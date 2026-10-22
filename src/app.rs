@@ -9,6 +9,7 @@ use tracing::{debug, warn};
 use crate::audio::{AudioEngine, AudioEvent, PlaybackState};
 use crate::geo::{Country, GeoService};
 use crate::ipc::{IpcCommand, IpcRequest, WakeFn};
+use crate::library::StationLibrary;
 use crate::media::{MediaCommand, MediaControls, PlaybackInfo};
 use crate::render::{
     GlobeCamera, GlobeInput, GlobeRenderer, MarkerVisual, SpectrumOverlay, SpectrumTarget,
@@ -38,6 +39,15 @@ struct StationMarker {
 struct SearchOutcome {
     stations: Vec<Station>,
     geo_stations: Vec<Station>,
+}
+
+/// Активная вкладка списка станций под поиском.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum LibraryTab {
+    #[default]
+    Results,
+    Favorites,
+    History,
 }
 
 /// Разделяемый с IPC-сервером слот для пробуждения GUI-цикла.
@@ -85,6 +95,7 @@ pub struct AppServices {
     pub geo: GeoService,
     pub radio: RadioBrowserClient,
     pub media: Option<MediaControls>,
+    pub library: StationLibrary,
     pub runtime: tokio::runtime::Handle,
 }
 
@@ -97,6 +108,7 @@ pub struct OrbitApp {
     geo: GeoService,
     radio: RadioBrowserClient,
     media: Option<MediaControls>,
+    library: StationLibrary,
     globe_camera: GlobeCamera,
     globe_ready: bool,
     spectrum_overlay: SpectrumOverlay,
@@ -108,6 +120,8 @@ pub struct OrbitApp {
     search_country: Option<Country>,
     search_results: Vec<Station>,
     markers: Vec<StationMarker>,
+    library_tab: LibraryTab,
+    library_error: Option<String>,
     search_pending: bool,
     search_empty: bool,
     search_rx: Option<mpsc::UnboundedReceiver<Result<SearchOutcome, RadioError>>>,
@@ -130,6 +144,7 @@ impl OrbitApp {
             geo,
             radio,
             media,
+            library,
             runtime,
         } = services;
         let audio_events = audio.subscribe();
@@ -158,6 +173,7 @@ impl OrbitApp {
             geo,
             radio,
             media,
+            library,
             globe_camera: GlobeCamera::default(),
             globe_ready,
             spectrum_overlay: SpectrumOverlay::default(),
@@ -169,6 +185,8 @@ impl OrbitApp {
             search_country: None,
             search_results: Vec::new(),
             markers: Vec::new(),
+            library_tab: LibraryTab::default(),
+            library_error: None,
             search_pending: false,
             search_empty: false,
             search_rx: None,
@@ -272,9 +290,39 @@ impl OrbitApp {
 
         self.current_url = Some(url);
         self.current_station = Some(station.clone());
+        match self.library.record_played(&station) {
+            Ok(()) => self.library_error = None,
+            Err(err) => {
+                warn!(error = %err, "не удалось сохранить историю станций");
+                self.library_error = Some(err.to_string());
+            }
+        }
         self.spawn_click(station.stationuuid);
         self.sync_media();
         Ok(())
+    }
+
+    fn toggle_favorite(&mut self, station: &Station) {
+        match self.library.toggle_favorite(station) {
+            Ok(favorite) => {
+                debug!(favorite, "избранное обновлено");
+                self.library_error = None;
+            }
+            Err(err) => {
+                warn!(error = %err, "не удалось сохранить избранное");
+                self.library_error = Some(err.to_string());
+            }
+        }
+    }
+
+    fn clear_history(&mut self) {
+        match self.library.clear_history() {
+            Ok(()) => self.library_error = None,
+            Err(err) => {
+                warn!(error = %err, "не удалось очистить историю");
+                self.library_error = Some(err.to_string());
+            }
+        }
     }
 
     fn spawn_click(&self, station_uuid: String) {
@@ -319,6 +367,7 @@ impl OrbitApp {
         self.search_error = None;
         self.search_results.clear();
         self.markers.clear();
+        self.library_tab = LibraryTab::Results;
 
         let mut geo_params = params.clone();
         geo_params.has_geo_info = true;
@@ -561,6 +610,8 @@ impl OrbitApp {
         let mut spectrum_requested: Option<bool> = None;
         let mut selected_station: Option<Station> = None;
         let mut selected_country: Option<Country> = None;
+        let mut favorite_toggle: Option<Station> = None;
+        let mut clear_history_requested = false;
 
         let card = egui::Frame::default()
             .fill(egui::Color32::from_rgba_unmultiplied(
@@ -632,11 +683,28 @@ impl OrbitApp {
                             }
                         ));
                         ui.label(format!("Воспроизведение: {playback}"));
+                        if let Some(station) = &self.current_station {
+                            ui.horizontal(|ui| {
+                                let favorite = self.library.is_favorite(&station.stationuuid);
+                                let (star, hint) = if favorite {
+                                    ("★", "Убрать из избранного")
+                                } else {
+                                    ("☆", "Добавить в избранное")
+                                };
+                                if ui.small_button(star).on_hover_text(hint).clicked() {
+                                    favorite_toggle = Some(station.clone());
+                                }
+                                ui.label(format!("Станция: {}", single_line(&station.name)));
+                            });
+                        }
                         ui.label(
                             egui::RichText::new(format!("Громкость: {volume:.0}%"))
                                 .color(MUTED_TEXT),
                         );
                         if let Some(error) = &self.spectrum_error {
+                            ui.label(egui::RichText::new(error).size(11.0).color(ERROR_TEXT));
+                        }
+                        if let Some(error) = &self.library_error {
                             ui.label(egui::RichText::new(error).size(11.0).color(ERROR_TEXT));
                         }
                     });
@@ -679,14 +747,86 @@ impl OrbitApp {
                 if self.search_empty && !self.search_pending && self.search_error.is_none() {
                     ui.label(egui::RichText::new("Станции не найдены").color(MUTED_TEXT));
                 }
-                if !self.search_results.is_empty() {
+                let has_library =
+                    !self.library.favorites().is_empty() || !self.library.history().is_empty();
+                if !self.search_results.is_empty() || has_library {
                     ui.add_space(4.0);
+                    let favorites_count = self.library.favorites().len();
+                    let history_count = self.library.history().len();
+                    ui.horizontal(|ui| {
+                        ui.selectable_value(
+                            &mut self.library_tab,
+                            LibraryTab::Results,
+                            format!("Результаты ({})", self.search_results.len()),
+                        );
+                        ui.selectable_value(
+                            &mut self.library_tab,
+                            LibraryTab::Favorites,
+                            format!("Избранное ({favorites_count})"),
+                        );
+                        ui.selectable_value(
+                            &mut self.library_tab,
+                            LibraryTab::History,
+                            format!("История ({history_count})"),
+                        );
+                    });
                     egui::ScrollArea::vertical()
+                        .id_salt("station_library")
                         .max_height(132.0)
-                        .show(ui, |ui| {
-                            for station in &self.search_results {
-                                if ui.selectable_label(false, station_label(station)).clicked() {
-                                    selected_station = Some(station.clone());
+                        .show(ui, |ui| match self.library_tab {
+                            LibraryTab::Results => {
+                                if self.search_results.is_empty() {
+                                    ui.label(
+                                        egui::RichText::new("Станции не найдены").color(MUTED_TEXT),
+                                    );
+                                } else {
+                                    for station in &self.search_results {
+                                        station_row(
+                                            ui,
+                                            station,
+                                            self.library.is_favorite(&station.stationuuid),
+                                            &mut selected_station,
+                                            &mut favorite_toggle,
+                                        );
+                                    }
+                                }
+                            }
+                            LibraryTab::Favorites => {
+                                if self.library.favorites().is_empty() {
+                                    ui.label(
+                                        egui::RichText::new("В избранном пока пусто")
+                                            .color(MUTED_TEXT),
+                                    );
+                                } else {
+                                    for station in self.library.favorites() {
+                                        station_row(
+                                            ui,
+                                            station,
+                                            true,
+                                            &mut selected_station,
+                                            &mut favorite_toggle,
+                                        );
+                                    }
+                                }
+                            }
+                            LibraryTab::History => {
+                                if self.library.history().is_empty() {
+                                    ui.label(
+                                        egui::RichText::new("История пока пуста").color(MUTED_TEXT),
+                                    );
+                                } else {
+                                    for station in self.library.history() {
+                                        station_row(
+                                            ui,
+                                            station,
+                                            self.library.is_favorite(&station.stationuuid),
+                                            &mut selected_station,
+                                            &mut favorite_toggle,
+                                        );
+                                    }
+                                    if ui.button("Очистить историю").clicked() {
+                                        clear_history_requested = true;
+                                    }
                                 }
                             }
                         });
@@ -843,6 +983,14 @@ impl OrbitApp {
                 Err(err) => self.search_error = Some(err),
             }
         }
+        if let Some(station) = favorite_toggle {
+            self.toggle_favorite(&station);
+            ctx.request_repaint();
+        }
+        if clear_history_requested {
+            self.clear_history();
+            ctx.request_repaint();
+        }
         if hide_requested {
             self.set_window_visible(&ctx, false);
         }
@@ -980,6 +1128,28 @@ fn marker_label(marker: &StationMarker) -> String {
     } else {
         name
     }
+}
+
+fn station_row(
+    ui: &mut egui::Ui,
+    station: &Station,
+    favorite: bool,
+    selected_station: &mut Option<Station>,
+    favorite_toggle: &mut Option<Station>,
+) {
+    ui.horizontal(|ui| {
+        let (star, hint) = if favorite {
+            ("★", "Убрать из избранного")
+        } else {
+            ("☆", "Добавить в избранное")
+        };
+        if ui.small_button(star).on_hover_text(hint).clicked() {
+            *favorite_toggle = Some(station.clone());
+        }
+        if ui.selectable_label(false, station_label(station)).clicked() {
+            *selected_station = Some(station.clone());
+        }
+    });
 }
 
 fn single_line(value: &str) -> String {

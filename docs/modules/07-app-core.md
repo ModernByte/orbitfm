@@ -20,7 +20,7 @@
 
 ## 3. Состояние приложения
 
-Текущее состояние (Этап 6):
+Текущее состояние (Этап 7):
 
 ```rust
 pub struct AppState {
@@ -32,6 +32,7 @@ pub struct AppServices {
     pub geo: GeoService,
     pub radio: RadioBrowserClient,
     pub media: Option<MediaControls>,
+    pub library: StationLibrary,
     pub runtime: tokio::runtime::Handle,
 }
 
@@ -44,6 +45,9 @@ pub struct OrbitApp {
     geo: GeoService,
     radio: RadioBrowserClient,
     media: Option<MediaControls>,
+    library: StationLibrary,
+    library_tab: LibraryTab,
+    library_error: Option<String>,
     globe_camera: GlobeCamera,
     globe_ready: bool,
     spectrum_overlay: SpectrumOverlay,
@@ -78,17 +82,24 @@ pub struct OrbitApp {
 `media` — `Option`, потому что MPRIS может быть недоступен (нет D-Bus); приложение в этом
 случае продолжает работать.
 
+`library` хранит избранное и историю (см. §9), `library_tab` — активную вкладку списка
+(`Results`/`Favorites`/`History`, по умолчанию `Results`), `library_error` — последнюю
+ошибку чтения/записи библиотеки для показа в карточке.
+
 ## 4. Порядок инициализации
 
 ```
 IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
-→ MediaControls::new(wake) → RadioBrowserClient::new → фоновый refresh_servers
-→ задача audio events → wake → IpcServer::run → eframe → OrbitApp::new
+→ MediaControls::new(wake) → RadioBrowserClient::new → StationLibrary::load_default
+→ фоновый refresh_servers → задача audio events → wake → IpcServer::run
+→ eframe → OrbitApp::new
 ```
 
 `try_bind` выполняется до создания аудио-ядра, чтобы второй экземпляр завершился, не
 занимая аудиоустройство. Ошибки `AudioEngine::new` и загрузки гео-датасета фатальны;
-ошибки MPRIS и прогрева каталога — только предупреждения.
+ошибки MPRIS, библиотеки и прогрева каталога — только предупреждения. При ошибке
+загрузки библиотеки создаётся `StationLibrary::ephemeral()`: изменения работают до
+завершения процесса, повреждённый файл не перезаписывается.
 
 `OrbitApp::new` создаёт `GlobeRenderer` из `cc.wgpu_render_state` и вставляет его в
 `render_state.renderer.write().callback_resources`. При отсутствии wgpu-состояния
@@ -169,7 +180,25 @@ IPC-сервера, MPRIS-колбэка, задача аудио-событий
 - `play <uuid>` сначала ищет станцию в последних результатах поиска, затем вызывает
   `get_station` с таймаутом 8 с; таймаут маппится в `RadioError::Network`.
 
-## 9. Синхронизация с MPRIS
+## 9. Избранное и история
+
+- `StationLibrary` загружается в `main` до запуска GUI; ошибка загрузки даёт
+  эфемерную библиотеку без файла (ADR-0013).
+- Успешный `start_station` (строка результатов, избранного или истории, маркер,
+  IPC `play`) вызывает `record_played`: станция перемещается в начало истории,
+  история ограничена 20 записями. Возобновление из MPRIS (`Play`/`PlayPause`)
+  историю не меняет.
+- Переключение звезды вызывает `toggle_favorite` и запрашивает repaint; звезда есть
+  у текущей станции и у каждой строки списка.
+- Под строкой поиска и маркеров показываются вкладки «Результаты»,
+  «Избранное (N)», «История (N)», если есть результаты или сохранённые станции.
+  Список прокручивается в области высотой 132 px; выбор строки запускает станцию.
+- Новый поиск сбрасывает вкладку на «Результаты»; вкладка «История» содержит кнопку
+  «Очистить историю» (`clear_history`).
+- Ошибки библиотеки логируются и показываются в карточке; они не прерывают
+  воспроизведение. Пути и формат файла описаны в `docs/modules/09-library.md`.
+
+## 10. Синхронизация с MPRIS
 
 `sync_media()` вызывается каждый кадр, но `MediaControls::set_playback` дедуплицирует
 неизменившееся состояние. Соответствие:
@@ -181,7 +210,7 @@ IPC-сервера, MPRIS-колбэка, задача аудио-событий
 Метаданные берутся из `current_station`: `name` → title, `tags` → artist, `favicon` →
 artUrl, `url_resolved` → `xesam:url`. Без станции используется URL потока.
 
-## 10. Жизненный цикл окна
+## 11. Жизненный цикл окна
 
 - Закрытие крестиком → `ViewportCommand::CancelClose` + `ViewportCommand::Visible(false)`,
   `window_visible = false`
@@ -190,18 +219,20 @@ artUrl, `url_resolved` → `xesam:url`. Без станции используе
 - Команда `quit` → `quitting = true` + `ViewportCommand::Close`; после выхода из GUI main
   останавливает IPC-сервер, аудио-поток и удаляет сокет
 
-## 11. Текущие ограничения
+## 12. Текущие ограничения
 
-- `Next`/`Previous` из MPRIS не переключают станции (нет списка/истории)
+- `Next`/`Previous` из MPRIS не переключают станции: история не является очередью
+  воспроизведения, для переключения нужен отдельный плейлист (ADR-0013)
 - На глобусе нет подписей стран и атмосферы; маркеры группируются только по
   совпадающим координатам, кластеризации близких точек нет
 - Клик мимо окна (overlay) ещё не реализован
-- Кэш станций только in-memory; дискового кэша нет
+- Кэш станций каталога только in-memory; на диске хранятся лишь избранное и история
 - Метаданные ICY (название трека внутри потока) не читаются
 - FFT-визуализатор управляется только из GUI, не имеет IPC-команды и показывает
   агрегированные метрики вместо полос спектра
 
-## 12. Связанные документы
+## 13. Связанные документы
 
-- ADR-0002, ADR-0005, ADR-0006, ADR-0010, ADR-0012
+- ADR-0002, ADR-0005, ADR-0006, ADR-0010, ADR-0012, ADR-0013
 - `docs/architecture/00-overview.md`
+- `docs/modules/09-library.md`

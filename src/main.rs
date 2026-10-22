@@ -1,13 +1,14 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
-use tracing::warn;
+use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
 mod app;
 mod audio;
 mod geo;
 mod ipc;
+mod library;
 mod media;
 mod render;
 mod services;
@@ -16,6 +17,7 @@ use app::{AppServices, OrbitApp, WakeHandle};
 use audio::AudioEngine;
 use geo::GeoService;
 use ipc::{IpcCommand, IpcError, IpcServer};
+use library::StationLibrary;
 use media::MediaControls;
 use services::RadioBrowserClient;
 
@@ -150,6 +152,19 @@ fn launch(runtime: &tokio::runtime::Runtime, command: &IpcCommand, explicit: boo
         }
     };
     let radio = RadioBrowserClient::new();
+    let library = match StationLibrary::load_default() {
+        Ok(library) => {
+            info!(path = ?library.path(), "библиотека станций загружена");
+            library
+        }
+        Err(err) => {
+            warn!(
+                error = %err,
+                "не удалось загрузить избранное и историю; используется временная библиотека"
+            );
+            StationLibrary::ephemeral()
+        }
+    };
     let warm_radio = radio.clone();
     runtime.spawn(async move {
         if let Err(err) = warm_radio.refresh_servers().await {
@@ -175,15 +190,15 @@ fn launch(runtime: &tokio::runtime::Runtime, command: &IpcCommand, explicit: boo
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let mut server_task = runtime.spawn(server.run(wake.waker(), shutdown_rx));
 
-    let gui_result = run_gui(
-        commands,
-        wake,
+    let services = AppServices {
         audio,
         geo,
         radio,
         media,
-        runtime.handle().clone(),
-    );
+        library,
+        runtime: runtime.handle().clone(),
+    };
+    let gui_result = run_gui(commands, wake, services);
 
     let _ = shutdown_tx.send(());
     let server_exit = runtime
@@ -234,11 +249,7 @@ fn resend_to_starting_instance(
 fn run_gui(
     commands: tokio::sync::mpsc::Receiver<ipc::IpcRequest>,
     wake: WakeHandle,
-    audio: AudioEngine,
-    geo: GeoService,
-    radio: RadioBrowserClient,
-    media: Option<MediaControls>,
-    runtime: tokio::runtime::Handle,
+    services: AppServices,
 ) -> Result<()> {
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
@@ -254,16 +265,7 @@ fn run_gui(
     eframe::run_native(
         "OrbitFM",
         options,
-        Box::new(move |cc| {
-            let services = AppServices {
-                audio,
-                geo,
-                radio,
-                media,
-                runtime,
-            };
-            Ok(Box::new(OrbitApp::new(cc, commands, &wake, services)))
-        }),
+        Box::new(move |cc| Ok(Box::new(OrbitApp::new(cc, commands, &wake, services)))),
     )
     .map_err(|err| anyhow!("не удалось запустить GUI: {err}"))
 }
