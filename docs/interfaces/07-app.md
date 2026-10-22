@@ -18,30 +18,32 @@ Application Core не экспортирует публичный трейт д�
 
 ## Порядок инициализации
 
-Текущий (Этап 2):
+Текущий (Этап 3):
 
 ```
 1. IpcServer::try_bind()          — ошибка AlreadyRunning → повторная отправка команды
 2. AudioEngine::new()             — ошибка фатальна для запуска
 3. MediaControls::new(wake)       — ошибка логируется, приложение работает без MPRIS
-4. фоновая задача: audio events → wake()
-5. IpcServer::run(wake, shutdown) — accept-loop
-6. eframe::run_native + OrbitApp  — GUI, после закрытия которого сервер
+4. RadioBrowserClient::new()      — без сетевых обращений
+5. фоновая задача refresh_servers — прогрев пула; ошибка только логируется
+6. фоновая задача: audio events → wake()
+7. IpcServer::run(wake, shutdown) — accept-loop
+8. eframe::run_native + OrbitApp  — GUI, после закрытия которого сервер
                                     останавливается и сокет удаляется
 ```
 
-Целевой порядок после Этапов 3–4: `GeoService` и `RadioClient` добавляются до
-`MediaControls`, а `GlobeRenderer` — перед созданием `OrbitApp`.
+Целевой порядок после Этапа 4: `GeoService` создаётся до `MediaControls`, а
+`GlobeRenderer` — перед созданием `OrbitApp`.
 
 ## Реакция на команды
 
 | Команда       | Действие |
 |---------------|----------|
 | Toggle/Show/Hide | Изменение `window_visible` + ViewportCommand |
-| Play          | На Этапе 2 — `error каталог станций ещё не подключён (Этап 3)`; после Этапа 3 — `radio.send_click` + `audio.play(url_resolved)` + media |
-| Stop          | `audio.stop()`, сброс `current_url`, обновление media |
+| Play          | Поиск станции в результатах последнего поиска, затем `radio.get_station` (таймаут 8 с); `audio.play(url_resolved)`, асинхронный `radio.send_click`, обновление media |
+| Stop          | `audio.stop()`; последний URL и станция сохраняются для повторного запуска из MPRIS |
 | Volume        | `audio.set_volume(level)`, обновление media |
-| Status        | `status <state>`, `volume <0.00>`, `window visible\|hidden` |
+| Status        | `status <state>`, при активной станции `stationuuid`/`name`, затем `volume <0.00>` и `window visible\|hidden` |
 | Quit          | Корректное завершение всех подсистем и выход |
 
 `MediaCommand` обрабатывается в том же цикле:
@@ -53,18 +55,27 @@ Application Core не экспортирует публичный трейт д�
 | PlayPause | переключить в зависимости от `PlaybackState` |
 | Stop | `audio.stop()` |
 | SetVolume | `audio.set_volume()` |
-| Next/Previous | пока логируются, переключение станций — Этап 3 |
+| Next/Previous | не действуют: переключение станций вне текущего объёма |
 
 Аудио-вызовы из синхронного `logic()` выполняются через
 `tokio::runtime::Handle::block_on`; сами операции короткие (ответ аудио-потока с
-таймаутом 3 с).
+таймаутом 3 с). Поиск станций выполняется асинхронно: результат приходит в
+`mpsc`-канал, `WakeFn` будит GUI.
 
 Ответ клиенту формируется после обновления состояния App и отправки `ViewportCommand`;
 применение команды оконным менеджером асинхронно и в ответе не подтверждается.
 `window` в `status` отражает состояние, управляемое OrbitFM, а не минимизацию WM.
 
+## GUI
+
+- поле поиска и кнопка «Найти» (Enter в поле также запускает поиск);
+- до 30 результатов, отсортированных по голосам; выбор строки запускает станцию;
+- состояние поиска (`Поиск…`) и ошибки каталога отображаются в карточке;
+- при активном воспроизведении статус содержит UUID и имя станции.
+
 ## Зависимости
 
-`OrbitApp` использует конкретные реализации (`AudioEngine`, `MediaControls`) и каналы
-`tokio::sync` как границы. Подмена реализаций в тестах не требуется; модульные тесты
-проверяют чистые функции (`format_status`, `playback_label`) и логику внутри модулей.
+`OrbitApp` использует конкретные реализации (`AudioEngine`, `RadioBrowserClient`,
+`MediaControls`) и каналы `tokio::sync` как границы. Подмена реализаций в тестах не
+требуется; модульные тесты проверяют чистые функции (`format_status`, `playback_label`,
+`station_label`, `truncate`) и логику внутри модулей.

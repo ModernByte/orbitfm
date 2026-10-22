@@ -41,15 +41,15 @@
 - [x] Базовый MPRIS (Linux) через playwire
 - [x] Живой тест воспроизведения (по запросу, вне CI)
 
-## Текущий этап: Этап 3 — Radio Browser
+## Этап 3: Radio Browser — завершён
 
-- [ ] DNS discovery
-- [ ] Поиск станций
-- [ ] Кэш и fallback зеркал
-- [ ] User-Agent и click-tracking
-- [ ] Подключение `play <uuid>` к аудио-ядру
+- [x] DNS discovery (`all.api.radio-browser.info`, ленивый + фоновый прогрев)
+- [x] Поиск станций и поиск в GUI
+- [x] Кэш и fallback зеркал
+- [x] User-Agent и click-tracking
+- [x] Подключение `play <uuid>` к аудио-ядру и метаданные станции в MPRIS
 
-## Этап 4: 3D-глобус (минимальный)
+## Текущий этап: Этап 4 — 3D-глобус (минимальный)
 
 - [ ] Сфера + текстура
 - [ ] Камера (вращение + zoom)

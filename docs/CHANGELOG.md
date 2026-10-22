@@ -8,6 +8,22 @@
 ## [Unreleased]
 
 ### Добавлено
+- Этап 3 — Radio Browser и запуск станций:
+  - `src/services/`: `RadioBrowserClient` с ленивым DNS-discovery
+    `all.api.radio-browser.info`, дедупликацией IP и случайной ротацией пула
+  - отдельный `reqwest::Client` на каждый IP с `.resolve` (TLS/SNI остаются на имени
+    хоста), User-Agent `OrbitFM/1.0 (ModernByte; Linux; Rust)`, таймаут 5 с
+  - failover по пулу для сетевых ошибок/таймаутов/`5xx`/`429`/`408`, повторный
+    discovery и один повтор; остальные `4xx` возвращаются сразу
+  - поиск `/json/stations/search` (`hidebroken`, сортировка по голосам), станция по
+    `/json/stations/byuuid`, click `/json/url`; in-memory кэш до 512 станций
+  - `play <uuid>`: станция из результатов поиска или каталога (таймаут 8 с),
+    воспроизведение `url_resolved`, асинхронный click
+  - поиск станций в окне (поле + Enter/«Найти», до 30 результатов) и запуск по клику
+  - MPRIS-метаданные из станции: название, теги, favicon, `url_resolved`
+  - `status` дополнен строками `stationuuid` и `name` при активной станции
+  - фоновый прогрев пула серверов при старте (ошибка не фатальна)
+  - unit-тесты клиента и живой тест `searches_and_fetches_live_station` (вне CI)
 - Этап 2 — аудио-ядро и базовый MPRIS:
   - `src/audio/`: безопасная обёртка `libmpv2` в выделенном потоке `orbitfm-audio`,
     команды через каналы tokio с таймаутом 3 с
@@ -73,7 +89,9 @@
 - `docs/templates/MERGE_CHECKLIST.md`, `PROJECT_STATUS.md`
 
 ### Изменено
-- Аудио-стек уточнён под ADR-0003: безопасная обёртка `libmpv2` вместо прямого
+- `stop`/`error` больше не сбрасывают последний URL: MPRIS `Play` перезапускает поток
+- зависимости: добавлены `reqwest` 0.13 (rustls, json, query), `serde`, `thiserror`
+- аудио-стек уточнён под ADR-0003: безопасная обёртка `libmpv2` вместо прямого
   `libmpv-sys`; MPRIS реализован через `playwire` (ADR-0006)
 - CI устанавливает `libmpv-dev` для сборки и тестов
 - IPC-контракт уточнён под реализацию: `IpcRequest` с oneshot-ответом, `commands(&mut self)`,
