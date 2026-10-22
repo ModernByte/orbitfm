@@ -75,7 +75,8 @@
 - [x] FFT-визуализатор (экспериментальный)
 - [x] Упаковка Linux: AppImage (`packaging/linux/build-appimage.sh`), desktop entry,
   AppStream-метаданные и иконка
-- [ ] Flatpak — заблокировано: нужны vendored cargo-исходники и модуль libmpv/FFmpeg
+- [x] Flatpak: `packaging/linux/org.modernbyte.OrbitFM.yml`, runtime 25.08,
+  libmpv/libass/libplacebo из исходников, vendored cargo (`build-flatpak.sh`)
 - [ ] MSI — заблокировано: нужна Windows-сборка (см. пункт Windows)
 - [ ] DMG — заблокировано: нужна macOS-сборка (см. пункт macOS)
 

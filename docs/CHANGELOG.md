@@ -8,6 +8,17 @@
 ## [Unreleased]
 
 ### Добавлено
+- Этап 6 — Flatpak для Linux:
+  - манифест `packaging/linux/org.modernbyte.OrbitFM.yml`: runtime
+    `org.freedesktop.Platform` 25.08, Rust 1.98 из SDK-расширения
+  - libmpv 0.41.0, libass 0.17.5 и libplacebo 7.360.1 собираются из исходников;
+    FFmpeg 7.1, GnuTLS, PulseAudio и PipeWire берутся из runtime/SDK
+  - `packaging/linux/flatpak-cargo-sources.json` с vendored crate-исходниками;
+    сборка идёт офлайн
+  - `packaging/linux/build-flatpak.sh` собирает и ставит приложение в
+    пользовательскую установку Flatpak
+  - проверено: запуск окна, воспроизведение станции по UUID, MPRIS и IPC;
+    публикация в Flathub не выполняется
 - Этап 7 — плагин Noctalia как источник каталога:
   - каталог плагина переименован `noctalia-plugin/` → `orbitfm/`: имя подкаталога
     должно совпадать с частью id после `/`
