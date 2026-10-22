@@ -34,8 +34,8 @@ Flatpak требует воспроизводимой сборки libmpv и ven
    `APPIMAGE_EXTRACT_AND_RUN=1`.
 4. CI проверяет только метаданные (`desktop-file-validate`, `appstreamcli validate`,
    `bash -n`); сборка AppImage остаётся локальной/ручной до появления release-workflow.
-5. **Отложено до появления нативных раннеров и платформенных бэкендов:**
-   - Flatpak — нужны vendored cargo-исходники и модуль libmpv/FFmpeg;
+5. **Отложено до появления нативных раннеров и платформенных бэкендов
+   (Flatpak разблокирован 2026-10-22, см. уточнение ниже):**
    - MSI — нужны Windows-сборка libmpv, named pipe IPC и SMTC с HWND;
    - DMG — нужна macOS-сборка libmpv и проверка Now Playing;
    - Windows (SMTC) и macOS (Now Playing) как пункты Этапа 6.
@@ -66,7 +66,30 @@ Flatpak требует воспроизводимой сборки libmpv и ven
 - AppImage наследует ограничения хостового libmpv/FFmpeg и драйверов; проверен только
   на x86_64 Linux
 - Continuous-инструменты не закреплены по хешу; для релизов потребуется pinning
-- Flatpak/MSI/DMG остаются незакрытыми до появления соответствующей инфраструктуры
+- MSI/DMG остаются незакрытыми до появления соответствующей инфраструктуры
+
+## Уточнение (2026-10-22): Flatpak
+
+Flatpak разблокирован и реализован: `packaging/linux/org.modernbyte.OrbitFM.yml`,
+`packaging/linux/flatpak-cargo-sources.json` и `packaging/linux/build-flatpak.sh`.
+
+- Runtime — `org.freedesktop.Platform` 25.08, SDK — `org.freedesktop.Sdk` 25.08
+  с расширением `org.freedesktop.Sdk.Extension.rust-stable`.
+- libmpv 0.41.0, libass 0.17.5 и libplacebo 7.360.1 собираются из исходников.
+  FFmpeg 7.1, GnuTLS, PulseAudio и PipeWire берутся из runtime/SDK; отдельная
+  сборка FFmpeg не нужна.
+- Cargo-исходники зафиксированы генератором `flatpak-cargo-generator` по
+  `Cargo.lock`; сборка идёт с `--offline`.
+- Sandbox: сеть, Wayland с fallback на X11, PulseAudio, PipeWire, DRI и
+  собственное имя MPRIS `org.mpris.MediaPlayer2.OrbitFM`.
+- `build-flatpak.sh` собирает через `flatpak-builder` или `org.flatpak.Builder`,
+  экспортирует в `target/flatpak-repo` и ставит в пользовательскую установку.
+- Проверено локально: сборка, запуск окна, воспроизведение станции, MPRIS
+  (`Playing`) и IPC-команды через второй запуск Flatpak. IPC-сокет Flatpak
+  находится в приватном runtime-каталоге sandbox, поэтому Noctalia-виджет и
+  внешний CLI работают только с нативной установкой.
+- Публикация в Flathub не выполняется: артефакт собирается локально, как и
+  AppImage; внешняя публикация потребует отдельного решения владельца.
 
 ## Ссылки
 
