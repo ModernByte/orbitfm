@@ -179,18 +179,19 @@ OrbitFM проектируется по архитектуре **«Единый 
 
 ## 4. Контракты интеграций и правила окон
 
-### 4.1. Манифест плагина Noctalia v5 (`noctalia-plugin/plugin.toml`)
+### 4.1. Манифест плагина Noctalia v5 (`orbitfm/plugin.toml`)
 
 ```toml
-id          = "modernbyte/orbitfm"
-name        = "OrbitFM"
-version     = "1.0.0"
-plugin_api  = 3
-author      = "ModernByte"
-license     = "MIT"
-icon        = "radio"
-description = "3D Interactive Global Radio Player"
-tags        = ["radio", "audio", "orbitfm"]
+id           = "modernbyte/orbitfm"
+name         = "OrbitFM"
+version      = "1.0.0"
+plugin_api   = 3
+author       = "ModernByte"
+license      = "MIT"
+icon         = "radio"
+description  = "3D Interactive Global Radio Player"
+tags         = ["bar", "audio", "music"]
+dependencies = ["orbitfm"]
 
 [[widget]]
 id    = "launcher"
@@ -198,29 +199,55 @@ entry = "plugin.luau"
 ```
 
 `id` обязан иметь формат `<author>/<plugin>`; app-id окна остаётся
-`org.modernbyte.OrbitFM`.
+`org.modernbyte.OrbitFM`. Имя каталога плагина совпадает с частью id после `/`
+— это требование каталога Noctalia. Теги выбираются только из официального
+списка, а внешняя команда `orbitfm` объявлена в `dependencies`.
 
-### 4.2. Luau Адаптер для Noctalia v5 (`noctalia-plugin/plugin.luau`)
+### 4.2. Luau Адаптер для Noctalia v5 (`orbitfm/plugin.luau`)
 
 ```luau
+--!nonstrict
+
 barWidget.setGlyph("radio")
 barWidget.setText(noctalia.tr("widget.label"))
 barWidget.setTooltip(noctalia.tr("widget.tooltip"))
 
 function onClick()
-    noctalia.runAsync("orbitfm toggle", function(result)
+    local started = noctalia.runAsync("orbitfm toggle", function(result)
         if result.exitCode ~= 0 then
-            noctalia.notify(noctalia.tr("widget.error_title"), result.stderr)
+            local detail = result.stderr ~= "" and result.stderr or noctalia.tr("widget.error_body")
+            noctalia.notify(noctalia.tr("widget.error_title"), detail)
         end
     end)
+
+    if not started then
+        noctalia.notify(noctalia.tr("widget.error_title"), noctalia.tr("widget.error_body"))
+    end
 end
 ```
 
 Плагин не держит состояние и не содержит бизнес-логики: он только отправляет
 IPC-команду `toggle` через CLI. Строки интерфейса — в `translations/en.json` и
-`translations/ru.json`.
+`translations/ru.json`; ключи вложены по сегментам (`widget.label`), плоские
+ключи с точками каталог не принимает.
 
-### 4.3. Оконные правила Niri 25.01+ (`wm-configs/orbitfm-niri.kdl`)
+### 4.3. Каталог плагинов Noctalia (`catalog.toml`)
+
+* `catalog.toml` в корне репозитория индексирует плагин для git-источника
+  `ModernByte/orbitfm`: `id`, `name`, `version`, `author`, `license`, `icon`,
+  `description`, `deprecated`, `plugin_api`, `tags`, `dependencies`.
+* Каталог плагина расположен в `orbitfm/`: `plugin.toml`, `plugin.luau`,
+  `README.md`, `thumbnail.webp` (960×540 WebP, до 512 КиБ) и
+  `translations/en.json`.
+* Подключение как пользовательского источника:
+  `noctalia msg plugins source add orbitfm git https://github.com/ModernByte/orbitfm`,
+  затем `noctalia msg plugins enable modernbyte/orbitfm`.
+* Публикация в общий магазин — отдельный PR в `noctalia-dev/community-plugins`;
+  там `catalog.toml` генерируется CI и вручную не редактируется.
+* Проверки: `noctalia plugins lint orbitfm` и официальный community-валидатор
+  манифеста, README, миниатюры и переводов.
+
+### 4.4. Оконные правила Niri 25.01+ (`wm-configs/orbitfm-niri.kdl`)
 
 Соответствует официальной спецификации Niri (v25.01+):
 
@@ -238,7 +265,7 @@ window-rule {
 Плавающие окна Niri центрирует по умолчанию; `default-floating-position`
 не требуется (значение `relative-to="center"` не поддерживается).
 
-### 4.4. Оконные правила Hyprland (`wm-configs/orbitfm-hyprland.conf`)
+### 4.5. Оконные правила Hyprland (`wm-configs/orbitfm-hyprland.conf`)
 
 ```ini
 windowrulev2 = float, class:^(org\.modernbyte\.OrbitFM)$
@@ -260,10 +287,13 @@ orbitfm/
 │   ├── geojson/world-110m.json      <-- Offline векторные границы стран (Natural Earth)
 │   ├── textures/earth.jpg           <-- Текстура Земли (equirectangular, public domain)
 │   └── icons/                       <-- SVG/PNG иконки интерфейса
-├── noctalia-plugin/
+├── orbitfm/                         <-- Плагин Noctalia (имя = суффикс id)
 │   ├── plugin.toml                  <-- Официальный валидный манифест Noctalia v5
 │   ├── plugin.luau                  <-- Luau-скрипт адаптера панели
+│   ├── README.md                    <-- Страница плагина в каталоге
+│   ├── thumbnail.webp               <-- Карточка 960×540
 │   └── translations/                <-- en.json, ru.json
+├── catalog.toml                     <-- Каталог плагинов для git-источника
 ├── wm-configs/
 │   ├── orbitfm-niri.kdl             <-- Валидный конфигурационный файл Niri 25.01+
 │   └── orbitfm-hyprland.conf        <-- Правила окон Hyprland
@@ -275,8 +305,9 @@ orbitfm/
 │   ├── geo/                         <-- GeoJSON R-Tree Index & Spatial Raycaster
 │   ├── render/                      <-- egui-wgpu Custom Render Pass (3D Globe Pipeline)
 │   ├── services/                    <-- Radio Browser Client & DNS Server Discovery
-│   ├── ipc/                         <-- Single-instance, Unix socket, протокол команд
-│   └── wm/                          <-- Platform WM Detector & Config Generator
+│   ├── library/                     <-- Избранное и история станций
+│   ├── settings/                    <-- Тема и акцент оформления
+│   └── ipc/                         <-- Single-instance, Unix socket, протокол команд
 ├── Cargo.toml
 └── README.md
 ```

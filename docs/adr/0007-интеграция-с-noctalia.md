@@ -14,12 +14,14 @@
 
 ### 1. Плагин Noctalia
 
-Отдельный каталог `noctalia-plugin/` со следующей структурой (по официальной документации docs.noctalia.dev):
+Отдельный каталог `orbitfm/` со следующей структурой (по официальной документации docs.noctalia.dev):
 
 ```
-noctalia-plugin/
+orbitfm/
 ├── plugin.toml
 ├── plugin.luau          # entry script
+├── README.md            # страница плагина в каталоге
+├── thumbnail.webp       # карточка 960×540
 └── translations/
     └── en.json          # (и ru.json при необходимости)
 ```
@@ -34,6 +36,8 @@ plugin_api = 3
 author     = "ModernByte"
 icon       = "radio"
 description = "3D Interactive Global Radio Player"
+tags       = ["bar", "audio", "music"]
+dependencies = ["orbitfm"]
 
 [[widget]]
 id    = "launcher"
@@ -65,6 +69,19 @@ noctalia.runAsync("orbitfm toggle")
 - Манифест проверен `noctalia plugins lint`: 0 ошибок, 0 предупреждений.
 
 Решение о тонком адаптере и IPC остаётся прежним.
+
+### Уточнение (2026-10-22): каталог плагинов
+
+- Каталог плагина переименован из `noctalia-plugin/` в `orbitfm/`: каталог
+  Noctalia требует, чтобы имя подкаталога совпадало с частью id после `/`.
+- В корне добавлен `catalog.toml`, индексирующий плагин для git-источника
+  `ModernByte/orbitfm`; публикация в общий магазин выполняется отдельным PR в
+  `noctalia-dev/community-plugins`.
+- Теги приведены к официальному списку (`bar`, `audio`, `music`), внешняя
+  команда `orbitfm` объявлена в `dependencies`.
+- Добавлены `README.md` и `thumbnail.webp` 960×540, переводы переведены на
+  вложенные ключи. Манифест проверен `noctalia plugins lint` и официальным
+  community-валидатором.
 
 ### Альтернативы
 

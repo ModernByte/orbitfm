@@ -41,7 +41,8 @@ cargo deny check
 ```
 orbitfm/
 ├── assets/
-├── noctalia-plugin/
+├── orbitfm/                 # плагин Noctalia (имя = суффикс id)
+├── catalog.toml             # каталог плагинов для git-источника
 ├── packaging/
 │   └── linux/
 ├── wm-configs/
@@ -53,8 +54,9 @@ orbitfm/
 │   ├── render/
 │   ├── services/
 │   ├── media/
-│   ├── ipc/
-│   └── wm/
+│   ├── library/
+│   ├── settings/
+│   └── ipc/
 ├── docs/
 │   ├── architecture/
 │   ├── adr/
