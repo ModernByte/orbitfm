@@ -8,6 +8,20 @@
 ## [Unreleased]
 
 ### Добавлено
+- Этап 2 — аудио-ядро и базовый MPRIS:
+  - `src/audio/`: безопасная обёртка `libmpv2` в выделенном потоке `orbitfm-audio`,
+    команды через каналы tokio с таймаутом 3 с
+  - состояния `Stopped`, `Playing`, `Paused`, `Buffering`, `Reconnecting`, `Error`;
+    события `Started`, `Stopped`, `Buffering`, `Reconnecting`, `Error`, `EndOfFile`
+  - play / pause / resume / stop / volume; громкость по умолчанию 0.7
+  - реконнект: до 5 попыток с задержками 1, 2, 4, 8, 16 с
+  - `LC_NUMERIC=C` и опции mpv `config=no`, `terminal=no`, `idle=yes`, `vid=no`,
+    `network-timeout=10`; отслеживание `paused-for-cache`
+  - `src/media/`: MPRIS v2 через playwire (`org.mpris.MediaPlayer2.OrbitFM`),
+    метаданные, громкость, Play/Pause/PlayPause/Stop; пробуждение GUI через `WakeFn`
+  - IPC `stop` и `volume` управляют аудио-ядром; `status` возвращает
+    `status <state>`, `volume <0.00>`, `window visible|hidden`
+  - живой тест `plays_and_stops_live_stream` (по запросу, вне CI)
 - Этап 1 (MVP-0) — каркас приложения:
   - crate `orbitfm` (Rust 2024, MSRV 1.95), зависимости eframe/egui 0.37, wgpu 30, tokio 1.54
   - single-instance IPC через Unix Domain Socket (`$XDG_RUNTIME_DIR/orbitfm.sock`)
@@ -59,6 +73,9 @@
 - `docs/templates/MERGE_CHECKLIST.md`, `PROJECT_STATUS.md`
 
 ### Изменено
+- Аудио-стек уточнён под ADR-0003: безопасная обёртка `libmpv2` вместо прямого
+  `libmpv-sys`; MPRIS реализован через `playwire` (ADR-0006)
+- CI устанавливает `libmpv-dev` для сборки и тестов
 - IPC-контракт уточнён под реализацию: `IpcRequest` с oneshot-ответом, `commands(&mut self)`,
   `run(WakeFn, shutdown)`, завершение ответа по EOF, лимит команды 4096 байт, таймауты,
   права сокета `0600`

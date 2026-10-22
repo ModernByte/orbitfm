@@ -1,9 +1,12 @@
 use std::sync::{Arc, Mutex};
 
 use eframe::egui;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
+use tracing::{debug, warn};
 
+use crate::audio::{AudioEngine, AudioEvent, PlaybackState};
 use crate::ipc::{IpcCommand, IpcRequest, WakeFn};
+use crate::media::{MediaCommand, MediaControls, PlaybackInfo};
 
 const WINDOW_TITLE: &str = "OrbitFM";
 const CARD_ALPHA: u8 = 236;
@@ -52,6 +55,11 @@ impl Default for AppState {
 pub struct OrbitApp {
     state: AppState,
     commands: mpsc::Receiver<IpcRequest>,
+    audio: AudioEngine,
+    audio_events: broadcast::Receiver<AudioEvent>,
+    media: Option<MediaControls>,
+    current_url: Option<String>,
+    runtime: tokio::runtime::Handle,
     quitting: bool,
 }
 
@@ -60,14 +68,25 @@ impl OrbitApp {
         cc: &eframe::CreationContext<'_>,
         commands: mpsc::Receiver<IpcRequest>,
         wake: &WakeHandle,
+        audio: AudioEngine,
+        media: Option<MediaControls>,
+        runtime: tokio::runtime::Handle,
     ) -> Self {
         configure_style(&cc.egui_ctx);
         wake.install(cc.egui_ctx.clone());
-        Self {
+        let audio_events = audio.subscribe();
+        let mut app = Self {
             state: AppState::default(),
             commands,
+            audio,
+            audio_events,
+            media,
+            current_url: None,
+            runtime,
             quitting: false,
-        }
+        };
+        app.sync_media();
+        app
     }
 
     fn process_commands(&mut self, ctx: &egui::Context) {
@@ -98,20 +117,137 @@ impl OrbitApp {
                 self.request_quit(ctx);
                 "ok".to_owned()
             }
-            IpcCommand::Play { .. } | IpcCommand::Stop | IpcCommand::Volume { .. } => {
-                "error аудио-ядро ещё не подключено (Этап 2)".to_owned()
+            IpcCommand::Play { .. } => "error каталог станций ещё не подключён (Этап 3)".to_owned(),
+            IpcCommand::Stop => match self.runtime.block_on(self.audio.stop()) {
+                Ok(()) => {
+                    self.current_url = None;
+                    "ok".to_owned()
+                }
+                Err(err) => format!("error {err}"),
+            },
+            IpcCommand::Volume { level } => {
+                match self.runtime.block_on(self.audio.set_volume(*level)) {
+                    Ok(()) => "ok".to_owned(),
+                    Err(err) => format!("error {err}"),
+                }
             }
             IpcCommand::Raw(raw) => format!("error неизвестная команда: {raw}"),
         }
     }
 
     fn status_text(&self) -> String {
-        let window = if self.state.window_visible {
-            "visible"
+        format_status(
+            &self.audio.state(),
+            self.audio.volume(),
+            self.state.window_visible,
+        )
+    }
+
+    fn process_audio_events(&mut self) {
+        loop {
+            match self.audio_events.try_recv() {
+                Ok(AudioEvent::Started { url }) => self.current_url = Some(url),
+                Ok(AudioEvent::Stopped | AudioEvent::Error { .. }) => self.current_url = None,
+                Ok(AudioEvent::Buffering | AudioEvent::Reconnecting { .. }) => {}
+                Ok(AudioEvent::EndOfFile) => {}
+                Err(
+                    broadcast::error::TryRecvError::Empty | broadcast::error::TryRecvError::Closed,
+                ) => break,
+                Err(broadcast::error::TryRecvError::Lagged(skipped)) => {
+                    warn!(skipped, "часть аудио-событий пропущена");
+                }
+            }
+        }
+    }
+
+    fn process_media_commands(&mut self) {
+        while let Some(command) = self
+            .media
+            .as_mut()
+            .and_then(|media| media.events().try_recv().ok())
+        {
+            self.execute_media_command(command);
+        }
+    }
+
+    fn execute_media_command(&mut self, command: MediaCommand) {
+        match command {
+            MediaCommand::Stop => {
+                if let Err(err) = self.runtime.block_on(self.audio.stop()) {
+                    warn!(error = %err, "не удалось остановить воспроизведение из MPRIS");
+                } else {
+                    self.current_url = None;
+                }
+            }
+            MediaCommand::SetVolume(volume) => {
+                if let Err(err) = self.runtime.block_on(self.audio.set_volume(volume)) {
+                    warn!(error = %err, "не удалось изменить громкость из MPRIS");
+                }
+            }
+            MediaCommand::Play => self.resume_playback(),
+            MediaCommand::Pause => self.set_audio_paused(true),
+            MediaCommand::PlayPause => match self.audio.state() {
+                PlaybackState::Paused => self.set_audio_paused(false),
+                PlaybackState::Playing | PlaybackState::Buffering => {
+                    self.set_audio_paused(true);
+                }
+                PlaybackState::Stopped | PlaybackState::Error(_) => self.resume_playback(),
+                PlaybackState::Reconnecting => {}
+            },
+            MediaCommand::Next | MediaCommand::Previous => {
+                debug!("переключение станций из MPRIS появится вместе с Radio Browser");
+            }
+        }
+    }
+
+    fn set_audio_paused(&mut self, paused: bool) {
+        if let Err(err) = self.runtime.block_on(self.audio.set_paused(paused)) {
+            warn!(error = %err, "не удалось изменить паузу из MPRIS");
+        }
+    }
+
+    fn resume_playback(&mut self) {
+        match self.audio.state() {
+            PlaybackState::Paused => self.set_audio_paused(false),
+            PlaybackState::Playing | PlaybackState::Buffering | PlaybackState::Reconnecting => {}
+            PlaybackState::Stopped | PlaybackState::Error(_) => {
+                if let Some(url) = self.current_url.clone()
+                    && let Err(err) = self.runtime.block_on(self.audio.play(&url))
+                {
+                    warn!(error = %err, "не удалось возобновить воспроизведение из MPRIS");
+                }
+            }
+        }
+    }
+
+    fn sync_media(&mut self) {
+        let state = self.audio.state();
+        let has_track = !matches!(state, PlaybackState::Stopped | PlaybackState::Error(_));
+        let playing = matches!(
+            state,
+            PlaybackState::Playing | PlaybackState::Buffering | PlaybackState::Reconnecting
+        );
+        let title = if has_track {
+            self.current_url
+                .clone()
+                .unwrap_or_else(|| WINDOW_TITLE.to_owned())
         } else {
-            "hidden"
+            String::new()
         };
-        format!("status stopped\nwindow {window}")
+        let info = PlaybackInfo {
+            title,
+            artist: None,
+            art_url: None,
+            url: self.current_url.clone().unwrap_or_default(),
+            playing,
+            volume: self.audio.volume(),
+        };
+
+        if let Some(media) = self.media.as_mut()
+            && let Err(err) = media.set_playback(&info)
+        {
+            warn!(error = %err, "не удалось обновить MPRIS");
+        }
     }
 
     fn set_window_visible(&mut self, ctx: &egui::Context, visible: bool) {
@@ -131,6 +267,8 @@ impl OrbitApp {
 
     fn draw(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
+        let playback = playback_label(&self.audio.state());
+        let volume = self.audio.volume() * 100.0;
         let mut hide_requested = false;
         let mut quit_requested = false;
 
@@ -184,12 +322,18 @@ impl OrbitApp {
                     .show(ui, |ui| {
                         ui.set_min_width(ui.available_width());
                         ui.label(egui::RichText::new("Состояние").strong());
-                        ui.label("Окно: видимо");
+                        ui.label(format!(
+                            "Окно: {}",
+                            if self.state.window_visible {
+                                "видимо"
+                            } else {
+                                "скрыто"
+                            }
+                        ));
+                        ui.label(format!("Воспроизведение: {playback}"));
                         ui.label(
-                            egui::RichText::new(
-                                "Воспроизведение: остановлено · аудио-ядро — Этап 2",
-                            )
-                            .color(MUTED_TEXT),
+                            egui::RichText::new(format!("Громкость: {volume:.0}%"))
+                                .color(MUTED_TEXT),
                         );
                     });
 
@@ -243,7 +387,10 @@ impl OrbitApp {
 
 impl eframe::App for OrbitApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.process_audio_events();
         self.process_commands(ctx);
+        self.process_media_commands();
+        self.sync_media();
 
         if ctx.input(|input| input.viewport().close_requested()) {
             if self.quitting {
@@ -265,6 +412,25 @@ impl eframe::App for OrbitApp {
     }
 }
 
+fn format_status(state: &PlaybackState, volume: f64, window_visible: bool) -> String {
+    let window = if window_visible { "visible" } else { "hidden" };
+    format!(
+        "status {}\nvolume {volume:.2}\nwindow {window}",
+        state.as_str()
+    )
+}
+
+fn playback_label(state: &PlaybackState) -> String {
+    match state {
+        PlaybackState::Stopped => "остановлено".to_owned(),
+        PlaybackState::Playing => "играет".to_owned(),
+        PlaybackState::Paused => "пауза".to_owned(),
+        PlaybackState::Buffering => "буферизация".to_owned(),
+        PlaybackState::Reconnecting => "переподключение".to_owned(),
+        PlaybackState::Error(message) => format!("ошибка: {message}"),
+    }
+}
+
 fn configure_style(ctx: &egui::Context) {
     ctx.set_theme(egui::Theme::Dark);
 
@@ -272,4 +438,35 @@ fn configure_style(ctx: &egui::Context) {
     visuals.panel_fill = egui::Color32::TRANSPARENT;
     visuals.window_fill = egui::Color32::TRANSPARENT;
     ctx.set_visuals_of(egui::Theme::Dark, visuals);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_reports_playback_volume_and_window() {
+        assert_eq!(
+            format_status(&PlaybackState::Reconnecting, 0.8, true),
+            "status reconnecting\nvolume 0.80\nwindow visible"
+        );
+    }
+
+    #[test]
+    fn error_state_is_reported_as_error() {
+        assert_eq!(
+            format_status(&PlaybackState::Error("нет сети".to_owned()), 0.5, false),
+            "status error\nvolume 0.50\nwindow hidden"
+        );
+    }
+
+    #[test]
+    fn playback_labels_are_human_readable() {
+        assert_eq!(playback_label(&PlaybackState::Stopped), "остановлено");
+        assert_eq!(playback_label(&PlaybackState::Playing), "играет");
+        assert_eq!(
+            playback_label(&PlaybackState::Error("таймаут".to_owned())),
+            "ошибка: таймаут"
+        );
+    }
 }

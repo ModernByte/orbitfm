@@ -13,31 +13,16 @@
 ## 2. Основные обязанности
 
 - Инициализация всех модулей в правильном порядке
-- Хранение shared state (текущая станция, видимость окна, громкость и т.д.)
+- Хранение shared state (видимость окна, текущий URL, флаг завершения)
 - Маршрутизация `IpcCommand` и `MediaCommand` в соответствующие модули
 - Реализация `eframe::App` (`logic` + `ui` в eframe 0.37)
 - Управление видимостью окна (show/hide вместо destroy)
 
 ## 3. Состояние приложения
 
-Целевое состояние (после Этапов 2–4):
+Целевое состояние (после Этапов 3–4) добавит `radio`, `geo`, `globe` и `current_station`.
 
-```rust
-pub struct AppState {
-    pub audio: AudioEngine,
-    pub radio: RadioBrowserClient,
-    pub geo: GeoService,
-    pub globe: GlobeRenderer,
-    pub media: MediaControls,
-    
-    pub current_station: Option<Station>,
-    pub window_visible: bool,
-    pub volume: f64,
-    // ...
-}
-```
-
-Текущее состояние (Этап 1):
+Текущее состояние (Этап 2):
 
 ```rust
 pub struct AppState {
@@ -47,47 +32,75 @@ pub struct AppState {
 pub struct OrbitApp {
     state: AppState,
     commands: mpsc::Receiver<IpcRequest>,
+    audio: AudioEngine,
+    audio_events: broadcast::Receiver<AudioEvent>,
+    media: Option<MediaControls>,
+    current_url: Option<String>,
+    runtime: tokio::runtime::Handle,
     quitting: bool,
 }
 ```
 
-## 4. Главный цикл (логика)
+`current_url` заполняется из `AudioEvent::Started` и очищается на `Stopped`/`Error`.
+Он используется для паузы/возобновления из MPRIS. `media` — `Option`, потому что MPRIS
+может быть недоступен (нет D-Bus); приложение в этом случае продолжает работать.
 
-Каждый кадр egui в целевой архитектуре:
+## 4. Порядок инициализации
 
-1. Обработать накопившиеся IPC- и Media-команды
-2. Обновить `GlobeRenderer` (input + dt)
-3. Отрисовать UI (панель управления + область глобуса с PaintCallback)
-4. При клике по глобусу → geo → список станций страны → UI
+```
+IpcServer::try_bind → AudioEngine::new → MediaControls::new(wake)
+→ задача audio events → wake → IpcServer::run → eframe
+```
 
-На Этапе 1 цикл ограничен:
+`try_bind` выполняется до создания аудио-ядра, чтобы второй экземпляр завершился, не
+занимая аудиоустройство. Ошибка `AudioEngine::new` фатальна; ошибка MPRIS — только
+предупреждение.
 
-1. `logic()` забирает запросы из IPC-очереди, выполняет команду и отвечает через
-   `IpcRequest::try_respond`
-2. Перехватывает закрытие окна (`close_requested`) и превращает его в Hide, если это не
-   `quit`
-3. `ui()` рисует карточку-заглушку только при видимом окне
+## 5. Главный цикл (логика)
 
-В eframe 0.37 скрытое окно не вызывает `ui()`, но `logic()` продолжает выполняться при
-запрошенном repaint. Поэтому IPC-команды обрабатываются и в скрытом состоянии.
+Каждый `logic()`:
 
-## 5. Жизненный цикл окна
+1. Разбирает накопившиеся `AudioEvent`, обновляя `current_url`.
+2. Обрабатывает очередь `IpcRequest` и отвечает через `IpcRequest::try_respond`.
+3. Разбирает `MediaCommand` от MPRIS.
+4. Синхронизирует состояние с MPRIS (`sync_media`).
+5. Перехватывает закрытие окна (`close_requested`) и превращает его в Hide, если это не
+   `quit`.
+
+`ui()` рисует карточку только при видимом окне. В eframe 0.37 скрытое окно не вызывает
+`ui()`, но `logic()` продолжает выполняться при запрошенном repaint. Поэтому IPC- и
+MPRIS-команды обрабатываются и в скрытом состоянии; пробуждение выполняют `WakeFn` из
+IPC-сервера, MPRIS-колбэка и задача аудио-событий.
+
+## 6. Синхронизация с MPRIS
+
+`sync_media()` вызывается каждый кадр, но `MediaControls::set_playback` дедуплицирует
+неизменившееся состояние. Соответствие:
+
+- `Stopped`/`Error` → трек отсутствует, `Stopped`;
+- `Paused` → трек есть, `Paused`;
+- `Playing`/`Buffering`/`Reconnecting` → трек есть, `Playing`.
+
+Пока Radio Browser не подключён, заголовком служит URL потока.
+
+## 7. Жизненный цикл окна
 
 - Закрытие крестиком → `ViewportCommand::CancelClose` + `ViewportCommand::Visible(false)`,
-  `window_visible = false` (клик мимо — поведение overlay-режима, позже)
+  `window_visible = false`
 - Команда `toggle` / `show` → `Visible(true)` + `Minimized(false)` + `Focus`; если окно
   свёрнуто оконным менеджером, `toggle` восстанавливает его, а не скрывает
-- Команда `quit` → `quitting = true` + `ViewportCommand::Close`
+- Команда `quit` → `quitting = true` + `ViewportCommand::Close`; после выхода из GUI main
+  останавливает IPC-сервер, аудио-поток и удаляет сокет
 
-## 6. Текущие ограничения
+## 8. Текущие ограничения
 
-- Аудио-команды (`play`, `stop`, `volume`) возвращают
-  `error аудио-ядро ещё не подключено (Этап 2)`
-- `MediaCommand` пока не обрабатывается
+- `play <uuid>` недоступен до Этапа 3 (нет каталога станций)
+- `Next`/`Previous` из MPRIS не переключают станции
 - 3D-глобус заменён заглушкой до Этапа 4
 - Клик мимо окна (overlay) ещё не реализован
+- Метаданные станции в MPRIS ограничены URL
 
-## 7. Связанные документы
+## 9. Связанные документы
 
-- ADR-0002, ADR-0005
+- ADR-0002, ADR-0005, ADR-0006
 - `docs/architecture/00-overview.md`

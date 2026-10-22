@@ -5,10 +5,14 @@ use tracing::warn;
 use tracing_subscriber::EnvFilter;
 
 mod app;
+mod audio;
 mod ipc;
+mod media;
 
 use app::{OrbitApp, WakeHandle};
+use audio::AudioEngine;
 use ipc::{IpcCommand, IpcError, IpcServer};
+use media::MediaControls;
 
 const APP_ID: &str = "org.modernbyte.OrbitFM";
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
@@ -25,9 +29,9 @@ OrbitFM — 3D Interactive Global Radio Player
   show              Показать окно
   hide              Скрыть окно
   status            Состояние приложения
-  play <uuid>       Воспроизвести станцию (Этап 2)
-  stop              Остановить воспроизведение (Этап 2)
-  volume <0.0-1.0>  Установить громкость (Этап 2)
+  play <uuid>       Воспроизвести станцию (после подключения Radio Browser)
+  stop              Остановить воспроизведение
+  volume <0.0-1.0>  Установить громкость
   quit              Завершить процесс
 
 Опции:
@@ -131,10 +135,34 @@ fn launch(runtime: &tokio::runtime::Runtime, command: &IpcCommand, explicit: boo
     };
 
     let commands = server.commands();
+    let audio = AudioEngine::new().context("не удалось инициализировать аудио-ядро")?;
+    let media = match MediaControls::new(wake.waker()) {
+        Ok(media) => Some(media),
+        Err(err) => {
+            warn!(error = %err, "медиа-контролы недоступны, продолжаем без MPRIS");
+            None
+        }
+    };
+
+    let mut audio_events = audio.subscribe();
+    let wake_audio = wake.waker();
+    runtime.spawn(async move {
+        loop {
+            match audio_events.recv().await {
+                Ok(_) => wake_audio(),
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    warn!(skipped, "часть аудио-событий пропущена");
+                    wake_audio();
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
+
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let mut server_task = runtime.spawn(server.run(wake.waker(), shutdown_rx));
 
-    let gui_result = run_gui(commands, wake);
+    let gui_result = run_gui(commands, wake, audio, media, runtime.handle().clone());
 
     let _ = shutdown_tx.send(());
     let server_exit = runtime
@@ -182,7 +210,13 @@ fn resend_to_starting_instance(
     }
 }
 
-fn run_gui(commands: tokio::sync::mpsc::Receiver<ipc::IpcRequest>, wake: WakeHandle) -> Result<()> {
+fn run_gui(
+    commands: tokio::sync::mpsc::Receiver<ipc::IpcRequest>,
+    wake: WakeHandle,
+    audio: AudioEngine,
+    media: Option<MediaControls>,
+    runtime: tokio::runtime::Handle,
+) -> Result<()> {
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("OrbitFM")
@@ -197,7 +231,11 @@ fn run_gui(commands: tokio::sync::mpsc::Receiver<ipc::IpcRequest>, wake: WakeHan
     eframe::run_native(
         "OrbitFM",
         options,
-        Box::new(move |cc| Ok(Box::new(OrbitApp::new(cc, commands, &wake)))),
+        Box::new(move |cc| {
+            Ok(Box::new(OrbitApp::new(
+                cc, commands, &wake, audio, media, runtime,
+            )))
+        }),
     )
     .map_err(|err| anyhow!("не удалось запустить GUI: {err}"))
 }

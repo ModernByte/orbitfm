@@ -1,8 +1,8 @@
 # Модуль: Media Controls
 
 **Путь в коде:** `src/media/`  
-**Ответственность:** Интеграция с системными медиа-клавишами и виджетами (MPRIS / SMTC / Now Playing).  
-**Зависимости:** playwire (предпочтительно) или souvlaki
+**Ответственность:** Интеграция с системными медиа-клавишами и виджетами (MPRIS v2 на Linux; SMTC/Now Playing — позже).  
+**Зависимости:** playwire 2.0 (Linux-бэкенд — MPRIS через zbus), tokio
 
 ---
 
@@ -11,40 +11,44 @@
 Позволить пользователю управлять воспроизведением через:
 
 - Медиа-клавиши
-- Системные UI (GNOME, KDE, Noctalia, playerctl и т.д.)
-- ОС-специфичные контролы
+- Системные UI (GNOME, KDE, Noctalia, `playerctl` и т.д.)
+- ОС-специфичные контролы (в перспективе)
+
+Модуль не содержит бизнес-логики: он публикует метаданные в систему и передаёт команды
+Application Core.
 
 ## 2. Публичный интерфейс
 
+Полное описание — `docs/interfaces/06-media.md`. Кратко:
+
 ```rust
+pub type WakeFn = Arc<dyn Fn() + Send + Sync>;
+
 pub struct MediaControls { /* ... */ }
 
 impl MediaControls {
-    pub fn new(config: PlatformConfig) -> Result<Self, MediaError>;
-
-    /// Обновить отображаемые метаданные и состояние
-    pub fn set_playback(&mut self, state: &PlaybackInfo);
-
-    /// Подписка на команды от системы (Play/Pause/Stop/Next...)
-    pub fn events(&self) -> mpsc::Receiver<MediaCommand>;
+    pub fn new(wake: WakeFn) -> Result<Self, MediaError>;
+    pub fn set_playback(&mut self, info: &PlaybackInfo) -> Result<(), MediaError>;
+    pub fn events(&mut self) -> &mut mpsc::UnboundedReceiver<MediaCommand>;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PlaybackInfo {
-    pub title: String,               // название станции
-    pub artist: Option<String>,      // или country / tags
-    pub art_url: Option<String>,     // favicon
+    pub title: String,
+    pub artist: Option<String>,
+    pub art_url: Option<String>,
+    pub url: String,
     pub playing: bool,
     pub volume: f64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum MediaCommand {
     Play,
     Pause,
     PlayPause,
     Stop,
-    Next,                            // пока может быть no-op
+    Next,
     Previous,
     SetVolume(f64),
 }
@@ -52,18 +56,57 @@ pub enum MediaCommand {
 
 ## 3. Платформенные особенности
 
-- **Linux:** MPRIS v2 через D-Bus (zbus)
-- **Windows:** System Media Transport Controls
-- **macOS:** MPNowPlayingInfoCenter + remote commands
+- **Linux:** MPRIS v2 через playwire (zbus). Имя — `org.mpris.MediaPlayer2.OrbitFM`.
+- **Windows:** System Media Transport Controls — Этап 6.
+- **macOS:** MPNowPlayingInfoCenter + remote commands — Этап 6.
 
-## 4. Минимальный набор MPRIS-свойств
+## 4. Конфигурация MPRIS
 
-- `Identity` / `DesktopEntry`
-- `PlaybackStatus`
-- `Metadata` (xesam:title, mpris:artUrl и т.д.)
-- `Volume`
-- Capabilities: CanPlay, CanPause, CanControl
+| Параметр | Значение |
+|----------|----------|
+| Identity | `OrbitFM` |
+| DesktopEntry | `org.modernbyte.OrbitFM` |
+| Track ID prefix | `/org/modernbyte/OrbitFM/track` |
+| Volume | из `PlaybackInfo`, `0.0..=1.0` |
+| Capabilities | `CanPlay`, `CanPause`, `CanControl`; `CanGoNext`/`CanGoPrevious`/`CanSeek` выключены |
 
-## 5. Связанные ADR
+## 5. Потоки и пробуждение GUI
+
+playwire вызывает колбэк в рабочем потоке D-Bus. Колбэк:
+
+1. преобразует событие в `MediaCommand` (неизвестные и seek игнорируются);
+2. кладёт команду в `mpsc::UnboundedSender`;
+3. вызывает `WakeFn`, который делает `egui::Context::request_repaint()`.
+
+Без шага 3 команда осталась бы в очереди до следующего пользовательского ввода или
+анимации. Application Core разбирает очередь в `logic()` и выполняет аудио-команду.
+
+`set_playback` дедуплицирует состояние: если `PlaybackInfo` не изменился, D-Bus не
+трогается. Это важно, потому что `sync_media()` вызывается каждый кадр.
+
+## 6. Соответствие состояний
+
+| `AudioEngine` | `playing` в MPRIS | `PlaybackStatus` |
+|---------------|-------------------|------------------|
+| `Stopped`, `Error` | `false`, трек отсутствует | `Stopped` |
+| `Paused` | `false` | `Paused` |
+| `Playing`, `Buffering`, `Reconnecting` | `true` | `Playing` |
+
+На Этапе 2 метаданные ограничены URL потока: название станции и favicon появятся после
+подключения Radio Browser (Этап 3).
+
+## 7. Ограничения
+
+- `Next` / `Previous` принимаются, но не действуют до появления списка станций.
+- Перемотка (seek) не поддерживается для живого радио.
+- Windows/macOS-бэкенды не проверялись.
+
+## 8. Тестирование
+
+- Unit-тесты маппинга событий playwire, включая клампинг громкости и отказ `NaN`.
+- Живая проверка на Linux: `playerctl -p OrbitFM status`, `volume`, `play-pause`,
+  `stop`; IPC `status` должен отражать изменения в течение одного кадра.
+
+## 9. Связанные ADR
 
 - ADR-0006: Медиа-контроли

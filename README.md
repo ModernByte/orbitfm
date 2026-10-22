@@ -17,10 +17,16 @@ OrbitFM — кроссплатформенный десктоп-плеер ин�
 
 ## Статус
 
-**Этап 1 (MVP-0) реализован:** single-instance IPC, CLI, каркас eframe/egui и прозрачное
-окно overlay. Аудио-ядро (libmpv) — следующий этап.
+**Этап 2 реализован:** аудио-ядро на libmpv (play / pause / stop / volume / реконнект),
+MPRIS v2 на Linux и управление через IPC. Каталог станций Radio Browser и команда
+`play <uuid>` — следующий этап.
 
-Требования для сборки: Rust 1.95+, Linux с Wayland/X11.
+Требования для сборки:
+
+- Rust 1.95+
+- Linux с Wayland/X11
+- системная библиотека libmpv с заголовками
+  (Debian/Ubuntu: `libmpv-dev`, Arch: `mpv`, Fedora: `mpv-libs-devel`)
 
 Подробный план — [ROADMAP](docs/ROADMAP.md), изменения — [CHANGELOG](docs/CHANGELOG.md).
 
@@ -39,10 +45,10 @@ OrbitFM — кроссплатформенный десктоп-плеер ин�
 
 - **Язык:** Rust (Edition 2024)
 - **GUI:** eframe + egui + egui-wgpu
-- **Аудио:** libmpv
+- **Аудио:** libmpv (безопасная обёртка `libmpv2`)
 - **Гео:** geo + geojson + rstar
 - **Сеть:** reqwest + Radio Browser API
-- **Интеграции:** Noctalia (Luau), MPRIS
+- **Интеграции:** Noctalia (Luau), MPRIS (playwire)
 
 Подробности — в ADR и SRS.
 
