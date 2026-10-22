@@ -24,6 +24,10 @@ pub(super) enum AudioCommand {
     Stop {
         reply: oneshot::Sender<CommandResult>,
     },
+    SetPaused {
+        paused: bool,
+        reply: oneshot::Sender<CommandResult>,
+    },
     SetVolume {
         volume: f64,
         reply: oneshot::Sender<CommandResult>,
@@ -126,6 +130,15 @@ impl AudioEngine {
         let (reply, response) = oneshot::channel();
         self.commands
             .send(AudioCommand::Stop { reply })
+            .map_err(|_| AudioError::Internal("аудио-поток остановлен".to_owned()))?;
+        wait_for_reply(response).await
+    }
+
+    /// Приостановить или возобновить воспроизведение.
+    pub async fn set_paused(&mut self, paused: bool) -> Result<(), AudioError> {
+        let (reply, response) = oneshot::channel();
+        self.commands
+            .send(AudioCommand::SetPaused { paused, reply })
             .map_err(|_| AudioError::Internal("аудио-поток остановлен".to_owned()))?;
         wait_for_reply(response).await
     }
@@ -273,5 +286,54 @@ mod tests {
         assert!(validate_volume(f64::NAN).is_err());
         assert!(validate_volume(-0.1).is_err());
         assert!(validate_volume(1.1).is_err());
+    }
+
+    #[tokio::test]
+    #[ignore = "требует сеть и аудиоустройство; задайте ORBITFM_TEST_STREAM_URL"]
+    async fn plays_and_stops_live_stream() {
+        let url =
+            std::env::var("ORBITFM_TEST_STREAM_URL").expect("задайте ORBITFM_TEST_STREAM_URL");
+        let mut engine = AudioEngine::new().expect("не удалось создать аудио-ядро");
+        let mut events = engine.subscribe();
+
+        engine.play(&url).await.expect("не удалось запустить поток");
+
+        let started = tokio::time::timeout(Duration::from_secs(20), async {
+            loop {
+                match events.recv().await {
+                    Ok(AudioEvent::Started { .. }) => return,
+                    Ok(AudioEvent::Error { message }) => {
+                        panic!("ошибка потока: {message}");
+                    }
+                    Ok(_) => {}
+                    Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(broadcast::error::RecvError::Closed) => {
+                        panic!("канал событий закрыт");
+                    }
+                }
+            }
+        })
+        .await;
+        assert!(started.is_ok(), "поток не загрузился за 20 секунд");
+
+        let state = engine.state();
+        assert!(
+            matches!(state, PlaybackState::Playing | PlaybackState::Buffering),
+            "неожиданное состояние: {state:?}"
+        );
+
+        engine
+            .set_paused(true)
+            .await
+            .expect("не удалось поставить на паузу");
+        assert_eq!(engine.state(), PlaybackState::Paused);
+        engine
+            .set_paused(false)
+            .await
+            .expect("не удалось возобновить воспроизведение");
+        assert_eq!(engine.state(), PlaybackState::Playing);
+
+        engine.stop().await.expect("не удалось остановить поток");
+        assert_eq!(engine.state(), PlaybackState::Stopped);
     }
 }

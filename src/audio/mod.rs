@@ -10,6 +10,7 @@ pub use engine::AudioEngine;
 pub enum PlaybackState {
     Stopped,
     Playing,
+    Paused,
     Buffering,
     Reconnecting,
     Error(String),
@@ -21,6 +22,7 @@ impl PlaybackState {
         match self {
             Self::Stopped => "stopped",
             Self::Playing => "playing",
+            Self::Paused => "paused",
             Self::Buffering => "buffering",
             Self::Reconnecting => "reconnecting",
             Self::Error(_) => "error",

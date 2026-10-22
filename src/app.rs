@@ -184,33 +184,50 @@ impl OrbitApp {
                     warn!(error = %err, "не удалось изменить громкость из MPRIS");
                 }
             }
-            MediaCommand::Play | MediaCommand::PlayPause => {
-                if let Some(url) = self.current_url.clone()
-                    && matches!(
-                        self.audio.state(),
-                        PlaybackState::Stopped | PlaybackState::Error(_)
-                    )
-                    && let Err(err) = self.runtime.block_on(self.audio.play(&url))
-                {
-                    warn!(error = %err, "не удалось возобновить воспроизведение из MPRIS");
+            MediaCommand::Play => self.resume_playback(),
+            MediaCommand::Pause => self.set_audio_paused(true),
+            MediaCommand::PlayPause => match self.audio.state() {
+                PlaybackState::Paused => self.set_audio_paused(false),
+                PlaybackState::Playing | PlaybackState::Buffering => {
+                    self.set_audio_paused(true);
                 }
-            }
-            MediaCommand::Pause => {
-                debug!("пауза не поддерживается для живого радио");
-            }
+                PlaybackState::Stopped | PlaybackState::Error(_) => self.resume_playback(),
+                PlaybackState::Reconnecting => {}
+            },
             MediaCommand::Next | MediaCommand::Previous => {
                 debug!("переключение станций из MPRIS появится вместе с Radio Browser");
             }
         }
     }
 
+    fn set_audio_paused(&mut self, paused: bool) {
+        if let Err(err) = self.runtime.block_on(self.audio.set_paused(paused)) {
+            warn!(error = %err, "не удалось изменить паузу из MPRIS");
+        }
+    }
+
+    fn resume_playback(&mut self) {
+        match self.audio.state() {
+            PlaybackState::Paused => self.set_audio_paused(false),
+            PlaybackState::Playing | PlaybackState::Buffering | PlaybackState::Reconnecting => {}
+            PlaybackState::Stopped | PlaybackState::Error(_) => {
+                if let Some(url) = self.current_url.clone()
+                    && let Err(err) = self.runtime.block_on(self.audio.play(&url))
+                {
+                    warn!(error = %err, "не удалось возобновить воспроизведение из MPRIS");
+                }
+            }
+        }
+    }
+
     fn sync_media(&mut self) {
         let state = self.audio.state();
+        let has_track = !matches!(state, PlaybackState::Stopped | PlaybackState::Error(_));
         let playing = matches!(
             state,
             PlaybackState::Playing | PlaybackState::Buffering | PlaybackState::Reconnecting
         );
-        let title = if playing {
+        let title = if has_track {
             self.current_url
                 .clone()
                 .unwrap_or_else(|| WINDOW_TITLE.to_owned())
@@ -407,6 +424,7 @@ fn playback_label(state: &PlaybackState) -> String {
     match state {
         PlaybackState::Stopped => "остановлено".to_owned(),
         PlaybackState::Playing => "играет".to_owned(),
+        PlaybackState::Paused => "пауза".to_owned(),
         PlaybackState::Buffering => "буферизация".to_owned(),
         PlaybackState::Reconnecting => "переподключение".to_owned(),
         PlaybackState::Error(message) => format!("ошибка: {message}"),

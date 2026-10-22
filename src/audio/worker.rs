@@ -88,6 +88,10 @@ impl AudioWorker {
                 let result = self.stop_playback();
                 respond(reply, result);
             }
+            AudioCommand::SetPaused { paused, reply } => {
+                let result = self.apply_paused(paused);
+                respond(reply, result);
+            }
             AudioCommand::SetVolume { volume, reply } => {
                 let result = self.apply_volume(volume);
                 respond(reply, result);
@@ -127,6 +131,33 @@ impl AudioWorker {
         Ok(())
     }
 
+    fn apply_paused(&mut self, paused: bool) -> Result<(), AudioError> {
+        if self.active_url.is_none()
+            || matches!(
+                self.shared.state(),
+                PlaybackState::Stopped | PlaybackState::Reconnecting | PlaybackState::Error(_)
+            )
+        {
+            return Err(AudioError::Playback(
+                "нет активного воспроизведения".to_owned(),
+            ));
+        }
+
+        self.mpv
+            .set_property("pause", paused)
+            .map_err(|err| AudioError::Playback(err.to_string()))?;
+
+        if paused {
+            self.shared.set_state(PlaybackState::Paused);
+        } else {
+            self.shared.set_state(PlaybackState::Playing);
+            if let Some(url) = self.active_url.clone() {
+                self.shared.emit(AudioEvent::Started { url });
+            }
+        }
+        Ok(())
+    }
+
     fn apply_volume(&mut self, volume: f64) -> Result<(), AudioError> {
         self.mpv
             .set_property("volume", volume * 100.0)
@@ -162,8 +193,23 @@ impl AudioWorker {
         };
 
         self.tracker.reset();
-        self.shared.set_state(PlaybackState::Playing);
+        let state = if self.is_paused() {
+            PlaybackState::Paused
+        } else {
+            PlaybackState::Playing
+        };
+        self.shared.set_state(state);
         self.shared.emit(AudioEvent::Started { url });
+    }
+
+    fn is_paused(&self) -> bool {
+        match self.mpv.get_property::<bool>("pause") {
+            Ok(paused) => paused,
+            Err(err) => {
+                tracing::trace!(error = %err, "не удалось прочитать свойство pause");
+                false
+            }
+        }
     }
 
     fn on_end_file(&mut self, reason: libmpv2::EndFileReason) {
@@ -182,7 +228,10 @@ impl AudioWorker {
         if self.active_url.is_none()
             || matches!(
                 self.shared.state(),
-                PlaybackState::Stopped | PlaybackState::Reconnecting | PlaybackState::Error(_)
+                PlaybackState::Stopped
+                    | PlaybackState::Paused
+                    | PlaybackState::Reconnecting
+                    | PlaybackState::Error(_)
             )
         {
             return;
