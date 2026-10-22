@@ -21,6 +21,8 @@
     https://github.com/ModernByte/orbitfm`
   - манифест проверен `noctalia plugins lint` и официальным
     community-валидатором: 0 ошибок
+  - внешняя публикация в `noctalia-dev/community-plugins` не выполняется:
+    плагин распространяется как git-источник `ModernByte/orbitfm`
 - Этап 7 — темы и кастомизация интерфейса:
   - модуль `src/settings/`: `SettingsStore`, `ThemeMode`, `AccentColor`,
     `SettingsError`, `default_path`; настройки не зависят от egui

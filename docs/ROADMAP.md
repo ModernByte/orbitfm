@@ -85,7 +85,9 @@
 - [x] Избранное и история
 - [x] Темы и кастомизация
 - [x] Плагин-каталог Noctalia: `catalog.toml`, README и карточка для git-источника
-- [ ] Публикация в `noctalia-dev/community-plugins` (внешний PR)
+
+Публикация в общий магазин `noctalia-dev/community-plugins` не выполняется:
+плагин распространяется как git-источник `ModernByte/orbitfm`.
 
 ---
 

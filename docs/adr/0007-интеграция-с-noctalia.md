@@ -75,8 +75,9 @@ noctalia.runAsync("orbitfm toggle")
 - Каталог плагина переименован из `noctalia-plugin/` в `orbitfm/`: каталог
   Noctalia требует, чтобы имя подкаталога совпадало с частью id после `/`.
 - В корне добавлен `catalog.toml`, индексирующий плагин для git-источника
-  `ModernByte/orbitfm`; публикация в общий магазин выполняется отдельным PR в
-  `noctalia-dev/community-plugins`.
+  `ModernByte/orbitfm`.
+- Внешняя публикация в `noctalia-dev/community-plugins` не выполняется по
+  решению владельца: плагин остаётся доступным как git-источник.
 - Теги приведены к официальному списку (`bar`, `audio`, `music`), внешняя
   команда `orbitfm` объявлена в `dependencies`.
 - Добавлены `README.md` и `thumbnail.webp` 960×540, переводы переведены на

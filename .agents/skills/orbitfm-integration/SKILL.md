@@ -21,9 +21,9 @@ description: Интеграции OrbitFM с окружением — Noctalia v
 - Проверка: `noctalia plugins lint orbitfm`.
 - Каталог: `catalog.toml` в корне репозитория; подключение
   `noctalia msg plugins source add orbitfm git https://github.com/ModernByte/orbitfm`
-  и `noctalia msg plugins enable modernbyte/orbitfm`. Публикация в общий магазин —
-  отдельный PR в `noctalia-dev/community-plugins` (внешнее действие, нужно
-  подтверждение пользователя).
+  и `noctalia msg plugins enable modernbyte/orbitfm`.
+- Внешняя публикация в `noctalia-dev/community-plugins` не выполняется: плагин
+  распространяется как git-источник. PR туда — только по новому решению владельца.
 
 Следуй официальной документации: https://docs.noctalia.dev/noctalia/plugins/development/
 
