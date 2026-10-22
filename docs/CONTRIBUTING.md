@@ -42,6 +42,8 @@ cargo deny check
 orbitfm/
 ├── assets/
 ├── noctalia-plugin/
+├── packaging/
+│   └── linux/
 ├── wm-configs/
 ├── src/
 │   ├── main.rs

@@ -89,9 +89,11 @@ OrbitFM — кроссплатформенное десктоп-приложен
 
 ## 7. Модель поставки
 
-- Основной целевой артефакт: нативный бинарник для Linux (x86_64 + aarch64)
-- Вторичные: Windows и macOS
-- Упаковка: AppImage / Flatpak (Linux), MSI/Portable (Windows), DMG (macOS)
+- Проверенный артефакт: AppImage для Linux x86_64 с встроенными libmpv/FFmpeg,
+  desktop entry и AppStream-метаданными (ADR-0011)
+- Исходная сборка: нативный бинарник для Linux (x86_64)
+- Заблокировано до появления нативных раннеров: Flatpak, MSI/DMG, aarch64 Linux,
+  Windows (SMTC) и macOS (Now Playing)
 - Плагин Noctalia распространяется отдельным каталогом или через каталог плагинов
 
 ## 8. Связанные документы

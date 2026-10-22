@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.modernbyte.OrbitFM</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>OrbitFM</name>
+  <summary>Interactive 3D globe for internet radio</summary>
+  <summary xml:lang="ru">Интерактивный 3D-глобус для интернет-радио</summary>
+  <description>
+    <p>
+      OrbitFM is a desktop internet radio player built around an interactive 3D
+      globe. Pick a country on the globe or search the Radio Browser catalog, then
+      listen without leaving the window.
+    </p>
+    <p xml:lang="ru">
+      OrbitFM — десктопный плеер интернет-радио с интерактивным 3D-глобусом.
+      Выберите страну на глобусе или найдите станцию в каталоге Radio Browser
+      и слушайте, не покидая окно.
+    </p>
+    <ul>
+      <li>Country selection by clicking the globe</li>
+      <li>Radio Browser search with automatic mirror failover</li>
+      <li>Playback through libmpv with automatic reconnect</li>
+      <li>MPRIS media controls and single-instance IPC on Linux</li>
+      <li xml:lang="ru">Экспериментальный FFT-визуализатор</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">org.modernbyte.OrbitFM.desktop</launchable>
+  <url type="homepage">https://github.com/ModernByte/orbitfm</url>
+  <url type="bugtracker">https://github.com/ModernByte/orbitfm/issues</url>
+  <developer id="org.modernbyte">
+    <name>ModernByte</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-10-22">
+      <description>
+        <p>OrbitFM 0.1.0 — первый прототип: глобус, Radio Browser, libmpv, MPRIS, IPC и FFT.</p>
+      </description>
+    </release>
+  </releases>
+  <categories>
+    <category>AudioVideo</category>
+    <category>Audio</category>
+    <category>Player</category>
+  </categories>
+  <keywords>
+    <keyword>radio</keyword>
+    <keyword>internet</keyword>
+    <keyword>globe</keyword>
+    <keyword>music</keyword>
+  </keywords>
+  <provides>
+    <binary>orbitfm</binary>
+  </provides>
+</component>

@@ -8,6 +8,14 @@
 ## [Unreleased]
 
 ### Добавлено
+- Этап 6 — упаковка Linux:
+  - `packaging/linux/` — desktop entry, AppStream metainfo и масштабируемая иконка
+  - `build-appimage.sh`: release-сборка, бандлинг libmpv/FFmpeg через linuxdeploy,
+    сборка `OrbitFM-<version>-x86_64.AppImage` в `target/appimage`
+  - AppImage проверен запуском, `--version` и воспроизведением станции через IPC
+  - CI-джоба валидации desktop entry, AppStream и синтаксиса скрипта
+- ADR-0011: поставка Linux через AppImage; Flatpak, MSI, DMG и кроссплатформенные
+  медиа-интеграции отложены до появления нативных раннеров
 - Этап 6 — экспериментальный FFT-визуализатор:
   - `SpectrumFrame` в аудио-ядре: centroid/spread/rolloff/flatness/flux и RMS
     из `af-metadata` фильтров `aspectralstats` + `astats`, опрос раз в 50 мс
@@ -17,7 +25,8 @@
     градиентная огибающая, затухание и подпись `FFT · <частота> · <RMS> дБ`
   - чекбокс «FFT» в заголовке (выключен по умолчанию), ошибки в карточке
   - живой тест `produces_fft_metrics_for_live_stream` (вне CI)
-- ADR-0010: FFT-визуализатор на агрегированных метриках без PCM-tap
+- ADR-0010: FFT-визуализатор
+- ADR-0011: Упаковка Linux на агрегированных метриках без PCM-tap
 - Этап 5 — интеграции Noctalia и оконных менеджеров:
   - `noctalia-plugin/`: манифест `plugin.toml` (id `modernbyte/orbitfm`,
     `plugin_api = 3`), виджет `plugin.luau` с глифом/подсказкой и отправкой
@@ -125,6 +134,7 @@
 - `docs/patterns/00-overview.md` — каталог паттернов
 - ADR-0009: каталог паттернов
 - ADR-0010: FFT-визуализатор
+- ADR-0011: Упаковка Linux
 - Шаблоны GitHub: PR, issue (bug/feature/adr), COMMIT_CONVENTION
 - `docs/templates/MERGE_CHECKLIST.md`, `PROJECT_STATUS.md`
 

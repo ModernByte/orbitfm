@@ -53,3 +53,23 @@ jobs:
 
       - name: Test
         run: cargo test --all-targets
+
+  packaging:
+    name: desktop metadata
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install validators
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends appstream desktop-file-utils
+
+      - name: Validate desktop entry and AppStream
+        run: |
+          desktop-file-validate packaging/linux/org.modernbyte.OrbitFM.desktop
+          appstreamcli validate --no-net packaging/linux/org.modernbyte.OrbitFM.metainfo.xml
+
+      - name: Check AppImage script syntax
+        run: bash -n packaging/linux/build-appimage.sh
