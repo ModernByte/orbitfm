@@ -20,59 +20,89 @@
 
 ## 3. Состояние приложения
 
-Целевое состояние (после Этапов 3–4) добавит `radio`, `geo`, `globe` и `current_station`.
+Целевое состояние (после Этапа 4) добавит `geo` и `globe`.
 
-Текущее состояние (Этап 2):
+Текущее состояние (Этап 3):
 
 ```rust
 pub struct AppState {
     pub window_visible: bool,
 }
 
+pub struct AppServices {
+    pub audio: AudioEngine,
+    pub radio: RadioBrowserClient,
+    pub media: Option<MediaControls>,
+    pub runtime: tokio::runtime::Handle,
+}
+
 pub struct OrbitApp {
     state: AppState,
     commands: mpsc::Receiver<IpcRequest>,
+    wake: WakeHandle,
     audio: AudioEngine,
     audio_events: broadcast::Receiver<AudioEvent>,
+    radio: RadioBrowserClient,
     media: Option<MediaControls>,
     current_url: Option<String>,
+    current_station: Option<Station>,
+    search_query: String,
+    search_results: Vec<Station>,
+    search_pending: bool,
+    search_rx: Option<mpsc::UnboundedReceiver<Result<Vec<Station>, RadioError>>>,
+    search_error: Option<String>,
     runtime: tokio::runtime::Handle,
     quitting: bool,
 }
 ```
 
-`current_url` заполняется из `AudioEvent::Started` и очищается на `Stopped`/`Error`.
-Он используется для паузы/возобновления из MPRIS. `media` — `Option`, потому что MPRIS
-может быть недоступен (нет D-Bus); приложение в этом случае продолжает работать.
+`current_url` заполняется из `AudioEvent::Started` и из запуска станции; `Stopped`/`Error`
+его больше не очищают — последний URL нужен MPRIS для повторного запуска.
+`current_station` хранит метаданные активной станции и источник для `status` и MPRIS.
+`media` — `Option`, потому что MPRIS может быть недоступен (нет D-Bus); приложение в этом
+случае продолжает работать.
 
 ## 4. Порядок инициализации
 
 ```
 IpcServer::try_bind → AudioEngine::new → MediaControls::new(wake)
+→ RadioBrowserClient::new → фоновый refresh_servers
 → задача audio events → wake → IpcServer::run → eframe
 ```
 
 `try_bind` выполняется до создания аудио-ядра, чтобы второй экземпляр завершился, не
-занимая аудиоустройство. Ошибка `AudioEngine::new` фатальна; ошибка MPRIS — только
-предупреждение.
+занимая аудиоустройство. Ошибка `AudioEngine::new` фатальна; ошибки MPRIS и прогрева
+каталога — только предупреждения.
 
 ## 5. Главный цикл (логика)
 
 Каждый `logic()`:
 
-1. Разбирает накопившиеся `AudioEvent`, обновляя `current_url`.
+1. Разбирает накопившиеся `AudioEvent`.
 2. Обрабатывает очередь `IpcRequest` и отвечает через `IpcRequest::try_respond`.
 3. Разбирает `MediaCommand` от MPRIS.
-4. Синхронизирует состояние с MPRIS (`sync_media`).
-5. Перехватывает закрытие окна (`close_requested`) и превращает его в Hide, если это не
+4. Забирает результат фонового поиска (`poll_search`).
+5. Синхронизирует состояние с MPRIS (`sync_media`).
+6. Перехватывает закрытие окна (`close_requested`) и превращает его в Hide, если это не
    `quit`.
 
 `ui()` рисует карточку только при видимом окне. В eframe 0.37 скрытое окно не вызывает
 `ui()`, но `logic()` продолжает выполняться при запрошенном repaint. Поэтому IPC- и
 MPRIS-команды обрабатываются и в скрытом состоянии; пробуждение выполняют `WakeFn` из
-IPC-сервера, MPRIS-колбэка и задача аудио-событий.
+IPC-сервера, MPRIS-колбэка, задача аудио-событий и завершённый поиск.
 
-## 6. Синхронизация с MPRIS
+## 6. Поиск и запуск станций
+
+- «Найти»/Enter запускают `RadioBrowserClient::search` с `name`, `limit = 30`,
+  `hide_broken = true`; запрос выполняется в tokio-задаче, результат приходит через
+  `mpsc` и будит GUI.
+- Выбор результата или IPC `play <uuid>` вызывает `start_station`:
+  проверяется непустой `url_resolved`, выполняется `audio.play`, сохраняются
+  `current_url`/`current_station`, асинхронно отправляется click.
+- `play <uuid>` сначала ищет станцию в последних результатах поиска, затем вызывает
+  `get_station` с таймаутом 8 с; таймаут маппится в `RadioError::Network`.
+
+## 7. Синхронизация с MPRIS
 
 `sync_media()` вызывается каждый кадр, но `MediaControls::set_playback` дедуплицирует
 неизменившееся состояние. Соответствие:
@@ -81,9 +111,10 @@ IPC-сервера, MPRIS-колбэка и задача аудио-событи
 - `Paused` → трек есть, `Paused`;
 - `Playing`/`Buffering`/`Reconnecting` → трек есть, `Playing`.
 
-Пока Radio Browser не подключён, заголовком служит URL потока.
+Метаданные берутся из `current_station`: `name` → title, `tags` → artist, `favicon` →
+artUrl, `url_resolved` → `xesam:url`. Без станции используется URL потока.
 
-## 7. Жизненный цикл окна
+## 8. Жизненный цикл окна
 
 - Закрытие крестиком → `ViewportCommand::CancelClose` + `ViewportCommand::Visible(false)`,
   `window_visible = false`
@@ -92,13 +123,13 @@ IPC-сервера, MPRIS-колбэка и задача аудио-событи
 - Команда `quit` → `quitting = true` + `ViewportCommand::Close`; после выхода из GUI main
   останавливает IPC-сервер, аудио-поток и удаляет сокет
 
-## 8. Текущие ограничения
+## 9. Текущие ограничения
 
-- `play <uuid>` недоступен до Этапа 3 (нет каталога станций)
-- `Next`/`Previous` из MPRIS не переключают станции
+- `Next`/`Previous` из MPRIS не переключают станции (нет списка/истории)
 - 3D-глобус заменён заглушкой до Этапа 4
 - Клик мимо окна (overlay) ещё не реализован
-- Метаданные станции в MPRIS ограничены URL
+- Кэш станций только in-memory; дискового кэша нет
+- Метаданные ICY (название трека внутри потока) не читаются
 
 ## 9. Связанные документы
 

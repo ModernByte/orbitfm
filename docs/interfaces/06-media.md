@@ -64,7 +64,7 @@ impl MediaControls {
 | Поле / команда | Поведение |
 |----------------|-----------|
 | `title`, `artist`, `art_url` | метаданные `Track`; пустой `title` означает отсутствие трека |
-| `url` | идентификатор трека и `xesam:url`; на Этапе 2 — URL потока |
+| `url` | идентификатор трека и `xesam:url`; `url_resolved` текущей станции, иначе URL потока |
 | `playing` | `true` → `PlaybackStatus = Playing`, `false` → `Paused` при наличии трека и `Stopped` без него |
 | `volume` | `0.0..=1.0`, передаётся в MPRIS `Volume` |
 | `Play` | возобновление или повторный запуск текущего URL |
@@ -72,10 +72,10 @@ impl MediaControls {
 | `PlayPause` | переключение в зависимости от состояния |
 | `Stop` | остановка воспроизведения |
 | `SetVolume` | конечное значение приводится к `0.0..=1.0` |
-| `Next` / `Previous` | принимаются, но пока не действуют (Этап 3) |
+| `Next` / `Previous` | принимаются, но не действуют (нет списка станций) |
 
 `set_playback` возвращает `Publish`, если playwire не смог обновить состояние. Application
 Core логирует ошибку и продолжает работу: отсутствие MPRIS не фатально.
 
-Capabilities на Этапе 2: `CanPlay`, `CanPause`, `CanControl`; `Next`, `Previous` и seek
-выключены, так как переключение станций появится вместе с Radio Browser.
+Capabilities: `CanPlay`, `CanPause`, `CanControl`; `Next`, `Previous` и seek
+выключены, так как переключение станций и перемотка живого радио не поддерживаются.

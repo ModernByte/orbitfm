@@ -7,10 +7,10 @@
 | Версия | Статус       | Ключевые возможности                                      | Примечание                  |
 |--------|--------------|-----------------------------------------------------------|-----------------------------|
 | 0.0.x  | Завершено    | SRS, ADR, архитектура, ROADMAP                            | Этап документации           |
-| 0.1.0  | В разработке | Single-instance, IPC, egui, libmpv play/pause/stop/volume/reconnect, MPRIS Linux | MVP-0: каркас + аудио (Этапы 1–2) |
-| 0.2.0  | Планируется  | Radio Browser discovery + поиск, `play <uuid>`            |                             |
-| 0.3.0  | Планируется  | 3D-глобус + raycasting + выбор страны                     |                             |
-| 0.4.0  | Планируется  | Noctalia plugin + window rules Niri/Hyprland              |                             |
+| 0.1.0  | Реализовано (без релиза) | Single-instance, IPC, egui, libmpv play/pause/stop/volume/reconnect, MPRIS Linux | MVP-0: каркас + аудио (Этапы 1–2) |
+| 0.2.0  | В разработке | Radio Browser discovery + поиск, `play <uuid>`, click-tracking, метаданные станции в MPRIS | Этап 3 реализован, релиз не выпущен |
+| 0.3.0  | Следующий    | 3D-глобус + raycasting + выбор страны                     | Этап 4                      |
+| 0.4.0  | Планируется  | Noctalia plugin + window rules Niri/Hyprland              | Этап 5                      |
 | 0.5.0  | Планируется  | Полировка, кроссплатформа (SMTC/macOS), FFT, упаковка     | Этап 6                      |
 | 1.0.0  | Цель         | Стабильный релиз                                          |                             |
 
