@@ -17,6 +17,7 @@
 - [x] ADR-0008 (Геопространственный поиск)
 - [x] ADR-0009 (Каталог паттернов)
 - [x] ADR-0010 (FFT-визуализатор)
+- [x] ADR-0011 (Упаковка Linux)
 - [x] VERSIONMAP
 - [x] CHANGELOG (инициализация)
 - [x] README
@@ -65,10 +66,15 @@
 
 ## Текущий этап: Этап 6 — Полировка и кроссплатформа
 
-- [ ] Windows (SMTC)
-- [ ] macOS (Now Playing)
+- [ ] Windows (SMTC) — заблокировано: нужны Windows-раннер, сборка libmpv,
+  named pipe IPC и привязка SMTC к HWND
+- [ ] macOS (Now Playing) — заблокировано: нужны macOS-раннер и сборка libmpv
 - [x] FFT-визуализатор (экспериментальный)
-- [ ] Упаковка (AppImage / Flatpak / MSI / DMG)
+- [x] Упаковка Linux: AppImage (`packaging/linux/build-appimage.sh`), desktop entry,
+  AppStream-метаданные и иконка
+- [ ] Flatpak — заблокировано: нужны vendored cargo-исходники и модуль libmpv/FFmpeg
+- [ ] MSI — заблокировано: нужна Windows-сборка (см. пункт Windows)
+- [ ] DMG — заблокировано: нужна macOS-сборка (см. пункт macOS)
 
 ## Дальше
 

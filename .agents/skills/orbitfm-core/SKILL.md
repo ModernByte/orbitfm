@@ -37,6 +37,8 @@ description: Базовые правила проекта OrbitFM (ModernByte). 
 orbitfm/
 ├── assets/
 ├── noctalia-plugin/
+├── packaging/
+│   └── linux/
 ├── wm-configs/
 ├── src/
 │   ├── main.rs

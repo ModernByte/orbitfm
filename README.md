@@ -15,16 +15,17 @@ OrbitFM — кроссплатформенный десктоп-плеер ин�
 - Интеграция с Noctalia v5 (виджет панели)
 - MPRIS / системные медиа-клавиши
 - Экспериментальный FFT-визуализатор (агрегированные метрики `aspectralstats`)
+- AppImage для Linux x86_64 (libmpv и FFmpeg внутри)
 - Single-instance архитектура
 
 ## Статус
 
-**Этап 6 в работе:** добавлен экспериментальный FFT-визуализатор — спектральная
-огибающая поверх глобуса, работающая на метаданных фильтров mpv без перехвата PCM.
-Ранее реализованы интеграция Noctalia v5 и правила окон для Niri и Hyprland,
-интерактивный 3D-глобус с выбором страны, каталог Radio Browser (DNS-discovery, поиск,
-failover, кэш, click-tracking), воспроизведение станции по UUID и MPRIS с метаданными
-станции. Следующие шаги — кроссплатформенные медиа-интеграции и упаковка.
+**Этап 6 в работе:** добавлены экспериментальный FFT-визуализатор и упаковка Linux —
+AppImage с метаданными рабочего стола и встроенными libmpv/FFmpeg. Ранее реализованы
+интеграция Noctalia v5 и правила окон для Niri и Hyprland, интерактивный 3D-глобус с
+выбором страны, каталог Radio Browser (DNS-discovery, поиск, failover, кэш,
+click-tracking), воспроизведение станции по UUID и MPRIS с метаданными станции.
+Кроссплатформенные медиа-интеграции и Flatpak/MSI/DMG ждут нативных раннеров.
 
 Границы стран (Natural Earth 110m) и текстура Земли встроены в бинарник, поэтому
 глобус работает offline.
@@ -35,6 +36,17 @@ failover, кэш, click-tracking), воспроизведение станции
   требуется `orbitfm` в `PATH`;
 - `wm-configs/orbitfm-niri.kdl` и `wm-configs/orbitfm-hyprland.conf` — готовые
   правила плавающего окна 920×660.
+
+Сборка AppImage (Linux x86_64):
+
+```bash
+./packaging/linux/build-appimage.sh
+```
+
+Скрипт собирает release-бинарник, бандлит libmpv/FFmpeg через `linuxdeploy` и
+складывает `target/appimage/OrbitFM-<version>-x86_64.AppImage`. Инструменты
+`linuxdeploy` и `appimagetool` скачиваются при первом запуске, если не заданы через
+`LINUXDEPLOY` / `APPIMAGETOOL`.
 
 Требования для сборки:
 

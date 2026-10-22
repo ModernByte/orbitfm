@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=OrbitFM
+Name[ru]=OrbitFM
+GenericName=Internet Radio Player
+GenericName[ru]=Плеер интернет-радио
+Comment=Interactive 3D globe for internet radio
+Comment[ru]=Интерактивный 3D-глобус для интернет-радио
+Exec=orbitfm
+Icon=org.modernbyte.OrbitFM
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=radio;internet;globe;music;
+Keywords[ru]=радио;интернет;глобус;музыка;
+StartupWMClass=org.modernbyte.OrbitFM
