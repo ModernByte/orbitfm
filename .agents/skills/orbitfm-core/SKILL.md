@@ -26,7 +26,7 @@ description: Базовые правила проекта OrbitFM (ModernByte). 
 | Организация | ModernByte |
 | Репозиторий | ModernByte/orbitfm |
 | Crate / binary | orbitfm |
-| Plugin ID | org.modernbyte.orbitfm |
+| Plugin ID (Noctalia) | modernbyte/orbitfm |
 | app-id / Desktop Entry | org.modernbyte.OrbitFM |
 | User-Agent | OrbitFM/1.0 (ModernByte; Linux; Rust) |
 | Author в plugin.toml | ModernByte |

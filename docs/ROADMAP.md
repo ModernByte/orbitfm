@@ -56,13 +56,13 @@
 - [x] Raycasting + Point-in-Polygon
 - [x] Выбор страны
 
-## Текущий этап: Этап 5 — Интеграции
+## Этап 5: Интеграции — завершён
 
-- [ ] Noctalia plugin (widget + IPC)
-- [ ] Window rules для Niri / Hyprland
-- [ ] Системный трей (опционально)
+- [x] Noctalia plugin (widget + IPC)
+- [x] Window rules для Niri / Hyprland
+- [ ] Системный трей (опционально; не реализован)
 
-## Этап 6: Полировка и кроссплатформа
+## Текущий этап: Этап 6 — Полировка и кроссплатформа
 
 - [ ] Windows (SMTC)
 - [ ] macOS (Now Playing)

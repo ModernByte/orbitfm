@@ -116,33 +116,43 @@ OrbitFM проектируется по архитектуре **«Единый 
 ### 4.1. Манифест плагина Noctalia v5 (`noctalia-plugin/plugin.toml`)
 
 ```toml
-[plugin]
-id = "org.modernbyte.orbitfm"
-name = "OrbitFM"
-version = "1.0.0"
+id          = "modernbyte/orbitfm"
+name        = "OrbitFM"
+version     = "1.0.0"
+plugin_api  = 3
+author      = "ModernByte"
+license     = "MIT"
+icon        = "radio"
 description = "3D Interactive Global Radio Player"
-author = "code_warlord (ModernByte)"
-icon = "radio-symbolic"
+tags        = ["radio", "audio", "orbitfm"]
 
-[entry]
-script = "plugin.luau"
+[[widget]]
+id    = "launcher"
+entry = "plugin.luau"
 ```
+
+`id` обязан иметь формат `<author>/<plugin>`; app-id окна остаётся
+`org.modernbyte.OrbitFM`.
 
 ### 4.2. Luau Адаптер для Noctalia v5 (`noctalia-plugin/plugin.luau`)
 
 ```luau
-local noctalia = require("noctalia")
+barWidget.setGlyph("radio")
+barWidget.setText(noctalia.tr("widget.label"))
+barWidget.setTooltip(noctalia.tr("widget.tooltip"))
 
-noctalia.register_widget({
-    id = "orbitfm_launcher",
-    icon = "radio",
-    tooltip = "OrbitFM Player",
-    on_click = function()
-        -- Отправка асинхронной IPC-команды переключения окна
-        noctalia.exec_async("orbitfm toggle")
-    end
-})
+function onClick()
+    noctalia.runAsync("orbitfm toggle", function(result)
+        if result.exitCode ~= 0 then
+            noctalia.notify(noctalia.tr("widget.error_title"), result.stderr)
+        end
+    end)
+end
 ```
+
+Плагин не держит состояние и не содержит бизнес-логики: он только отправляет
+IPC-команду `toggle` через CLI. Строки интерфейса — в `translations/en.json` и
+`translations/ru.json`.
 
 ### 4.3. Оконные правила Niri 25.01+ (`wm-configs/orbitfm-niri.kdl`)
 
@@ -156,12 +166,11 @@ window-rule {
     default-column-width { fixed 920; }
     default-window-height { fixed 660; }
     draw-border-with-background false
-    
-    // В Niri 25.01+ центрирование плавающих окон задается по умолчанию 
-    // или через явную позиционирующую директиву:
-    default-floating-position x=0 y=0 relative-to="center"
 }
 ```
+
+Плавающие окна Niri центрирует по умолчанию; `default-floating-position`
+не требуется (значение `relative-to="center"` не поддерживается).
 
 ### 4.4. Оконные правила Hyprland (`wm-configs/orbitfm-hyprland.conf`)
 
@@ -171,6 +180,9 @@ windowrulev2 = size 920 660, class:^(org\.modernbyte\.OrbitFM)$
 windowrulev2 = center, class:^(org\.modernbyte\.OrbitFM)$
 windowrulev2 = stayfocused, class:^(org\.modernbyte\.OrbitFM)$
 ```
+
+`windowrulev2` работает в Hyprland 0.52 и совместимом режиме 0.53+; в 0.53+
+синтаксис помечен deprecated, новый формат — блок `windowrule { ... }`.
 
 ---
 
@@ -184,7 +196,8 @@ orbitfm/
 │   └── icons/                       <-- SVG/PNG иконки интерфейса
 ├── noctalia-plugin/
 │   ├── plugin.toml                  <-- Официальный валидный манифест Noctalia v5
-│   └── plugin.luau                  <-- Luau-скрипт адаптера панели
+│   ├── plugin.luau                  <-- Luau-скрипт адаптера панели
+│   └── translations/                <-- en.json, ru.json
 ├── wm-configs/
 │   ├── orbitfm-niri.kdl             <-- Валидный конфигурационный файл Niri 25.01+
 │   └── orbitfm-hyprland.conf        <-- Правила окон Hyprland

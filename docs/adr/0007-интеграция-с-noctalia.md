@@ -27,12 +27,12 @@ noctalia-plugin/
 **plugin.toml** (минимально необходимый набор):
 
 ```toml
-id         = "org.modernbyte.orbitfm"
+id         = "modernbyte/orbitfm"
 name       = "OrbitFM"
 version    = "1.0.0"
 plugin_api = 3
 author     = "ModernByte"
-icon       = "radio-symbolic"
+icon       = "radio"
 description = "3D Interactive Global Radio Player"
 
 [[widget]]
@@ -45,7 +45,7 @@ entry = "plugin.luau"
 В `plugin.luau` виджет при клике выполняет:
 
 ```luau
-noctalia.exec_async("orbitfm toggle")
+noctalia.runAsync("orbitfm toggle")
 ```
 
 То есть плагин **не** содержит логики плеера — только отправляет IPC-команду уже запущенному (или запускаемому) процессу OrbitFM.
@@ -55,6 +55,16 @@ noctalia.exec_async("orbitfm toggle")
 - Noctalia-плагин = тонкий адаптер
 - Вся бизнес-логика и аудио живут в основном процессе `orbitfm`
 - Плагин не держит состояние воспроизведения
+
+### Уточнение (2026-10-22)
+
+- Noctalia требует `id` в формате `<author>/<plugin>`; в манифесте используется
+  `modernbyte/orbitfm`. Это не меняет app-id `org.modernbyte.OrbitFM` и имя проекта.
+- Отправка команды выполняется через `noctalia.runAsync(...)` — актуальный Runtime API
+  Noctalia. Функции `exec_async` в Plugin API нет.
+- Манифест проверен `noctalia plugins lint`: 0 ошибок, 0 предупреждений.
+
+Решение о тонком адаптере и IPC остаётся прежним.
 
 ### Альтернативы
 

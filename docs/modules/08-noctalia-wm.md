@@ -17,38 +17,60 @@ noctalia-plugin/
 ├── plugin.toml
 ├── plugin.luau
 └── translations/
-    └── en.json
+    ├── en.json
+    └── ru.json
 ```
 
-### plugin.toml (канон)
+### plugin.toml
 
 ```toml
-id         = "org.modernbyte.orbitfm"
-name       = "OrbitFM"
-version    = "1.0.0"
-plugin_api = 3
-author     = "ModernByte"
-icon       = "radio-symbolic"
+id          = "modernbyte/orbitfm"
+name        = "OrbitFM"
+version     = "1.0.0"
+plugin_api  = 3
+author      = "ModernByte"
+license     = "MIT"
+icon        = "radio"
 description = "3D Interactive Global Radio Player"
+tags        = ["radio", "audio", "orbitfm"]
 
 [[widget]]
 id    = "launcher"
 entry = "plugin.luau"
 ```
 
+Noctalia требует `id` в формате `<author>/<plugin>`; `org.modernbyte.orbitfm`
+использоваться не может. app-id окна остаётся `org.modernbyte.OrbitFM`.
+
 ### Поведение
 
-Виджет при клике выполняет:
+Скрипт задаёт глиф `radio`, текст «OrbitFM» и подсказку из переводов. При клике
+выполняется:
 
 ```luau
-noctalia.exec_async("orbitfm toggle")
+noctalia.runAsync("orbitfm toggle", function(result)
+    if result.exitCode ~= 0 then
+        noctalia.notify(noctalia.tr("widget.error_title"), result.stderr)
+    end
+end)
 ```
 
-Плагин **не** хранит состояние плеера и не содержит бизнес-логики.
+`runAsync` запускает `orbitfm` через `/bin/sh -c`; бинарник должен быть в `PATH`.
+Если процесс не запустился, виджет показывает уведомление. Плагин **не** хранит
+состояние плеера и не содержит бизнес-логики; `toggle` при отсутствии экземпляра
+запускает OrbitFM с видимым окном (семантика CLI).
+
+Проверка манифеста:
+
+```bash
+noctalia plugins lint noctalia-plugin
+```
 
 ## 2. Window Rules
 
-### Niri (пример)
+### Niri
+
+`wm-configs/orbitfm-niri.kdl`:
 
 ```kdl
 window-rule {
@@ -60,15 +82,27 @@ window-rule {
 }
 ```
 
-### Hyprland (пример)
+Плавающие окна Niri центрирует по умолчанию. `default-floating-position`
+не используется: допустимые значения `relative-to` не включают `center`.
+Файл проверен командой `niri validate -c wm-configs/orbitfm-niri.kdl`.
+
+### Hyprland
+
+`wm-configs/orbitfm-hyprland.conf`:
 
 ```ini
 windowrulev2 = float, class:^(org\.modernbyte\.OrbitFM)$
 windowrulev2 = size 920 660, class:^(org\.modernbyte\.OrbitFM)$
 windowrulev2 = center, class:^(org\.modernbyte\.OrbitFM)$
+windowrulev2 = stayfocused, class:^(org\.modernbyte\.OrbitFM)$
 ```
 
-Файлы правил поставляются в `wm-configs/` и могут копироваться пользователем или генерироваться модулем `src/wm/`.
+Синтаксис `windowrulev2` работает в Hyprland 0.52 и совместимом режиме 0.53+.
+Начиная с 0.53 он помечен deprecated (новый формат — `windowrule { ... }`), поэтому
+при обновлении файла нужно проверить актуальную документацию Hyprland.
+
+Файлы правил поставляются в `wm-configs/` и копируются пользователем. Модуль
+`src/wm/` для автоматической генерации пока не реализован.
 
 ## 3. Принципы
 
