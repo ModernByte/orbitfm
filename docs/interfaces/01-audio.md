@@ -2,8 +2,9 @@
 
 Реализация — конкретная структура `AudioEngine` (`src/audio/`), публичный трейт не
 используется. Методы, изменяющие состояние, асинхронные; команды выполняются в выделенном
-аудио-потоке с таймаутом 3 с. Ошибка выполнения команды не меняет состояние молча: движок
-публикует соответствующее событие.
+аудио-потоке с таймаутом 3 с. Ошибка команды воспроизведения не меняет состояние молча:
+движок публикует соответствующее событие. Ошибка визуализатора возвращается вызывающему
+и не влияет на воспроизведение.
 
 ```rust
 use tokio::sync::broadcast;
@@ -36,6 +37,23 @@ pub enum AudioEvent {
     EndOfFile,
 }
 
+/// Агрегированные FFT-метрики текущего аудиокадра.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct SpectrumFrame {
+    /// Спектральный центроид, Гц.
+    pub centroid_hz: f32,
+    /// Спектральный разброс, Гц.
+    pub spread_hz: f32,
+    /// Частота rolloff (85 %), Гц.
+    pub rolloff_hz: f32,
+    /// Спектральная плоскостность `0.0..=1.0`.
+    pub flatness: f32,
+    /// Спектральный поток (ненормированная величина).
+    pub flux: f32,
+    /// RMS-уровень, дБFS.
+    pub rms_db: f32,
+}
+
 /// Ошибки аудио-подсистемы.
 #[derive(Debug, thiserror::Error)]
 pub enum AudioError {
@@ -47,6 +65,8 @@ pub enum AudioError {
     InvalidUrl,
     #[error("внутренняя ошибка: {0}")]
     Internal(String),
+    #[error("визуализатор недоступен: {0}")]
+    Spectrum(String),
 }
 
 /// Аудио-движок на базе libmpv.
@@ -76,6 +96,15 @@ impl AudioEngine {
 
     /// Подписка на события.
     pub fn subscribe(&self) -> broadcast::Receiver<AudioEvent>;
+
+    /// Включает или выключает FFT-визуализатор.
+    pub async fn set_spectrum_enabled(&mut self, enabled: bool) -> Result<(), AudioError>;
+
+    /// Включён ли FFT-визуализатор.
+    pub fn spectrum_enabled(&self) -> bool;
+
+    /// Последний кадр FFT-метрик; `None`, если данных ещё нет.
+    pub fn spectrum(&self) -> Option<SpectrumFrame>;
 }
 ```
 
@@ -87,6 +116,7 @@ impl AudioEngine {
 | `stop()` | состояние `Stopped`, событие `Stopped` | `Playback`, `Internal` |
 | `set_paused(true/false)` | `Paused` / `Playing`; при возобновлении публикуется `Started` | `Playback`, если нет активного URL или состояние `Stopped`/`Reconnecting`/`Error` |
 | `set_volume(v)` | значение применяется к mpv и к `volume()` | `Playback`, если `v` не конечное число или вне `0.0..=1.0` |
+| `set_spectrum_enabled(true/false)` | цепочка `aspectralstats` + `astats` подключается к `af` или снимается; при выключении кадр очищается; состояние воспроизведения не меняется | `Spectrum`, если mpv отклонил фильтр |
 
 ## 2. Реконнект
 
@@ -100,7 +130,26 @@ impl AudioEngine {
 Естественное завершение потока даёт `EndOfFile`, после чего запускается та же политика
 реконнекта (для живого радио это эквивалентно обрыву).
 
-## 3. Потоки и жизненный цикл
+## 3. FFT-визуализатор
+
+Визуализатор экспериментальный, выключен по умолчанию и работает без перехвата PCM
+(ADR-0010). При включении движок выставляет свойство mpv `af` в цепочку
+`@spectrum:lavfi=[aspectralstats=measure=centroid+spread+flatness+flux+rolloff:win_size=2048,astats=metadata=1:reset=1]`.
+Поток `orbitfm-audio` опрашивает `af-metadata/spectrum` примерно раз в 50 мс, пока
+состояние — `Playing` или `Buffering`, и публикует `SpectrumFrame`:
+
+- `centroid_hz`, `spread_hz`, `rolloff_hz` — частотные характеристики, Гц;
+- `flatness` — плоскостность спектра, нормирована в `0.0..=1.0`;
+- `flux` — ненормированный спектральный поток;
+- `rms_db` — уровень RMS в дБFS (`0` — полная шкала).
+
+Некорректные или нефинитные значения отбрасываются. Вне активного воспроизведения,
+при `play`, `stop` и после ошибки кадр очищается. Полосы спектра по бинам не
+предоставляются: доступны только агрегированные метрики. Если сборка mpv не содержит
+`aspectralstats`, включение возвращает `AudioError::Spectrum`, а воспроизведение
+продолжается.
+
+## 4. Потоки и жизненный цикл
 
 - Все вызовы libmpv выполняются только в потоке `orbitfm-audio`.
 - `AudioEngine::Drop` отправляет команду `Shutdown` и дожидается завершения потока.

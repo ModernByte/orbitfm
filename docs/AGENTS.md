@@ -58,7 +58,7 @@
 | **orbitfm-architect**     | Архитектура, ADR, границы модулей, компромиссы            | Новые подсистемы, рефакторинг границ, ADR |
 | **orbitfm-rust**          | Стиль Rust, async, FFI, ошибки, тесты, Cargo              | Любой Rust-код |
 | **orbitfm-gui**           | eframe / egui / egui-wgpu, окно, глобус, PaintCallback    | UI и 3D |
-| **orbitfm-audio**         | libmpv, play/stop/reconnect, PCM/FFT                      | Аудио |
+| **orbitfm-audio**         | libmpv, play/stop/reconnect, FFT-метрики                  | Аудио |
 | **orbitfm-radio**         | Radio Browser, discovery, User-Agent, click               | API станций |
 | **orbitfm-geo**           | geo / geojson / rstar, raycasting, Point-in-Polygon       | Гео и выбор страны |
 | **orbitfm-ipc**           | Single-instance, сокет/pipe, протокол команд              | IPC, CLI, lifetime процесса |

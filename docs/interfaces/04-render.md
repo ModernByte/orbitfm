@@ -1,8 +1,8 @@
 # Интерфейс: Globe Renderer
 
-Публичная поверхность модуля `render`: `GlobeInput`, `GlobeCamera`, `GlobeRenderer`
-и функция `paint_globe`. Трейт рендерера не используется; GPU-ресурсы живут в
-`CallbackResources` egui-wgpu.
+Публичная поверхность модуля `render`: `GlobeInput`, `GlobeCamera`, `GlobeRenderer`,
+`SpectrumTarget`, `SpectrumOverlay` и функция `paint_globe`. Трейт рендерера не
+используется; GPU-ресурсы живут в `CallbackResources` egui-wgpu.
 
 ```rust
 /// Ввод от пользователя для глобуса.
@@ -63,6 +63,31 @@ impl GlobeRenderer {
 
 /// Добавляет paint callback глобуса в painter.
 pub fn paint_globe(painter: &egui::Painter, rect: egui::Rect, camera: &GlobeCamera);
+
+/// Срез FFT-метрик для визуализации; не содержит доменных типов.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct SpectrumTarget {
+    pub centroid_hz: f32,
+    pub spread_hz: f32,
+    pub flux: f32,
+    pub flatness: f32,
+    pub rms_db: f32,
+}
+
+/// Сглаженное состояние спектрального оверлея.
+#[derive(Debug, Default)]
+pub struct SpectrumOverlay { /* ... */ }
+
+impl SpectrumOverlay {
+    /// Обновляет сглаженные значения за кадр; `None` — данных нет.
+    pub fn update(&mut self, target: Option<SpectrumTarget>, dt: f32);
+
+    /// Видим ли оверлей (есть данные или ещё не затух).
+    pub fn is_visible(&self) -> bool;
+
+    /// Рисует спектральную огибающую средствами egui.
+    pub fn paint(&self, painter: &egui::Painter, rect: egui::Rect, time: f64);
+}
 ```
 
 `CameraUniform` — внутренний тип (`pub(crate)`), содержащий `view_proj` и
@@ -81,9 +106,19 @@ pub fn paint_globe(painter: &egui::Painter, rect: egui::Rect, camera: &GlobeCame
   пропускает отрисовку.
 - Координатное соглашение сферы: `x = cos φ · sin λ`, `y = sin φ`, `z = cos φ · cos λ`;
   `+Z` — Гринвич, `+Y` — север.
+- `SpectrumOverlay::update` на первом кадре принимает значения без сглаживания, затем
+  интерполирует их экспоненциально; `None` запускает затухание, неположительный `dt`
+  игнорируется. `is_visible` становится `false` после затухания.
+- `SpectrumOverlay::paint` рисует только через `egui::Painter` (без wgpu-ресурсов):
+  полупрозрачную полосу, градиентную огибающую в логарифмической шкале
+  30 Гц–20 кГц, линию уровня и подпись `FFT · <частота> · <RMS> дБ`.
+  Модуль не знает о `AudioEngine` и `SpectrumFrame`: App Core передаёт срез
+  `SpectrumTarget`.
 
 ## Ограничения
 
 - Depth buffer не используется: сфера выпуклая, backface culling достаточен.
 - Текстура без mipmap, фильтрация линейная.
 - Атмосфера, маркеры станций и подписи стран — вне текущего объёма.
+- Спектральный оверлей показывает агрегированные метрики, а не полосы по бинам
+  (ADR-0010); это художественная огибающая, а не точный анализатор спектра.

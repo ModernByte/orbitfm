@@ -1,7 +1,7 @@
 # Модуль: Audio Engine
 
 **Путь в коде:** `src/audio/`  
-**Ответственность:** Воспроизведение интернет-радиостанций, управление сессией libmpv, реконнект, получение PCM (для FFT в перспективе).  
+**Ответственность:** Воспроизведение интернет-радиостанций, управление сессией libmpv, реконнект, агрегированные FFT-метрики для визуализатора.
 **Зависимости:** `libmpv2` 6.0 (безопасная обёртка над C API libmpv), `tokio` (каналы и таймауты), `libc` (локаль)
 
 ---
@@ -28,6 +28,19 @@ impl AudioEngine {
     pub fn state(&self) -> PlaybackState;
     pub fn volume(&self) -> f64;
     pub fn subscribe(&self) -> broadcast::Receiver<AudioEvent>;
+    pub async fn set_spectrum_enabled(&mut self, enabled: bool) -> Result<(), AudioError>;
+    pub fn spectrum_enabled(&self) -> bool;
+    pub fn spectrum(&self) -> Option<SpectrumFrame>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct SpectrumFrame {
+    pub centroid_hz: f32,
+    pub spread_hz: f32,
+    pub rolloff_hz: f32,
+    pub flatness: f32,
+    pub flux: f32,
+    pub rms_db: f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,19 +68,20 @@ pub enum AudioEvent {
 
 | Файл | Назначение |
 |------|------------|
-| `mod.rs` | Публичные типы `PlaybackState`, `AudioEvent`, `AudioError`; реэкспорт `AudioEngine` |
+| `mod.rs` | Публичные типы `PlaybackState`, `AudioEvent`, `AudioError`, `SpectrumFrame`; реэкспорт `AudioEngine` |
 | `engine.rs` | Фасад движка: инициализация mpv, канал команд, `oneshot`-ответы, `Drop` |
-| `worker.rs` | Выделенный поток: цикл команд и событий mpv, реконнект-политика |
+| `worker.rs` | Выделенный поток: цикл команд и событий mpv, реконнект-политика, опрос FFT-метрик |
 
 ## 4. Внутреннее устройство
 
 - `AudioEngine::new()` создаёт `Mpv` и запускает поток `orbitfm-audio`.
 - Команды передаются через `tokio::sync::mpsc::UnboundedSender`; каждая несёт
   `oneshot::Sender<CommandResult>`.
-- `play`, `stop`, `set_paused`, `set_volume` ждут ответ с таймаутом 3 с.
-- Состояние и громкость хранятся в `Shared` под `Mutex` (устойчиво к отравлению).
+- `play`, `stop`, `set_paused`, `set_volume`, `set_spectrum_enabled` ждут ответ с таймаутом 3 с.
+- Состояние, громкость и последний FFT-кадр хранятся в `Shared` под `Mutex` (устойчиво к отравлению).
 - События публикуются в `broadcast`-канал ёмкостью 64.
-- Поток опрашивает `mpv_wait_event` каждые 50 мс и между опросами разбирает команды.
+- Поток опрашивает `mpv_wait_event` каждые 50 мс и между опросами разбирает команды;
+  при включённом визуализаторе с той же частотой читает `af-metadata`.
 
 Опции mpv при инициализации:
 
@@ -107,26 +121,45 @@ pub enum AudioEvent {
 - Пока ожидается повтор, новые обрывы не создают дополнительных попыток.
 - `FileLoaded`, `play`, `stop` сбрасывают счётчик.
 
-## 7. Ошибки
+## 7. FFT-визуализатор
+
+- PCM не перехватывается: к работающей сессии mpv по команде подключается фильтр
+  `@spectrum:lavfi=[aspectralstats=measure=centroid+spread+flatness+flux+rolloff:win_size=2048,astats=metadata=1:reset=1]`.
+- `aspectralstats` даёт FFT-метрики кадра, `astats` — RMS-уровень; оба прозрачны для звука.
+- Поток `orbitfm-audio` читает строковые свойства `af-metadata/spectrum/...` раз в
+  50 мс, пока состояние — `Playing` или `Buffering`, и складывает `SpectrumFrame`.
+- Нефинитные значения отбрасываются; отрицательные и выходящие за диапазон —
+  ограничиваются (`flatness` в `0.0..=1.0`, частоты неотрицательны).
+- При выключении свойство `af` очищается, кадр сбрасывается. Новый `play`, `stop` и
+  ошибки также очищают кадр.
+- Если фильтр недоступен, mpv возвращает ошибку, команда отдаёт
+  `AudioError::Spectrum`; воспроизведение не прерывается.
+- Полосы спектра по бинам не поддерживаются; подробности и альтернативы — ADR-0010.
+
+## 8. Ошибки
 
 Все ошибки мапятся в `AudioError` (thiserror).  
 `Init` означает, что модуль неработоспособен; Application Core считает это фатальной
 ошибкой запуска. Остальные варианты возвращаются из конкретной команды.
 
-## 8. Тестирование
+## 9. Тестирование
 
 - Unit-тесты: валидация URL (только http/https с хостом), диапазон громкости, backoff,
-  исчерпание попыток, сброс трекера.
+  исчерпание попыток, сброс трекера, разбор и ограничение FFT-метрик.
 - Живой тест `plays_and_stops_live_stream` (`#[ignore]`, требует сеть и аудиоустройство):
   `ORBITFM_TEST_STREAM_URL=... cargo test --all-targets plays_and_stops_live_stream -- --ignored`
   проверяет play → pause → resume → stop.
+- Живой тест `produces_fft_metrics_for_live_stream` (`#[ignore]`) включает визуализатор,
+  ждёт до 20 с первый `SpectrumFrame`, проверяет конечность значений и выключает фильтр.
 
-## 9. Текущие ограничения
+## 10. Текущие ограничения
 
-- PCM для FFT ещё не отдаётся; появится вместе с экспериментальным визуализатором.
+- FFT доступен только как агрегированные метрики; полос спектра нет.
+- Наличие `aspectralstats` зависит от сборки libavfilter (проверено на FFmpeg 12.1 / mpv 0.41).
 - Метаданные ICY (название трека) не читаются — это задача будущих этапов.
 - Поддержка Windows/macOS не проверялась.
 
-## 10. Связанные ADR
+## 11. Связанные ADR
 
 - ADR-0003: Выбор аудио-движка
+- ADR-0010: Экспериментальный FFT-визуализатор

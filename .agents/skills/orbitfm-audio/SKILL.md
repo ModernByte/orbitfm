@@ -7,7 +7,8 @@ description: Аудио-подсистема OrbitFM на libmpv. Использ
 
 Ты работаешь с аудио-движком OrbitFM (libmpv).
 
-Опирайся на ADR-0003, `docs/modules/01-audio-engine.md`, `docs/interfaces/01-audio.md`.
+Опирайся на ADR-0003, ADR-0010, `docs/modules/01-audio-engine.md`,
+`docs/interfaces/01-audio.md`.
 
 ## Обязательные правила libmpv
 
@@ -36,10 +37,14 @@ description: Аудио-подсистема OrbitFM на libmpv. Использ
 - RAII-обёртка с `Drop` для `mpv_handle`.
 - Коды возврата C API мапить в `AudioError`.
 
-## PCM / FFT (экспериментально)
+## FFT (экспериментально)
 
-- Только через audio-filter / IPC mpv, изолированно.
-- Не блокировать основной цикл GUI.
+- PCM не перехватывать: `ao=pcm` заменяет аудиовыход, второй декодер дублирует поток.
+- Метрики берутся из `af-metadata` фильтров `aspectralstats` + `astats`, цепочка
+  включается/снимается через свойство `af` (ADR-0010).
+- Опрос `af-metadata` выполняется в потоке `orbitfm-audio` (~50 мс), не в UI.
+- Ошибка фильтра возвращается как `AudioError::Spectrum` и не прерывает воспроизведение.
+- Полосы спектра по бинам не поддерживаются; не имитировать их без нового ADR.
 
 ## Чего нельзя
 

@@ -9,7 +9,9 @@ use crate::audio::{AudioEngine, AudioEvent, PlaybackState};
 use crate::geo::{Country, GeoService};
 use crate::ipc::{IpcCommand, IpcRequest, WakeFn};
 use crate::media::{MediaCommand, MediaControls, PlaybackInfo};
-use crate::render::{GlobeCamera, GlobeInput, GlobeRenderer, paint_globe};
+use crate::render::{
+    GlobeCamera, GlobeInput, GlobeRenderer, SpectrumOverlay, SpectrumTarget, paint_globe,
+};
 use crate::services::{RadioBrowserClient, RadioError, SearchParams, Station};
 
 const WINDOW_TITLE: &str = "OrbitFM";
@@ -79,6 +81,9 @@ pub struct OrbitApp {
     media: Option<MediaControls>,
     globe_camera: GlobeCamera,
     globe_ready: bool,
+    spectrum_overlay: SpectrumOverlay,
+    spectrum_enabled: bool,
+    spectrum_error: Option<String>,
     current_url: Option<String>,
     current_station: Option<Station>,
     search_query: String,
@@ -125,7 +130,7 @@ impl OrbitApp {
             warn!("wgpu render state недоступен: 3D-глобус отключён");
             false
         };
-        let mut app = Self {
+        Self {
             state: AppState::default(),
             commands,
             wake: wake.clone(),
@@ -136,6 +141,9 @@ impl OrbitApp {
             media,
             globe_camera: GlobeCamera::default(),
             globe_ready,
+            spectrum_overlay: SpectrumOverlay::default(),
+            spectrum_enabled: false,
+            spectrum_error: None,
             current_url: None,
             current_station: None,
             search_query: String::new(),
@@ -147,9 +155,7 @@ impl OrbitApp {
             search_error: None,
             runtime,
             quitting: false,
-        };
-        app.sync_media();
-        app
+        }
     }
 
     fn process_commands(&mut self, ctx: &egui::Context) {
@@ -458,6 +464,22 @@ impl OrbitApp {
         }
     }
 
+    fn set_spectrum_enabled(&mut self, enabled: bool) {
+        match self
+            .runtime
+            .block_on(self.audio.set_spectrum_enabled(enabled))
+        {
+            Ok(()) => {
+                self.spectrum_enabled = enabled;
+                self.spectrum_error = None;
+            }
+            Err(err) => {
+                self.spectrum_error = Some(err.to_string());
+                self.spectrum_enabled = self.audio.spectrum_enabled();
+            }
+        }
+    }
+
     fn set_window_visible(&mut self, ctx: &egui::Context, visible: bool) {
         self.state.window_visible = visible;
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(visible));
@@ -480,6 +502,7 @@ impl OrbitApp {
         let mut hide_requested = false;
         let mut quit_requested = false;
         let mut search_requested = false;
+        let mut spectrum_requested: Option<bool> = None;
         let mut selected_station: Option<Station> = None;
         let mut selected_country: Option<Country> = None;
 
@@ -519,6 +542,17 @@ impl OrbitApp {
                         if ui.button("Скрыть").clicked() {
                             hide_requested = true;
                         }
+                        let mut spectrum = self.spectrum_enabled;
+                        if ui
+                            .checkbox(&mut spectrum, "FFT")
+                            .on_hover_text(
+                                "Экспериментальный FFT-визуализатор: агрегированные \
+                                 метрики mpv (без PCM)",
+                            )
+                            .changed()
+                        {
+                            spectrum_requested = Some(spectrum);
+                        }
                     });
                 });
 
@@ -546,6 +580,9 @@ impl OrbitApp {
                             egui::RichText::new(format!("Громкость: {volume:.0}%"))
                                 .color(MUTED_TEXT),
                         );
+                        if let Some(error) = &self.spectrum_error {
+                            ui.label(egui::RichText::new(error).size(11.0).color(ERROR_TEXT));
+                        }
                     });
 
                 ui.add_space(10.0);
@@ -641,6 +678,25 @@ impl OrbitApp {
                     );
                 }
 
+                let spectrum_target = self.audio.spectrum().map(|frame| SpectrumTarget {
+                    centroid_hz: frame.centroid_hz,
+                    spread_hz: frame.spread_hz,
+                    flux: frame.flux,
+                    flatness: frame.flatness,
+                    rms_db: frame.rms_db,
+                });
+                self.spectrum_overlay
+                    .update(spectrum_target, ui.input(|input| input.stable_dt));
+                if self.spectrum_overlay.is_visible() {
+                    let strip = egui::Rect::from_min_max(
+                        egui::pos2(globe_rect.left() + 16.0, globe_rect.bottom() - 76.0),
+                        egui::pos2(globe_rect.right() - 16.0, globe_rect.bottom() - 14.0),
+                    );
+                    self.spectrum_overlay
+                        .paint(ui.painter(), strip, ui.input(|input| input.time));
+                    ui.ctx().request_repaint_after(Duration::from_millis(33));
+                }
+
                 if self.globe_camera.is_animating() {
                     ui.ctx().request_repaint();
                 }
@@ -671,6 +727,10 @@ impl OrbitApp {
             self.start_search();
             ctx.request_repaint();
         }
+        if let Some(enabled) = spectrum_requested {
+            self.set_spectrum_enabled(enabled);
+            ctx.request_repaint();
+        }
         if let Some(country) = selected_country {
             self.start_country_search(country);
             ctx.request_repaint();
@@ -697,6 +757,16 @@ impl eframe::App for OrbitApp {
         self.process_media_commands();
         self.poll_search();
         self.sync_media();
+        self.spectrum_enabled = self.audio.spectrum_enabled();
+
+        if self.spectrum_enabled
+            && matches!(
+                self.audio.state(),
+                PlaybackState::Playing | PlaybackState::Buffering
+            )
+        {
+            ctx.request_repaint_after(Duration::from_millis(33));
+        }
 
         if ctx.input(|input| input.viewport().close_requested()) {
             if self.quitting {

@@ -9,10 +9,10 @@
 
 | Файл | Описание |
 |------|----------|
-| `01-audio.md` | Контракт аудио-движка (`AudioEngine`) |
+| `01-audio.md` | Контракт аудио-движка (`AudioEngine`, FFT-метрики) |
 | `02-radio.md` | Контракт клиента Radio Browser |
 | `03-geo.md` | Контракт геосервиса (`GeoService`, `Country`) |
-| `04-render.md` | Контракт рендерера глобуса (`GlobeCamera`, `GlobeRenderer`) |
+| `04-render.md` | Контракт рендерера глобуса и спектрального оверлея (`GlobeCamera`, `GlobeRenderer`, `SpectrumOverlay`) |
 | `05-ipc.md` | IPC-протокол и команды |
 | `06-media.md` | Контракт медиа-контролов (`MediaControls`) |
 | `07-app.md` | Контракты Application Core |
