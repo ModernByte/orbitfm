@@ -1,11 +1,12 @@
 <#
 .SYNOPSIS
-    Собирает MSI из подготовленного каталога dist/OrbitFM через WiX v7.
+    Собирает MSI из подготовленного каталога dist/OrbitFM через WiX v5.
 
 .DESCRIPTION
     AppDir должен содержать orbitfm.exe, libmpv-2.dll и остальные runtime DLL.
-    WiX устанавливается отдельно: dotnet tool install --global wix --version 7.0.0.
-    Элемент Files для автосбора каталога есть только начиная с WiX 7.
+    WiX устанавливается отдельно: dotnet tool install --global wix --version 5.0.2.
+    WiX 5 — последняя версия без принятия OSMF EULA (в v6+ сборка без неё
+    завершается ошибкой WIX7015).
 #>
 [CmdletBinding()]
 param(
@@ -23,7 +24,7 @@ $wix = Join-Path $env:USERPROFILE '.dotnet\tools\wix.exe'
 if (-not (Test-Path -LiteralPath $wix)) {
     $command = Get-Command wix.exe -ErrorAction SilentlyContinue
     if (-not $command) {
-        throw 'wix.exe не найден; выполните dotnet tool install --global wix --version 7.0.0'
+        throw 'wix.exe не найден; выполните dotnet tool install --global wix --version 5.0.2'
     }
     $wix = $command.Source
 }

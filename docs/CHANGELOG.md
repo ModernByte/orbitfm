@@ -13,7 +13,7 @@
   - Windows: `fmt` и `clippy`
 - Сборка нативных установщиков в CI:
   - Windows MSI (джоба `msi`): MSYS2 UCRT64 с libmpv 0.41.0, импорт `mpv.lib`
-    через `dumpbin`/`lib.exe`, сбор DLL-замыкания, WiX 7, per-user установка в
+    через `dumpbin`/`lib.exe`, сбор DLL-замыкания, WiX 5, per-user установка в
     `%LOCALAPPDATA%\Programs\OrbitFM` с ярлыком в меню «Пуск» и smoke-тестом
     `msiexec`
   - macOS DMG (джоба `dmg`): `.app` с `Info.plist` и `.icns`, `dylibbundler`,

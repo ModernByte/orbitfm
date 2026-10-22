@@ -49,9 +49,9 @@ Flatpak требует воспроизводимой сборки libmpv и ven
    - Windows: MSYS2 UCRT64 `mingw-w64-ucrt-x86_64-mpv` (libmpv 0.41.0); импорт
      `mpv.lib` генерируется из `libmpv-2.dll` через `dumpbin` и `lib.exe`;
      MSVC release-сборка; транзитивные DLL собираются по таблицам импорта через
-     `objdump`; MSI собирает WiX 7 (элемент `Files` появился только в v7) для
-     per-user установки в `%LOCALAPPDATA%\Programs\OrbitFM` с ярлыком в меню
-     «Пуск»; CI выполняет тихую установку и удаление MSI.
+     `objdump`; MSI собирает WiX 5 (последняя версия без OSMF EULA, которую
+     требуют v6+) для per-user установки в `%LOCALAPPDATA%\Programs\OrbitFM`
+     с ярлыком в меню «Пуск»; CI выполняет тихую установку и удаление MSI.
    - macOS: `.app` с `Info.plist`, иконкой `.icns` (из общего SVG через
      `rsvg-convert`/`iconutil`), зависимости бандлятся `dylibbundler`, подпись
      ad-hoc; DMG (UDZO) содержит приложение и ссылку на `/Applications`;
@@ -121,7 +121,7 @@ Flatpak разблокирован и реализован: `packaging/linux/org
   (libmpv 0.41.0). `prepare-libmpv.ps1` извлекает экспорты через `dumpbin` и
   собирает `mpv.lib` через `lib.exe`; `RUSTFLAGS=-L native=...` указывает путь
   MSVC-линкеру. `stage-app.sh` обходит DLL-замыкание через `objdump`, после чего
-  добавляются runtime DLL MSVC. WiX 7 собирает per-user MSI
+  добавляются runtime DLL MSVC. WiX 5 (v5.0.2) собирает per-user MSI
   (`%LOCALAPPDATA%\Programs\OrbitFM`, ярлык в меню «Пуск»); CI проверяет тихую
   установку и удаление.
 - Джоба `dmg` (`macos-latest`): `build-dmg.sh` собирает `.app`, генерирует

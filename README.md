@@ -77,7 +77,7 @@ CI собирает и тестирует проект на Linux и macOS, пр
 Нативные установщики собираются в CI (артефакты `OrbitFM-windows-x64-msi` и
 `OrbitFM-macos-dmg`):
 
-- Windows: `packaging/windows/build-msi.ps1` — MSI через WiX 7, libmpv из MSYS2
+- Windows: `packaging/windows/build-msi.ps1` — MSI через WiX 5, libmpv из MSYS2
   UCRT64; per-user установка в `%LOCALAPPDATA%\Programs\OrbitFM`;
 - macOS: `packaging/macos/build-dmg.sh` — `.app` с зависимостями из Homebrew,
   ad-hoc подпись и UDZO DMG.

@@ -78,7 +78,7 @@
   AppStream-метаданные и иконка
 - [x] Flatpak: `packaging/linux/org.modernbyte.OrbitFM.yml`, runtime 25.08,
   libmpv/libass/libplacebo из исходников, vendored cargo (`build-flatpak.sh`)
-- [x] MSI: джоба `msi` — libmpv из MSYS2 UCRT64, замыкание DLL, WiX 7,
+- [x] MSI: джоба `msi` — libmpv из MSYS2 UCRT64, замыкание DLL, WiX 5,
   per-user установка и smoke-тест `msiexec`; артефакт без подписи
 - [x] DMG: джоба `dmg` — `.app` с `dylibbundler`, ad-hoc подпись и UDZO-образ;
   артефакт без нотаризации

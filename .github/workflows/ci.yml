@@ -166,7 +166,7 @@ jobs:
 
       - name: Install WiX
         shell: pwsh
-        run: dotnet tool update --global wix --version 7.0.0
+        run: dotnet tool update --global wix --version 5.0.2
 
       - name: Read version
         id: version
