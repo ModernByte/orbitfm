@@ -242,8 +242,10 @@ IPC-команду `toggle` через CLI. Строки интерфейса �
 * Подключение как пользовательского источника:
   `noctalia msg plugins source add orbitfm git https://github.com/ModernByte/orbitfm`,
   затем `noctalia msg plugins enable modernbyte/orbitfm`.
-* Публикация в общий магазин — отдельный PR в `noctalia-dev/community-plugins`;
-  там `catalog.toml` генерируется CI и вручную не редактируется.
+* Внешняя публикация в `noctalia-dev/community-plugins` не выполняется: плагин
+  распространяется как git-источник `ModernByte/orbitfm`. Если решение изменится,
+  потребуется отдельный PR; в общем магазине `catalog.toml` генерируется CI и
+  вручную не редактируется.
 * Проверки: `noctalia plugins lint orbitfm` и официальный community-валидатор
   манифеста, README, миниатюры и переводов.
 

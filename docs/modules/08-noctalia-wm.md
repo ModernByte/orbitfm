@@ -89,8 +89,9 @@ noctalia plugins lint orbitfm
 - Подключение как источника:
   `noctalia msg plugins source add orbitfm git https://github.com/ModernByte/orbitfm`,
   затем `noctalia msg plugins enable modernbyte/orbitfm`.
-- Для публикации в общем магазине нужен отдельный PR в
-  `noctalia-dev/community-plugins`; там `catalog.toml` генерируется CI.
+- Внешняя публикация в `noctalia-dev/community-plugins` не выполняется: плагин
+  распространяется как git-источник `ModernByte/orbitfm`. Если решение изменится,
+  понадобится отдельный PR; в общем магазине `catalog.toml` генерируется CI.
 - Локальная проверка: community-валидатор из
   `.github/workflows/scripts/validate-plugins.py` на копии каталога плагина —
   `python3 validate-plugins.py --root <staging>` (0 ошибок).
