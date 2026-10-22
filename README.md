@@ -21,6 +21,7 @@ OrbitFM — кроссплатформенный десктоп-плеер ин�
 - Экспериментальный FFT-визуализатор (агрегированные метрики `aspectralstats`)
 - AppImage для Linux x86_64 (libmpv и FFmpeg внутри)
 - Flatpak для Linux x86_64 (libmpv/libass/libplacebo из исходников)
+- MSI для Windows x64 (libmpv из MSYS2, WiX) и DMG для macOS (libmpv из Homebrew)
 - Single-instance архитектура (Unix-сокет / Windows named pipe)
 
 ## Статус
@@ -40,9 +41,10 @@ Flatpak с libmpv/libass/libplacebo из исходников. Также
 реализованы интеграция Noctalia v5 и правила окон для Niri и Hyprland, интерактивный
 3D-глобус с выбором страны, каталог Radio Browser (DNS-discovery, поиск, failover,
 кэш, click-tracking), воспроизведение станции по UUID и MPRIS с метаданными станции.
-Кроссплатформенные медиа-интеграции, привязка SMTC к HWND и упаковка MSI/DMG пока
-не реализованы; CI собирает и тестирует проект на Linux и macOS и проверяет
-компиляцию под Windows.
+CI собирает и тестирует проект на Linux и macOS, проверяет компиляцию под Windows,
+а также публикует неподписанные MSI и DMG артефактами. Кроссплатформенные
+медиа-интеграции — привязка SMTC к HWND и Now Playing на macOS — пока не
+реализованы.
 
 Границы стран (Natural Earth 110m) и текстура Земли встроены в бинарник, поэтому
 глобус работает offline.
@@ -71,6 +73,17 @@ Flatpak с libmpv/libass/libplacebo из исходников. Также
 складывает `target/appimage/OrbitFM-<version>-x86_64.AppImage`. Инструменты
 `linuxdeploy` и `appimagetool` скачиваются при первом запуске, если не заданы через
 `LINUXDEPLOY` / `APPIMAGETOOL`.
+
+Нативные установщики собираются в CI (артефакты `OrbitFM-windows-x64-msi` и
+`OrbitFM-macos-dmg`):
+
+- Windows: `packaging/windows/build-msi.ps1` — MSI через WiX 5, libmpv из MSYS2
+  UCRT64; per-user установка в `%LOCALAPPDATA%\Programs\OrbitFM`;
+- macOS: `packaging/macos/build-dmg.sh` — `.app` с зависимостями из Homebrew,
+  ad-hoc подпись и UDZO DMG.
+
+Установщики не подписаны сертификатами: MSI без Authenticode, DMG без Developer ID
+и нотаризации.
 
 Требования для сборки:
 

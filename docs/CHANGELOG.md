@@ -10,7 +10,16 @@
 ### Добавлено
 - Нативные CI-джобы:
   - macOS: libmpv из Homebrew, `fmt`, `clippy`, тесты и release-сборка
-  - Windows: `fmt` и `clippy`; линковка libmpv не выполняется
+  - Windows: `fmt` и `clippy`
+- Сборка нативных установщиков в CI:
+  - Windows MSI (джоба `msi`): MSYS2 UCRT64 с libmpv 0.41.0, импорт `mpv.lib`
+    через `dumpbin`/`lib.exe`, сбор DLL-замыкания, WiX 5, per-user установка в
+    `%LOCALAPPDATA%\Programs\OrbitFM` с ярлыком в меню «Пуск» и smoke-тестом
+    `msiexec`
+  - macOS DMG (джоба `dmg`): `.app` с `Info.plist` и `.icns`, `dylibbundler`,
+    ad-hoc подпись, UDZO DMG со ссылкой на `/Applications` и проверкой образа
+  - артефакты `OrbitFM-windows-x64-msi` и `OrbitFM-macos-dmg`; без подписи
+    сертификатами и без нотаризации
 - Windows IPC: `src/ipc/pipe.rs` — named pipe `\\.\pipe\orbitfm`, single-instance
   через первый экземпляр; Unix-транспорт выделен в `socket.rs`, сервер и клиент общие
 - Этап 6 — Flatpak для Linux:
