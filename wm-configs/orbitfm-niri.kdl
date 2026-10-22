@@ -1,0 +1,9 @@
+// OrbitFM: плавающее окно 920×660.
+// Плавающие окна Niri центрирует по умолчанию, отдельная позиция не нужна.
+window-rule {
+    match app-id="org.modernbyte.OrbitFM"
+    open-floating true
+    default-column-width { fixed 920; }
+    default-window-height { fixed 660; }
+    draw-border-with-background false
+}

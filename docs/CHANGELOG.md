@@ -8,6 +8,16 @@
 ## [Unreleased]
 
 ### Добавлено
+- Этап 5 — интеграции Noctalia и оконных менеджеров:
+  - `noctalia-plugin/`: манифест `plugin.toml` (id `modernbyte/orbitfm`,
+    `plugin_api = 3`), виджет `plugin.luau` с глифом/подсказкой и отправкой
+    `orbitfm toggle` через `noctalia.runAsync`
+  - переводы `translations/en.json` и `translations/ru.json`
+  - манифест проверен `noctalia plugins lint` (0 ошибок, 0 предупреждений)
+  - `wm-configs/orbitfm-niri.kdl` — плавающее окно 920×660, проверено
+    `niri validate`
+  - `wm-configs/orbitfm-hyprland.conf` — float/size/center/stayfocused
+    через `windowrulev2`
 - Этап 4 — 3D-глобус и выбор страны:
   - `assets/geojson/world-110m.json` — Natural Earth 110m Admin 0 Countries
     (public domain), встроен через `include_str!`
@@ -108,6 +118,11 @@
 - `docs/templates/MERGE_CHECKLIST.md`, `PROJECT_STATUS.md`
 
 ### Изменено
+- plugin ID Noctalia приведён к обязательному формату `<author>/<plugin>`:
+  `modernbyte/orbitfm` вместо `org.modernbyte.orbitfm`; app-id окна
+  `org.modernbyte.OrbitFM` не изменился
+- пример плагина и документация переведены с несуществующего `exec_async` на
+  `noctalia.runAsync`; SRS и модуль 08 дополнены проверенными манифестом и правилами
 - зависимости: добавлены `egui-wgpu` 0.37, `wgpu` 30, `glam` 0.34, `bytemuck` 1.25,
   `geo` 0.33, `geojson` 1.0, `rstar` 0.13, `image` 0.25 (jpeg)
 - поиск станций разделён на поиск по названию и по стране; общий канал результатов

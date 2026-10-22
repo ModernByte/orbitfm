@@ -82,7 +82,7 @@ OrbitFM — кроссплатформенное десктоп-приложен
 | Репозиторий                 | ModernByte/orbitfm                |
 | Имя crate                   | orbitfm                           |
 | Бинарник                    | orbitfm                           |
-| ID плагина Noctalia         | org.modernbyte.orbitfm            |
+| ID плагина Noctalia         | modernbyte/orbitfm                |
 | Author в plugin.toml        | ModernByte                        |
 | Desktop Entry / app-id      | org.modernbyte.OrbitFM            |
 | User-Agent                  | OrbitFM/1.0 (ModernByte; Linux; Rust) |
