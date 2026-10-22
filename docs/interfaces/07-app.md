@@ -11,29 +11,33 @@ Application Core не экспортирует публичный трейт д�
 3. Маршрутизировать `IpcCommand` и `MediaCommand` в соответствующие модули.
 4. Управлять видимостью окна (show/hide, а не destroy).
 5. При клике по глобусу:
-   - получить точку на сфере от `GlobeRenderer`
-   - спросить страну у `GeoService`
-   - при необходимости запросить станции через `RadioClient`
-   - обновить UI
+   - получить точку на сфере от `GlobeCamera::screen_to_sphere`
+   - спросить страну у `GeoService::country_at_sphere_point`
+   - запросить станции страны через `RadioBrowserClient` с фильтром `countrycode`
+   - обновить UI (заголовок страны, результаты, пустое состояние)
 
 ## Порядок инициализации
 
-Текущий (Этап 3):
+Текущий (Этап 4):
 
 ```
 1. IpcServer::try_bind()          — ошибка AlreadyRunning → повторная отправка команды
 2. AudioEngine::new()             — ошибка фатальна для запуска
-3. MediaControls::new(wake)       — ошибка логируется, приложение работает без MPRIS
-4. RadioBrowserClient::new()      — без сетевых обращений
-5. фоновая задача refresh_servers — прогрев пула; ошибка только логируется
-6. фоновая задача: audio events → wake()
-7. IpcServer::run(wake, shutdown) — accept-loop
-8. eframe::run_native + OrbitApp  — GUI, после закрытия которого сервер
+3. GeoService::from_embedded()    — ошибка фатальна: без границ стран нет поиска
+4. MediaControls::new(wake)       — ошибка логируется, приложение работает без MPRIS
+5. RadioBrowserClient::new()      — без сетевых обращений
+6. фоновая задача refresh_servers — прогрев пула; ошибка только логируется
+7. фоновая задача: audio events → wake()
+8. IpcServer::run(wake, shutdown) — accept-loop
+9. eframe::run_native + OrbitApp  — GUI, после закрытия которого сервер
                                     останавливается и сокет удаляется
+10. OrbitApp::new                 — создаёт GlobeRenderer из wgpu_render_state
+                                    и кладёт его в callback_resources
 ```
 
-Целевой порядок после Этапа 4: `GeoService` создаётся до `MediaControls`, а
-`GlobeRenderer` — перед созданием `OrbitApp`.
+`GeoService` создаётся до `MediaControls`, чтобы ошибка датасета проявилась раньше
+инициализации D-Bus. Если `wgpu_render_state` недоступен, приложение продолжает
+работать без 3D-глобуса (`globe_ready = false`).
 
 ## Реакция на команды
 
@@ -68,14 +72,20 @@ Application Core не экспортирует публичный трейт д�
 
 ## GUI
 
+- глобус: ЛКМ выбирает страну, ПКМ + перетаскивание вращает, колесо масштабирует;
+- клик по стране запускает поиск станций `countrycode=<ISO alpha-2>` (до 30,
+  по голосам, `hide_broken=true`), в карточке показывается `Страна: …`;
 - поле поиска и кнопка «Найти» (Enter в поле также запускает поиск);
 - до 30 результатов, отсортированных по голосам; выбор строки запускает станцию;
-- состояние поиска (`Поиск…`) и ошибки каталога отображаются в карточке;
+- состояние поиска (`Поиск…`), ошибки каталога и «Станции не найдены» отображаются
+  в карточке;
+- при отсутствии `wgpu_render_state` вместо глобуса показывается «3D-глобус недоступен»;
 - при активном воспроизведении статус содержит UUID и имя станции.
 
 ## Зависимости
 
-`OrbitApp` использует конкретные реализации (`AudioEngine`, `RadioBrowserClient`,
-`MediaControls`) и каналы `tokio::sync` как границы. Подмена реализаций в тестах не
-требуется; модульные тесты проверяют чистые функции (`format_status`, `playback_label`,
-`station_label`, `truncate`) и логику внутри модулей.
+`OrbitApp` использует конкретные реализации (`AudioEngine`, `GeoService`,
+`RadioBrowserClient`, `MediaControls`, `GlobeCamera`) и каналы `tokio::sync` как
+границы. Подмена реализаций в тестах не требуется; модульные тесты проверяют чистые
+функции (`format_status`, `playback_label`, `station_label`, `country_label`,
+`truncate`) и логику внутри модулей.

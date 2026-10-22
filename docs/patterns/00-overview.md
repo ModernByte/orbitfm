@@ -126,7 +126,7 @@
 | **Type state** | Запрет вызовов в неверном состоянии на этапе компиляции (где окупается) |
 | **Drop / RAII** | Все FFI-ресурсы |
 | **Error enum + thiserror** | Доменные ошибки по модулям |
-| **Trait as port** | `AudioEngine`, `RadioClient`, `GeoService` — тестируемые границы |
+| **Явная граница модуля** | `AudioEngine`, `RadioBrowserClient`, `GeoService` — конкретные типы с зафиксированным контрактом |
 
 Детали стиля: скилл `orbitfm-rust`, [CONTRIBUTING.md](../CONTRIBUTING.md).
 

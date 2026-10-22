@@ -8,6 +8,25 @@
 ## [Unreleased]
 
 ### Добавлено
+- Этап 4 — 3D-глобус и выбор страны:
+  - `assets/geojson/world-110m.json` — Natural Earth 110m Admin 0 Countries
+    (public domain), встроен через `include_str!`
+  - `assets/textures/earth.jpg` — текстура Земли 2048×1024 (public domain),
+    встроена через `include_bytes!`
+  - `src/geo/`: `GeoService` с R-Tree по bounding box и Point-in-Polygon
+    (`geo::Contains`), преобразование точки сферы в широту/долготу,
+    fallback `ISO_A2_EH` для стран без `ISO_A2`
+  - `src/render/`: `GlobeRenderer` на wgpu (UV-сфера 64×32, текстура sRGB,
+    ambient + directional light, backface culling без depth buffer)
+  - `GlobeCamera`: орбитальное вращение ПКМ + drag с инерцией, зум колесом
+    с ограничением дистанции, `screen_to_sphere` через inverse view-projection
+  - интеграция через `egui_wgpu::Callback`: GPU-ресурсы в `CallbackResources`,
+    камера и ввод — в `OrbitApp`
+  - клик по стране запускает поиск `countrycode=<ISO alpha-2>` (до 30 станций,
+    `hide_broken=true`), заголовок `Страна: …` и состояние «Станции не найдены»
+  - заглушка «3D-глобус недоступен», если wgpu-состояние отсутствует
+  - unit-тесты geo (страны, антимеридиан, ISO fallback, сфера) и render
+    (геометрия сферы, камера, raycast, инерция, зум)
 - Этап 3 — Radio Browser и запуск станций:
   - `src/services/`: `RadioBrowserClient` с ленивым DNS-discovery
     `all.api.radio-browser.info`, дедупликацией IP и случайной ротацией пула
@@ -89,6 +108,10 @@
 - `docs/templates/MERGE_CHECKLIST.md`, `PROJECT_STATUS.md`
 
 ### Изменено
+- зависимости: добавлены `egui-wgpu` 0.37, `wgpu` 30, `glam` 0.34, `bytemuck` 1.25,
+  `geo` 0.33, `geojson` 1.0, `rstar` 0.13, `image` 0.25 (jpeg)
+- поиск станций разделён на поиск по названию и по стране; общий канал результатов
+  и `WakeFn`
 - `stop`/`error` больше не сбрасывают последний URL: MPRIS `Play` перезапускает поток
 - зависимости: добавлены `reqwest` 0.13 (rustls, json, query), `serde`, `thiserror`
 - аудио-стек уточнён под ADR-0003: безопасная обёртка `libmpv2` вместо прямого

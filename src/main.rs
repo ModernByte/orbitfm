@@ -6,12 +6,15 @@ use tracing_subscriber::EnvFilter;
 
 mod app;
 mod audio;
+mod geo;
 mod ipc;
 mod media;
+mod render;
 mod services;
 
 use app::{AppServices, OrbitApp, WakeHandle};
 use audio::AudioEngine;
+use geo::GeoService;
 use ipc::{IpcCommand, IpcError, IpcServer};
 use media::MediaControls;
 use services::RadioBrowserClient;
@@ -138,6 +141,7 @@ fn launch(runtime: &tokio::runtime::Runtime, command: &IpcCommand, explicit: boo
 
     let commands = server.commands();
     let audio = AudioEngine::new().context("не удалось инициализировать аудио-ядро")?;
+    let geo = GeoService::from_embedded().context("не удалось загрузить границы стран")?;
     let media = match MediaControls::new(wake.waker()) {
         Ok(media) => Some(media),
         Err(err) => {
@@ -175,6 +179,7 @@ fn launch(runtime: &tokio::runtime::Runtime, command: &IpcCommand, explicit: boo
         commands,
         wake,
         audio,
+        geo,
         radio,
         media,
         runtime.handle().clone(),
@@ -230,6 +235,7 @@ fn run_gui(
     commands: tokio::sync::mpsc::Receiver<ipc::IpcRequest>,
     wake: WakeHandle,
     audio: AudioEngine,
+    geo: GeoService,
     radio: RadioBrowserClient,
     media: Option<MediaControls>,
     runtime: tokio::runtime::Handle,
@@ -251,6 +257,7 @@ fn run_gui(
         Box::new(move |cc| {
             let services = AppServices {
                 audio,
+                geo,
                 radio,
                 media,
                 runtime,

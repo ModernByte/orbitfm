@@ -6,8 +6,10 @@ use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, warn};
 
 use crate::audio::{AudioEngine, AudioEvent, PlaybackState};
+use crate::geo::{Country, GeoService};
 use crate::ipc::{IpcCommand, IpcRequest, WakeFn};
 use crate::media::{MediaCommand, MediaControls, PlaybackInfo};
+use crate::render::{GlobeCamera, GlobeInput, GlobeRenderer, paint_globe};
 use crate::services::{RadioBrowserClient, RadioError, SearchParams, Station};
 
 const WINDOW_TITLE: &str = "OrbitFM";
@@ -60,6 +62,7 @@ impl Default for AppState {
 /// Подсистемы, которые создаются в `main` и передаются в GUI.
 pub struct AppServices {
     pub audio: AudioEngine,
+    pub geo: GeoService,
     pub radio: RadioBrowserClient,
     pub media: Option<MediaControls>,
     pub runtime: tokio::runtime::Handle,
@@ -71,13 +74,18 @@ pub struct OrbitApp {
     wake: WakeHandle,
     audio: AudioEngine,
     audio_events: broadcast::Receiver<AudioEvent>,
+    geo: GeoService,
     radio: RadioBrowserClient,
     media: Option<MediaControls>,
+    globe_camera: GlobeCamera,
+    globe_ready: bool,
     current_url: Option<String>,
     current_station: Option<Station>,
     search_query: String,
+    search_country: Option<Country>,
     search_results: Vec<Station>,
     search_pending: bool,
+    search_empty: bool,
     search_rx: Option<mpsc::UnboundedReceiver<Result<Vec<Station>, RadioError>>>,
     search_error: Option<String>,
     runtime: tokio::runtime::Handle,
@@ -95,24 +103,46 @@ impl OrbitApp {
         wake.install(cc.egui_ctx.clone());
         let AppServices {
             audio,
+            geo,
             radio,
             media,
             runtime,
         } = services;
         let audio_events = audio.subscribe();
+        let globe_ready = if let Some(render_state) = &cc.wgpu_render_state {
+            let renderer = GlobeRenderer::new(
+                &render_state.device,
+                &render_state.queue,
+                render_state.target_format,
+            );
+            render_state
+                .renderer
+                .write()
+                .callback_resources
+                .insert(renderer);
+            true
+        } else {
+            warn!("wgpu render state недоступен: 3D-глобус отключён");
+            false
+        };
         let mut app = Self {
             state: AppState::default(),
             commands,
             wake: wake.clone(),
             audio,
             audio_events,
+            geo,
             radio,
             media,
+            globe_camera: GlobeCamera::default(),
+            globe_ready,
             current_url: None,
             current_station: None,
             search_query: String::new(),
+            search_country: None,
             search_results: Vec::new(),
             search_pending: false,
+            search_empty: false,
             search_rx: None,
             search_error: None,
             runtime,
@@ -236,19 +266,35 @@ impl OrbitApp {
             return;
         }
 
-        let (sender, receiver) = mpsc::unbounded_channel();
-        self.search_rx = Some(receiver);
-        self.search_pending = true;
-        self.search_error = None;
-
-        let radio = self.radio.clone();
-        let waker = self.wake.waker();
-        let params = SearchParams {
+        self.search_country = None;
+        self.begin_search(SearchParams {
             name: Some(query),
             limit: SEARCH_RESULT_LIMIT,
             hide_broken: true,
             ..SearchParams::default()
-        };
+        });
+    }
+
+    fn start_country_search(&mut self, country: Country) {
+        self.search_country = Some(country.clone());
+        self.begin_search(SearchParams {
+            country_code: Some(country.iso_a2),
+            limit: SEARCH_RESULT_LIMIT,
+            hide_broken: true,
+            ..SearchParams::default()
+        });
+    }
+
+    fn begin_search(&mut self, params: SearchParams) {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        self.search_rx = Some(receiver);
+        self.search_pending = true;
+        self.search_empty = false;
+        self.search_error = None;
+        self.search_results.clear();
+
+        let radio = self.radio.clone();
+        let waker = self.wake.waker();
         self.runtime.spawn(async move {
             let result = radio.search(params).await;
             let _ = sender.send(result);
@@ -264,6 +310,7 @@ impl OrbitApp {
 
         match result {
             Ok(Ok(stations)) => {
+                self.search_empty = stations.is_empty();
                 self.search_results = stations;
                 self.search_pending = false;
                 self.search_rx = None;
@@ -434,6 +481,7 @@ impl OrbitApp {
         let mut quit_requested = false;
         let mut search_requested = false;
         let mut selected_station: Option<Station> = None;
+        let mut selected_country: Option<Country> = None;
 
         let card = egui::Frame::default()
             .fill(egui::Color32::from_rgba_unmultiplied(
@@ -514,11 +562,21 @@ impl OrbitApp {
                         search_requested = true;
                     }
                 });
+                if let Some(country) = &self.search_country {
+                    ui.label(
+                        egui::RichText::new(format!("Страна: {}", country_label(country)))
+                            .color(ACCENT)
+                            .strong(),
+                    );
+                }
                 if self.search_pending {
                     ui.label(egui::RichText::new("Поиск…").color(MUTED_TEXT));
                 }
                 if let Some(error) = &self.search_error {
                     ui.label(egui::RichText::new(error).color(ERROR_TEXT));
+                }
+                if self.search_empty && !self.search_pending && self.search_error.is_none() {
+                    ui.label(egui::RichText::new("Станции не найдены").color(MUTED_TEXT));
                 }
                 if !self.search_results.is_empty() {
                     ui.add_space(4.0);
@@ -535,32 +593,69 @@ impl OrbitApp {
 
                 ui.add_space(10.0);
 
-                let height = (ui.available_height() - 56.0).max(140.0);
-                let (globe_rect, _) = ui.allocate_exact_size(
+                let height = (ui.available_height() - 72.0).max(120.0);
+                let (globe_rect, response) = ui.allocate_exact_size(
                     egui::vec2(ui.available_width(), height),
-                    egui::Sense::hover(),
+                    egui::Sense::click_and_drag(),
                 );
-                let painter = ui.painter();
-                painter.rect_filled(
+                ui.painter().rect_filled(
                     globe_rect,
                     egui::CornerRadius::same(14),
                     egui::Color32::from_rgba_unmultiplied(255, 255, 255, 7),
                 );
-                let radius = (globe_rect.width().min(globe_rect.height()) * 0.24).max(48.0);
-                painter.circle_stroke(
-                    globe_rect.center(),
-                    radius,
-                    egui::Stroke::new(1.5, ACCENT.gamma_multiply(0.7)),
-                );
-                painter.text(
-                    globe_rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "3D-глобус\nЭтап 4",
-                    egui::FontId::proportional(16.0),
-                    MUTED_TEXT,
+
+                if self.globe_ready {
+                    let mut globe_input = GlobeInput::default();
+                    if response.dragged_by(egui::PointerButton::Secondary) {
+                        globe_input.drag_delta = ui.input(|input| input.pointer.delta());
+                    }
+                    if response.hovered() {
+                        globe_input.scroll_delta = ui.input(|input| input.smooth_scroll_delta.y);
+                    }
+                    if response.clicked_by(egui::PointerButton::Primary) {
+                        globe_input.primary_clicked = response.interact_pointer_pos();
+                    }
+                    let dt = ui.input(|input| input.stable_dt);
+                    self.globe_camera.update(dt, &globe_input);
+
+                    if let Some(position) = globe_input.primary_clicked
+                        && let Some(point) =
+                            self.globe_camera.screen_to_sphere(position, globe_rect)
+                        && let Some(country) = self.geo.country_at_sphere_point(
+                            f64::from(point.x),
+                            f64::from(point.y),
+                            f64::from(point.z),
+                        )
+                    {
+                        selected_country = Some(country.clone());
+                    }
+
+                    paint_globe(ui.painter(), globe_rect, &self.globe_camera);
+                } else {
+                    ui.painter().text(
+                        globe_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "3D-глобус недоступен",
+                        egui::FontId::proportional(16.0),
+                        MUTED_TEXT,
+                    );
+                }
+
+                if self.globe_camera.is_animating() {
+                    ui.ctx().request_repaint();
+                }
+
+                ui.add_space(6.0);
+                ui.label(
+                    egui::RichText::new(
+                        "ЛКМ — выбрать страну · ПКМ + перетаскивание — вращение · \
+                         колесо — масштаб",
+                    )
+                    .size(11.0)
+                    .color(MUTED_TEXT),
                 );
 
-                ui.add_space(8.0);
+                ui.add_space(4.0);
                 ui.label(
                     egui::RichText::new(
                         "Закрытие окна скрывает его — процесс продолжает работу. \
@@ -574,6 +669,10 @@ impl OrbitApp {
 
         if search_requested {
             self.start_search();
+            ctx.request_repaint();
+        }
+        if let Some(country) = selected_country {
+            self.start_country_search(country);
             ctx.request_repaint();
         }
         if let Some(station) = selected_station {
@@ -649,6 +748,20 @@ fn truncate(value: &str, max_chars: usize) -> String {
     let mut truncated: String = value.chars().take(max_chars.saturating_sub(1)).collect();
     truncated.push('…');
     truncated
+}
+
+fn country_label(country: &Country) -> String {
+    let name = single_line(&country.name);
+    let name = if name.is_empty() {
+        country.iso_a2.clone()
+    } else {
+        name
+    };
+
+    match country.iso_a3.as_deref() {
+        Some(iso_a3) => format!("{name} ({}, {iso_a3})", country.iso_a2),
+        None => format!("{name} ({})", country.iso_a2),
+    }
 }
 
 fn station_label(station: &Station) -> String {
@@ -773,6 +886,26 @@ mod tests {
         assert_eq!(truncate("коротко", 10), "коротко");
         assert_eq!(truncate("abcdef", 4), "abc…");
         assert_eq!(truncate("абвгде", 4), "абв…");
+    }
+
+    #[test]
+    fn country_label_includes_iso_codes() {
+        let country = Country {
+            name: "Germany".to_owned(),
+            iso_a2: "DE".to_owned(),
+            iso_a3: Some("DEU".to_owned()),
+        };
+        assert_eq!(country_label(&country), "Germany (DE, DEU)");
+    }
+
+    #[test]
+    fn country_label_falls_back_to_iso_codes() {
+        let country = Country {
+            name: "  ".to_owned(),
+            iso_a2: "XK".to_owned(),
+            iso_a3: None,
+        };
+        assert_eq!(country_label(&country), "XK (XK)");
     }
 
     #[test]

@@ -1,0 +1,261 @@
+//! Камера глобуса: орбитальное вращение, зум и преобразование экран → сфера.
+
+use eframe::egui::{Pos2, Rect, Vec2};
+use glam::camera::rh::{proj::directx, view};
+use glam::{Mat4, Vec3, Vec4};
+
+use super::GlobeInput;
+
+const FOV_Y_RADIANS: f32 = std::f32::consts::FRAC_PI_4;
+const NEAR_PLANE: f32 = 0.1;
+const FAR_PLANE: f32 = 50.0;
+
+const DEFAULT_DISTANCE: f32 = 2.8;
+const MIN_DISTANCE: f32 = 1.4;
+const MAX_DISTANCE: f32 = 6.0;
+const ZOOM_SENSITIVITY: f32 = 0.002;
+
+const DRAG_SENSITIVITY: f32 = 0.006;
+const INERTIA_DAMPING: f32 = 6.0;
+const INERTIA_STOP: f32 = 0.01;
+const MAX_PITCH: f32 = 85.0 * std::f32::consts::PI / 180.0;
+
+/// Униформ-данные камеры для шейдера.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct CameraUniform {
+    pub view_proj: [[f32; 4]; 4],
+    pub light_direction: [f32; 4],
+}
+
+/// Орбитальная камера вокруг глобуса радиусом 1.
+#[derive(Debug)]
+pub struct GlobeCamera {
+    yaw: f32,
+    pitch: f32,
+    distance: f32,
+    yaw_velocity: f32,
+    pitch_velocity: f32,
+}
+
+impl Default for GlobeCamera {
+    fn default() -> Self {
+        Self {
+            yaw: 0.0,
+            pitch: 0.0,
+            distance: DEFAULT_DISTANCE,
+            yaw_velocity: 0.0,
+            pitch_velocity: 0.0,
+        }
+    }
+}
+
+impl GlobeCamera {
+    /// Обновляет камеру по вводу за кадр.
+    pub fn update(&mut self, dt: f32, input: &GlobeInput) {
+        let dt = dt.clamp(0.001, 0.05);
+
+        if input.drag_delta != Vec2::ZERO {
+            let yaw_delta = -input.drag_delta.x * DRAG_SENSITIVITY;
+            let pitch_delta = input.drag_delta.y * DRAG_SENSITIVITY;
+
+            self.yaw += yaw_delta;
+            self.pitch += pitch_delta;
+            self.yaw_velocity = yaw_delta / dt;
+            self.pitch_velocity = pitch_delta / dt;
+        } else {
+            self.yaw += self.yaw_velocity * dt;
+            self.pitch += self.pitch_velocity * dt;
+
+            let damping = (-INERTIA_DAMPING * dt).exp();
+            self.yaw_velocity *= damping;
+            self.pitch_velocity *= damping;
+            if self.yaw_velocity.abs() < INERTIA_STOP {
+                self.yaw_velocity = 0.0;
+            }
+            if self.pitch_velocity.abs() < INERTIA_STOP {
+                self.pitch_velocity = 0.0;
+            }
+        }
+
+        self.yaw = self.yaw.rem_euclid(std::f32::consts::TAU);
+        self.pitch = self.pitch.clamp(-MAX_PITCH, MAX_PITCH);
+        if (self.pitch == MAX_PITCH && self.pitch_velocity > 0.0)
+            || (self.pitch == -MAX_PITCH && self.pitch_velocity < 0.0)
+        {
+            self.pitch_velocity = 0.0;
+        }
+
+        if input.scroll_delta != 0.0 {
+            let scale = (-input.scroll_delta * ZOOM_SENSITIVITY).exp();
+            self.distance = (self.distance * scale).clamp(MIN_DISTANCE, MAX_DISTANCE);
+        }
+    }
+
+    /// Идёт ли инерционное движение, требующее перерисовки.
+    pub fn is_animating(&self) -> bool {
+        self.yaw_velocity != 0.0 || self.pitch_velocity != 0.0
+    }
+
+    /// Позиция камеры в мировых координатах.
+    pub fn eye(&self) -> Vec3 {
+        let cos_pitch = self.pitch.cos();
+        Vec3::new(
+            cos_pitch * self.yaw.sin(),
+            self.pitch.sin(),
+            cos_pitch * self.yaw.cos(),
+        ) * self.distance
+    }
+
+    /// Матрица вида и проекции для текущего aspect.
+    pub fn view_proj(&self, aspect: f32) -> Mat4 {
+        let view = view::look_at_mat4(self.eye(), Vec3::ZERO, Vec3::Y);
+        let projection =
+            directx::perspective(FOV_Y_RADIANS, aspect.max(0.01), NEAR_PLANE, FAR_PLANE);
+        projection * view
+    }
+
+    /// Пересечение луча из экранной точки со сферой радиусом 1.
+    pub fn screen_to_sphere(&self, screen_pos: Pos2, viewport: Rect) -> Option<Vec3> {
+        if viewport.width() <= 0.0 || viewport.height() <= 0.0 || !viewport.contains(screen_pos) {
+            return None;
+        }
+
+        let ndc_x = (screen_pos.x - viewport.left()) / viewport.width() * 2.0 - 1.0;
+        let ndc_y = 1.0 - (screen_pos.y - viewport.top()) / viewport.height() * 2.0;
+        let inverse = self.view_proj(viewport.aspect_ratio()).inverse();
+
+        let near = unproject(inverse, ndc_x, ndc_y, 0.0)?;
+        let far = unproject(inverse, ndc_x, ndc_y, 1.0)?;
+
+        let origin = self.eye();
+        let direction = (far - near).normalize_or_zero();
+        if direction == Vec3::ZERO {
+            return None;
+        }
+
+        let b = origin.dot(direction);
+        let c = origin.length_squared() - 1.0;
+        let discriminant = b * b - c;
+        if discriminant < 0.0 {
+            return None;
+        }
+
+        let distance = -b - discriminant.sqrt();
+        (distance >= 0.0).then(|| (origin + direction * distance).normalize())
+    }
+
+    pub(crate) fn uniform(&self, aspect: f32) -> CameraUniform {
+        let light = Vec3::new(0.5, 0.35, 0.8).normalize();
+        CameraUniform {
+            view_proj: self.view_proj(aspect).to_cols_array_2d(),
+            light_direction: [light.x, light.y, light.z, 0.0],
+        }
+    }
+}
+
+fn unproject(inverse_view_proj: Mat4, x: f32, y: f32, z: f32) -> Option<Vec3> {
+    let clip = inverse_view_proj * Vec4::new(x, y, z, 1.0);
+    (clip.w.abs() > f32::EPSILON).then(|| clip.truncate() / clip.w)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn viewport() -> Rect {
+        Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0))
+    }
+
+    #[test]
+    fn center_ray_hits_visible_hemisphere() {
+        let camera = GlobeCamera::default();
+        let hit = camera
+            .screen_to_sphere(viewport().center(), viewport())
+            .expect("центр экрана должен попадать в сферу");
+
+        assert!((hit.length() - 1.0).abs() < 1e-5);
+        assert!(hit.z > 0.99, "ожидалась точка перед камерой: {hit:?}");
+    }
+
+    #[test]
+    fn center_ray_reflects_camera_angles() {
+        let camera = GlobeCamera {
+            yaw: 13.405_f32.to_radians(),
+            pitch: 52.52_f32.to_radians(),
+            ..GlobeCamera::default()
+        };
+        let hit = camera
+            .screen_to_sphere(viewport().center(), viewport())
+            .expect("центр экрана должен попадать в сферу");
+
+        let lat = hit.y.asin().to_degrees();
+        let lon = hit.x.atan2(hit.z).to_degrees();
+        assert!((lat - 52.52).abs() < 1e-3, "широта: {lat}");
+        assert!((lon - 13.405).abs() < 1e-3, "долгота: {lon}");
+    }
+
+    #[test]
+    fn corner_ray_misses_sphere() {
+        let camera = GlobeCamera::default();
+        let corner = viewport().left_top();
+
+        assert!(camera.screen_to_sphere(corner, viewport()).is_none());
+    }
+
+    #[test]
+    fn drag_changes_orientation_and_keeps_inertia() {
+        let mut camera = GlobeCamera::default();
+        let input = GlobeInput {
+            drag_delta: Vec2::new(40.0, 0.0),
+            ..GlobeInput::default()
+        };
+
+        camera.update(0.016, &input);
+        assert!(camera.is_animating());
+
+        let yaw_before = camera.yaw;
+        camera.update(0.05, &GlobeInput::default());
+        assert!(
+            camera.yaw < yaw_before,
+            "инерция должна продолжать вращение"
+        );
+    }
+
+    #[test]
+    fn zoom_is_clamped() {
+        let mut camera = GlobeCamera::default();
+        camera.update(
+            0.016,
+            &GlobeInput {
+                scroll_delta: 100_000.0,
+                ..GlobeInput::default()
+            },
+        );
+        assert!((camera.distance - MIN_DISTANCE).abs() < 1e-5);
+
+        camera.update(
+            0.016,
+            &GlobeInput {
+                scroll_delta: -100_000.0,
+                ..GlobeInput::default()
+            },
+        );
+        assert!((camera.distance - MAX_DISTANCE).abs() < 1e-5);
+    }
+
+    #[test]
+    fn pitch_is_clamped() {
+        let mut camera = GlobeCamera::default();
+        camera.update(
+            0.016,
+            &GlobeInput {
+                drag_delta: Vec2::new(0.0, 100_000.0),
+                ..GlobeInput::default()
+            },
+        );
+
+        assert!((camera.pitch - MAX_PITCH).abs() < 1e-5);
+        assert!(camera.eye().is_finite());
+    }
+}

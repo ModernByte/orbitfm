@@ -20,9 +20,7 @@
 
 ## 3. Состояние приложения
 
-Целевое состояние (после Этапа 4) добавит `geo` и `globe`.
-
-Текущее состояние (Этап 3):
+Текущее состояние (Этап 4):
 
 ```rust
 pub struct AppState {
@@ -31,6 +29,7 @@ pub struct AppState {
 
 pub struct AppServices {
     pub audio: AudioEngine,
+    pub geo: GeoService,
     pub radio: RadioBrowserClient,
     pub media: Option<MediaControls>,
     pub runtime: tokio::runtime::Handle,
@@ -42,19 +41,28 @@ pub struct OrbitApp {
     wake: WakeHandle,
     audio: AudioEngine,
     audio_events: broadcast::Receiver<AudioEvent>,
+    geo: GeoService,
     radio: RadioBrowserClient,
     media: Option<MediaControls>,
+    globe_camera: GlobeCamera,
+    globe_ready: bool,
     current_url: Option<String>,
     current_station: Option<Station>,
     search_query: String,
+    search_country: Option<Country>,
     search_results: Vec<Station>,
     search_pending: bool,
+    search_empty: bool,
     search_rx: Option<mpsc::UnboundedReceiver<Result<Vec<Station>, RadioError>>>,
     search_error: Option<String>,
     runtime: tokio::runtime::Handle,
     quitting: bool,
 }
 ```
+
+`globe_ready` — результат создания `GlobeRenderer` из `CreationContext::wgpu_render_state`.
+`search_country` хранит страну, выбранную на глобусе, и сбрасывается при поиске по
+названию; `search_empty` отмечает успешный ответ без станций.
 
 `current_url` заполняется из `AudioEvent::Started` и из запуска станции; `Stopped`/`Error`
 его больше не очищают — последний URL нужен MPRIS для повторного запуска.
@@ -65,14 +73,18 @@ pub struct OrbitApp {
 ## 4. Порядок инициализации
 
 ```
-IpcServer::try_bind → AudioEngine::new → MediaControls::new(wake)
-→ RadioBrowserClient::new → фоновый refresh_servers
-→ задача audio events → wake → IpcServer::run → eframe
+IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
+→ MediaControls::new(wake) → RadioBrowserClient::new → фоновый refresh_servers
+→ задача audio events → wake → IpcServer::run → eframe → OrbitApp::new
 ```
 
 `try_bind` выполняется до создания аудио-ядра, чтобы второй экземпляр завершился, не
-занимая аудиоустройство. Ошибка `AudioEngine::new` фатальна; ошибки MPRIS и прогрева
-каталога — только предупреждения.
+занимая аудиоустройство. Ошибки `AudioEngine::new` и загрузки гео-датасета фатальны;
+ошибки MPRIS и прогрева каталога — только предупреждения.
+
+`OrbitApp::new` создаёт `GlobeRenderer` из `cc.wgpu_render_state` и вставляет его в
+`render_state.renderer.write().callback_resources`. При отсутствии wgpu-состояния
+приложение работает без глобуса (`globe_ready = false`).
 
 ## 5. Главный цикл (логика)
 
@@ -91,18 +103,41 @@ IpcServer::try_bind → AudioEngine::new → MediaControls::new(wake)
 MPRIS-команды обрабатываются и в скрытом состоянии; пробуждение выполняют `WakeFn` из
 IPC-сервера, MPRIS-колбэка, задача аудио-событий и завершённый поиск.
 
-## 6. Поиск и запуск станций
+## 6. Глобус и выбор страны
+
+В `ui()` область глобуса выделяется через `allocate_exact_size` с
+`Sense::click_and_drag()`:
+
+1. ПКМ + drag → `GlobeInput::drag_delta`; колесо при наведении → `scroll_delta`;
+   ЛКМ → `primary_clicked`.
+2. `GlobeCamera::update(stable_dt, &input)` обновляет ориентацию, инерцию и зум.
+3. При клике `screen_to_sphere` даёт точку сферы, `GeoService::country_at_sphere_point`
+   — страну.
+4. Найденная страна передаётся в `start_country_search`: `search_country`
+   устанавливается, выполняется запрос `countrycode=<ISO alpha-2>`, `limit = 30`,
+   `hide_broken = true`.
+5. `paint_globe` добавляет paint callback; пока камера `is_animating`, запрашивается
+   repaint.
+
+Клик по океану или территории без валидного ISO-кода ничего не меняет. При
+`globe_ready = false` вместо глобуса рисуется заглушка, ввод игнорируется.
+
+## 7. Поиск и запуск станций
 
 - «Найти»/Enter запускают `RadioBrowserClient::search` с `name`, `limit = 30`,
-  `hide_broken = true`; запрос выполняется в tokio-задаче, результат приходит через
-  `mpsc` и будит GUI.
+  `hide_broken = true`; `search_country` сбрасывается. Запрос выполняется в
+  tokio-задаче, результат приходит через `mpsc` и будит GUI.
+- Поиск по стране использует тот же канал и отличается только `SearchParams`
+  (`country_code`, без `name`); заголовок `Страна: …` остаётся до следующего
+  поиска по названию.
+- Пустой успешный ответ выставляет `search_empty`; UI показывает «Станции не найдены».
 - Выбор результата или IPC `play <uuid>` вызывает `start_station`:
   проверяется непустой `url_resolved`, выполняется `audio.play`, сохраняются
   `current_url`/`current_station`, асинхронно отправляется click.
 - `play <uuid>` сначала ищет станцию в последних результатах поиска, затем вызывает
   `get_station` с таймаутом 8 с; таймаут маппится в `RadioError::Network`.
 
-## 7. Синхронизация с MPRIS
+## 8. Синхронизация с MPRIS
 
 `sync_media()` вызывается каждый кадр, но `MediaControls::set_playback` дедуплицирует
 неизменившееся состояние. Соответствие:
@@ -114,7 +149,7 @@ IPC-сервера, MPRIS-колбэка, задача аудио-событий
 Метаданные берутся из `current_station`: `name` → title, `tags` → artist, `favicon` →
 artUrl, `url_resolved` → `xesam:url`. Без станции используется URL потока.
 
-## 8. Жизненный цикл окна
+## 9. Жизненный цикл окна
 
 - Закрытие крестиком → `ViewportCommand::CancelClose` + `ViewportCommand::Visible(false)`,
   `window_visible = false`
@@ -123,15 +158,15 @@ artUrl, `url_resolved` → `xesam:url`. Без станции используе
 - Команда `quit` → `quitting = true` + `ViewportCommand::Close`; после выхода из GUI main
   останавливает IPC-сервер, аудио-поток и удаляет сокет
 
-## 9. Текущие ограничения
+## 10. Текущие ограничения
 
 - `Next`/`Previous` из MPRIS не переключают станции (нет списка/истории)
-- 3D-глобус заменён заглушкой до Этапа 4
+- На глобусе нет маркеров станций, подписей стран и атмосферы
 - Клик мимо окна (overlay) ещё не реализован
 - Кэш станций только in-memory; дискового кэша нет
 - Метаданные ICY (название трека внутри потока) не читаются
 
-## 9. Связанные документы
+## 11. Связанные документы
 
 - ADR-0002, ADR-0005, ADR-0006
 - `docs/architecture/00-overview.md`

@@ -50,7 +50,8 @@ OrbitFM проектируется по архитектуре **«Единый 
 | :--- | :--- | :--- |
 | **Core & Async Engine** | Rust 1.95+ + `tokio` | Асинхронная обработка IPC, HTTP-запросов и событий |
 | **GUI Framework** | `eframe` / `egui` | Реактивный кроссплатформенный UI с поддержкой прозрачности |
-| **3D Rendering Pass** | `egui-wgpu` (`PaintCallback`) | Чистый нативный рендер 3D-шара через `wgpu` прямо в кастомный пасс `egui` (без несовместимого `three-d`) |
+| **3D Rendering Pass** | `egui-wgpu` (`PaintCallback`) + `wgpu` + `glam` | Нативный рендер 3D-шара в кастомный пасс `egui` (без несовместимого `three-d`); матрицы — `glam` |
+| **Texture Decoding** | `image` (feature `jpeg`) | Декодирование встроенной текстуры Земли в RGBA8 |
 | **Spatial / Geo Index** | `geo` + `geojson` + `rstar` | Парсинг GeoJSON, R-Tree индекс стран для мгновенного `Point-in-Polygon` Raycasting |
 | **Audio Core** | `libmpv2` (безопасная обёртка над `libmpv` C-API) | Отказоустойчивое декодирование сетевых стримов (HLS, AAC, MP3) с поддержкой реконнекта |
 | **Radio API Client** | `reqwest` + Server Discovery | Динамический поиск живых серверов Radio Browser и авто-переключение зеркала |
@@ -69,10 +70,10 @@ OrbitFM проектируется по архитектуре **«Единый 
 #### Математика Raycasting & R-Tree Поиска
 1. **Пересечение луча со сферой:** При клике ЛКМ вычисляется луч $R(t) = O + tD$ из координат курсора через обратную матрицу видовой проецирующей камеры $(M_{proj} \times M_{view})^{-1}$.
 2. **Координатное преобразование:** Точка пересечения сферы $(x, y, z)$ переводится в географические координаты:
-   $$\phi = \arcsin\left(\frac{y}{R}\right), \quad \lambda = \arctan2(z, x)$$
+   $$\phi = \arcsin\left(\frac{y}{R}\right), \quad \lambda = \arctan2(x, z)$$
 3. **R-Tree spatial lookup:** Координата $(\phi, \lambda)$ передается в `rstar::RTree` индекс прямоугольных рамок (Bounding Boxes) стран.
 4. **Точная проверка (Point-in-Polygon):** Для отфильтрованных кандидатов из R-Tree запускается проверка `geo::contains` по точным `MultiPolygon` границам из датасета *Natural Earth 110m*.
-5. **Обработка антимеридиана:** Полигоны, пересекающие $+180^\circ/-180^\circ$, нормализуются до единого координатного пространства.
+5. **Обработка антимеридиана:** Используется датасет Natural Earth, в котором полигоны уже разделены по $\pm180^\circ$; дополнительная нормализация не требуется.
 
 ---
 
@@ -179,6 +180,7 @@ windowrulev2 = stayfocused, class:^(org\.modernbyte\.OrbitFM)$
 orbitfm/
 ├── assets/
 │   ├── geojson/world-110m.json      <-- Offline векторные границы стран (Natural Earth)
+│   ├── textures/earth.jpg           <-- Текстура Земли (equirectangular, public domain)
 │   └── icons/                       <-- SVG/PNG иконки интерфейса
 ├── noctalia-plugin/
 │   ├── plugin.toml                  <-- Официальный валидный манифест Noctalia v5

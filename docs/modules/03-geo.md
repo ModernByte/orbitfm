@@ -17,16 +17,16 @@
 pub struct GeoService { /* ... */ }
 
 impl GeoService {
-    /// Загружает GeoJSON и строит R-Tree
+    /// Загружает GeoJSON из файла и строит R-Tree.
     pub fn load(path: &Path) -> Result<Self, GeoError>;
 
-    /// Или из встроенных данных
+    /// Загружает встроенный Natural Earth 110m.
     pub fn from_embedded() -> Result<Self, GeoError>;
 
-    /// Найти страну по географическим координатам
+    /// Находит страну по географическим координатам (градусы).
     pub fn country_at(&self, lat: f64, lon: f64) -> Option<&Country>;
 
-    /// Найти страну по точке на единичной сфере (x, y, z)
+    /// Находит страну по точке на сфере (x, y, z).
     pub fn country_at_sphere_point(&self, x: f64, y: f64, z: f64) -> Option<&Country>;
 }
 
@@ -35,33 +35,63 @@ pub struct Country {
     pub name: String,
     pub iso_a2: String,          // ISO 3166-1 alpha-2
     pub iso_a3: Option<String>,
-    // геометрия хранится внутри сервиса
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GeoError {
+    #[error("не удалось загрузить GeoJSON: {0}")]
+    Load(String),
+    #[error("некорректные данные границ")]
+    InvalidGeometry,
 }
 ```
 
+Геометрия (`MultiPolygon<f64>`) хранится внутри `GeoService` и наружу не выходит.
+Для приложения используется `from_embedded`; `load` остаётся контрактом модуля для
+альтернативных датасетов.
+
 ## 3. Алгоритм
 
-1. Луч из экранных координат → через inverse view-projection → пересечение со сферой.
-2. Точка пересечения (x, y, z) → географические координаты:
+1. Рендер-модуль преобразует клик в точку на сфере (`GlobeCamera::screen_to_sphere`).
+2. Точка `(x, y, z)` переводится в географические координаты:
    ```
+   R = sqrt(x² + y² + z²)
    φ = arcsin(y / R)
-   λ = atan2(z, x)
+   λ = atan2(x, z)
    ```
-3. Быстрый отбор кандидатов через R-Tree по bounding box.
-4. Точная проверка `geo::contains` для MultiPolygon.
-5. Полигоны, пересекающие ±180°, нормализуются при загрузке.
+   Соглашение: `x = cos φ · sin λ`, `y = sin φ`, `z = cos φ · cos λ`; `+Z` — Гринвич.
+3. Быстрый отбор кандидатов через R-Tree по bounding box `[lon, lat]`.
+4. Точная проверка `geo::Contains<Point>` для `MultiPolygon`.
+5. Полигоны антимеридиана уже разделены в датасете Natural Earth; отдельная
+   нормализация при загрузке не выполняется. Это проверено тестом для Fiji.
 
 ## 4. Данные
 
-- Источник: Natural Earth 110m (Admin 0 – Countries)
-- Формат: GeoJSON
-- Расположение: `assets/geojson/world-110m.json` (или embedded через `include_dir` / `rust-embed`)
+- Источник: [Natural Earth 110m](https://www.naturalearthdata.com/) (Admin 0 – Countries), public domain.
+- Формат: GeoJSON FeatureCollection.
+- Расположение: `assets/geojson/world-110m.json`, встроен в бинарник через `include_str!`.
+- Название: `ADMIN` (fallback — `NAME`).
+- ISO-коды: `ISO_A2`, при `-99`/пустом значении — `ISO_A2_EH`; невалидные пропускаются.
+  `ISO_A3` сохраняется как `Option`.
+- Учитываются только `Polygon` и `MultiPolygon`; кольца короче 4 точек и нечисловые
+  координаты отбрасываются. Feature без валидного ISO alpha-2 пропускается.
 
 ## 5. Производительность
 
-- Построение R-Tree — один раз при старте
-- Запрос `country_at` должен укладываться в единицы миллисекунд
+- Построение R-Tree — один раз при старте.
+- Запрос `country_at` — один обход R-Tree плюс Point-in-Polygon по кандидатам,
+  укладывается в единицы миллисекунд.
 
-## 6. Связанные ADR
+## 6. Тесты
+
+- загрузка минимального GeoJSON из файла;
+- встроенный датасет содержит более 170 стран;
+- DE/RU/AU/AQ определяются по координатам;
+- fallback `ISO_A2_EH` для FR/NO;
+- Fiji через антимеридиан;
+- океан, невалидные координаты и NaN → `None`;
+- `country_at_sphere_point` согласован с `country_at`.
+
+## 7. Связанные ADR
 
 - ADR-0008: Геопространственный поиск
