@@ -136,7 +136,7 @@ fn launch(runtime: &tokio::runtime::Runtime, command: &IpcCommand, explicit: boo
 
     let commands = server.commands();
     let audio = AudioEngine::new().context("не удалось инициализировать аудио-ядро")?;
-    let media = match MediaControls::new() {
+    let media = match MediaControls::new(wake.waker()) {
         Ok(media) => Some(media),
         Err(err) => {
             warn!(error = %err, "медиа-контролы недоступны, продолжаем без MPRIS");

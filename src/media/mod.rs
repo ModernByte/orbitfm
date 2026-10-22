@@ -1,5 +1,6 @@
 //! Системные медиа-контролы на базе playwire (MPRIS v2 на Linux).
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use playwire::{
@@ -11,6 +12,9 @@ use tokio::sync::mpsc;
 const PLAYER_IDENTITY: &str = "OrbitFM";
 const DESKTOP_ENTRY: &str = "org.modernbyte.OrbitFM";
 const TRACK_ID_PREFIX: &str = "/org/modernbyte/OrbitFM/track";
+
+/// Пробуждение GUI-цикла после команды от системного медиа-виджета.
+pub type WakeFn = Arc<dyn Fn() + Send + Sync>;
 
 /// Информация, отображаемая системой.
 #[derive(Debug, Clone, PartialEq)]
@@ -55,17 +59,18 @@ pub struct MediaControls {
 
 impl MediaControls {
     /// Регистрирует MPRIS-имя и начинает принимать команды системы.
-    pub fn new() -> Result<Self, MediaError> {
+    pub fn new(wake: WakeFn) -> Result<Self, MediaError> {
         let (event_tx, events) = mpsc::unbounded_channel();
         let config = PlayerConfig::new(PLAYER_IDENTITY)
             .desktop_entry(DESKTOP_ENTRY)
             .track_id_prefix(TRACK_ID_PREFIX);
 
         let controls = PlatformControls::new(config, move |event| {
-            if let Some(command) = map_event(event)
-                && event_tx.send(command).is_err()
-            {
-                tracing::trace!("приёмник медиа-команд отключён");
+            if let Some(command) = map_event(event) {
+                if event_tx.send(command).is_err() {
+                    tracing::trace!("приёмник медиа-команд отключён");
+                }
+                wake();
             }
         })
         .map_err(init_error)?;
