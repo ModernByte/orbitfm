@@ -1,0 +1,32 @@
+[package]
+name = "orbitfm"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+description = "3D Interactive Global Radio Player"
+repository = "https://github.com/ModernByte/orbitfm"
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0"
+eframe = { version = "0.37", default-features = false, features = [
+    "accesskit",
+    "default_fonts",
+    "wayland",
+    "wgpu",
+    "x11",
+] }
+thiserror = "2.0"
+tokio = { version = "1.54", features = [
+    "io-util",
+    "macros",
+    "net",
+    "rt-multi-thread",
+    "sync",
+    "time",
+] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile = "3"

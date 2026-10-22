@@ -1,0 +1,46 @@
+name: Функция (Feature)
+description: Предложить новую возможность
+title: "[feat] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Проблема / потребность
+      description: Какую задачу пользователя решаем?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Предложение
+      description: Как видишь решение на высоком уровне?
+    validations:
+      required: true
+  - type: dropdown
+    id: layer
+    attributes:
+      label: Затронутый слой
+      options:
+        - Presentation (GUI / globe)
+        - Application Core
+        - Domain (audio / radio / geo / media)
+        - Infrastructure / IPC
+        - Docs / ADR
+        - Не уверен
+    validations:
+      required: true
+  - type: checkboxes
+    id: adr
+    attributes:
+      label: Архитектура
+      options:
+        - label: Требуется новый или обновлённый ADR
+        - label: Меняются docs/interfaces или docs/modules
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Критерии приёмки
+      value: |
+        - [ ]
+        - [ ]

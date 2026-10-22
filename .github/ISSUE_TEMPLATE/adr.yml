@@ -1,0 +1,38 @@
+name: ADR (Architecture Decision)
+description: Предложить архитектурное решение
+title: "[adr] "
+labels: ["architecture"]
+body:
+  - type: textarea
+    id: context
+    attributes:
+      label: Контекст
+      description: Какая проблема и ограничения?
+    validations:
+      required: true
+  - type: textarea
+    id: options
+    attributes:
+      label: Варианты
+      description: 2–3 альтернативы со ссылками на официальную документацию
+    validations:
+      required: true
+  - type: textarea
+    id: recommendation
+    attributes:
+      label: Рекомендуемое решение
+    validations:
+      required: true
+  - type: textarea
+    id: consequences
+    attributes:
+      label: Последствия
+      value: |
+        Положительные:
+        - 
+        Отрицательные / риски:
+        - 
+  - type: markdown
+    attributes:
+      value: |
+        После обсуждения оформить файл в `docs/adr/XXXX-....md` по шаблону из ADR-0001.

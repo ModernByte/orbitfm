@@ -1,0 +1,55 @@
+name: Ошибка (Bug)
+description: Сообщить о дефекте в OrbitFM
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Опиши проблему так, чтобы её можно было воспроизвести. Linux First.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Кратко
+      description: Что пошло не так?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Шаги воспроизведения
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Ожидаемое поведение
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Фактическое поведение
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Платформа
+      placeholder: "Linux (Niri 25.x) / Windows / macOS"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Версия / коммит
+      placeholder: "0.1.0 или git SHA"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Логи / стек
+      render: shell

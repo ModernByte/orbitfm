@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Документация OrbitFM
+    url: https://github.com/ModernByte/orbitfm/tree/main/docs
+    about: SRS, ADR, modules, interfaces, patterns, AGENTS
