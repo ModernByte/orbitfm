@@ -21,7 +21,7 @@ OrbitFM — кроссплатформенный десктоп-плеер ин�
 - Экспериментальный FFT-визуализатор (агрегированные метрики `aspectralstats`)
 - AppImage для Linux x86_64 (libmpv и FFmpeg внутри)
 - Flatpak для Linux x86_64 (libmpv/libass/libplacebo из исходников)
-- Single-instance архитектура
+- Single-instance архитектура (Unix-сокет / Windows named pipe)
 
 ## Статус
 
@@ -40,7 +40,9 @@ Flatpak с libmpv/libass/libplacebo из исходников. Также
 реализованы интеграция Noctalia v5 и правила окон для Niri и Hyprland, интерактивный
 3D-глобус с выбором страны, каталог Radio Browser (DNS-discovery, поиск, failover,
 кэш, click-tracking), воспроизведение станции по UUID и MPRIS с метаданными станции.
-Кроссплатформенные медиа-интеграции и MSI/DMG ждут нативных раннеров.
+Кроссплатформенные медиа-интеграции, привязка SMTC к HWND и упаковка MSI/DMG пока
+не реализованы; CI собирает и тестирует проект на Linux и macOS и проверяет
+компиляцию под Windows.
 
 Границы стран (Natural Earth 110m) и текстура Земли встроены в бинарник, поэтому
 глобус работает offline.

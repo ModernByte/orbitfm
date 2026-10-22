@@ -69,16 +69,17 @@
 
 ## Текущий этап: Этап 6 — Полировка и кроссплатформа
 
-- [ ] Windows (SMTC) — заблокировано: нужны Windows-раннер, сборка libmpv,
-  named pipe IPC и привязка SMTC к HWND
-- [ ] macOS (Now Playing) — заблокировано: нужны macOS-раннер и сборка libmpv
+- [x] Windows: named pipe IPC (`src/ipc/pipe.rs`) и CI-проверка на `windows-latest`
+- [ ] Windows (SMTC) — осталось: привязка playwire к HWND и MSI
+- [x] macOS: CI-сборка, clippy и тесты на `macos-latest` с libmpv из Homebrew
+- [ ] macOS (Now Playing) — осталось: рантайм-проверка Now Playing и DMG
 - [x] FFT-визуализатор (экспериментальный)
 - [x] Упаковка Linux: AppImage (`packaging/linux/build-appimage.sh`), desktop entry,
   AppStream-метаданные и иконка
 - [x] Flatpak: `packaging/linux/org.modernbyte.OrbitFM.yml`, runtime 25.08,
   libmpv/libass/libplacebo из исходников, vendored cargo (`build-flatpak.sh`)
-- [ ] MSI — заблокировано: нужна Windows-сборка (см. пункт Windows)
-- [ ] DMG — заблокировано: нужна macOS-сборка (см. пункт macOS)
+- [ ] MSI — не реализовано: нужна Windows-сборка libmpv и WiX
+- [ ] DMG — не реализовано: нужна macOS-сборка libmpv, подпись и notarization
 
 ## Этап 7: Маркеры и персонализация — завершён
 

@@ -8,6 +8,11 @@
 ## [Unreleased]
 
 ### Добавлено
+- Нативные CI-джобы:
+  - macOS: libmpv из Homebrew, `fmt`, `clippy`, тесты и release-сборка
+  - Windows: `fmt` и `clippy`; линковка libmpv не выполняется
+- Windows IPC: `src/ipc/pipe.rs` — named pipe `\\.\pipe\orbitfm`, single-instance
+  через первый экземпляр; Unix-транспорт выделен в `socket.rs`, сервер и клиент общие
 - Этап 6 — Flatpak для Linux:
   - манифест `packaging/linux/org.modernbyte.OrbitFM.yml`: runtime
     `org.freedesktop.Platform` 25.08, Rust 1.98 из SDK-расширения

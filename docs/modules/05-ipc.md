@@ -2,7 +2,7 @@
 
 **Путь в коде:** `src/ipc/`  
 **Ответственность:** Обеспечение единственного экземпляра процесса, приём и маршрутизация команд.  
-**Зависимости:** tokio (Unix socket; named pipe для Windows — позже)
+**Зависимости:** tokio (Unix socket и Windows named pipe)
 
 ---
 
@@ -22,7 +22,8 @@
 | `mod.rs` | Публичный фасад (`IpcServer`, `IpcCommand`, `IpcError`, `IpcRequest`, `WakeFn`) |
 | `protocol.rs` | Разбор/сериализация команд, лимиты, ошибки |
 | `client.rs` | Одноразовый клиент: подключение, отправка, чтение ответа |
-| `socket.rs` | Путь сокета, bind, проверка «зомби», права `0600`, удаление при Drop |
+| `socket.rs` | Unix-транспорт: путь сокета, bind, проверка «зомби», права `0600`, удаление при Drop |
+| `pipe.rs` | Windows-транспорт: named pipe `\\.\pipe\orbitfm`, первый экземпляр и accept-loop |
 | `server.rs` | Accept-loop, очередь запросов, ответы через oneshot |
 
 ## 3. Публичный интерфейс
@@ -69,15 +70,15 @@ pub enum IpcCommand {
 ```
 
 `IpcServer` — конкретная структура, а не трейт: в тестах используется внутренний
-`try_bind_at(path)`, позволяющий занять временный сокет.
+`try_bind_at(path)`, позволяющий занять временный сокет или pipe.
 
 ## 4. Транспорт
 
 | Платформа | Механизм              | Адрес | Статус |
 |-----------|-----------------------|-------|--------|
 | Linux     | Unix Domain Socket    | `$XDG_RUNTIME_DIR/orbitfm.sock` | Реализовано |
-| macOS     | Unix Domain Socket    | `$TMPDIR/orbitfm.sock` (fallback) | Код общий, не тестировалось |
-| Windows   | Named Pipe            | `\\.\pipe\orbitfm` | Этап 6 |
+| macOS     | Unix Domain Socket    | `$TMPDIR/orbitfm.sock` (fallback) | Реализовано, CI-тесты |
+| Windows   | Named Pipe            | `\\.\pipe\orbitfm` | Реализовано, CI-компиляция |
 
 Требования к сокету:
 

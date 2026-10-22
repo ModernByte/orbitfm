@@ -14,6 +14,22 @@ const PROBE_TIMEOUT: Duration = Duration::from_millis(500);
 const SOCKET_FILE: &str = "orbitfm.sock";
 const LOCK_FILE: &str = "orbitfm.lock";
 
+pub(super) type Stream = UnixStream;
+pub(super) type ClientStream = UnixStream;
+
+/// Обёртка над `UnixListener` с общим для платформ интерфейсом.
+pub(super) struct Listener(UnixListener);
+
+impl Listener {
+    pub(super) async fn accept(&mut self) -> std::io::Result<Stream> {
+        self.0.accept().await.map(|(stream, _)| stream)
+    }
+}
+
+pub(super) async fn connect(path: &Path) -> std::io::Result<ClientStream> {
+    UnixStream::connect(path).await
+}
+
 /// Путь сокета по ADR-0005.
 pub(super) fn default_path() -> Result<PathBuf, IpcError> {
     #[cfg(target_os = "linux")]
@@ -66,13 +82,13 @@ fn validate_runtime_dir(dir: &Path) -> Result<(), IpcError> {
 ///
 /// Lock-файл сериализует проверку и очистку сокета между экземплярами,
 /// чтобы два одновременных запуска не могли удалить живой сокет.
-pub(super) async fn bind(path: &Path) -> Result<(UnixListener, SocketGuard), IpcError> {
+pub(super) async fn bind(path: &Path) -> Result<(Listener, SocketGuard), IpcError> {
     let lock = acquire_lock(path)?;
 
     match UnixListener::bind(path) {
         Ok(listener) => {
             secure_socket(path)?;
-            Ok((listener, SocketGuard::new(path.to_owned(), lock)))
+            Ok((Listener(listener), SocketGuard::new(path.to_owned(), lock)))
         }
         Err(err) if err.kind() == ErrorKind::AddrInUse => {
             match probe(path).await? {
@@ -83,7 +99,7 @@ pub(super) async fn bind(path: &Path) -> Result<(UnixListener, SocketGuard), Ipc
             match UnixListener::bind(path) {
                 Ok(listener) => {
                     secure_socket(path)?;
-                    Ok((listener, SocketGuard::new(path.to_owned(), lock)))
+                    Ok((Listener(listener), SocketGuard::new(path.to_owned(), lock)))
                 }
                 Err(err) if err.kind() == ErrorKind::AddrInUse => Err(IpcError::AlreadyRunning),
                 Err(err) => Err(IpcError::Io(err)),
