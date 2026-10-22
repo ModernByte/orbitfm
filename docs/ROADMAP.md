@@ -49,14 +49,14 @@
 - [x] User-Agent и click-tracking
 - [x] Подключение `play <uuid>` к аудио-ядру и метаданные станции в MPRIS
 
-## Текущий этап: Этап 4 — 3D-глобус (минимальный)
+## Этап 4: 3D-глобус (минимальный) — завершён
 
-- [ ] Сфера + текстура
-- [ ] Камера (вращение + zoom)
-- [ ] Raycasting + Point-in-Polygon
-- [ ] Выбор страны
+- [x] Сфера + текстура
+- [x] Камера (вращение + zoom)
+- [x] Raycasting + Point-in-Polygon
+- [x] Выбор страны
 
-## Этап 5: Интеграции
+## Текущий этап: Этап 5 — Интеграции
 
 - [ ] Noctalia plugin (widget + IPC)
 - [ ] Window rules для Niri / Hyprland

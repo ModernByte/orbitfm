@@ -98,7 +98,7 @@ OrbitFM — кроссплатформенное десктоп-приложен
 
 - `docs/adr/` — Architecture Decision Records
 - `docs/modules/` — детальные спецификации подсистем
-- `docs/interfaces/` — контракты (трейты, IPC)
+- `docs/interfaces/` — контракты модулей и IPC
 - `docs/patterns/00-overview.md` — каталог паттернов проектирования
 - `docs/AGENTS.md` — правила агентов, модульность, perf
 - `docs/templates/` — merge-чеклист, статусы
