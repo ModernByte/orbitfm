@@ -26,7 +26,11 @@ jobs:
 
       - name: Install system dependencies
         run: |
-          sudo apt-get update
+          sudo timeout 120 apt-get update \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=30 \
+            -o Acquire::ForceIPv4=true \
+            || echo "apt-get update не завершился вовремя; используются текущие списки"
           sudo apt-get install -y --no-install-recommends \
             libgl1-mesa-dev \
             libmpv-dev \
@@ -117,7 +121,11 @@ jobs:
 
       - name: Install validators
         run: |
-          sudo apt-get update
+          sudo timeout 120 apt-get update \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=30 \
+            -o Acquire::ForceIPv4=true \
+            || echo "apt-get update не завершился вовремя; используются текущие списки"
           sudo apt-get install -y --no-install-recommends appstream desktop-file-utils python3-yaml
 
       - name: Validate desktop entry and AppStream
