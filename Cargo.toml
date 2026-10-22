@@ -16,6 +16,9 @@ eframe = { version = "0.37", default-features = false, features = [
     "wgpu",
     "x11",
 ] }
+libc = "0.2"
+libmpv2 = { version = "6.0", default-features = false }
+playwire = "2.0"
 thiserror = "2.0"
 tokio = { version = "1.54", features = [
     "io-util",
@@ -27,6 +30,7 @@ tokio = { version = "1.54", features = [
 ] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url = "2.5"
 
 [dev-dependencies]
 tempfile = "3"
