@@ -1,7 +1,7 @@
 # Модуль: Render / 3D Globe
 
 **Путь в коде:** `src/render/`  
-**Ответственность:** Отрисовка 3D-сферы, камера, взаимодействие мыши, интеграция с egui через PaintCallback.  
+**Ответственность:** Отрисовка 3D-сферы, камера, взаимодействие мыши, интеграция с egui через PaintCallback, спектральный оверлей.
 **Зависимости:** egui-wgpu, wgpu, glam, bytemuck, image
 
 ---
@@ -16,6 +16,7 @@
 ```rust
 pub use camera::GlobeCamera;
 pub use globe::{GlobeRenderer, paint_globe};
+pub use spectrum::{SpectrumOverlay, SpectrumTarget};
 
 pub struct GlobeCamera { /* yaw, pitch, distance, velocities */ }
 
@@ -41,6 +42,23 @@ pub struct GlobeInput {
     pub drag_delta: egui::Vec2,
     pub scroll_delta: f32,
     pub primary_clicked: Option<egui::Pos2>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct SpectrumTarget {
+    pub centroid_hz: f32,
+    pub spread_hz: f32,
+    pub flux: f32,
+    pub flatness: f32,
+    pub rms_db: f32,
+}
+
+pub struct SpectrumOverlay { /* сглаженные значения */ }
+
+impl SpectrumOverlay {
+    pub fn update(&mut self, target: Option<SpectrumTarget>, dt: f32);
+    pub fn is_visible(&self) -> bool;
+    pub fn paint(&self, painter: &egui::Painter, rect: egui::Rect, time: f64);
 }
 ```
 
@@ -86,7 +104,20 @@ pub struct GlobeInput {
 - Шейдер: `src/render/globe.wgsl`.
 - (Позже) Fresnel-атмосфера, маркеры станций, подписи стран.
 
-## 6. Тесты
+## 6. Спектральный оверлей
+
+- `SpectrumTarget` — срез метрик (`centroid_hz`, `spread_hz`, `flux`, `flatness`,
+  `rms_db`) без зависимости от аудио-модуля.
+- `SpectrumOverlay` сглаживает значения экспоненциально; первый кадр принимается
+  как есть, `None` запускает затухание. Состояние живёт в `OrbitApp`.
+- Рисуется в `egui::Painter` поверх области глобуса: полупрозрачная полоса,
+  градиентная огибающая в лог-шкале 30 Гц–20 кГц, линия уровня и подпись
+  `FFT · <частота> · <RMS> дБ`.
+- Оверлей не создаёт GPU-ресурсов и не участвует в wgpu-пайплайне глобуса.
+- Метрики агрегированные, поэтому огибающая — художественная интерпретация,
+  а не покадровый спектр по бинам (ADR-0010).
+
+## 7. Тесты
 
 - все треугольники меша обращены наружу;
 - вершины лежат на единичной сфере, UV в `[0, 1]`;
@@ -94,9 +125,12 @@ pub struct GlobeInput {
 - центральный луч соответствует yaw/pitch камеры (Берлин);
 - луч из угла viewport не пересекает сферу;
 - drag меняет ориентацию и сохраняет инерцию;
-- зум и pitch ограничены.
+- зум и pitch ограничены;
+- спектральный оверлей принимает первый кадр без сглаживания, затухает без данных,
+  ограничивает частоты и игнорирует неположительный `dt`.
 
-## 7. Связанные ADR
+## 8. Связанные ADR
 
 - ADR-0002: Выбор GUI-стека
 - ADR-0008: Геопространственный поиск
+- ADR-0010: Экспериментальный FFT-визуализатор

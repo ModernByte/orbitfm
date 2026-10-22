@@ -2,11 +2,13 @@
 
 mod camera;
 mod globe;
+mod spectrum;
 
 use eframe::egui::{Pos2, Vec2};
 
 pub use camera::GlobeCamera;
 pub use globe::{GlobeRenderer, paint_globe};
+pub use spectrum::{SpectrumOverlay, SpectrumTarget};
 
 /// Ввод пользователя для глобуса.
 #[derive(Debug, Clone, Default)]

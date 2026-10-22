@@ -20,7 +20,7 @@
 
 ## 3. Состояние приложения
 
-Текущее состояние (Этап 4):
+Текущее состояние (Этап 6):
 
 ```rust
 pub struct AppState {
@@ -46,6 +46,9 @@ pub struct OrbitApp {
     media: Option<MediaControls>,
     globe_camera: GlobeCamera,
     globe_ready: bool,
+    spectrum_overlay: SpectrumOverlay,
+    spectrum_enabled: bool,
+    spectrum_error: Option<String>,
     current_url: Option<String>,
     current_station: Option<Station>,
     search_query: String,
@@ -61,6 +64,8 @@ pub struct OrbitApp {
 ```
 
 `globe_ready` — результат создания `GlobeRenderer` из `CreationContext::wgpu_render_state`.
+`spectrum_enabled` синхронизируется с аудио-ядром в `logic()`, `spectrum_overlay` хранит
+сглаженное состояние оверлея, `spectrum_error` — последняя ошибка включения фильтра.
 `search_country` хранит страну, выбранную на глобусе, и сбрасывается при поиске по
 названию; `search_empty` отмечает успешный ответ без станций.
 
@@ -122,7 +127,20 @@ IPC-сервера, MPRIS-колбэка, задача аудио-событий
 Клик по океану или территории без валидного ISO-кода ничего не меняет. При
 `globe_ready = false` вместо глобуса рисуется заглушка, ввод игнорируется.
 
-## 7. Поиск и запуск станций
+## 7. FFT-визуализатор
+
+- В заголовке карточки — чекбокс «FFT» с подсказкой; по умолчанию выключен.
+- Переключение вызывает `AudioEngine::set_spectrum_enabled` через
+  `runtime.block_on`; ошибка показывается в карточке и не прерывает воспроизведение.
+- Каждый кадр `logic()` синхронизирует `spectrum_enabled` с движком. В `ui()`
+  `AudioEngine::spectrum()` преобразуется в `SpectrumTarget` и передаётся в
+  `SpectrumOverlay::update`; оверлей рисуется в нижней части области глобуса.
+- Пока оверлей виден или визуализатор включён при `Playing`/`Buffering`, запрашивается
+  repaint с интервалом ~33 мс.
+- IPC-команды для FFT нет: управление доступно только из GUI. Полосы спектра по бинам
+  не поддерживаются (ADR-0010).
+
+## 8. Поиск и запуск станций
 
 - «Найти»/Enter запускают `RadioBrowserClient::search` с `name`, `limit = 30`,
   `hide_broken = true`; `search_country` сбрасывается. Запрос выполняется в
@@ -137,7 +155,7 @@ IPC-сервера, MPRIS-колбэка, задача аудио-событий
 - `play <uuid>` сначала ищет станцию в последних результатах поиска, затем вызывает
   `get_station` с таймаутом 8 с; таймаут маппится в `RadioError::Network`.
 
-## 8. Синхронизация с MPRIS
+## 9. Синхронизация с MPRIS
 
 `sync_media()` вызывается каждый кадр, но `MediaControls::set_playback` дедуплицирует
 неизменившееся состояние. Соответствие:
@@ -149,7 +167,7 @@ IPC-сервера, MPRIS-колбэка, задача аудио-событий
 Метаданные берутся из `current_station`: `name` → title, `tags` → artist, `favicon` →
 artUrl, `url_resolved` → `xesam:url`. Без станции используется URL потока.
 
-## 9. Жизненный цикл окна
+## 10. Жизненный цикл окна
 
 - Закрытие крестиком → `ViewportCommand::CancelClose` + `ViewportCommand::Visible(false)`,
   `window_visible = false`
@@ -158,15 +176,17 @@ artUrl, `url_resolved` → `xesam:url`. Без станции используе
 - Команда `quit` → `quitting = true` + `ViewportCommand::Close`; после выхода из GUI main
   останавливает IPC-сервер, аудио-поток и удаляет сокет
 
-## 10. Текущие ограничения
+## 11. Текущие ограничения
 
 - `Next`/`Previous` из MPRIS не переключают станции (нет списка/истории)
 - На глобусе нет маркеров станций, подписей стран и атмосферы
 - Клик мимо окна (overlay) ещё не реализован
 - Кэш станций только in-memory; дискового кэша нет
 - Метаданные ICY (название трека внутри потока) не читаются
+- FFT-визуализатор управляется только из GUI, не имеет IPC-команды и показывает
+  агрегированные метрики вместо полос спектра
 
-## 11. Связанные документы
+## 12. Связанные документы
 
-- ADR-0002, ADR-0005, ADR-0006
+- ADR-0002, ADR-0005, ADR-0006, ADR-0010
 - `docs/architecture/00-overview.md`

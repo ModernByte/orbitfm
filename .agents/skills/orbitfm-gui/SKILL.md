@@ -7,7 +7,8 @@ description: GUI и 3D-глобус OrbitFM на eframe, egui и egui-wgpu. Ис
 
 Ты работаешь с UI-слоем OrbitFM (eframe + egui + egui-wgpu).
 
-Опирайся на ADR-0002 и `docs/modules/04-render-globe.md`, `docs/interfaces/04-render.md`.
+Опирайся на ADR-0002, ADR-0010 и `docs/modules/04-render-globe.md`,
+`docs/interfaces/04-render.md`.
 
 ## Стек
 
@@ -28,6 +29,13 @@ description: GUI и 3D-глобус OrbitFM на eframe, egui и egui-wgpu. Ис
 - Не использовать отдельное окно или конфликтующие 3D-движки.
 - Камера: ПКМ + drag (с инерцией), колесо — zoom с min/max.
 - Клик ЛКМ → `screen_to_sphere` → точка (x, y, z) → передаётся в GeoService.
+
+## FFT-оверлей
+
+- Рисовать через `egui::Painter` поверх области глобуса, а не отдельным GPU-пассом.
+- В render-модуль передавать `SpectrumTarget`, не `SpectrumFrame`/`AudioEngine`.
+- Сглаживание и затухание — в `SpectrumOverlay`; App Core только поставляет данные.
+- Пока оверлей виден, запрашивать repaint (~33 мс).
 
 ## Правила кода
 

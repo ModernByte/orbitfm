@@ -8,6 +8,16 @@
 ## [Unreleased]
 
 ### Добавлено
+- Этап 6 — экспериментальный FFT-визуализатор:
+  - `SpectrumFrame` в аудио-ядре: centroid/spread/rolloff/flatness/flux и RMS
+    из `af-metadata` фильтров `aspectralstats` + `astats`, опрос раз в 50 мс
+  - `AudioEngine::set_spectrum_enabled`, `spectrum_enabled`, `spectrum`; при
+    недоступности фильтра — `AudioError::Spectrum` без прерывания воспроизведения
+  - `src/render/spectrum.rs`: сглаженный оверлей в лог-шкале 30 Гц–20 кГц,
+    градиентная огибающая, затухание и подпись `FFT · <частота> · <RMS> дБ`
+  - чекбокс «FFT» в заголовке (выключен по умолчанию), ошибки в карточке
+  - живой тест `produces_fft_metrics_for_live_stream` (вне CI)
+- ADR-0010: FFT-визуализатор на агрегированных метриках без PCM-tap
 - Этап 5 — интеграции Noctalia и оконных менеджеров:
   - `noctalia-plugin/`: манифест `plugin.toml` (id `modernbyte/orbitfm`,
     `plugin_api = 3`), виджет `plugin.luau` с глифом/подсказкой и отправкой
@@ -114,6 +124,7 @@
   - orbitfm-geo, orbitfm-ipc, orbitfm-integration, orbitfm-docs
 - `docs/patterns/00-overview.md` — каталог паттернов
 - ADR-0009: каталог паттернов
+- ADR-0010: FFT-визуализатор
 - Шаблоны GitHub: PR, issue (bug/feature/adr), COMMIT_CONVENTION
 - `docs/templates/MERGE_CHECKLIST.md`, `PROJECT_STATUS.md`
 

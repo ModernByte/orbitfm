@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -6,7 +7,7 @@ use libmpv2::Mpv;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use url::Url;
 
-use super::{AudioError, AudioEvent, PlaybackState};
+use super::{AudioError, AudioEvent, PlaybackState, SpectrumFrame};
 use crate::audio::worker::AudioWorker;
 
 pub(super) const DEFAULT_VOLUME: f64 = 0.7;
@@ -32,6 +33,10 @@ pub(super) enum AudioCommand {
         volume: f64,
         reply: oneshot::Sender<CommandResult>,
     },
+    SetSpectrum {
+        enabled: bool,
+        reply: oneshot::Sender<CommandResult>,
+    },
     Shutdown,
 }
 
@@ -39,6 +44,8 @@ pub(super) struct Shared {
     state: Mutex<PlaybackState>,
     volume: Mutex<f64>,
     events: broadcast::Sender<AudioEvent>,
+    spectrum_enabled: AtomicBool,
+    spectrum: Mutex<Option<SpectrumFrame>>,
 }
 
 impl Shared {
@@ -48,6 +55,8 @@ impl Shared {
             state: Mutex::new(PlaybackState::Stopped),
             volume: Mutex::new(DEFAULT_VOLUME),
             events,
+            spectrum_enabled: AtomicBool::new(false),
+            spectrum: Mutex::new(None),
         }
     }
 
@@ -71,6 +80,22 @@ impl Shared {
         if let Err(err) = self.events.send(event) {
             tracing::trace!(error = %err, "нет подписчиков аудио-событий");
         }
+    }
+
+    pub(super) fn spectrum_enabled(&self) -> bool {
+        self.spectrum_enabled.load(Ordering::Relaxed)
+    }
+
+    pub(super) fn set_spectrum_enabled(&self, enabled: bool) {
+        self.spectrum_enabled.store(enabled, Ordering::Relaxed);
+    }
+
+    pub(super) fn spectrum(&self) -> Option<SpectrumFrame> {
+        *lock(&self.spectrum)
+    }
+
+    pub(super) fn set_spectrum(&self, frame: Option<SpectrumFrame>) {
+        *lock(&self.spectrum) = frame;
     }
 }
 
@@ -153,6 +178,17 @@ impl AudioEngine {
         wait_for_reply(response).await
     }
 
+    /// Включить или выключить экспериментальный FFT-визуализатор.
+    ///
+    /// Фильтры подключаются к работающему mpv и не меняют аудиотракт.
+    pub async fn set_spectrum_enabled(&mut self, enabled: bool) -> Result<(), AudioError> {
+        let (reply, response) = oneshot::channel();
+        self.commands
+            .send(AudioCommand::SetSpectrum { enabled, reply })
+            .map_err(|_| AudioError::Internal("аудио-поток остановлен".to_owned()))?;
+        wait_for_reply(response).await
+    }
+
     /// Текущее состояние воспроизведения.
     pub fn state(&self) -> PlaybackState {
         self.shared.state()
@@ -161,6 +197,16 @@ impl AudioEngine {
     /// Текущая громкость в диапазоне `0.0..=1.0`.
     pub fn volume(&self) -> f64 {
         self.shared.volume()
+    }
+
+    /// Включён ли FFT-визуализатор.
+    pub fn spectrum_enabled(&self) -> bool {
+        self.shared.spectrum_enabled()
+    }
+
+    /// Последний кадр FFT-метрик, пока визуализатор получает данные.
+    pub fn spectrum(&self) -> Option<SpectrumFrame> {
+        self.shared.spectrum()
     }
 
     /// Подписка на события аудио-ядра.
@@ -335,5 +381,40 @@ mod tests {
 
         engine.stop().await.expect("не удалось остановить поток");
         assert_eq!(engine.state(), PlaybackState::Stopped);
+    }
+
+    #[tokio::test]
+    #[ignore = "требует сеть и аудиоустройство; задайте ORBITFM_TEST_STREAM_URL"]
+    async fn produces_fft_metrics_for_live_stream() {
+        let url =
+            std::env::var("ORBITFM_TEST_STREAM_URL").expect("задайте ORBITFM_TEST_STREAM_URL");
+        let mut engine = AudioEngine::new().expect("не удалось создать аудио-ядро");
+
+        engine.play(&url).await.expect("не удалось запустить поток");
+        engine
+            .set_spectrum_enabled(true)
+            .await
+            .expect("не удалось включить визуализатор");
+
+        let frame = tokio::time::timeout(Duration::from_secs(20), async {
+            loop {
+                if let Some(frame) = engine.spectrum() {
+                    break frame;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .expect("FFT-метрики не появились за 20 секунд");
+
+        assert!(frame.centroid_hz > 0.0, "центроид: {frame:?}");
+        assert!(frame.rms_db.is_finite(), "RMS: {frame:?}");
+
+        engine
+            .set_spectrum_enabled(false)
+            .await
+            .expect("не удалось выключить визуализатор");
+        assert!(!engine.spectrum_enabled());
+        engine.stop().await.expect("не удалось остановить поток");
     }
 }

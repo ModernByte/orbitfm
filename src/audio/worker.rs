@@ -6,9 +6,19 @@ use libmpv2::events::{Event as MpvEvent, PropertyData};
 use tokio::sync::{mpsc, oneshot};
 
 use super::engine::{AudioCommand, CommandResult, Shared};
-use super::{AudioError, AudioEvent, PlaybackState};
+use super::{AudioError, AudioEvent, PlaybackState, SpectrumFrame};
 
 const EVENT_POLL_INTERVAL_SECS: f64 = 0.05;
+const SPECTRUM_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const SPECTRUM_FILTER: &str = "@spectrum:lavfi=[\
+aspectralstats=measure=centroid+spread+flatness+flux+rolloff:win_size=2048,\
+astats=metadata=1:reset=1]";
+const SPECTRUM_CENTROID: &str = "af-metadata/spectrum/lavfi.aspectralstats.1.centroid";
+const SPECTRUM_SPREAD: &str = "af-metadata/spectrum/lavfi.aspectralstats.1.spread";
+const SPECTRUM_ROLLOFF: &str = "af-metadata/spectrum/lavfi.aspectralstats.1.rolloff";
+const SPECTRUM_FLATNESS: &str = "af-metadata/spectrum/lavfi.aspectralstats.1.flatness";
+const SPECTRUM_FLUX: &str = "af-metadata/spectrum/lavfi.aspectralstats.1.flux";
+const SPECTRUM_RMS: &str = "af-metadata/spectrum/lavfi.astats.Overall.RMS_level";
 const END_FILE_EOF: libmpv2::EndFileReason = libmpv2::mpv_end_file_reason::Eof;
 const END_FILE_ERROR: libmpv2::EndFileReason = libmpv2::mpv_end_file_reason::Error;
 const END_FILE_STOP: libmpv2::EndFileReason = libmpv2::mpv_end_file_reason::Stop;
@@ -24,6 +34,7 @@ pub(super) struct AudioWorker {
     commands: mpsc::UnboundedReceiver<AudioCommand>,
     active_url: Option<String>,
     tracker: ReconnectTracker,
+    last_spectrum_poll: Option<Instant>,
 }
 
 impl AudioWorker {
@@ -38,6 +49,7 @@ impl AudioWorker {
             commands,
             active_url: None,
             tracker: ReconnectTracker::default(),
+            last_spectrum_poll: None,
         }
     }
 
@@ -58,6 +70,10 @@ impl AudioWorker {
 
             if let Some(event) = self.next_event() {
                 self.handle_event(event);
+            }
+
+            if self.shared.spectrum_enabled() && self.spectrum_poll_due() {
+                self.poll_spectrum();
             }
         }
     }
@@ -96,6 +112,10 @@ impl AudioWorker {
                 let result = self.apply_volume(volume);
                 respond(reply, result);
             }
+            AudioCommand::SetSpectrum { enabled, reply } => {
+                let result = self.apply_spectrum(enabled);
+                respond(reply, result);
+            }
             AudioCommand::Shutdown => {}
         }
     }
@@ -103,6 +123,7 @@ impl AudioWorker {
     fn play_url(&mut self, url: &str) -> Result<(), AudioError> {
         self.active_url = Some(url.to_owned());
         self.tracker.reset();
+        self.shared.set_spectrum(None);
         self.shared.set_state(PlaybackState::Buffering);
         self.shared.emit(AudioEvent::Buffering);
 
@@ -126,6 +147,7 @@ impl AudioWorker {
 
         self.active_url = None;
         self.tracker.reset();
+        self.shared.set_spectrum(None);
         self.shared.set_state(PlaybackState::Stopped);
         self.shared.emit(AudioEvent::Stopped);
         Ok(())
@@ -164,6 +186,39 @@ impl AudioWorker {
             .map_err(|err| AudioError::Playback(err.to_string()))?;
         self.shared.set_volume(volume);
         Ok(())
+    }
+
+    fn apply_spectrum(&mut self, enabled: bool) -> Result<(), AudioError> {
+        let filters = if enabled { SPECTRUM_FILTER } else { "" };
+        self.mpv
+            .set_property("af", filters)
+            .map_err(|err| AudioError::Spectrum(err.to_string()))?;
+        self.shared.set_spectrum_enabled(enabled);
+        if !enabled {
+            self.shared.set_spectrum(None);
+        }
+        Ok(())
+    }
+
+    fn spectrum_poll_due(&self) -> bool {
+        self.last_spectrum_poll
+            .is_none_or(|last| last.elapsed() >= SPECTRUM_POLL_INTERVAL)
+    }
+
+    fn poll_spectrum(&mut self) {
+        self.last_spectrum_poll = Some(Instant::now());
+
+        if !matches!(
+            self.shared.state(),
+            PlaybackState::Playing | PlaybackState::Buffering
+        ) {
+            self.shared.set_spectrum(None);
+            return;
+        }
+
+        if let Some(frame) = read_spectrum(&self.mpv) {
+            self.shared.set_spectrum(Some(frame));
+        }
     }
 
     fn retry(&mut self) {
@@ -254,6 +309,7 @@ impl AudioWorker {
         if self.active_url.is_none() || self.tracker.is_pending() {
             return;
         }
+        self.shared.set_spectrum(None);
 
         match self.tracker.on_failure(Instant::now()) {
             RetryOutcome::Scheduled { attempt, delay } => {
@@ -278,6 +334,47 @@ impl AudioWorker {
             }
         }
     }
+}
+
+fn read_spectrum(mpv: &Mpv) -> Option<SpectrumFrame> {
+    spectrum_from_values(
+        read_metric(mpv, SPECTRUM_CENTROID)?,
+        read_metric(mpv, SPECTRUM_SPREAD)?,
+        read_metric(mpv, SPECTRUM_ROLLOFF)?,
+        read_metric(mpv, SPECTRUM_FLATNESS)?,
+        read_metric(mpv, SPECTRUM_FLUX)?,
+        read_metric(mpv, SPECTRUM_RMS)?,
+    )
+}
+
+fn read_metric(mpv: &Mpv, property: &str) -> Option<f32> {
+    let raw: String = mpv.get_property(property).ok()?;
+    raw.trim().parse::<f32>().ok()
+}
+
+fn spectrum_from_values(
+    centroid_hz: f32,
+    spread_hz: f32,
+    rolloff_hz: f32,
+    flatness: f32,
+    flux: f32,
+    rms_db: f32,
+) -> Option<SpectrumFrame> {
+    if ![centroid_hz, spread_hz, rolloff_hz, flatness, flux, rms_db]
+        .into_iter()
+        .all(f32::is_finite)
+    {
+        return None;
+    }
+
+    Some(SpectrumFrame {
+        centroid_hz: centroid_hz.max(0.0),
+        spread_hz: spread_hz.max(0.0),
+        rolloff_hz: rolloff_hz.max(0.0),
+        flatness: flatness.clamp(0.0, 1.0),
+        flux: flux.max(0.0),
+        rms_db,
+    })
 }
 
 enum WorkerEvent {
@@ -437,6 +534,41 @@ mod tests {
         let _ = tracker.take_due(now + Duration::from_secs(1));
         assert_eq!(tracker.on_failure(now), RetryOutcome::Exhausted);
         assert_eq!(tracker.on_failure(now), RetryOutcome::Exhausted);
+    }
+
+    #[test]
+    fn accepts_valid_spectrum_values() {
+        let frame = spectrum_from_values(1741.0, 1679.0, 4008.0, 0.5, 0.001, -19.2)
+            .expect("кадр должен быть валидным");
+        assert_eq!(
+            frame,
+            SpectrumFrame {
+                centroid_hz: 1741.0,
+                spread_hz: 1679.0,
+                rolloff_hz: 4008.0,
+                flatness: 0.5,
+                flux: 0.001,
+                rms_db: -19.2,
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_non_finite_spectrum_values() {
+        assert!(spectrum_from_values(f32::NAN, 1.0, 1.0, 0.5, 0.0, -20.0).is_none());
+        assert!(spectrum_from_values(1.0, 1.0, 1.0, 0.5, 0.0, f32::INFINITY).is_none());
+    }
+
+    #[test]
+    fn clamps_spectrum_ranges() {
+        let frame = spectrum_from_values(-10.0, -1.0, -2.0, 2.0, -0.5, -3.0)
+            .expect("кадр должен быть валидным");
+        assert_eq!(frame.centroid_hz, 0.0);
+        assert_eq!(frame.spread_hz, 0.0);
+        assert_eq!(frame.rolloff_hz, 0.0);
+        assert_eq!(frame.flatness, 1.0);
+        assert_eq!(frame.flux, 0.0);
+        assert_eq!(frame.rms_db, -3.0);
     }
 
     #[test]
