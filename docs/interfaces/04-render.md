@@ -72,6 +72,17 @@ impl GlobeRenderer {
 /// Добавляет paint callback глобуса в painter.
 pub fn paint_globe(painter: &egui::Painter, rect: egui::Rect, camera: &GlobeCamera);
 
+/// Цвета маркеров, задаваемые темой приложения.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MarkerColors {
+    /// Обычный маркер.
+    pub marker: egui::Color32,
+    /// Маркер текущей станции.
+    pub active: egui::Color32,
+}
+
+impl Default for MarkerColors { /* синий маркер, тёплый активный */ }
+
 /// Экранное представление маркера станции; не содержит доменных типов.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MarkerVisual {
@@ -92,6 +103,7 @@ pub fn paint_markers(
     markers: &[MarkerVisual],
     hovered: Option<usize>,
     hovered_label: Option<&str>,
+    colors: MarkerColors,
 );
 
 /// Срез FFT-метрик для визуализации; не содержит доменных типов.
@@ -149,8 +161,10 @@ impl SpectrumOverlay {
   `SpectrumTarget`.
 - `paint_markers` рисует поверх wgpu-callback глобуса: свечение, точку, обводку,
   бейдж количества (`count > 1`), кольцо наведения и подпись в пределах `bounds`.
-  Активный маркер выделяется цветом. Модуль не знает о `Station`: App Core передаёт
-  готовые `MarkerVisual` и текст подписи.
+  Обычные маркеры используют `colors.marker`, активный — `colors.active`; свечение
+  выводится из цвета маркера. Модуль не знает о `Station` и теме приложения: App Core
+  передаёт готовые `MarkerVisual`, текст подписи и `MarkerColors`.
+  `MarkerColors::default()` — синий маркер и тёплый янтарный активный.
 
 ## Ограничения
 

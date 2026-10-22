@@ -33,6 +33,7 @@ pub struct AppServices {
     pub radio: RadioBrowserClient,
     pub media: Option<MediaControls>,
     pub library: StationLibrary,
+    pub settings: SettingsStore,
     pub runtime: tokio::runtime::Handle,
 }
 
@@ -48,6 +49,8 @@ pub struct OrbitApp {
     library: StationLibrary,
     library_tab: LibraryTab,
     library_error: Option<String>,
+    settings: SettingsStore,
+    settings_error: Option<String>,
     globe_camera: GlobeCamera,
     globe_ready: bool,
     spectrum_overlay: SpectrumOverlay,
@@ -86,22 +89,27 @@ pub struct OrbitApp {
 (`Results`/`Favorites`/`History`, по умолчанию `Results`), `library_error` — последнюю
 ошибку чтения/записи библиотеки для показа в карточке.
 
+`settings` хранит тему и акцент (см. §10), `settings_error` — последнюю ошибку
+чтения/записи настроек оформления.
+
 ## 4. Порядок инициализации
 
 ```
 IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
 → MediaControls::new(wake) → RadioBrowserClient::new → StationLibrary::load_default
-→ фоновый refresh_servers → задача audio events → wake → IpcServer::run
-→ eframe → OrbitApp::new
+→ SettingsStore::load_default → фоновый refresh_servers → задача audio events
+→ wake → IpcServer::run → eframe → OrbitApp::new
 ```
 
 `try_bind` выполняется до создания аудио-ядра, чтобы второй экземпляр завершился, не
 занимая аудиоустройство. Ошибки `AudioEngine::new` и загрузки гео-датасета фатальны;
-ошибки MPRIS, библиотеки и прогрева каталога — только предупреждения. При ошибке
-загрузки библиотеки создаётся `StationLibrary::ephemeral()`: изменения работают до
-завершения процесса, повреждённый файл не перезаписывается.
+ошибки MPRIS, библиотеки, настроек и прогрева каталога — только предупреждения. При
+ошибке загрузки библиотеки создаётся `StationLibrary::ephemeral()`: изменения работают
+до завершения процесса, повреждённый файл не перезаписывается. Аналогично ошибка
+загрузки настроек даёт `SettingsStore::ephemeral()` с темой System и акцентом Blue.
 
-`OrbitApp::new` создаёт `GlobeRenderer` из `cc.wgpu_render_state` и вставляет его в
+`OrbitApp::new` применяет настройки оформления к `egui::Context`, создаёт
+`GlobeRenderer` из `cc.wgpu_render_state` и вставляет его в
 `render_state.renderer.write().callback_resources`. При отсутствии wgpu-состояния
 приложение работает без глобуса (`globe_ready = false`).
 
@@ -198,7 +206,28 @@ IPC-сервера, MPRIS-колбэка, задача аудио-событий
 - Ошибки библиотеки логируются и показываются в карточке; они не прерывают
   воспроизведение. Пути и формат файла описаны в `docs/modules/09-library.md`.
 
-## 10. Синхронизация с MPRIS
+## 10. Оформление
+
+- `SettingsStore` загружается в `main` до запуска GUI; ошибка чтения даёт эфемерное
+  хранилище с настройками по умолчанию, повреждённый файл не перезаписывается
+  (ADR-0014).
+- При старте и после каждого изменения `configure_style` применяет к
+  `egui::Context`: `ThemePreference` (System/Dark/Light), прозрачные заливки панелей
+  и окна (нужно для overlay), цвет выделения `selection.bg_fill` из акцента,
+  контрастную обводку выделения и цвет гиперссылок.
+- Блок «Оформление» в карточке: переключатели темы «Системная / Тёмная / Светлая» и
+  шесть пресетов акцента (Орбита, Изумруд, Янтарь, Фиалка, Роза, Океан). Изменение
+  применяется сразу и сохраняется через `SettingsStore`; ошибка записи показывается
+  в статусе и не прерывает воспроизведение.
+- `Palette::for_ui(theme, accent)` задаёт цвета карточки, обводки, приглушённого и
+  ошибочного текста, подложек и глобуса. В тёмной теме акцент совпадает с цветом
+  маркеров; в светлой — затемняется для контраста с фоном, а маркеры остаются
+  яркими.
+- Обычные маркеры получают `palette.marker`, активный маркер сохраняет тёплый
+  янтарный цвет.
+- IPC-команд для оформления нет: настройка доступна только из GUI.
+
+## 11. Синхронизация с MPRIS
 
 `sync_media()` вызывается каждый кадр, но `MediaControls::set_playback` дедуплицирует
 неизменившееся состояние. Соответствие:
@@ -210,7 +239,7 @@ IPC-сервера, MPRIS-колбэка, задача аудио-событий
 Метаданные берутся из `current_station`: `name` → title, `tags` → artist, `favicon` →
 artUrl, `url_resolved` → `xesam:url`. Без станции используется URL потока.
 
-## 11. Жизненный цикл окна
+## 12. Жизненный цикл окна
 
 - Закрытие крестиком → `ViewportCommand::CancelClose` + `ViewportCommand::Visible(false)`,
   `window_visible = false`
@@ -219,7 +248,7 @@ artUrl, `url_resolved` → `xesam:url`. Без станции используе
 - Команда `quit` → `quitting = true` + `ViewportCommand::Close`; после выхода из GUI main
   останавливает IPC-сервер, аудио-поток и удаляет сокет
 
-## 12. Текущие ограничения
+## 13. Текущие ограничения
 
 - `Next`/`Previous` из MPRIS не переключают станции: история не является очередью
   воспроизведения, для переключения нужен отдельный плейлист (ADR-0013)
@@ -230,9 +259,14 @@ artUrl, `url_resolved` → `xesam:url`. Без станции используе
 - Метаданные ICY (название трека внутри потока) не читаются
 - FFT-визуализатор управляется только из GUI, не имеет IPC-команды и показывает
   агрегированные метрики вместо полос спектра
+- Акцент выбирается только из шести пресетов, произвольный цвет не поддерживается
+  (ADR-0014); тема System следует системной теме, которую сообщает eframe
+- Светлая палитра производная от `egui::Theme::Light`; отдельной ручной настройки
+  контрастности нет
 
-## 13. Связанные документы
+## 14. Связанные документы
 
-- ADR-0002, ADR-0005, ADR-0006, ADR-0010, ADR-0012, ADR-0013
+- ADR-0002, ADR-0005, ADR-0006, ADR-0010, ADR-0012, ADR-0013, ADR-0014
 - `docs/architecture/00-overview.md`
 - `docs/modules/09-library.md`
+- `docs/modules/10-settings.md`

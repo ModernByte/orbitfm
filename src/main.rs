@@ -12,6 +12,7 @@ mod library;
 mod media;
 mod render;
 mod services;
+mod settings;
 
 use app::{AppServices, OrbitApp, WakeHandle};
 use audio::AudioEngine;
@@ -20,6 +21,7 @@ use ipc::{IpcCommand, IpcError, IpcServer};
 use library::StationLibrary;
 use media::MediaControls;
 use services::RadioBrowserClient;
+use settings::SettingsStore;
 
 const APP_ID: &str = "org.modernbyte.OrbitFM";
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
@@ -165,6 +167,19 @@ fn launch(runtime: &tokio::runtime::Runtime, command: &IpcCommand, explicit: boo
             StationLibrary::ephemeral()
         }
     };
+    let settings = match SettingsStore::load_default() {
+        Ok(settings) => {
+            info!(path = ?settings.path(), "настройки оформления загружены");
+            settings
+        }
+        Err(err) => {
+            warn!(
+                error = %err,
+                "не удалось загрузить настройки оформления; используются значения по умолчанию"
+            );
+            SettingsStore::ephemeral()
+        }
+    };
     let warm_radio = radio.clone();
     runtime.spawn(async move {
         if let Err(err) = warm_radio.refresh_servers().await {
@@ -196,6 +211,7 @@ fn launch(runtime: &tokio::runtime::Runtime, command: &IpcCommand, explicit: boo
         radio,
         media,
         library,
+        settings,
         runtime: runtime.handle().clone(),
     };
     let gui_result = run_gui(commands, wake, services);
