@@ -8,11 +8,13 @@ mod app;
 mod audio;
 mod ipc;
 mod media;
+mod services;
 
-use app::{OrbitApp, WakeHandle};
+use app::{AppServices, OrbitApp, WakeHandle};
 use audio::AudioEngine;
 use ipc::{IpcCommand, IpcError, IpcServer};
 use media::MediaControls;
+use services::RadioBrowserClient;
 
 const APP_ID: &str = "org.modernbyte.OrbitFM";
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
@@ -29,7 +31,7 @@ OrbitFM — 3D Interactive Global Radio Player
   show              Показать окно
   hide              Скрыть окно
   status            Состояние приложения
-  play <uuid>       Воспроизвести станцию (после подключения Radio Browser)
+  play <uuid>       Воспроизвести станцию по UUID (Radio Browser)
   stop              Остановить воспроизведение
   volume <0.0-1.0>  Установить громкость
   quit              Завершить процесс
@@ -143,6 +145,13 @@ fn launch(runtime: &tokio::runtime::Runtime, command: &IpcCommand, explicit: boo
             None
         }
     };
+    let radio = RadioBrowserClient::new();
+    let warm_radio = radio.clone();
+    runtime.spawn(async move {
+        if let Err(err) = warm_radio.refresh_servers().await {
+            warn!(error = %err, "не удалось прогреть пул серверов Radio Browser");
+        }
+    });
 
     let mut audio_events = audio.subscribe();
     let wake_audio = wake.waker();
@@ -162,7 +171,14 @@ fn launch(runtime: &tokio::runtime::Runtime, command: &IpcCommand, explicit: boo
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let mut server_task = runtime.spawn(server.run(wake.waker(), shutdown_rx));
 
-    let gui_result = run_gui(commands, wake, audio, media, runtime.handle().clone());
+    let gui_result = run_gui(
+        commands,
+        wake,
+        audio,
+        radio,
+        media,
+        runtime.handle().clone(),
+    );
 
     let _ = shutdown_tx.send(());
     let server_exit = runtime
@@ -214,6 +230,7 @@ fn run_gui(
     commands: tokio::sync::mpsc::Receiver<ipc::IpcRequest>,
     wake: WakeHandle,
     audio: AudioEngine,
+    radio: RadioBrowserClient,
     media: Option<MediaControls>,
     runtime: tokio::runtime::Handle,
 ) -> Result<()> {
@@ -232,9 +249,13 @@ fn run_gui(
         "OrbitFM",
         options,
         Box::new(move |cc| {
-            Ok(Box::new(OrbitApp::new(
-                cc, commands, &wake, audio, media, runtime,
-            )))
+            let services = AppServices {
+                audio,
+                radio,
+                media,
+                runtime,
+            };
+            Ok(Box::new(OrbitApp::new(cc, commands, &wake, services)))
         }),
     )
     .map_err(|err| anyhow!("не удалось запустить GUI: {err}"))

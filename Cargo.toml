@@ -19,6 +19,12 @@ eframe = { version = "0.37", default-features = false, features = [
 libc = "0.2"
 libmpv2 = { version = "6.0", default-features = false }
 playwire = "2.0"
+reqwest = { version = "0.13", default-features = false, features = [
+    "json",
+    "query",
+    "rustls",
+] }
+serde = { version = "1.0", features = ["derive"] }
 thiserror = "2.0"
 tokio = { version = "1.54", features = [
     "io-util",
@@ -33,4 +39,5 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2.5"
 
 [dev-dependencies]
+serde_json = "1.0"
 tempfile = "3"
