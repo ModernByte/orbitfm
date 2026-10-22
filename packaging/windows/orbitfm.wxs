@@ -40,6 +40,7 @@
 
     <Feature Id="ProductFeature" Title="OrbitFM" Level="1">
       <Files Include="$(var.AppDir)\**" Directory="INSTALLFOLDER" />
+      <ComponentRef Id="ApplicationShortcut" />
     </Feature>
   </Package>
 </Wix>
