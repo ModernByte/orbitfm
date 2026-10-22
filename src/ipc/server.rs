@@ -2,8 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{UnixListener, UnixStream};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::sync::{Semaphore, mpsc, oneshot};
 use tokio::task::JoinSet;
 use tokio::time::timeout;
@@ -11,7 +10,7 @@ use tracing::warn;
 
 use super::client;
 use super::protocol::{IpcCommand, IpcError, MAX_COMMAND_BYTES};
-use super::socket::{self, SocketGuard};
+use super::transport::{self, Listener, SocketGuard, Stream};
 
 const COMMAND_QUEUE: usize = 64;
 const MAX_CONNECTIONS: usize = 64;
@@ -43,7 +42,7 @@ impl IpcRequest {
 
 /// Серверная часть IPC: занятый сокет и очередь запросов для App.
 pub struct IpcServer {
-    listener: UnixListener,
+    listener: Listener,
     _socket_guard: SocketGuard,
     sender: mpsc::Sender<IpcRequest>,
     receiver: Option<mpsc::Receiver<IpcRequest>>,
@@ -52,12 +51,12 @@ pub struct IpcServer {
 impl IpcServer {
     /// Занимает сокет по умолчанию.
     pub async fn try_bind() -> Result<Self, IpcError> {
-        let path = socket::default_path()?;
+        let path = transport::default_path()?;
         Self::try_bind_at(&path).await
     }
 
     pub(super) async fn try_bind_at(path: &Path) -> Result<Self, IpcError> {
-        let (listener, socket_guard) = socket::bind(path).await?;
+        let (listener, socket_guard) = transport::bind(path).await?;
         let (sender, receiver) = mpsc::channel(COMMAND_QUEUE);
         Ok(Self {
             listener,
@@ -76,14 +75,14 @@ impl IpcServer {
 
     /// Отправляет команду уже работающему экземпляру.
     pub async fn send_to_existing(command: &str) -> Result<String, IpcError> {
-        let path = socket::default_path()?;
+        let path = transport::default_path()?;
         client::send(&path, command).await
     }
 
     /// Принимает соединения до сигнала shutdown, затем дожидается ответов.
     pub async fn run(self, wake: WakeFn, mut shutdown: oneshot::Receiver<()>) {
         let Self {
-            listener,
+            mut listener,
             _socket_guard,
             sender,
             receiver: _,
@@ -97,8 +96,8 @@ impl IpcServer {
                 biased;
                 _ = &mut shutdown => break,
                 accepted = listener.accept() => {
-                    let (stream, _addr) = match accepted {
-                        Ok(accepted) => accepted,
+                    let stream = match accepted {
+                        Ok(stream) => stream,
                         Err(err) => {
                             warn!(error = %err, "не удалось принять IPC-соединение");
                             tokio::time::sleep(Duration::from_millis(100)).await;
@@ -135,11 +134,11 @@ impl IpcServer {
 }
 
 async fn handle_connection(
-    stream: UnixStream,
+    stream: Stream,
     sender: mpsc::Sender<IpcRequest>,
     wake: WakeFn,
 ) -> Result<(), IpcError> {
-    let (read_half, mut write_half) = stream.into_split();
+    let (read_half, mut write_half) = tokio::io::split(stream);
     let mut reader = BufReader::new(read_half).take((MAX_COMMAND_BYTES + 2) as u64);
     let mut buffer = Vec::with_capacity(MAX_COMMAND_BYTES + 2);
 
@@ -204,21 +203,22 @@ async fn handle_connection(
     Ok(())
 }
 
-async fn write_response(
-    writer: &mut tokio::net::unix::OwnedWriteHalf,
-    response: &str,
-) -> Result<(), IpcError> {
+async fn write_response<W>(writer: &mut W, response: &str) -> Result<(), IpcError>
+where
+    W: AsyncWrite + Unpin,
+{
     writer.write_all(response.as_bytes()).await?;
     writer.write_all(b"\n").await?;
     writer.shutdown().await?;
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use tempfile::TempDir;
+    use tokio::net::UnixStream;
 
     use super::*;
 

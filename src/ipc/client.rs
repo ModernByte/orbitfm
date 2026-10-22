@@ -3,10 +3,10 @@ use std::path::Path;
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::UnixStream;
 use tokio::time::timeout;
 
 use super::protocol::{IpcError, MAX_COMMAND_BYTES};
+use super::transport;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(12);
@@ -18,7 +18,7 @@ pub(super) async fn send(path: &Path, command: &str) -> Result<String, IpcError>
         return Err(IpcError::CommandTooLong);
     }
 
-    let mut stream = match timeout(CONNECT_TIMEOUT, UnixStream::connect(path)).await {
+    let mut stream = match timeout(CONNECT_TIMEOUT, transport::connect(path)).await {
         Err(_) => {
             return Err(IpcError::Timeout(format!(
                 "подключение к {}",
