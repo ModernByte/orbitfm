@@ -16,6 +16,7 @@
 ```rust
 pub use camera::GlobeCamera;
 pub use globe::{GlobeRenderer, paint_globe};
+pub use markers::{MarkerVisual, paint_markers, sphere_point};
 pub use spectrum::{SpectrumOverlay, SpectrumTarget};
 
 pub struct GlobeCamera { /* yaw, pitch, distance, velocities */ }
@@ -26,6 +27,7 @@ impl GlobeCamera {
     pub fn eye(&self) -> glam::Vec3;
     pub fn view_proj(&self, aspect: f32) -> glam::Mat4;
     pub fn screen_to_sphere(&self, screen_pos: egui::Pos2, viewport: egui::Rect) -> Option<glam::Vec3>;
+    pub fn project_on_sphere(&self, point: glam::Vec3, viewport: egui::Rect) -> Option<egui::Pos2>;
 }
 
 pub struct GlobeRenderer { /* pipeline, buffers, texture, bind group */ }
@@ -37,6 +39,23 @@ impl GlobeRenderer {
 }
 
 pub fn paint_globe(painter: &egui::Painter, rect: egui::Rect, camera: &GlobeCamera);
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MarkerVisual {
+    pub pos: egui::Pos2,
+    pub highlighted: bool,
+    pub count: usize,
+}
+
+pub fn sphere_point(lat_deg: f32, lon_deg: f32) -> glam::Vec3;
+
+pub fn paint_markers(
+    painter: &egui::Painter,
+    bounds: egui::Rect,
+    markers: &[MarkerVisual],
+    hovered: Option<usize>,
+    hovered_label: Option<&str>,
+);
 
 pub struct GlobeInput {
     pub drag_delta: egui::Vec2,
@@ -90,6 +109,9 @@ impl SpectrumOverlay {
 - Проекция: FOV 45°, near 0.1, far 50, DirectX-стиль NDC (wgpu): `glam::camera::rh`.
 - `screen_to_sphere`: NDC → unproject (z=0 и z=1) → луч из `eye` → ближайшее
   пересечение с единичной сферой.
+- `project_on_sphere`: точка единичной сферы → view-projection → экранные координаты;
+  `None` для задней полусферы (`point · eye <= 1`), нечисловых значений и выхода
+  за viewport.
 - Начальная ориентация: yaw=0, pitch=0 — перед камерой Гринвич/Африка, север сверху.
 
 ## 5. Визуал (MVP)
@@ -102,9 +124,24 @@ impl SpectrumOverlay {
 - Сэмплер: `Repeat` по U, `ClampToEdge` по V, линейная фильтрация, без mipmap.
 - Освещение: фиксированное направление `(0.5, 0.35, 0.8)`, `ambient 0.25 + diffuse 0.75`.
 - Шейдер: `src/render/globe.wgsl`.
-- (Позже) Fresnel-атмосфера, маркеры станций, подписи стран.
+- (Позже) Fresnel-атмосфера и подписи стран.
 
-## 6. Спектральный оверлей
+## 6. Маркеры станций
+
+- `render/markers.rs` не создаёт GPU-ресурсов и не зависит от доменных типов.
+  Application Core валидирует координаты, группирует станции и передаёт
+  `MarkerVisual` с экранной позицией.
+- `sphere_point(lat, lon)` переводит градусы в точку единичной сферы по общему
+  соглашению (`x = cos φ · sin λ`, `y = sin φ`, `z = cos φ · cos λ`).
+- `paint_markers` рисует поверх wgpu-callback глобуса через `egui::Painter`:
+  свечение, точку радиусом 4 px, белую обводку, бейдж количества при `count > 1`,
+  кольцо наведения и подпись с фоном, прижатую к границам области.
+- Активный маркер (`highlighted`) выделяется тёплым цветом. Отсечение задней
+  полусферы и viewport выполняет `project_on_sphere`.
+- Поведение взаимодействия (радиус 10 px, приоритет над страной) определяет
+  Application Core; см. ADR-0012.
+
+## 7. Спектральный оверлей
 
 - `SpectrumTarget` — срез метрик (`centroid_hz`, `spread_hz`, `flux`, `flatness`,
   `rms_db`) без зависимости от аудио-модуля.
@@ -117,7 +154,7 @@ impl SpectrumOverlay {
 - Метрики агрегированные, поэтому огибающая — художественная интерпретация,
   а не покадровый спектр по бинам (ADR-0010).
 
-## 7. Тесты
+## 8. Тесты
 
 - все треугольники меша обращены наружу;
 - вершины лежат на единичной сфере, UV в `[0, 1]`;
@@ -126,11 +163,15 @@ impl SpectrumOverlay {
 - луч из угла viewport не пересекает сферу;
 - drag меняет ориентацию и сохраняет инерцию;
 - зум и pitch ограничены;
+- `project_on_sphere` проецирует видимую точку в центр, учитывает широту/долготу и
+  отсекает заднюю полусферу, пустой viewport и нечисловые координаты;
+- `sphere_point` следует соглашению сферы и возвращает нормализованные векторы;
 - спектральный оверлей принимает первый кадр без сглаживания, затухает без данных,
   ограничивает частоты и игнорирует неположительный `dt`.
 
-## 8. Связанные ADR
+## 9. Связанные ADR
 
 - ADR-0002: Выбор GUI-стека
 - ADR-0008: Геопространственный поиск
 - ADR-0010: Экспериментальный FFT-визуализатор
+- ADR-0012: Маркеры станций на глобусе

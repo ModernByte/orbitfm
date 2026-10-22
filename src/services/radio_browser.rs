@@ -28,6 +28,8 @@ pub struct SearchParams {
     pub limit: u32,
     pub offset: u32,
     pub hide_broken: bool,
+    /// Только станции с известными координатами.
+    pub has_geo_info: bool,
 }
 
 /// Станция в том виде, в котором её отдаёт Radio Browser.
@@ -53,6 +55,10 @@ pub struct Station {
     pub bitrate: u32,
     #[serde(default)]
     pub codec: String,
+    #[serde(default)]
+    pub geo_lat: Option<f64>,
+    #[serde(default)]
+    pub geo_long: Option<f64>,
 }
 
 /// Ошибки клиента Radio Browser.
@@ -328,6 +334,9 @@ fn search_query(params: &SearchParams) -> Vec<(&'static str, String)> {
     if params.offset > 0 {
         query.push(("offset", params.offset.to_string()));
     }
+    if params.has_geo_info {
+        query.push(("has_geo_info", "true".to_owned()));
+    }
 
     query
 }
@@ -395,6 +404,8 @@ mod tests {
             language: "english".to_owned(),
             bitrate: 128,
             codec: "MP3".to_owned(),
+            geo_lat: None,
+            geo_long: None,
         }
     }
 
@@ -411,7 +422,9 @@ mod tests {
             "countrycode": "US",
             "language": "english",
             "bitrate": 128,
-            "codec": "MP3"
+            "codec": "MP3",
+            "geo_lat": null,
+            "geo_long": null
         }]"#;
 
         let stations: Vec<Station> = serde_json::from_str(json).expect("фикстура должна парситься");
@@ -419,6 +432,24 @@ mod tests {
         assert_eq!(stations[0].homepage, None);
         assert_eq!(stations[0].favicon, None);
         assert_eq!(stations[0].countrycode, "US");
+        assert_eq!(stations[0].geo_lat, None);
+        assert_eq!(stations[0].geo_long, None);
+    }
+
+    #[test]
+    fn station_parses_geo_coordinates() {
+        let json = r#"[{
+            "stationuuid": "c685c086-b716-4edd-b313-d4a7baf1084c",
+            "name": "Test Radio",
+            "url": "http://example.com/live",
+            "url_resolved": "https://example.com/live",
+            "geo_lat": 52.52,
+            "geo_long": 13.405
+        }]"#;
+
+        let stations: Vec<Station> = serde_json::from_str(json).expect("фикстура должна парситься");
+        assert_eq!(stations[0].geo_lat, Some(52.52));
+        assert_eq!(stations[0].geo_long, Some(13.405));
     }
 
     #[test]
@@ -431,6 +462,7 @@ mod tests {
             limit: 25,
             offset: 10,
             hide_broken: true,
+            has_geo_info: true,
         };
 
         let query = search_query(&params);
@@ -441,8 +473,16 @@ mod tests {
         assert!(query.contains(&("offset", "10".to_owned())));
         assert!(query.contains(&("hidebroken", "true".to_owned())));
         assert!(query.contains(&("order", "votes".to_owned())));
+        assert!(query.contains(&("has_geo_info", "true".to_owned())));
         assert!(!query.iter().any(|(key, _)| *key == "tag"));
         assert!(!query.iter().any(|(key, _)| *key == "language"));
+    }
+
+    #[test]
+    fn omits_geo_filter_by_default() {
+        let query = search_query(&SearchParams::default());
+
+        assert!(!query.iter().any(|(key, _)| *key == "has_geo_info"));
     }
 
     #[test]

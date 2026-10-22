@@ -41,6 +41,14 @@ impl GlobeCamera {
         screen_pos: egui::Pos2,
         viewport: egui::Rect,
     ) -> Option<glam::Vec3>;
+
+    /// Точка единичной сферы → экранные координаты; `None` для обратной полусферы
+    /// и выхода за viewport.
+    pub fn project_on_sphere(
+        &self,
+        point: glam::Vec3,
+        viewport: egui::Rect,
+    ) -> Option<egui::Pos2>;
 }
 
 /// GPU-ресурсы: пайплайн, сфера, текстура Земли, uniform-буфер.
@@ -63,6 +71,28 @@ impl GlobeRenderer {
 
 /// Добавляет paint callback глобуса в painter.
 pub fn paint_globe(painter: &egui::Painter, rect: egui::Rect, camera: &GlobeCamera);
+
+/// Экранное представление маркера станции; не содержит доменных типов.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MarkerVisual {
+    pub pos: egui::Pos2,
+    /// Маркер соответствует текущей станции.
+    pub highlighted: bool,
+    /// Число станций, совпавших по координатам.
+    pub count: usize,
+}
+
+/// Широта/долгота (градусы) → точка единичной сферы по соглашению рендера.
+pub fn sphere_point(lat_deg: f32, lon_deg: f32) -> glam::Vec3;
+
+/// Рисует маркеры средствами egui поверх области глобуса.
+pub fn paint_markers(
+    painter: &egui::Painter,
+    bounds: egui::Rect,
+    markers: &[MarkerVisual],
+    hovered: Option<usize>,
+    hovered_label: Option<&str>,
+);
 
 /// Срез FFT-метрик для визуализации; не содержит доменных типов.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -101,6 +131,9 @@ impl SpectrumOverlay {
   при скорости ниже порога.
 - `screen_to_sphere` возвращает нормализованную точку единичной сферы или `None`,
   если луч не пересекает сферу либо точка вне viewport.
+- `project_on_sphere` — обратная операция: отсекает точки задней полусферы
+  (`point · eye <= 1`), нечисловые координаты и результат вне viewport. Используется
+  для проецирования маркеров станций.
 - `paint_globe` не создаёт ресурсов: `GlobeRenderer` должен быть заранее вставлен в
   `callback_resources` (это делает `OrbitApp::new`). Если ресурса нет, callback
   пропускает отрисовку.
@@ -114,11 +147,16 @@ impl SpectrumOverlay {
   30 Гц–20 кГц, линию уровня и подпись `FFT · <частота> · <RMS> дБ`.
   Модуль не знает о `AudioEngine` и `SpectrumFrame`: App Core передаёт срез
   `SpectrumTarget`.
+- `paint_markers` рисует поверх wgpu-callback глобуса: свечение, точку, обводку,
+  бейдж количества (`count > 1`), кольцо наведения и подпись в пределах `bounds`.
+  Активный маркер выделяется цветом. Модуль не знает о `Station`: App Core передаёт
+  готовые `MarkerVisual` и текст подписи.
 
 ## Ограничения
 
 - Depth buffer не используется: сфера выпуклая, backface culling достаточен.
 - Текстура без mipmap, фильтрация линейная.
-- Атмосфера, маркеры станций и подписи стран — вне текущего объёма.
+- Атмосфера и подписи стран — вне текущего объёма; маркеры станций реализованы
+  egui-оверлеем (ADR-0012).
 - Спектральный оверлей показывает агрегированные метрики, а не полосы по бинам
   (ADR-0010); это художественная огибающая, а не точный анализатор спектра.

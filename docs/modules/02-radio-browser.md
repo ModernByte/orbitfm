@@ -49,6 +49,7 @@ pub struct SearchParams {
     pub limit: u32,
     pub offset: u32,
     pub hide_broken: bool,
+    pub has_geo_info: bool,                // только станции с координатами
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -64,6 +65,8 @@ pub struct Station {
     pub language: String,
     pub bitrate: u32,
     pub codec: String,
+    pub geo_lat: Option<f64>,              // широта, если известна
+    pub geo_long: Option<f64>,             // долгота, если известна
 }
 ```
 
@@ -96,12 +99,14 @@ pub struct Station {
 
 | Метод | Эндпоинт | Назначение |
 |-------|----------|------------|
-| GET | `/json/stations/search` | Поиск; `hidebroken`, `order=votes`, `reverse=true`, фильтры `name`, `countrycode`, `tag`, `language`, `limit`, `offset` |
+| GET | `/json/stations/search` | Поиск; `hidebroken`, `order=votes`, `reverse=true`, фильтры `name`, `countrycode`, `tag`, `language`, `has_geo_info`, `limit`, `offset` |
 | GET | `/json/stations/byuuid/<uuid>` | Станция по UUID |
 | GET | `/json/url/<uuid>` | Click-tracking при старте воспроизведения |
 
 Станции без `url_resolved` отбрасываются при поиске. Воспроизведение всегда использует
-`url_resolved`.
+`url_resolved`. `geo_lat`/`geo_long` передаются как есть (`Option<f64>`); фильтр
+`has_geo_info=true` включается только при `SearchParams::has_geo_info`. Валидацию
+координат и группировку маркеров выполняет Application Core (ADR-0012).
 
 ## 7. Кэш и валидация
 
@@ -118,7 +123,8 @@ pub struct Station {
 ## 9. Тесты
 
 - разбор станции с пустыми `homepage`/`favicon` → `None`;
-- построение query без пустых фильтров;
+- разбор `geo_lat`/`geo_long`, включая `null`;
+- построение query без пустых фильтров и с `has_geo_info=true`;
 - валидация UUID (включая попытку path traversal);
 - попадание в кэш по UUID;
 - ротация пула сохраняет все серверы;
@@ -127,3 +133,4 @@ pub struct Station {
 ## 10. Связанные ADR
 
 - ADR-0004: Выбор клиента Radio Browser
+- ADR-0012: Маркеры станций на глобусе (гео-фильтр и поля координат)

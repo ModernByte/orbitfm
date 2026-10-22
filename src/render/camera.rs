@@ -145,6 +145,32 @@ impl GlobeCamera {
         (distance >= 0.0).then(|| (origin + direction * distance).normalize())
     }
 
+    /// Проецирует точку единичной сферы в экранные координаты.
+    ///
+    /// Возвращает `None` для обратной полусферы, выхода за viewport и
+    /// нечисловых координат.
+    pub fn project_on_sphere(&self, point: Vec3, viewport: Rect) -> Option<Pos2> {
+        if viewport.width() <= 0.0 || viewport.height() <= 0.0 {
+            return None;
+        }
+        if point.dot(self.eye()) <= 1.0 {
+            return None;
+        }
+
+        let clip = self.view_proj(viewport.aspect_ratio()) * point.extend(1.0);
+        if clip.w <= f32::EPSILON {
+            return None;
+        }
+
+        let ndc = clip.truncate() / clip.w;
+        let position = Pos2::new(
+            viewport.left() + (ndc.x * 0.5 + 0.5) * viewport.width(),
+            viewport.top() + (0.5 - ndc.y * 0.5) * viewport.height(),
+        );
+        (position.x.is_finite() && position.y.is_finite() && viewport.contains(position))
+            .then_some(position)
+    }
+
     pub(crate) fn uniform(&self, aspect: f32) -> CameraUniform {
         let light = Vec3::new(0.5, 0.35, 0.8).normalize();
         CameraUniform {
@@ -165,6 +191,12 @@ mod tests {
 
     fn viewport() -> Rect {
         Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0))
+    }
+
+    fn sphere_point(lat: f64, lon: f64) -> Vec3 {
+        let lat = lat.to_radians() as f32;
+        let lon = lon.to_radians() as f32;
+        Vec3::new(lat.cos() * lon.sin(), lat.sin(), lat.cos() * lon.cos())
     }
 
     #[test]
@@ -193,6 +225,49 @@ mod tests {
         let lon = hit.x.atan2(hit.z).to_degrees();
         assert!((lat - 52.52).abs() < 1e-3, "широта: {lat}");
         assert!((lon - 13.405).abs() < 1e-3, "долгота: {lon}");
+    }
+
+    #[test]
+    fn projects_visible_point_to_screen_center() {
+        let camera = GlobeCamera::default();
+        let rect = viewport();
+        let position = camera
+            .project_on_sphere(sphere_point(0.0, 0.0), rect)
+            .expect("точка перед камерой должна проецироваться");
+
+        assert!((position - rect.center()).length() < 1e-3);
+    }
+
+    #[test]
+    fn projection_respects_latitude_and_longitude() {
+        let camera = GlobeCamera::default();
+        let rect = viewport();
+        let position = camera
+            .project_on_sphere(sphere_point(52.52, 13.405), rect)
+            .expect("Берлин должен быть виден");
+
+        assert!(
+            position.x > rect.center().x,
+            "восточная долгота правее центра"
+        );
+        assert!(position.y < rect.center().y, "северная широта выше центра");
+    }
+
+    #[test]
+    fn hides_back_hemisphere_and_invalid_viewport() {
+        let camera = GlobeCamera::default();
+        let rect = viewport();
+
+        assert!(
+            camera
+                .project_on_sphere(sphere_point(0.0, 180.0), rect)
+                .is_none()
+        );
+        assert!(
+            camera
+                .project_on_sphere(sphere_point(0.0, 0.0), Rect::NOTHING)
+                .is_none()
+        );
     }
 
     #[test]

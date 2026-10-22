@@ -56,8 +56,9 @@ pub struct OrbitApp {
     search_results: Vec<Station>,
     search_pending: bool,
     search_empty: bool,
-    search_rx: Option<mpsc::UnboundedReceiver<Result<Vec<Station>, RadioError>>>,
+    search_rx: Option<mpsc::UnboundedReceiver<Result<SearchOutcome, RadioError>>>,
     search_error: Option<String>,
+    markers: Vec<StationMarker>,
     runtime: tokio::runtime::Handle,
     quitting: bool,
 }
@@ -67,7 +68,9 @@ pub struct OrbitApp {
 `spectrum_enabled` синхронизируется с аудио-ядром в `logic()`, `spectrum_overlay` хранит
 сглаженное состояние оверлея, `spectrum_error` — последняя ошибка включения фильтра.
 `search_country` хранит страну, выбранную на глобусе, и сбрасывается при поиске по
-названию; `search_empty` отмечает успешный ответ без станций.
+названию; `search_empty` отмечает успешный ответ без станций. `SearchOutcome` —
+внутренний тип с результатами основного и гео-запроса; `StationMarker` хранит
+представителя группы, координаты и количество станций.
 
 `current_url` заполняется из `AudioEvent::Started` и из запуска станции; `Stopped`/`Error`
 его больше не очищают — последний URL нужен MPRIS для повторного запуска.
@@ -108,7 +111,7 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
 MPRIS-команды обрабатываются и в скрытом состоянии; пробуждение выполняют `WakeFn` из
 IPC-сервера, MPRIS-колбэка, задача аудио-событий и завершённый поиск.
 
-## 6. Глобус и выбор страны
+## 6. Глобус, маркеры и выбор страны
 
 В `ui()` область глобуса выделяется через `allocate_exact_size` с
 `Sense::click_and_drag()`:
@@ -116,13 +119,17 @@ IPC-сервера, MPRIS-колбэка, задача аудио-событий
 1. ПКМ + drag → `GlobeInput::drag_delta`; колесо при наведении → `scroll_delta`;
    ЛКМ → `primary_clicked`.
 2. `GlobeCamera::update(stable_dt, &input)` обновляет ориентацию, инерцию и зум.
-3. При клике `screen_to_sphere` даёт точку сферы, `GeoService::country_at_sphere_point`
-   — страну.
-4. Найденная страна передаётся в `start_country_search`: `search_country`
+3. При клике сначала проверяется ближайший маркер в радиусе 10 px: он приоритетнее
+   выбора страны и запускает представителя группы через `start_station`.
+4. Если маркера нет, `screen_to_sphere` даёт точку сферы,
+   `GeoService::country_at_sphere_point` — страну.
+5. Найденная страна передаётся в `start_country_search`: `search_country`
    устанавливается, выполняется запрос `countrycode=<ISO alpha-2>`, `limit = 30`,
    `hide_broken = true`.
-5. `paint_globe` добавляет paint callback; пока камера `is_animating`, запрашивается
-   repaint.
+6. Маркеры проецируются через `project_on_sphere`; наведение показывает подпись и
+   курсор-указатель, активная станция подсвечивается. `paint_globe` добавляет paint
+   callback, затем `paint_markers` рисует egui-оверлей; пока камера `is_animating`,
+   запрашивается repaint.
 
 Клик по океану или территории без валидного ISO-кода ничего не меняет. При
 `globe_ready = false` вместо глобуса рисуется заглушка, ввод игнорируется.
@@ -145,10 +152,17 @@ IPC-сервера, MPRIS-колбэка, задача аудио-событий
 - «Найти»/Enter запускают `RadioBrowserClient::search` с `name`, `limit = 30`,
   `hide_broken = true`; `search_country` сбрасывается. Запрос выполняется в
   tokio-задаче, результат приходит через `mpsc` и будит GUI.
+- Параллельно с основным запросом выполняется гео-запрос с теми же фильтрами,
+  `has_geo_info = true`, `limit = 60`; его ошибка логируется и не влияет на список.
+  Результат используется только для маркеров.
+- Маркеры строятся из гео-станций: координаты должны быть конечными, лежать в
+  `[-90, 90]`/`[-180, 180]` и не быть `(0, 0)`; станции с координатами, округлёнными
+  до 2 знаков, объединяются, дубликаты по UUID отбрасываются.
 - Поиск по стране использует тот же канал и отличается только `SearchParams`
   (`country_code`, без `name`); заголовок `Страна: …` остаётся до следующего
   поиска по названию.
 - Пустой успешный ответ выставляет `search_empty`; UI показывает «Станции не найдены».
+- Новый поиск очищает маркеры; ошибка основного запроса также очищает их.
 - Выбор результата или IPC `play <uuid>` вызывает `start_station`:
   проверяется непустой `url_resolved`, выполняется `audio.play`, сохраняются
   `current_url`/`current_station`, асинхронно отправляется click.
@@ -179,7 +193,8 @@ artUrl, `url_resolved` → `xesam:url`. Без станции используе
 ## 11. Текущие ограничения
 
 - `Next`/`Previous` из MPRIS не переключают станции (нет списка/истории)
-- На глобусе нет маркеров станций, подписей стран и атмосферы
+- На глобусе нет подписей стран и атмосферы; маркеры группируются только по
+  совпадающим координатам, кластеризации близких точек нет
 - Клик мимо окна (overlay) ещё не реализован
 - Кэш станций только in-memory; дискового кэша нет
 - Метаданные ICY (название трека внутри потока) не читаются
@@ -188,5 +203,5 @@ artUrl, `url_resolved` → `xesam:url`. Без станции используе
 
 ## 12. Связанные документы
 
-- ADR-0002, ADR-0005, ADR-0006, ADR-0010
+- ADR-0002, ADR-0005, ADR-0006, ADR-0010, ADR-0012
 - `docs/architecture/00-overview.md`
