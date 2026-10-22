@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -10,7 +11,8 @@ use crate::geo::{Country, GeoService};
 use crate::ipc::{IpcCommand, IpcRequest, WakeFn};
 use crate::media::{MediaCommand, MediaControls, PlaybackInfo};
 use crate::render::{
-    GlobeCamera, GlobeInput, GlobeRenderer, SpectrumOverlay, SpectrumTarget, paint_globe,
+    GlobeCamera, GlobeInput, GlobeRenderer, MarkerVisual, SpectrumOverlay, SpectrumTarget,
+    paint_globe, paint_markers, sphere_point,
 };
 use crate::services::{RadioBrowserClient, RadioError, SearchParams, Station};
 
@@ -20,7 +22,23 @@ const MUTED_TEXT: egui::Color32 = egui::Color32::from_rgb(150, 158, 176);
 const ACCENT: egui::Color32 = egui::Color32::from_rgb(108, 176, 255);
 const ERROR_TEXT: egui::Color32 = egui::Color32::from_rgb(255, 128, 128);
 const SEARCH_RESULT_LIMIT: u32 = 30;
+const MARKER_RESULT_LIMIT: u32 = 60;
+const MARKER_CLICK_RADIUS: f32 = 10.0;
+const MARKER_GROUP_SCALE: f64 = 100.0;
 const STATION_LOOKUP_TIMEOUT: Duration = Duration::from_secs(8);
+
+#[derive(Debug, Clone)]
+struct StationMarker {
+    station: Station,
+    lat: f32,
+    lon: f32,
+    count: usize,
+}
+
+struct SearchOutcome {
+    stations: Vec<Station>,
+    geo_stations: Vec<Station>,
+}
 
 /// Разделяемый с IPC-сервером слот для пробуждения GUI-цикла.
 #[derive(Clone, Default)]
@@ -89,9 +107,10 @@ pub struct OrbitApp {
     search_query: String,
     search_country: Option<Country>,
     search_results: Vec<Station>,
+    markers: Vec<StationMarker>,
     search_pending: bool,
     search_empty: bool,
-    search_rx: Option<mpsc::UnboundedReceiver<Result<Vec<Station>, RadioError>>>,
+    search_rx: Option<mpsc::UnboundedReceiver<Result<SearchOutcome, RadioError>>>,
     search_error: Option<String>,
     runtime: tokio::runtime::Handle,
     quitting: bool,
@@ -149,6 +168,7 @@ impl OrbitApp {
             search_query: String::new(),
             search_country: None,
             search_results: Vec::new(),
+            markers: Vec::new(),
             search_pending: false,
             search_empty: false,
             search_rx: None,
@@ -298,11 +318,33 @@ impl OrbitApp {
         self.search_empty = false;
         self.search_error = None;
         self.search_results.clear();
+        self.markers.clear();
+
+        let mut geo_params = params.clone();
+        geo_params.has_geo_info = true;
+        geo_params.limit = MARKER_RESULT_LIMIT;
 
         let radio = self.radio.clone();
         let waker = self.wake.waker();
         self.runtime.spawn(async move {
-            let result = radio.search(params).await;
+            let (stations, geo_stations) =
+                tokio::join!(radio.search(params), radio.search(geo_params));
+            let result = match stations {
+                Ok(stations) => {
+                    let geo_stations = match geo_stations {
+                        Ok(stations) => stations,
+                        Err(err) => {
+                            warn!(error = %err, "гео-поиск станций не удался");
+                            Vec::new()
+                        }
+                    };
+                    Ok(SearchOutcome {
+                        stations,
+                        geo_stations,
+                    })
+                }
+                Err(err) => Err(err),
+            };
             let _ = sender.send(result);
             waker();
         });
@@ -315,14 +357,16 @@ impl OrbitApp {
         };
 
         match result {
-            Ok(Ok(stations)) => {
-                self.search_empty = stations.is_empty();
-                self.search_results = stations;
+            Ok(Ok(outcome)) => {
+                self.search_empty = outcome.stations.is_empty();
+                self.search_results = outcome.stations;
+                self.markers = build_markers(outcome.geo_stations);
                 self.search_pending = false;
                 self.search_rx = None;
             }
             Ok(Err(err)) => {
                 self.search_error = Some(err.to_string());
+                self.markers.clear();
                 self.search_pending = false;
                 self.search_rx = None;
             }
@@ -333,6 +377,18 @@ impl OrbitApp {
                 self.search_rx = None;
             }
         }
+    }
+
+    fn marker_screens(&self, viewport: egui::Rect) -> Vec<(usize, egui::Pos2)> {
+        self.markers
+            .iter()
+            .enumerate()
+            .filter_map(|(index, marker)| {
+                self.globe_camera
+                    .project_on_sphere(sphere_point(marker.lat, marker.lon), viewport)
+                    .map(|position| (index, position))
+            })
+            .collect()
     }
 
     fn process_audio_events(&mut self) {
@@ -606,6 +662,14 @@ impl OrbitApp {
                             .strong(),
                     );
                 }
+                if !self.markers.is_empty() {
+                    let total: usize = self.markers.iter().map(|marker| marker.count).sum();
+                    ui.label(
+                        egui::RichText::new(format!("Маркеры: {total} станций с координатами"))
+                            .size(11.0)
+                            .color(MUTED_TEXT),
+                    );
+                }
                 if self.search_pending {
                     ui.label(egui::RichText::new("Поиск…").color(MUTED_TEXT));
                 }
@@ -655,19 +719,57 @@ impl OrbitApp {
                     let dt = ui.input(|input| input.stable_dt);
                     self.globe_camera.update(dt, &globe_input);
 
-                    if let Some(position) = globe_input.primary_clicked
-                        && let Some(point) =
+                    let marker_screens = self.marker_screens(globe_rect);
+
+                    if let Some(position) = globe_input.primary_clicked {
+                        if let Some(index) = nearest_marker(&marker_screens, position) {
+                            selected_station = Some(self.markers[index].station.clone());
+                        } else if let Some(point) =
                             self.globe_camera.screen_to_sphere(position, globe_rect)
-                        && let Some(country) = self.geo.country_at_sphere_point(
-                            f64::from(point.x),
-                            f64::from(point.y),
-                            f64::from(point.z),
-                        )
-                    {
-                        selected_country = Some(country.clone());
+                            && let Some(country) = self.geo.country_at_sphere_point(
+                                f64::from(point.x),
+                                f64::from(point.y),
+                                f64::from(point.z),
+                            )
+                        {
+                            selected_country = Some(country.clone());
+                        }
                     }
 
                     paint_globe(ui.painter(), globe_rect, &self.globe_camera);
+
+                    let hovered = response
+                        .hover_pos()
+                        .and_then(|position| nearest_marker(&marker_screens, position));
+                    if hovered.is_some() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                    }
+                    if !marker_screens.is_empty() {
+                        let current_station = self
+                            .current_station
+                            .as_ref()
+                            .map(|station| station.stationuuid.as_str());
+                        let visuals: Vec<MarkerVisual> = marker_screens
+                            .iter()
+                            .map(|(index, position)| {
+                                let marker = &self.markers[*index];
+                                MarkerVisual {
+                                    pos: *position,
+                                    highlighted: current_station
+                                        == Some(marker.station.stationuuid.as_str()),
+                                    count: marker.count,
+                                }
+                            })
+                            .collect();
+                        let hovered_label = hovered.map(|index| marker_label(&self.markers[index]));
+                        paint_markers(
+                            ui.painter(),
+                            globe_rect,
+                            &visuals,
+                            hovered,
+                            hovered_label.as_deref(),
+                        );
+                    }
                 } else {
                     ui.painter().text(
                         globe_rect.center(),
@@ -704,8 +806,8 @@ impl OrbitApp {
                 ui.add_space(6.0);
                 ui.label(
                     egui::RichText::new(
-                        "ЛКМ — выбрать страну · ПКМ + перетаскивание — вращение · \
-                         колесо — масштаб",
+                        "ЛКМ — выбрать страну или станцию · ПКМ + перетаскивание — \
+                         вращение · колесо — масштаб",
                     )
                     .size(11.0)
                     .color(MUTED_TEXT),
@@ -806,6 +908,80 @@ fn format_status(
     status
 }
 
+fn build_markers(stations: Vec<Station>) -> Vec<StationMarker> {
+    let mut markers: Vec<StationMarker> = Vec::new();
+    let mut groups: HashMap<(i64, i64), usize> = HashMap::new();
+    let mut seen = HashSet::new();
+
+    for station in stations {
+        if !seen.insert(station.stationuuid.clone()) {
+            continue;
+        }
+        let Some((lat, lon)) = station_geo(&station) else {
+            continue;
+        };
+        let key = (
+            (lat * MARKER_GROUP_SCALE).round() as i64,
+            (lon * MARKER_GROUP_SCALE).round() as i64,
+        );
+        if let Some(&index) = groups.get(&key) {
+            markers[index].count += 1;
+        } else {
+            groups.insert(key, markers.len());
+            markers.push(StationMarker {
+                station,
+                lat: lat as f32,
+                lon: lon as f32,
+                count: 1,
+            });
+        }
+    }
+
+    markers
+}
+
+fn station_geo(station: &Station) -> Option<(f64, f64)> {
+    let lat = station.geo_lat?;
+    let lon = station.geo_long?;
+    if !lat.is_finite()
+        || !lon.is_finite()
+        || !(-90.0..=90.0).contains(&lat)
+        || !(-180.0..=180.0).contains(&lon)
+    {
+        return None;
+    }
+    if lat == 0.0 && lon == 0.0 {
+        return None;
+    }
+    Some((lat, lon))
+}
+
+fn nearest_marker(screens: &[(usize, egui::Pos2)], position: egui::Pos2) -> Option<usize> {
+    screens
+        .iter()
+        .filter_map(|(index, marker)| {
+            let distance = (*marker - position).length();
+            (distance <= MARKER_CLICK_RADIUS).then_some((distance, *index))
+        })
+        .min_by(|left, right| left.0.total_cmp(&right.0))
+        .map(|(_, index)| index)
+}
+
+fn marker_label(marker: &StationMarker) -> String {
+    let name = single_line(&marker.station.name);
+    let name = if name.is_empty() {
+        "Без названия".to_owned()
+    } else {
+        truncate(&name, 40)
+    };
+
+    if marker.count > 1 {
+        format!("{name} · +{}", marker.count - 1)
+    } else {
+        name
+    }
+}
+
 fn single_line(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -899,6 +1075,8 @@ mod tests {
             language: "english".to_owned(),
             bitrate: 128,
             codec: "MP3".to_owned(),
+            geo_lat: None,
+            geo_long: None,
         }
     }
 
@@ -994,5 +1172,79 @@ mod tests {
             station_label(&station),
             "Без названия — US · MP3 · 128 kbps"
         );
+    }
+
+    fn geo_station(uuid: &str, lat: f64, lon: f64) -> Station {
+        let mut station = sample_station();
+        station.stationuuid = uuid.to_owned();
+        station.geo_lat = Some(lat);
+        station.geo_long = Some(lon);
+        station
+    }
+
+    #[test]
+    fn marker_groups_stations_with_shared_coordinates() {
+        let markers = build_markers(vec![
+            geo_station("a", 52.5200, 13.4050),
+            geo_station("b", 52.5201, 13.4051),
+            geo_station("c", 48.8566, 2.3522),
+        ]);
+
+        assert_eq!(markers.len(), 2);
+        assert_eq!(markers[0].count, 2);
+        assert_eq!(markers[1].count, 1);
+        assert_eq!(markers[0].station.stationuuid, "a");
+    }
+
+    #[test]
+    fn markers_skip_missing_invalid_and_zero_coordinates() {
+        let mut missing = sample_station();
+        missing.stationuuid = "missing".to_owned();
+
+        let mut zero = geo_station("zero", 0.0, 0.0);
+        zero.stationuuid = "zero".to_owned();
+
+        let markers = build_markers(vec![
+            missing,
+            zero,
+            geo_station("nan", f64::NAN, 13.0),
+            geo_station("range", 91.0, 13.0),
+            geo_station("valid", 52.52, 13.405),
+        ]);
+
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].station.stationuuid, "valid");
+    }
+
+    #[test]
+    fn markers_deduplicate_by_uuid() {
+        let markers = build_markers(vec![
+            geo_station("same", 52.52, 13.405),
+            geo_station("same", 48.85, 2.35),
+        ]);
+
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].station.stationuuid, "same");
+    }
+
+    #[test]
+    fn nearest_marker_uses_click_radius() {
+        let screens = vec![(0, egui::pos2(10.0, 10.0)), (1, egui::pos2(100.0, 100.0))];
+
+        assert_eq!(nearest_marker(&screens, egui::pos2(14.0, 12.0)), Some(0));
+        assert_eq!(nearest_marker(&screens, egui::pos2(50.0, 50.0)), None);
+    }
+
+    #[test]
+    fn marker_label_reports_group_size() {
+        let mut marker = StationMarker {
+            station: geo_station("a", 52.52, 13.405),
+            lat: 52.52,
+            lon: 13.405,
+            count: 3,
+        };
+        marker.station.name = "Groove\nSalad".to_owned();
+
+        assert_eq!(marker_label(&marker), "Groove Salad · +2");
     }
 }

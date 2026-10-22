@@ -7,7 +7,7 @@ description: GUI и 3D-глобус OrbitFM на eframe, egui и egui-wgpu. Ис
 
 Ты работаешь с UI-слоем OrbitFM (eframe + egui + egui-wgpu).
 
-Опирайся на ADR-0002, ADR-0010 и `docs/modules/04-render-globe.md`,
+Опирайся на ADR-0002, ADR-0010, ADR-0012 и `docs/modules/04-render-globe.md`,
 `docs/interfaces/04-render.md`.
 
 ## Стек
@@ -29,6 +29,13 @@ description: GUI и 3D-глобус OrbitFM на eframe, egui и egui-wgpu. Ис
 - Не использовать отдельное окно или конфликтующие 3D-движки.
 - Камера: ПКМ + drag (с инерцией), колесо — zoom с min/max.
 - Клик ЛКМ → `screen_to_sphere` → точка (x, y, z) → передаётся в GeoService.
+
+## Маркеры станций
+
+- Проекция — `GlobeCamera::project_on_sphere`, отсечение задней полусферы и viewport.
+- Рисовать egui-оверлеем после `paint_globe` через `paint_markers`; GPU-ресурсы не нужны.
+- В render-модуль передавать `MarkerVisual`, не `Station`; группировку и подписи готовит App Core.
+- Клик по маркеру приоритетнее выбора страны; радиус — 10 px.
 
 ## FFT-оверлей
 

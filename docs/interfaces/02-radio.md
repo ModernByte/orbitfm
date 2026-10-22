@@ -13,6 +13,8 @@ pub struct SearchParams {
     pub limit: u32,
     pub offset: u32,
     pub hide_broken: bool,
+    /// Только станции с известными координатами (`has_geo_info=true`).
+    pub has_geo_info: bool,
 }
 
 /// Станция (минимальный набор полей)
@@ -29,6 +31,10 @@ pub struct Station {
     pub language: String,
     pub bitrate: u32,
     pub codec: String,
+    /// Широта, если каталог её знает.
+    pub geo_lat: Option<f64>,
+    /// Долгота, если каталог её знает.
+    pub geo_long: Option<f64>,
 }
 
 /// Ошибки
@@ -79,6 +85,8 @@ impl RadioBrowserClient {
 - `search` всегда передаёт `hidebroken`, `order=votes`, `reverse=true`; `limit` и `offset`
   добавляются только при значении больше нуля. Пустые строковые фильтры отбрасываются,
   значения обрезаются по краям. Станции без `url_resolved` в результат не попадают.
+- При `has_geo_info = true` добавляется фильтр `has_geo_info=true`; клиент не проверяет
+  координаты — это делает вызывающая сторона (`geo_lat`/`geo_long` могут быть `null`).
 - `get_station` проверяет формат UUID (`InvalidUuid`) и сначала ищет станцию в кэше;
   при промахе запрашивает `/json/stations/byuuid/<uuid>` и возвращает `NotFound` для
   пустого ответа.
