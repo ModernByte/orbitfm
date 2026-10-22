@@ -34,18 +34,20 @@
 - [x] Базовый eframe/egui skeleton
 - [x] Прозрачное окно (overlay-режим)
 
-## Текущий этап: Этап 2 — Аудио-ядро
+## Этап 2: Аудио-ядро — завершён
 
-- [ ] Обёртка над libmpv
-- [ ] Play / Stop / Volume / Reconnect
-- [ ] Базовый MPRIS (Linux)
+- [x] Обёртка над libmpv (`libmpv2`) в выделенном потоке
+- [x] Play / Pause / Stop / Volume / Reconnect
+- [x] Базовый MPRIS (Linux) через playwire
+- [x] Живой тест воспроизведения (по запросу, вне CI)
 
-## Этап 3: Radio Browser
+## Текущий этап: Этап 3 — Radio Browser
 
 - [ ] DNS discovery
 - [ ] Поиск станций
 - [ ] Кэш и fallback зеркал
 - [ ] User-Agent и click-tracking
+- [ ] Подключение `play <uuid>` к аудио-ядру
 
 ## Этап 4: 3D-глобус (минимальный)
 

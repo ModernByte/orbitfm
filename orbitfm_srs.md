@@ -52,9 +52,9 @@ OrbitFM проектируется по архитектуре **«Единый 
 | **GUI Framework** | `eframe` / `egui` | Реактивный кроссплатформенный UI с поддержкой прозрачности |
 | **3D Rendering Pass** | `egui-wgpu` (`PaintCallback`) | Чистый нативный рендер 3D-шара через `wgpu` прямо в кастомный пасс `egui` (без несовместимого `three-d`) |
 | **Spatial / Geo Index** | `geo` + `geojson` + `rstar` | Парсинг GeoJSON, R-Tree индекс стран для мгновенного `Point-in-Polygon` Raycasting |
-| **Audio Core** | `libmpv-sys` (`libmpv` C-API) | Отказоустойчивое декодирование сетевых стримов (HLS, AAC, MP3) с поддержкой реконнекта |
+| **Audio Core** | `libmpv2` (безопасная обёртка над `libmpv` C-API) | Отказоустойчивое декодирование сетевых стримов (HLS, AAC, MP3) с поддержкой реконнекта |
 | **Radio API Client** | `reqwest` + Server Discovery | Динамический поиск живых серверов Radio Browser и авто-переключение зеркала |
-| **Desktop Integrations**| `mpris-player` + `zbus` | Нативная интеграция с системными медиа-клавишами и виджетами Linux |
+| **Desktop Integrations**| `playwire` (MPRIS v2 через zbus на Linux) | Нативная интеграция с системными медиа-клавишами и виджетами Linux |
 
 ---
 
@@ -91,7 +91,9 @@ OrbitFM проектируется по архитектуре **«Единый 
 
 ### 3.3. Аудиобэкенд и экспериментальный FFT
 
-* **Основное воспроизведение:** Реализовано через `libmpv` C-API (`mpv_create`, `mpv_initialize`). Позволяет из коробки обрабатывать сетевые лаги, динамический битрейт и кодеки.
+* **Основное воспроизведение:** Реализовано через безопасную обёртку `libmpv2` над `libmpv`
+  C-API. Все вызовы выполняются в выделенном потоке; `LC_NUMERIC` принудительно равен `C`.
+  Движок из коробки обрабатывает сетевые лаги, динамический битрейт и кодеки.
 * **Изолированный FFT-трек (Экспериментальный):**
   Доступ к PCM-данным для спектроанализатора реализуется через подключение `audio-filter` в mpv с выводом в IPC-stream (pcm pipe). Подсистема визуализатора изолирована и не блокирует основной цикл рендеринга GUI.
 
@@ -176,10 +178,12 @@ orbitfm/
 ├── src/
 │   ├── main.rs                      <-- CLI, Single-Instance & IPC Server (Unix Socket)
 │   ├── app.rs                       <-- eframe/egui UI Loop & Layout
-│   ├── audio/                       <-- libmpv Core Engine + MPRIS Interface
+│   ├── audio/                       <-- libmpv Core Engine (выделенный поток, реконнект)
+│   ├── media/                       <-- Системные медиа-контролы (MPRIS / playwire)
 │   ├── geo/                         <-- GeoJSON R-Tree Index & Spatial Raycaster
 │   ├── render/                      <-- egui-wgpu Custom Render Pass (3D Globe Pipeline)
 │   ├── services/                    <-- Radio Browser Client & DNS Server Discovery
+│   ├── ipc/                         <-- Single-instance, Unix socket, протокол команд
 │   └── wm/                          <-- Platform WM Detector & Config Generator
 ├── Cargo.toml
 └── README.md
