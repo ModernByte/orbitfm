@@ -132,6 +132,10 @@ pub enum IpcError {
     #[error("таймаут IPC: {0}")]
     Timeout(String),
     #[error("не удалось определить путь сокета: {0}")]
+    #[cfg_attr(
+        windows,
+        allow(dead_code, reason = "путь сокета проверяется только Unix-транспортом")
+    )]
     SocketPath(String),
 }
 
