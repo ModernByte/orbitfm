@@ -54,7 +54,7 @@ OrbitFM — кроссплатформенное десктоп-приложен
 ┌────────────────────────────▼─────────────────────────────────────┐
 │                         Domain Layer                             │
 │  RadioBrowserClient • AudioEngine • GeoService • MediaControls   │
-│  • StationLibrary                                                │
+│  • StationLibrary • SettingsStore                                │
 └────────────────────────────┬─────────────────────────────────────┘
                              │
 ┌────────────────────────────▼─────────────────────────────────────┐
@@ -74,6 +74,7 @@ OrbitFM — кроссплатформенное десктоп-приложен
 | Геопространственные данные | geo + geojson                 | Экосистема GeoRust, Point-in-Polygon                        |
 | Медиа-кнопки / MPRIS   | playwire                         | Кроссплатформенный API; Linux — MPRIS v2 через zbus         |
 | Избранное и история    | serde_json + XDG                 | Небольшой JSON в `$XDG_DATA_HOME`, атомарная запись (ADR-0013) |
+| Темы и акцент          | serde_json + XDG                 | Настройки оформления в `$XDG_CONFIG_HOME`, атомарная запись (ADR-0014) |
 | Интеграция с Noctalia  | plugin.toml + Luau               | docs.noctalia.dev                                           |
 
 ## 6. Именование (ModernByte)

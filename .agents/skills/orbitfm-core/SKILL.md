@@ -49,8 +49,8 @@ orbitfm/
 │   ├── services/
 │   ├── media/
 │   ├── library/
-│   ├── ipc/
-│   └── wm/
+│   ├── settings/
+│   └── ipc/
 ├── docs/
 │   ├── architecture/
 │   ├── adr/

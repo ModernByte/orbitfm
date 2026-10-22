@@ -16,7 +16,7 @@
 ```rust
 pub use camera::GlobeCamera;
 pub use globe::{GlobeRenderer, paint_globe};
-pub use markers::{MarkerVisual, paint_markers, sphere_point};
+pub use markers::{MarkerColors, MarkerVisual, paint_markers, sphere_point};
 pub use spectrum::{SpectrumOverlay, SpectrumTarget};
 
 pub struct GlobeCamera { /* yaw, pitch, distance, velocities */ }
@@ -47,6 +47,14 @@ pub struct MarkerVisual {
     pub count: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MarkerColors {
+    pub marker: egui::Color32,
+    pub active: egui::Color32,
+}
+
+impl Default for MarkerColors { /* синий маркер, тёплый активный */ }
+
 pub fn sphere_point(lat_deg: f32, lon_deg: f32) -> glam::Vec3;
 
 pub fn paint_markers(
@@ -55,6 +63,7 @@ pub fn paint_markers(
     markers: &[MarkerVisual],
     hovered: Option<usize>,
     hovered_label: Option<&str>,
+    colors: MarkerColors,
 );
 
 pub struct GlobeInput {
@@ -136,8 +145,11 @@ impl SpectrumOverlay {
 - `paint_markers` рисует поверх wgpu-callback глобуса через `egui::Painter`:
   свечение, точку радиусом 4 px, белую обводку, бейдж количества при `count > 1`,
   кольцо наведения и подпись с фоном, прижатую к границам области.
-- Активный маркер (`highlighted`) выделяется тёплым цветом. Отсечение задней
-  полусферы и viewport выполняет `project_on_sphere`.
+- `MarkerColors` передаёт цвета обычного (`marker`) и текущего (`active`) маркера;
+  свечение выводится из `marker` с прозрачностью. `MarkerColors::default()` —
+  синий маркер и тёплый янтарный активный; Application Core подставляет цвет
+  акцента из темы для обычных маркеров. Отсечение задней полусферы и viewport
+  выполняет `project_on_sphere`.
 - Поведение взаимодействия (радиус 10 px, приоритет над страной) определяет
   Application Core; см. ADR-0012.
 

@@ -20,6 +20,8 @@ Application Core не экспортирует публичный трейт д�
    `limit=60`) и строить маркеры; ошибка гео-запроса не влияет на список.
 7. Хранить избранное и историю через `StationLibrary`: записывать станцию в историю
    при успешном запуске и переключать избранное по действию пользователя.
+8. Хранить тему и акцент через `SettingsStore`: применять их к egui при старте и
+   сохранять при изменении пользователем.
 
 ## Порядок инициализации
 
@@ -32,12 +34,14 @@ Application Core не экспортирует публичный трейт д�
 4. MediaControls::new(wake)       — ошибка логируется, приложение работает без MPRIS
 5. RadioBrowserClient::new()      — без сетевых обращений
 6. StationLibrary::load_default() — ошибка логируется, используется ephemeral()
-7. фоновая задача refresh_servers — прогрев пула; ошибка только логируется
-8. фоновая задача: audio events → wake()
-9. IpcServer::run(wake, shutdown) — accept-loop
-10. eframe::run_native + OrbitApp — GUI, после закрытия которого сервер
+7. SettingsStore::load_default()  — ошибка логируется, используется ephemeral()
+8. фоновая задача refresh_servers — прогрев пула; ошибка только логируется
+9. фоновая задача: audio events → wake()
+10. IpcServer::run(wake, shutdown) — accept-loop
+11. eframe::run_native + OrbitApp — GUI, после закрытия которого сервер
                                     останавливается и сокет удаляется
-11. OrbitApp::new                 — создаёт GlobeRenderer из wgpu_render_state
+12. OrbitApp::new                 — применяет тему и акцент к egui, создаёт
+                                    GlobeRenderer из wgpu_render_state
                                     и кладёт его в callback_resources
 ```
 
@@ -98,6 +102,9 @@ Application Core не экспортирует публичный трейт д�
   «Очистить историю»;
 - ошибки чтения/записи библиотеки показываются в карточке и не прерывают
   воспроизведение;
+- раскрывающийся блок «Оформление» содержит выбор темы (Системная / Тёмная /
+  Светлая) и акцент из шести пресетов; изменение сразу применяется и сохраняется,
+  ошибка записи показывается в карточке и не мешает работе;
 - состояние поиска (`Поиск…`), ошибки каталога и «Станции не найдены» отображаются
   в карточке;
 - при отсутствии `wgpu_render_state` вместо глобуса показывается «3D-глобус недоступен»;
@@ -109,7 +116,7 @@ Application Core не экспортирует публичный трейт д�
 ## Зависимости
 
 `OrbitApp` использует конкретные реализации (`AudioEngine`, `GeoService`,
-`RadioBrowserClient`, `MediaControls`, `StationLibrary`, `GlobeCamera`) и каналы
-`tokio::sync` как границы. Подмена реализаций в тестах не требуется; модульные тесты
+`RadioBrowserClient`, `MediaControls`, `StationLibrary`, `SettingsStore`,
+`GlobeCamera`) и каналы `tokio::sync` как границы. Подмена реализаций в тестах не требуется; модульные тесты
 проверяют чистые функции (`format_status`, `playback_label`, `station_label`,
 `country_label`, `truncate`) и логику внутри модулей.

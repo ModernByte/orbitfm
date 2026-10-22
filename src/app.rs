@@ -12,16 +12,14 @@ use crate::ipc::{IpcCommand, IpcRequest, WakeFn};
 use crate::library::StationLibrary;
 use crate::media::{MediaCommand, MediaControls, PlaybackInfo};
 use crate::render::{
-    GlobeCamera, GlobeInput, GlobeRenderer, MarkerVisual, SpectrumOverlay, SpectrumTarget,
-    paint_globe, paint_markers, sphere_point,
+    GlobeCamera, GlobeInput, GlobeRenderer, MarkerColors, MarkerVisual, SpectrumOverlay,
+    SpectrumTarget, paint_globe, paint_markers, sphere_point,
 };
 use crate::services::{RadioBrowserClient, RadioError, SearchParams, Station};
+use crate::settings::{AccentColor, Settings, SettingsStore, ThemeMode};
 
 const WINDOW_TITLE: &str = "OrbitFM";
 const CARD_ALPHA: u8 = 236;
-const MUTED_TEXT: egui::Color32 = egui::Color32::from_rgb(150, 158, 176);
-const ACCENT: egui::Color32 = egui::Color32::from_rgb(108, 176, 255);
-const ERROR_TEXT: egui::Color32 = egui::Color32::from_rgb(255, 128, 128);
 const SEARCH_RESULT_LIMIT: u32 = 30;
 const MARKER_RESULT_LIMIT: u32 = 60;
 const MARKER_CLICK_RADIUS: f32 = 10.0;
@@ -96,6 +94,7 @@ pub struct AppServices {
     pub radio: RadioBrowserClient,
     pub media: Option<MediaControls>,
     pub library: StationLibrary,
+    pub settings: SettingsStore,
     pub runtime: tokio::runtime::Handle,
 }
 
@@ -109,6 +108,8 @@ pub struct OrbitApp {
     radio: RadioBrowserClient,
     media: Option<MediaControls>,
     library: StationLibrary,
+    settings: SettingsStore,
+    settings_error: Option<String>,
     globe_camera: GlobeCamera,
     globe_ready: bool,
     spectrum_overlay: SpectrumOverlay,
@@ -137,16 +138,17 @@ impl OrbitApp {
         wake: &WakeHandle,
         services: AppServices,
     ) -> Self {
-        configure_style(&cc.egui_ctx);
-        wake.install(cc.egui_ctx.clone());
         let AppServices {
             audio,
             geo,
             radio,
             media,
             library,
+            settings,
             runtime,
         } = services;
+        configure_style(&cc.egui_ctx, settings.settings());
+        wake.install(cc.egui_ctx.clone());
         let audio_events = audio.subscribe();
         let globe_ready = if let Some(render_state) = &cc.wgpu_render_state {
             let renderer = GlobeRenderer::new(
@@ -174,6 +176,8 @@ impl OrbitApp {
             radio,
             media,
             library,
+            settings,
+            settings_error: None,
             globe_camera: GlobeCamera::default(),
             globe_ready,
             spectrum_overlay: SpectrumOverlay::default(),
@@ -323,6 +327,28 @@ impl OrbitApp {
                 self.library_error = Some(err.to_string());
             }
         }
+    }
+
+    fn set_theme(&mut self, ctx: &egui::Context, theme: ThemeMode) {
+        match self.settings.set_theme(theme) {
+            Ok(()) => self.settings_error = None,
+            Err(err) => {
+                warn!(error = %err, "не удалось сохранить тему");
+                self.settings_error = Some(err.to_string());
+            }
+        }
+        configure_style(ctx, self.settings.settings());
+    }
+
+    fn set_accent(&mut self, ctx: &egui::Context, accent: AccentColor) {
+        match self.settings.set_accent(accent) {
+            Ok(()) => self.settings_error = None,
+            Err(err) => {
+                warn!(error = %err, "не удалось сохранить акцент");
+                self.settings_error = Some(err.to_string());
+            }
+        }
+        configure_style(ctx, self.settings.settings());
     }
 
     fn spawn_click(&self, station_uuid: String) {
@@ -602,25 +628,24 @@ impl OrbitApp {
 
     fn draw(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
+        let settings = self.settings.settings();
+        let palette = Palette::for_ui(ctx.theme(), settings.accent);
         let playback = playback_label(&self.audio.state());
         let volume = self.audio.volume() * 100.0;
         let mut hide_requested = false;
         let mut quit_requested = false;
         let mut search_requested = false;
         let mut spectrum_requested: Option<bool> = None;
+        let mut theme_change: Option<ThemeMode> = None;
+        let mut accent_change: Option<AccentColor> = None;
         let mut selected_station: Option<Station> = None;
         let mut selected_country: Option<Country> = None;
         let mut favorite_toggle: Option<Station> = None;
         let mut clear_history_requested = false;
 
         let card = egui::Frame::default()
-            .fill(egui::Color32::from_rgba_unmultiplied(
-                12, 15, 23, CARD_ALPHA,
-            ))
-            .stroke(egui::Stroke::new(
-                1.0,
-                egui::Color32::from_rgba_unmultiplied(255, 255, 255, 20),
-            ))
+            .fill(palette.card_fill)
+            .stroke(egui::Stroke::new(1.0, palette.card_stroke))
             .corner_radius(egui::CornerRadius::same(18))
             .inner_margin(egui::Margin::same(22));
 
@@ -639,7 +664,7 @@ impl OrbitApp {
                         ui.label(
                             egui::RichText::new("3D Interactive Global Radio Player")
                                 .size(12.0)
-                                .color(MUTED_TEXT),
+                                .color(palette.muted),
                         );
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -668,7 +693,7 @@ impl OrbitApp {
                 ui.add_space(6.0);
 
                 egui::Frame::default()
-                    .fill(egui::Color32::from_rgba_unmultiplied(255, 255, 255, 8))
+                    .fill(palette.subtle_fill)
                     .corner_radius(egui::CornerRadius::same(12))
                     .inner_margin(egui::Margin::symmetric(16, 10))
                     .show(ui, |ui| {
@@ -699,14 +724,57 @@ impl OrbitApp {
                         }
                         ui.label(
                             egui::RichText::new(format!("Громкость: {volume:.0}%"))
-                                .color(MUTED_TEXT),
+                                .color(palette.muted),
                         );
                         if let Some(error) = &self.spectrum_error {
-                            ui.label(egui::RichText::new(error).size(11.0).color(ERROR_TEXT));
+                            ui.label(egui::RichText::new(error).size(11.0).color(palette.error));
                         }
                         if let Some(error) = &self.library_error {
-                            ui.label(egui::RichText::new(error).size(11.0).color(ERROR_TEXT));
+                            ui.label(egui::RichText::new(error).size(11.0).color(palette.error));
                         }
+                        if let Some(error) = &self.settings_error {
+                            ui.label(egui::RichText::new(error).size(11.0).color(palette.error));
+                        }
+                    });
+
+                ui.add_space(6.0);
+                egui::CollapsingHeader::new("Оформление")
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label("Тема:");
+                            for mode in ThemeMode::ALL {
+                                if ui
+                                    .selectable_label(settings.theme == mode, theme_label(mode))
+                                    .clicked()
+                                    && settings.theme != mode
+                                {
+                                    theme_change = Some(mode);
+                                }
+                            }
+                        });
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label("Акцент:");
+                            for accent in AccentColor::ALL {
+                                let selected = settings.accent == accent;
+                                let stroke = if selected {
+                                    egui::Stroke::new(2.0, ui.visuals().strong_text_color())
+                                } else {
+                                    egui::Stroke::new(1.0, palette.card_stroke)
+                                };
+                                let response = ui
+                                    .add(
+                                        egui::Button::new("")
+                                            .fill(accent_color(accent))
+                                            .stroke(stroke)
+                                            .min_size(egui::vec2(24.0, 18.0)),
+                                    )
+                                    .on_hover_text(accent_label(accent));
+                                if response.clicked() && !selected {
+                                    accent_change = Some(accent);
+                                }
+                            }
+                        });
                     });
 
                 ui.add_space(10.0);
@@ -726,7 +794,7 @@ impl OrbitApp {
                 if let Some(country) = &self.search_country {
                     ui.label(
                         egui::RichText::new(format!("Страна: {}", country_label(country)))
-                            .color(ACCENT)
+                            .color(palette.accent)
                             .strong(),
                     );
                 }
@@ -735,17 +803,17 @@ impl OrbitApp {
                     ui.label(
                         egui::RichText::new(format!("Маркеры: {total} станций с координатами"))
                             .size(11.0)
-                            .color(MUTED_TEXT),
+                            .color(palette.muted),
                     );
                 }
                 if self.search_pending {
-                    ui.label(egui::RichText::new("Поиск…").color(MUTED_TEXT));
+                    ui.label(egui::RichText::new("Поиск…").color(palette.muted));
                 }
                 if let Some(error) = &self.search_error {
-                    ui.label(egui::RichText::new(error).color(ERROR_TEXT));
+                    ui.label(egui::RichText::new(error).color(palette.error));
                 }
                 if self.search_empty && !self.search_pending && self.search_error.is_none() {
-                    ui.label(egui::RichText::new("Станции не найдены").color(MUTED_TEXT));
+                    ui.label(egui::RichText::new("Станции не найдены").color(palette.muted));
                 }
                 let has_library =
                     !self.library.favorites().is_empty() || !self.library.history().is_empty();
@@ -777,7 +845,8 @@ impl OrbitApp {
                             LibraryTab::Results => {
                                 if self.search_results.is_empty() {
                                     ui.label(
-                                        egui::RichText::new("Станции не найдены").color(MUTED_TEXT),
+                                        egui::RichText::new("Станции не найдены")
+                                            .color(palette.muted),
                                     );
                                 } else {
                                     for station in &self.search_results {
@@ -795,7 +864,7 @@ impl OrbitApp {
                                 if self.library.favorites().is_empty() {
                                     ui.label(
                                         egui::RichText::new("В избранном пока пусто")
-                                            .color(MUTED_TEXT),
+                                            .color(palette.muted),
                                     );
                                 } else {
                                     for station in self.library.favorites() {
@@ -812,7 +881,8 @@ impl OrbitApp {
                             LibraryTab::History => {
                                 if self.library.history().is_empty() {
                                     ui.label(
-                                        egui::RichText::new("История пока пуста").color(MUTED_TEXT),
+                                        egui::RichText::new("История пока пуста")
+                                            .color(palette.muted),
                                     );
                                 } else {
                                     for station in self.library.history() {
@@ -842,7 +912,7 @@ impl OrbitApp {
                 ui.painter().rect_filled(
                     globe_rect,
                     egui::CornerRadius::same(14),
-                    egui::Color32::from_rgba_unmultiplied(255, 255, 255, 7),
+                    palette.globe_fill,
                 );
 
                 if self.globe_ready {
@@ -908,6 +978,10 @@ impl OrbitApp {
                             &visuals,
                             hovered,
                             hovered_label.as_deref(),
+                            MarkerColors {
+                                marker: palette.marker,
+                                ..MarkerColors::default()
+                            },
                         );
                     }
                 } else {
@@ -916,7 +990,7 @@ impl OrbitApp {
                         egui::Align2::CENTER_CENTER,
                         "3D-глобус недоступен",
                         egui::FontId::proportional(16.0),
-                        MUTED_TEXT,
+                        palette.muted,
                     );
                 }
 
@@ -950,7 +1024,7 @@ impl OrbitApp {
                          вращение · колесо — масштаб",
                     )
                     .size(11.0)
-                    .color(MUTED_TEXT),
+                    .color(palette.muted),
                 );
 
                 ui.add_space(4.0);
@@ -960,13 +1034,21 @@ impl OrbitApp {
                          Управление: orbitfm toggle | status | quit",
                     )
                     .size(11.0)
-                    .color(MUTED_TEXT),
+                    .color(palette.muted),
                 );
             });
         });
 
         if search_requested {
             self.start_search();
+            ctx.request_repaint();
+        }
+        if let Some(theme) = theme_change {
+            self.set_theme(&ctx, theme);
+            ctx.request_repaint();
+        }
+        if let Some(accent) = accent_change {
+            self.set_accent(&ctx, accent);
             ctx.request_repaint();
         }
         if let Some(enabled) = spectrum_requested {
@@ -1219,13 +1301,112 @@ fn playback_label(state: &PlaybackState) -> String {
     }
 }
 
-fn configure_style(ctx: &egui::Context) {
-    ctx.set_theme(egui::Theme::Dark);
+fn configure_style(ctx: &egui::Context, settings: Settings) {
+    ctx.set_theme(theme_preference(settings.theme));
 
-    let mut visuals = egui::Visuals::dark();
-    visuals.panel_fill = egui::Color32::TRANSPARENT;
-    visuals.window_fill = egui::Color32::TRANSPARENT;
-    ctx.set_visuals_of(egui::Theme::Dark, visuals);
+    let accent = accent_color(settings.accent);
+    let selection_text = contrast_text(accent);
+    for theme in [egui::Theme::Dark, egui::Theme::Light] {
+        let mut visuals = match theme {
+            egui::Theme::Dark => egui::Visuals::dark(),
+            egui::Theme::Light => egui::Visuals::light(),
+        };
+        visuals.panel_fill = egui::Color32::TRANSPARENT;
+        visuals.window_fill = egui::Color32::TRANSPARENT;
+        visuals.selection.bg_fill = accent;
+        visuals.selection.stroke = egui::Stroke::new(1.0, selection_text);
+        visuals.hyperlink_color = match theme {
+            egui::Theme::Dark => accent,
+            egui::Theme::Light => shade(accent, 0.6),
+        };
+        ctx.set_visuals_of(theme, visuals);
+    }
+}
+
+fn theme_preference(mode: ThemeMode) -> egui::ThemePreference {
+    match mode {
+        ThemeMode::System => egui::ThemePreference::System,
+        ThemeMode::Dark => egui::ThemePreference::Dark,
+        ThemeMode::Light => egui::ThemePreference::Light,
+    }
+}
+
+fn theme_label(mode: ThemeMode) -> &'static str {
+    match mode {
+        ThemeMode::System => "Системная",
+        ThemeMode::Dark => "Тёмная",
+        ThemeMode::Light => "Светлая",
+    }
+}
+
+fn accent_label(accent: AccentColor) -> &'static str {
+    match accent {
+        AccentColor::Blue => "Орбита",
+        AccentColor::Green => "Изумруд",
+        AccentColor::Amber => "Янтарь",
+        AccentColor::Violet => "Фиалка",
+        AccentColor::Rose => "Роза",
+        AccentColor::Cyan => "Океан",
+    }
+}
+
+fn accent_color(accent: AccentColor) -> egui::Color32 {
+    let [red, green, blue] = accent.rgb();
+    egui::Color32::from_rgb(red, green, blue)
+}
+
+fn contrast_text(color: egui::Color32) -> egui::Color32 {
+    let luma =
+        0.299 * f32::from(color.r()) + 0.587 * f32::from(color.g()) + 0.114 * f32::from(color.b());
+    if luma > 150.0 {
+        egui::Color32::BLACK
+    } else {
+        egui::Color32::WHITE
+    }
+}
+
+fn shade(color: egui::Color32, factor: f32) -> egui::Color32 {
+    let scale = |channel: u8| (f32::from(channel) * factor).round() as u8;
+    egui::Color32::from_rgb(scale(color.r()), scale(color.g()), scale(color.b()))
+}
+
+struct Palette {
+    card_fill: egui::Color32,
+    card_stroke: egui::Color32,
+    muted: egui::Color32,
+    error: egui::Color32,
+    subtle_fill: egui::Color32,
+    globe_fill: egui::Color32,
+    accent: egui::Color32,
+    marker: egui::Color32,
+}
+
+impl Palette {
+    fn for_ui(theme: egui::Theme, accent: AccentColor) -> Self {
+        let marker = accent_color(accent);
+        match theme {
+            egui::Theme::Dark => Self {
+                card_fill: egui::Color32::from_rgba_unmultiplied(12, 15, 23, CARD_ALPHA),
+                card_stroke: egui::Color32::from_rgba_unmultiplied(255, 255, 255, 20),
+                muted: egui::Color32::from_rgb(150, 158, 176),
+                error: egui::Color32::from_rgb(255, 128, 128),
+                subtle_fill: egui::Color32::from_rgba_unmultiplied(255, 255, 255, 8),
+                globe_fill: egui::Color32::from_rgba_unmultiplied(255, 255, 255, 7),
+                accent: marker,
+                marker,
+            },
+            egui::Theme::Light => Self {
+                card_fill: egui::Color32::from_rgba_unmultiplied(246, 248, 252, CARD_ALPHA),
+                card_stroke: egui::Color32::from_rgba_unmultiplied(15, 20, 30, 40),
+                muted: egui::Color32::from_rgb(88, 97, 116),
+                error: egui::Color32::from_rgb(176, 40, 40),
+                subtle_fill: egui::Color32::from_rgba_unmultiplied(15, 20, 30, 10),
+                globe_fill: egui::Color32::from_rgba_unmultiplied(15, 20, 30, 8),
+                accent: shade(marker, 0.6),
+                marker,
+            },
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1416,5 +1597,42 @@ mod tests {
         marker.station.name = "Groove\nSalad".to_owned();
 
         assert_eq!(marker_label(&marker), "Groove Salad · +2");
+    }
+
+    #[test]
+    fn theme_preference_maps_all_modes() {
+        assert_eq!(
+            theme_preference(ThemeMode::System),
+            egui::ThemePreference::System
+        );
+        assert_eq!(
+            theme_preference(ThemeMode::Dark),
+            egui::ThemePreference::Dark
+        );
+        assert_eq!(
+            theme_preference(ThemeMode::Light),
+            egui::ThemePreference::Light
+        );
+    }
+
+    #[test]
+    fn contrast_text_picks_readable_foreground() {
+        assert_eq!(
+            contrast_text(accent_color(AccentColor::Amber)),
+            egui::Color32::BLACK
+        );
+        assert_eq!(
+            contrast_text(egui::Color32::from_rgb(20, 30, 60)),
+            egui::Color32::WHITE
+        );
+    }
+
+    #[test]
+    fn light_palette_darkens_accent_but_keeps_marker_bright() {
+        let dark = Palette::for_ui(egui::Theme::Dark, AccentColor::Blue);
+        let light = Palette::for_ui(egui::Theme::Light, AccentColor::Blue);
+        assert_eq!(dark.accent, dark.marker);
+        assert_ne!(light.accent, light.marker);
+        assert!(light.accent.r() < light.marker.r());
     }
 }

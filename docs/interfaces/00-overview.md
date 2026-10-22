@@ -17,6 +17,7 @@
 | `06-media.md` | Контракт медиа-контролов (`MediaControls`) |
 | `07-app.md` | Контракты Application Core |
 | `08-library.md` | Контракт библиотеки станций (`StationLibrary`, избранное и история) |
+| `09-settings.md` | Контракт настроек оформления (`SettingsStore`, тема и акцент) |
 
 ## Принципы
 
