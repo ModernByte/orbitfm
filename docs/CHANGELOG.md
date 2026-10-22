@@ -8,6 +8,19 @@
 ## [Unreleased]
 
 ### Добавлено
+- Этап 7 — плагин Noctalia как источник каталога:
+  - каталог плагина переименован `noctalia-plugin/` → `orbitfm/`: имя подкаталога
+    должно совпадать с частью id после `/`
+  - `plugin.toml`: допустимые теги `bar`/`audio`/`music`, зависимость
+    `orbitfm`; переводы переведены на вложенные ключи `widget.*`
+  - `catalog.toml` в корне индексирует плагин для git-источника
+    `ModernByte/orbitfm`
+  - `orbitfm/README.md` с требованиями и использованием, карточка
+    `orbitfm/thumbnail.webp` 960×540 WebP
+  - подключение через `noctalia msg plugins source add orbitfm git
+    https://github.com/ModernByte/orbitfm`
+  - манифест проверен `noctalia plugins lint` и официальным
+    community-валидатором: 0 ошибок
 - Этап 7 — темы и кастомизация интерфейса:
   - модуль `src/settings/`: `SettingsStore`, `ThemeMode`, `AccentColor`,
     `SettingsError`, `default_path`; настройки не зависят от egui

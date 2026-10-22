@@ -36,7 +36,8 @@ description: Базовые правила проекта OrbitFM (ModernByte). 
 ```
 orbitfm/
 ├── assets/
-├── noctalia-plugin/
+├── orbitfm/                 # плагин Noctalia (имя = суффикс id)
+├── catalog.toml             # каталог плагинов для git-источника
 ├── packaging/
 │   └── linux/
 ├── wm-configs/

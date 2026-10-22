@@ -1,0 +1,15 @@
+# Каталог плагинов Noctalia для git-источника ModernByte/orbitfm.
+# Формат: https://docs.noctalia.dev/noctalia/plugins/development/workflow/
+
+[[plugin]]
+id = "modernbyte/orbitfm"
+name = "OrbitFM"
+version = "1.0.0"
+author = "ModernByte"
+license = "MIT"
+icon = "radio"
+description = "3D Interactive Global Radio Player"
+deprecated = false
+plugin_api = 3
+tags = ["bar", "audio", "music"]
+dependencies = ["orbitfm"]

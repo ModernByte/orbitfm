@@ -1,7 +1,7 @@
 # Модуль: Noctalia Plugin и Window Manager Rules
 
-**Путь в коде:**  
-- Плагин: `noctalia-plugin/`  
+**Путь в коде:**
+- Плагин: `orbitfm/` и каталог `catalog.toml`
 - Правила WM: `wm-configs/` и `src/wm/` (опциональная генерация)
 
 **Ответственность:** Тонкая интеграция с Noctalia v5 и оконными менеджерами.
@@ -13,26 +13,32 @@
 ### Структура
 
 ```
-noctalia-plugin/
+orbitfm/
 ├── plugin.toml
 ├── plugin.luau
+├── README.md
+├── thumbnail.webp
 └── translations/
     ├── en.json
     └── ru.json
 ```
 
+Имя каталога совпадает с частью id после `/`: этого требует каталог Noctalia.
+`catalog.toml` в корне репозитория индексирует плагин для git-источника.
+
 ### plugin.toml
 
 ```toml
-id          = "modernbyte/orbitfm"
-name        = "OrbitFM"
-version     = "1.0.0"
-plugin_api  = 3
-author      = "ModernByte"
-license     = "MIT"
-icon        = "radio"
-description = "3D Interactive Global Radio Player"
-tags        = ["radio", "audio", "orbitfm"]
+id           = "modernbyte/orbitfm"
+name         = "OrbitFM"
+version      = "1.0.0"
+plugin_api   = 3
+author       = "ModernByte"
+license      = "MIT"
+icon         = "radio"
+description  = "3D Interactive Global Radio Player"
+tags         = ["bar", "audio", "music"]
+dependencies = ["orbitfm"]
 
 [[widget]]
 id    = "launcher"
@@ -60,11 +66,34 @@ end)
 состояние плеера и не содержит бизнес-логики; `toggle` при отсутствии экземпляра
 запускает OrbitFM с видимым окном (семантика CLI).
 
+`tags` выбираются только из официального списка (здесь `bar`, `audio`, `music`),
+а `dependencies = ["orbitfm"]` объявляет внешнюю команду, которую запускает
+виджет. Переводы используют вложенные ключи (`widget.label`), а не плоские
+ключи с точками.
+
 Проверка манифеста:
 
 ```bash
-noctalia plugins lint noctalia-plugin
+noctalia plugins lint orbitfm
 ```
+
+### Каталог и публикация
+
+- `catalog.toml` в корне содержит строку `[[plugin]]` с `id`, `name`, `version`,
+  `author`, `license`, `icon`, `description`, `deprecated`, `plugin_api`,
+  `tags` и `dependencies`; хост читает её для витрины и проверки совместимости.
+- Обязательные файлы публикации: `plugin.toml`, entry-скрипт, `README.md`,
+  `thumbnail.webp` (960×540 WebP, до 512 КиБ) и `translations/en.json`.
+  README обязан содержать разделы `## Plugin`, `## Requirements` (упоминание
+  `orbitfm`) и `## Usage`.
+- Подключение как источника:
+  `noctalia msg plugins source add orbitfm git https://github.com/ModernByte/orbitfm`,
+  затем `noctalia msg plugins enable modernbyte/orbitfm`.
+- Для публикации в общем магазине нужен отдельный PR в
+  `noctalia-dev/community-plugins`; там `catalog.toml` генерируется CI.
+- Локальная проверка: community-валидатор из
+  `.github/workflows/scripts/validate-plugins.py` на копии каталога плагина —
+  `python3 validate-plugins.py --root <staging>` (0 ошибок).
 
 ## 2. Window Rules
 

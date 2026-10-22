@@ -24,7 +24,9 @@ OrbitFM — кроссплатформенный десктоп-плеер ин�
 
 ## Статус
 
-**Этап 7 в работе:** добавлены темы и кастомизация — блок «Оформление» с выбором
+**Этап 7 в работе:** плагин Noctalia оформлен как источник каталога — добавлены
+`catalog.toml`, README с требованиями и карточка 960×540; манифест прошёл
+официальный community-валидатор. Также добавлены темы и кастомизация — блок «Оформление» с выбором
 системной, тёмной или светлой темы и одного из шести акцентов; настройки
 сохраняются в `$XDG_CONFIG_HOME/orbitfm/settings.json`, акцент окрашивает выделение,
 гиперссылки и маркеры. Также добавлены избранное и история станций — вкладки
@@ -43,8 +45,15 @@ Linux — AppImage с метаданными рабочего стола и вс
 
 Интеграции:
 
-- `noctalia-plugin/` — манифест и виджет Noctalia (`modernbyte/orbitfm`);
-  требуется `orbitfm` в `PATH`;
+- `orbitfm/` — плагин Noctalia (`modernbyte/orbitfm`) с манифестом, виджетом,
+  README и карточкой каталога; требуется `orbitfm` в `PATH`;
+- `catalog.toml` — каталог плагинов для git-источника. Подключение:
+
+  ```bash
+  noctalia msg plugins source add orbitfm git https://github.com/ModernByte/orbitfm
+  noctalia msg plugins enable modernbyte/orbitfm
+  ```
+
 - `wm-configs/orbitfm-niri.kdl` и `wm-configs/orbitfm-hyprland.conf` — готовые
   правила плавающего окна 920×660.
 

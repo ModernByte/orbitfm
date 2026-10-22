@@ -1,0 +1,14 @@
+id           = "modernbyte/orbitfm"
+name         = "OrbitFM"
+version      = "1.0.0"
+plugin_api   = 3
+author       = "ModernByte"
+license      = "MIT"
+icon         = "radio"
+description  = "3D Interactive Global Radio Player"
+tags         = ["bar", "audio", "music"]
+dependencies = ["orbitfm"]
+
+[[widget]]
+id    = "launcher"
+entry = "plugin.luau"
