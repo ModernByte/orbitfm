@@ -112,6 +112,156 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 
+  msi:
+    name: Windows (MSI)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSYS2 with libmpv
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            binutils
+            mingw-w64-ucrt-x86_64-mpv
+          path-type: inherit
+
+      - name: Setup MSVC tools
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Prepare libmpv import library
+        shell: pwsh
+        run: ./packaging/windows/prepare-libmpv.ps1 -MpvDll 'C:\msys64\ucrt64\bin\libmpv-2.dll' -OutDir build/mpv-lib
+
+      - name: Build release
+        shell: pwsh
+        env:
+          RUSTFLAGS: -L native=${{ github.workspace }}\build\mpv-lib
+        run: cargo build --release --locked
+
+      - name: Stage application and runtime DLLs
+        shell: msys2 {0}
+        run: bash packaging/windows/stage-app.sh
+
+      - name: Add MSVC runtime DLLs
+        shell: pwsh
+        run: |
+          $redist = Get-ChildItem "$env:VCINSTALLDIR\Redist\MSVC\*\x64\Microsoft.VC*.CRT" -Directory |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $redist) { throw 'Не найден MSVC CRT redist' }
+          Copy-Item "$($redist.FullName)\*.dll" dist/OrbitFM
+          Get-ChildItem dist/OrbitFM | Select-Object Name
+
+      - name: Install WiX
+        shell: pwsh
+        run: dotnet tool update --global wix --version 7.0.0
+
+      - name: Read version
+        id: version
+        shell: pwsh
+        run: |
+          $version = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages[0].version
+          "value=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Build MSI
+        shell: pwsh
+        run: >-
+          ./packaging/windows/build-msi.ps1
+          -AppDir dist/OrbitFM
+          -Version '${{ steps.version.outputs.value }}'
+          -Output 'dist/OrbitFM-${{ steps.version.outputs.value }}-windows-x64.msi'
+
+      - name: Smoke-test MSI
+        shell: pwsh
+        run: |
+          $msi = (Get-ChildItem dist -Filter '*.msi' | Select-Object -First 1).FullName
+          $log = Join-Path $env:RUNNER_TEMP 'msi-install.log'
+          $install = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @(
+            '/i', "`"$msi`"", '/qn', '/norestart', '/l*v', "`"$log`""
+          )
+          if ($install.ExitCode -notin 0, 3010) {
+            Get-Content $log -Tail 100
+            throw "msiexec install завершился с кодом $($install.ExitCode)"
+          }
+          $exe = Join-Path $env:LOCALAPPDATA 'Programs\OrbitFM\orbitfm.exe'
+          if (-not (Test-Path $exe)) { throw "не найден $exe" }
+          $uninstall = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @(
+            '/x', "`"$msi`"", '/qn', '/norestart'
+          )
+          if ($uninstall.ExitCode -notin 0, 3010) {
+            throw "msiexec uninstall завершился с кодом $($uninstall.ExitCode)"
+          }
+
+      - name: Upload MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrbitFM-windows-x64-msi
+          path: dist/*.msi
+          if-no-files-found: error
+
+  dmg:
+    name: macOS (DMG)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install libmpv and packaging tools
+        run: brew install mpv dylibbundler librsvg
+
+      - name: Export libmpv search path
+        run: echo "LIBRARY_PATH=$(brew --prefix)/lib" >> "$GITHUB_ENV"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release
+        run: cargo build --release --locked
+
+      - name: Build DMG
+        run: bash packaging/macos/build-dmg.sh
+
+      - name: Smoke-test DMG
+        run: |
+          set -euo pipefail
+          dmg=$(ls dist/*.dmg | head -n 1)
+          mount=$(mktemp -d)
+          hdiutil attach "$dmg" -nobrowse -quiet -mountpoint "$mount"
+          trap 'hdiutil detach "$mount" -quiet || true' EXIT
+          app="$mount/OrbitFM.app"
+          test -x "$app/Contents/MacOS/orbitfm"
+          codesign --verify --deep --strict "$app"
+          if otool -L "$app/Contents/MacOS/orbitfm" | grep -E '/(opt/homebrew|usr/local)/'; then
+            echo "бинарник ссылается на Homebrew" >&2
+            exit 1
+          fi
+          if find "$app/Contents/Frameworks" -name '*.dylib' -exec otool -L {} \; |
+            grep -E '/(opt/homebrew|usr/local)/'; then
+            echo "dylib ссылается на Homebrew" >&2
+            exit 1
+          fi
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrbitFM-macos-dmg
+          path: dist/*.dmg
+          if-no-files-found: error
+
   packaging:
     name: desktop metadata
     runs-on: ubuntu-latest
@@ -133,8 +283,45 @@ jobs:
           desktop-file-validate packaging/linux/org.modernbyte.OrbitFM.desktop
           appstreamcli validate --no-net packaging/linux/org.modernbyte.OrbitFM.metainfo.xml
 
-      - name: Check AppImage script syntax
-        run: bash -n packaging/linux/build-appimage.sh
+      - name: Check AppImage and native installer script syntax
+        run: |
+          bash -n packaging/linux/build-appimage.sh
+          bash -n packaging/macos/build-dmg.sh
+          bash -n packaging/windows/stage-app.sh
+
+      - name: Validate native installer metadata
+        run: |
+          python3 - <<'PY'
+          import plistlib
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+
+          plist = plistlib.loads(Path("packaging/macos/Info.plist.in").read_bytes())
+          assert plist["CFBundleIdentifier"] == "org.modernbyte.OrbitFM"
+          assert plist["CFBundleExecutable"] == "orbitfm"
+          assert plist["CFBundleShortVersionString"] == "__VERSION__"
+
+          ET.parse("packaging/windows/orbitfm.wxs")
+          print("native installer metadata ok")
+          PY
+
+      - name: Parse Windows packaging scripts
+        run: |
+          pwsh -NoProfile -Command '
+            $errors = $null
+            foreach ($file in @(
+              "packaging/windows/prepare-libmpv.ps1",
+              "packaging/windows/build-msi.ps1"
+            )) {
+              [System.Management.Automation.Language.Parser]::ParseFile(
+                (Resolve-Path $file), [ref]$null, [ref]$errors
+              ) | Out-Null
+              if ($errors.Count -gt 0) {
+                $errors | ForEach-Object { Write-Error $_ }
+                exit 1
+              }
+            }
+          '
 
       - name: Check Flatpak manifest and vendored sources
         run: |

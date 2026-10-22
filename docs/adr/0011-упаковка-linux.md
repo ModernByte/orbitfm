@@ -32,18 +32,33 @@ Flatpak требует воспроизводимой сборки libmpv и ven
    `APPIMAGETOOL` из окружения либо скачивает continuous-сборки в
    `target/appimage-tools`. Для сред без FUSE применяется
    `APPIMAGE_EXTRACT_AND_RUN=1`.
-4. CI проверяет только метаданные (`desktop-file-validate`, `appstreamcli validate`,
-   `bash -n`); сборка AppImage остаётся локальной/ручной до появления release-workflow.
-5. **Отложено до появления нативных раннеров и платформенных бэкендов
-   (Flatpak разблокирован 2026-10-22, нативные CI-джобы добавлены 2026-10-23,
-   см. уточнения ниже):**
-   - MSI — нужны Windows-сборка libmpv и SMTC с HWND (named pipe IPC реализован);
-   - DMG — нужна macOS-сборка libmpv и проверка Now Playing;
-   - Windows (SMTC) и macOS (Now Playing) как пункты Этапа 6.
+4. CI проверяет метаданные (`desktop-file-validate`, `appstreamcli validate`,
+   `bash -n`, XML/plist); сборка AppImage остаётся локальной/ручной до появления
+   release-workflow.
+5. **Отложено до появления платформенных бэкендов (MSI/DMG разблокированы
+   2026-10-23, см. уточнение ниже):**
+   - Windows (SMTC) — привязка playwire к HWND;
+   - macOS (Now Playing) — рантайм-проверка Now Playing.
 
    Критерий возврата: зелёная сборка и ручная проверка медиа-интеграции на
    соответствующей ОС. До этого пункты ROADMAP остаются незакрытыми с пометкой
    «заблокировано».
+6. **MSI и DMG в CI (2026-10-23).** Нативные установщики собираются отдельными
+   джобами и публикуются артефактами `actions/upload-artifact`; во внешние
+   каналы не выкладываются:
+   - Windows: MSYS2 UCRT64 `mingw-w64-ucrt-x86_64-mpv` (libmpv 0.41.0); импорт
+     `mpv.lib` генерируется из `libmpv-2.dll` через `dumpbin` и `lib.exe`;
+     MSVC release-сборка; транзитивные DLL собираются по таблицам импорта через
+     `objdump`; MSI собирает WiX 7 (элемент `Files` появился только в v7) для
+     per-user установки в `%LOCALAPPDATA%\Programs\OrbitFM` с ярлыком в меню
+     «Пуск»; CI выполняет тихую установку и удаление MSI.
+   - macOS: `.app` с `Info.plist`, иконкой `.icns` (из общего SVG через
+     `rsvg-convert`/`iconutil`), зависимости бандлятся `dylibbundler`, подпись
+     ad-hoc; DMG (UDZO) содержит приложение и ссылку на `/Applications`;
+     CI монтирует DMG и проверяет подпись и отсутствие ссылок на Homebrew.
+   - Артефакты не подписаны сертификатами и не нотаризованы: MSI не имеет
+     Authenticode, DMG — Developer ID и notarization. Это осознанное ограничение
+     до появления сертификатов у владельца.
 
 ## Альтернативы
 
@@ -67,7 +82,8 @@ Flatpak требует воспроизводимой сборки libmpv и ven
 - AppImage наследует ограничения хостового libmpv/FFmpeg и драйверов; проверен только
   на x86_64 Linux
 - Continuous-инструменты не закреплены по хешу; для релизов потребуется pinning
-- MSI/DMG остаются незакрытыми до появления соответствующей инфраструктуры
+- MSI/DMG собираются без подписи и нотаризации; для релиза потребуются сертификаты
+  владельца
 
 ## Уточнение (2026-10-22): Flatpak
 
@@ -95,11 +111,26 @@ Flatpak разблокирован и реализован: `packaging/linux/org
 ## Уточнение (2026-10-23): нативные CI-джобы
 
 - macOS (`macos-latest`): libmpv из Homebrew, `fmt`, `clippy`, тесты и release-сборка.
-- Windows (`windows-latest`): `fmt` и `clippy`; проверяется компиляция, но не
-  линковка с libmpv и не упаковка. Реализован named pipe IPC
-  (`src/ipc/pipe.rs`), рантайм на Windows ещё не проверялся.
-- MSI и DMG остаются незакрытыми: нужны сборка/бандлинг libmpv, подпись и ручная
-  проверка медиа-интеграций. Критерий возврата из решения не изменился.
+- Windows (`windows-latest`): `fmt` и `clippy`; проверяется компиляция. Реализован
+  named pipe IPC (`src/ipc/pipe.rs`).
+- MSI и DMG на этом шаге ещё не собирались; ниже добавлены отдельные джобы упаковки.
+
+## Уточнение (2026-10-23): MSI и DMG
+
+- Джоба `msi` (`windows-latest`): MSYS2 UCRT64 с `mingw-w64-ucrt-x86_64-mpv`
+  (libmpv 0.41.0). `prepare-libmpv.ps1` извлекает экспорты через `dumpbin` и
+  собирает `mpv.lib` через `lib.exe`; `RUSTFLAGS=-L native=...` указывает путь
+  MSVC-линкеру. `stage-app.sh` обходит DLL-замыкание через `objdump`, после чего
+  добавляются runtime DLL MSVC. WiX 7 собирает per-user MSI
+  (`%LOCALAPPDATA%\Programs\OrbitFM`, ярлык в меню «Пуск»); CI проверяет тихую
+  установку и удаление.
+- Джоба `dmg` (`macos-latest`): `build-dmg.sh` собирает `.app`, генерирует
+  `.icns` из общего SVG, бандлит зависимости через `dylibbundler`, подписывает
+  ad-hoc и создаёт UDZO DMG со ссылкой на `/Applications`; CI монтирует образ,
+  проверяет подпись и отсутствие ссылок на Homebrew.
+- Оба артефакта публикуются через `actions/upload-artifact` и не выкладываются
+  во внешние каналы. MSI не подписан Authenticode, DMG не подписан Developer ID
+  и не нотаризован — это ограничение до появления сертификатов у владельца.
 
 ## Ссылки
 

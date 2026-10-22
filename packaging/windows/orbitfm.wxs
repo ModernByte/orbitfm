@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+      Name="OrbitFM"
+      Manufacturer="ModernByte"
+      Version="$(var.Version)"
+      UpgradeCode="8547C9D1-7771-4A0A-8533-AA2A9125D225"
+      Scope="perUser"
+      Compressed="yes">
+
+    <SummaryInformation
+        Description="OrbitFM — 3D Interactive Global Radio Player"
+        Manufacturer="ModernByte" />
+    <MajorUpgrade DowngradeErrorMessage="Установлена более новая версия OrbitFM." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="OrbitFM" />
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="ApplicationShortcut" Guid="79F1D757-9914-4B56-B758-0F8A54547DB7">
+        <Shortcut
+            Id="OrbitFMShortcut"
+            Name="OrbitFM"
+            Description="3D Interactive Global Radio Player"
+            Target="[INSTALLFOLDER]orbitfm.exe"
+            WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue
+            Root="HKCU"
+            Key="Software\ModernByte\OrbitFM"
+            Name="Shortcut"
+            Type="integer"
+            Value="1"
+            KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <Feature Id="ProductFeature" Title="OrbitFM" Level="1">
+      <Files Include="$(var.AppDir)\**" Directory="INSTALLFOLDER" />
+    </Feature>
+  </Package>
+</Wix>

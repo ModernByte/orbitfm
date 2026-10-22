@@ -98,9 +98,10 @@ OrbitFM — кроссплатформенное десктоп-приложен
   vendored cargo-исходники (ADR-0011)
 - Исходная сборка: нативный бинарник для Linux (x86_64)
 - CI: Linux (`fmt`/`clippy`/тесты), macOS (сборка, тесты и release с libmpv из
-  Homebrew), Windows (`fmt`/`clippy`; рантайм и MSI не проверяются)
-- Не реализовано: MSI/DMG, aarch64 Linux, привязка SMTC к HWND и рантайм-проверка
-  Now Playing
+  Homebrew), Windows (`fmt`/`clippy`); отдельные джобы собирают MSI (MSYS2 +
+  WiX 7) и DMG (`dylibbundler` + ad-hoc подпись) и публикуют артефакты
+- Не реализовано: aarch64 Linux, привязка SMTC к HWND и рантайм-проверка
+  Now Playing; установщики не подписаны сертификатами и не нотаризованы
 - Плагин Noctalia распространяется отдельным каталогом или через каталог плагинов
 
 ## 8. Связанные документы
