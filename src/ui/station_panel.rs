@@ -6,6 +6,7 @@ use crate::geo::Country;
 use crate::services::Station;
 
 use super::icons;
+use super::mode_switch::genre_label;
 use super::palette::Palette;
 use super::station_filter::{self, CountryFilterState, GenreTag, StationSort};
 use super::{UiAction, country_label, single_line, truncate};
@@ -22,6 +23,7 @@ pub(crate) enum LibraryTab {
 pub(crate) struct PanelState<'a> {
     pub tab: &'a mut LibraryTab,
     pub country: Option<&'a Country>,
+    pub genre: Option<&'a str>,
     pub markers_total: usize,
     pub results: &'a [Station],
     pub favorites: &'a [Station],
@@ -54,6 +56,13 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: PanelState<'_>) 
                     .color(palette.accent)
                     .strong(),
             );
+        } else if let Some(genre) = state.genre {
+            ui.label(
+                egui::RichText::new(format!("Жанр: {}", genre_label(genre)))
+                    .size(12.0)
+                    .color(palette.accent)
+                    .strong(),
+            );
         }
         if state.markers_total > 0 {
             ui.label(
@@ -75,15 +84,17 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: PanelState<'_>) 
         if state.results.is_empty() && !has_library {
             ui.add_space(12.0);
             ui.label(
-                egui::RichText::new("Найдите станцию по имени или кликните по точке на глобусе.")
-                    .size(12.0)
-                    .color(palette.muted),
+                egui::RichText::new(
+                    "Найдите станцию по имени, выберите жанр или кликните по стране на глобусе.",
+                )
+                .size(12.0)
+                .color(palette.muted),
             );
             return;
         }
 
-        let country_mode = state.country.is_some();
-        let filtered = if country_mode {
+        let context_mode = state.country.is_some() || state.genre.is_some();
+        let filtered = if context_mode {
             station_filter::filtered_results(state.results, state.filter)
         } else {
             state.results.iter().collect()
@@ -91,7 +102,7 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: PanelState<'_>) 
 
         ui.add_space(6.0);
         ui.horizontal_wrapped(|ui| {
-            let results_label = if country_mode && state.filter.is_active() {
+            let results_label = if context_mode && state.filter.is_active() {
                 format!("Результаты ({} из {})", filtered.len(), state.results.len())
             } else {
                 format!("Результаты ({})", filtered.len())
@@ -110,8 +121,8 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: PanelState<'_>) 
         });
         ui.separator();
 
-        if country_mode && *state.tab == LibraryTab::Results && !state.results.is_empty() {
-            draw_country_filters(ui, palette, state.filter);
+        if context_mode && *state.tab == LibraryTab::Results && !state.results.is_empty() {
+            draw_local_filters(ui, palette, state.filter);
             ui.add_space(4.0);
         }
 
@@ -127,7 +138,7 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: PanelState<'_>) 
                             let message = if state.empty {
                                 "Станции не найдены"
                             } else {
-                                "Выберите страну или найдите станцию по имени."
+                                "Выберите страну или жанр, либо найдите станцию по имени."
                             };
                             ui.label(egui::RichText::new(message).color(palette.muted));
                         } else if filtered.is_empty() {
@@ -145,7 +156,7 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: PanelState<'_>) 
                             if ui.button("Сбросить фильтры").clicked() {
                                 state.filter.reset();
                             }
-                        } else if country_mode {
+                        } else if context_mode {
                             for station in &filtered {
                                 station_card(ui, palette, station, state.favorites, &mut actions);
                             }
@@ -188,10 +199,10 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: PanelState<'_>) 
     actions
 }
 
-fn draw_country_filters(ui: &mut egui::Ui, palette: &Palette, filter: &mut CountryFilterState) {
+fn draw_local_filters(ui: &mut egui::Ui, palette: &Palette, filter: &mut CountryFilterState) {
     ui.add(
         egui::TextEdit::singleline(&mut filter.text)
-            .hint_text("Имя, жанр или штат")
+            .hint_text("Имя, жанр, страна или штат")
             .desired_width(f32::INFINITY),
     );
     ui.horizontal_wrapped(|ui| {

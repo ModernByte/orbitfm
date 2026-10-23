@@ -5,6 +5,11 @@ use glam::Vec3;
 
 const MARKER_COLOR: Color32 = Color32::from_rgb(108, 176, 255);
 const ACTIVE_COLOR: Color32 = Color32::from_rgb(255, 208, 112);
+const MARKER_MIN_RADIUS: f32 = 3.5;
+const MARKER_WEIGHT_RADIUS: f32 = 3.5;
+const MARKER_HIGHLIGHT_RADIUS: f32 = 2.0;
+const MARKER_GLOW_RADIUS: f32 = 3.0;
+const MARKER_GLOW_WEIGHT_RADIUS: f32 = 2.0;
 
 /// Цвета маркеров, задаваемые темой интерфейса.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -29,6 +34,8 @@ pub struct MarkerVisual {
     pub highlighted: bool,
     /// Число станций, совпавших по координатам.
     pub count: usize,
+    /// Визуальный вес 0..1 (популярность и битрейт станции).
+    pub weight: f32,
 }
 
 /// Точка единичной сферы по географическим координатам.
@@ -39,6 +46,25 @@ pub fn sphere_point(lat_deg: f32, lon_deg: f32) -> Vec3 {
     let lat = lat_deg.to_radians();
     let lon = lon_deg.to_radians();
     Vec3::new(lat.cos() * lon.sin(), lat.sin(), lat.cos() * lon.cos())
+}
+
+/// Нормализует визуальный вес маркера в `0..1`.
+fn marker_weight(weight: f32) -> f32 {
+    if weight.is_finite() {
+        weight.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+/// Радиус маркера: растёт с весом, активный маркер крупнее.
+fn marker_radius(weight: f32, highlighted: bool) -> f32 {
+    let highlight = if highlighted {
+        MARKER_HIGHLIGHT_RADIUS
+    } else {
+        0.0
+    };
+    MARKER_MIN_RADIUS + MARKER_WEIGHT_RADIUS * marker_weight(weight) + highlight
 }
 
 /// Рисует маркеры и подпись наведённого маркера поверх области глобуса.
@@ -59,14 +85,16 @@ pub fn paint_markers(
     let label_bg = Color32::from_rgba_unmultiplied(8, 11, 18, 235);
 
     for (index, marker) in markers.iter().enumerate() {
-        let radius = if marker.highlighted { 7.0 } else { 5.0 };
+        let radius = marker_radius(marker.weight, marker.highlighted);
+        let glow =
+            radius + MARKER_GLOW_RADIUS + marker_weight(marker.weight) * MARKER_GLOW_WEIGHT_RADIUS;
         let color = if marker.highlighted {
             colors.active
         } else {
             colors.marker
         };
 
-        painter.circle_filled(marker.pos, radius + 4.0, glow_color);
+        painter.circle_filled(marker.pos, glow, glow_color);
         painter.circle_filled(marker.pos, radius, color);
         painter.circle_stroke(
             marker.pos,
@@ -75,7 +103,7 @@ pub fn paint_markers(
         );
 
         if marker.count > 1 {
-            let badge = marker.pos + Vec2::new(7.0, -7.0);
+            let badge = marker.pos + Vec2::new(radius + 2.0, -(radius + 2.0));
             painter.circle_filled(badge, 6.5, Color32::from_rgb(18, 23, 33));
             painter.circle_stroke(badge, 6.5, Stroke::new(1.0, glow_color));
             painter.text(
@@ -146,5 +174,31 @@ mod tests {
             let point = sphere_point(lat, lon);
             assert!((point.length() - 1.0).abs() < 1e-5);
         }
+    }
+
+    #[test]
+    fn marker_radius_grows_with_weight() {
+        let light = marker_radius(0.0, false);
+        let heavy = marker_radius(1.0, false);
+        let active = marker_radius(1.0, true);
+
+        assert!((light - MARKER_MIN_RADIUS).abs() < 1e-5);
+        assert!(heavy > light);
+        assert!(active > heavy);
+        assert!((marker_radius(0.5, false) - (light + heavy) / 2.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn marker_radius_clamps_invalid_weight() {
+        assert!((marker_radius(-3.0, false) - MARKER_MIN_RADIUS).abs() < 1e-5);
+        assert!(
+            (marker_radius(f32::NAN, false) - MARKER_MIN_RADIUS).abs() < 1e-5,
+            "NaN не должен раздувать маркер"
+        );
+        assert_eq!(
+            marker_radius(9.0, false),
+            marker_radius(1.0, false),
+            "вес ограничен сверху"
+        );
     }
 }

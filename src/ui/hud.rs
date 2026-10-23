@@ -8,14 +8,21 @@ use crate::services::Station;
 use crate::settings::{AccentColor, Settings, ThemeMode};
 
 use super::palette::{Palette, accent_color, accent_label, theme_label};
-use super::{UiAction, country_label, playback_label, single_line, truncate};
+use super::{
+    SearchMode, UiAction, country_label, mode_switch, playback_label, single_line, truncate,
+};
 
 const COMPACT_HUD_WIDTH: f32 = 1000.0;
+const TIGHT_HUD_WIDTH: f32 = 840.0;
 const COUNTRY_SUGGESTIONS: usize = 6;
 
 pub(crate) struct HudState<'a> {
     pub query: &'a mut String,
     pub country_query: &'a mut String,
+    pub genre_query: &'a mut String,
+    pub mode: SearchMode,
+    pub selected_genre: Option<&'a str>,
+    pub context_active: bool,
     pub geo: &'a GeoService,
     pub now_playing: Option<&'a Station>,
     pub playback: &'a PlaybackState,
@@ -26,7 +33,9 @@ pub(crate) struct HudState<'a> {
 
 pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: HudState<'_>) -> Vec<UiAction> {
     let mut actions = Vec::new();
-    let compact = ui.available_width() < COMPACT_HUD_WIDTH;
+    let width = ui.available_width();
+    let compact = width < COMPACT_HUD_WIDTH;
+    let tight = width < TIGHT_HUD_WIDTH;
 
     palette.glass().show(ui, |ui| {
         ui.set_min_size(ui.available_size());
@@ -41,59 +50,79 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: HudState<'_>) ->
             });
             ui.add_space(12.0);
 
-            let mut country_action: Option<UiAction> = None;
-            let country_button = ui.button("Страна").on_hover_text("Найти страну на глобусе");
-            let country_popup_id = egui::Popup::default_response_id(&country_button);
-            egui::Popup::menu(&country_button)
-                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                .show(|ui| {
-                    ui.set_min_width(260.0);
-                    ui.label(egui::RichText::new("Поиск страны").strong());
-                    let response = ui.add(
-                        egui::TextEdit::singleline(state.country_query)
-                            .hint_text("Название или ISO-код")
-                            .desired_width(240.0),
-                    );
-                    let enter = response.lost_focus()
-                        && ui.input(|input| input.key_pressed(egui::Key::Enter));
-                    let suggestions = state
-                        .geo
-                        .search_countries(state.country_query, COUNTRY_SUGGESTIONS);
-                    if !state.country_query.trim().is_empty() && suggestions.is_empty() {
-                        ui.label(
-                            egui::RichText::new("Ничего не найдено")
-                                .size(11.0)
-                                .color(palette.muted),
+            actions.extend(mode_switch::show(
+                ui,
+                palette,
+                mode_switch::ModeState {
+                    mode: state.mode,
+                    selected_genre: state.selected_genre,
+                    genre_query: state.genre_query,
+                },
+            ));
+            ui.add_space(2.0);
+
+            if state.mode == SearchMode::Country {
+                let mut country_action: Option<UiAction> = None;
+                let country_button = ui
+                    .button("Найти страну")
+                    .on_hover_text("Найти страну на глобусе");
+                let country_popup_id = egui::Popup::default_response_id(&country_button);
+                egui::Popup::menu(&country_button)
+                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                    .show(|ui| {
+                        ui.set_min_width(260.0);
+                        ui.label(egui::RichText::new("Поиск страны").strong());
+                        let response = ui.add(
+                            egui::TextEdit::singleline(state.country_query)
+                                .hint_text("Название или ISO-код")
+                                .desired_width(240.0),
                         );
-                    }
-                    for country in &suggestions {
-                        if ui.button(country_label(country)).clicked() {
+                        let enter = response.lost_focus()
+                            && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                        let suggestions = state
+                            .geo
+                            .search_countries(state.country_query, COUNTRY_SUGGESTIONS);
+                        if !state.country_query.trim().is_empty() && suggestions.is_empty() {
+                            ui.label(
+                                egui::RichText::new("Ничего не найдено")
+                                    .size(11.0)
+                                    .color(palette.muted),
+                            );
+                        }
+                        for country in &suggestions {
+                            if ui.button(country_label(country)).clicked() {
+                                country_action = Some(UiAction::SelectCountry((*country).clone()));
+                                egui::Popup::close_id(ui.ctx(), country_popup_id);
+                            }
+                        }
+                        if enter
+                            && country_action.is_none()
+                            && let Some(country) = suggestions.first()
+                        {
                             country_action = Some(UiAction::SelectCountry((*country).clone()));
                             egui::Popup::close_id(ui.ctx(), country_popup_id);
                         }
-                    }
-                    if enter
-                        && country_action.is_none()
-                        && let Some(country) = suggestions.first()
-                    {
-                        country_action = Some(UiAction::SelectCountry((*country).clone()));
-                        egui::Popup::close_id(ui.ctx(), country_popup_id);
-                    }
-                });
-            if let Some(action) = country_action {
-                actions.push(action);
+                    });
+                if let Some(action) = country_action {
+                    actions.push(action);
+                }
+                ui.add_space(4.0);
             }
-            ui.add_space(4.0);
 
-            let search_width = if compact { 150.0 } else { 260.0 };
+            let (search_hint, search_label) = if state.context_active {
+                ("Фильтр по названию", "Фильтр")
+            } else {
+                ("Поиск станции", "Найти")
+            };
+            let search_width = if compact { 130.0 } else { 240.0 };
             let response = ui.add(
                 egui::TextEdit::singleline(state.query)
-                    .hint_text("Поиск станции")
+                    .hint_text(search_hint)
                     .desired_width(search_width),
             );
             let enter =
                 response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
-            if ui.button("Найти").clicked() || enter {
+            if ui.button(search_label).clicked() || enter {
                 actions.push(UiAction::RunSearch);
             }
 
@@ -172,32 +201,34 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: HudState<'_>) ->
                     state.playback,
                     PlaybackState::Playing | PlaybackState::Buffering | PlaybackState::Reconnecting
                 );
-                let (name, details) = match state.now_playing {
-                    Some(station) => {
-                        let name = single_line(&station.name);
-                        let name = if name.is_empty() {
-                            "Без названия".to_owned()
-                        } else {
-                            truncate(&name, if compact { 18 } else { 26 })
-                        };
-                        let details = if compact {
-                            String::new()
-                        } else {
-                            format!(" · {}", playback_label(state.playback))
-                        };
-                        (name, details)
-                    }
-                    None => (playback_label(state.playback), String::new()),
-                };
-                ui.label(
-                    egui::RichText::new(format!("{name}{details}"))
-                        .size(12.0)
-                        .color(if playing {
-                            palette.accent
-                        } else {
-                            palette.muted
-                        }),
-                );
+                if !tight {
+                    let (name, details) = match state.now_playing {
+                        Some(station) => {
+                            let name = single_line(&station.name);
+                            let name = if name.is_empty() {
+                                "Без названия".to_owned()
+                            } else {
+                                truncate(&name, if compact { 18 } else { 26 })
+                            };
+                            let details = if compact {
+                                String::new()
+                            } else {
+                                format!(" · {}", playback_label(state.playback))
+                            };
+                            (name, details)
+                        }
+                        None => (playback_label(state.playback), String::new()),
+                    };
+                    ui.label(
+                        egui::RichText::new(format!("{name}{details}"))
+                            .size(12.0)
+                            .color(if playing {
+                                palette.accent
+                            } else {
+                                palette.muted
+                            }),
+                    );
+                }
 
                 let panel_hint = if state.panel_open {
                     "Скрыть список станций"

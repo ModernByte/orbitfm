@@ -19,12 +19,12 @@ use crate::ui::station_filter::CountryFilterState;
 use crate::ui::station_panel::{self, LibraryTab};
 use crate::ui::toast::Toast;
 use crate::ui::transport::{self, TransportState};
-use crate::ui::{self, UiAction, hud};
+use crate::ui::{self, SearchMode, UiAction, hud};
 
 const WINDOW_TITLE: &str = "OrbitFM";
-const SEARCH_RESULT_LIMIT: u32 = 30;
+const SEARCH_RESULT_LIMIT: u32 = 100;
 const COUNTRY_RESULT_LIMIT: u32 = 100;
-const MARKER_RESULT_LIMIT: u32 = 60;
+const GENRE_RESULT_LIMIT: u32 = 200;
 const STATION_LOOKUP_TIMEOUT: Duration = Duration::from_secs(8);
 const HUD_HEIGHT: f32 = 58.0;
 const TRANSPORT_HEIGHT: f32 = 48.0;
@@ -36,6 +36,59 @@ const HINT_SECONDS: f64 = 10.0;
 struct SearchOutcome {
     stations: Vec<Station>,
     geo_stations: Vec<Station>,
+}
+
+/// Результат фонового поиска с номером поколения.
+struct SearchResponse {
+    generation: u64,
+    result: Result<SearchOutcome, RadioError>,
+}
+
+impl SearchResponse {
+    fn is_current(&self, generation: u64) -> bool {
+        self.generation == generation
+    }
+}
+
+/// Активный контекст поиска: страна или глобальный жанр.
+#[derive(Debug, Default)]
+struct SearchContext {
+    mode: SearchMode,
+    country: Option<Country>,
+    genre: Option<String>,
+}
+
+impl SearchContext {
+    /// Переключает режим и сбрасывает выбранную страну/жанр.
+    fn switch_mode(&mut self, mode: SearchMode) -> bool {
+        if self.mode == mode {
+            return false;
+        }
+        self.mode = mode;
+        self.clear();
+        true
+    }
+
+    fn clear(&mut self) {
+        self.country = None;
+        self.genre = None;
+    }
+
+    fn is_active(&self) -> bool {
+        self.country.is_some() || self.genre.is_some()
+    }
+
+    fn activate_country(&mut self, country: Country) {
+        self.mode = SearchMode::Country;
+        self.genre = None;
+        self.country = Some(country);
+    }
+
+    fn activate_genre(&mut self, genre: String) {
+        self.mode = SearchMode::GlobalGenre;
+        self.country = None;
+        self.genre = Some(genre);
+    }
 }
 
 /// Разделяемый с IPC-сервером слот для пробуждения GUI-цикла.
@@ -107,14 +160,16 @@ pub struct OrbitApp {
     current_station: Option<Station>,
     search_query: String,
     country_query: String,
-    search_country: Option<Country>,
+    genre_query: String,
+    search_context: SearchContext,
     search_results: Vec<Station>,
     markers: Vec<GlobeMarker>,
     library_tab: LibraryTab,
     country_filter: CountryFilterState,
+    search_generation: u64,
     search_pending: bool,
     search_empty: bool,
-    search_rx: Option<mpsc::UnboundedReceiver<Result<SearchOutcome, RadioError>>>,
+    search_rx: Option<mpsc::UnboundedReceiver<SearchResponse>>,
     search_error: Option<String>,
     panel_open: bool,
     hint_until: f64,
@@ -178,11 +233,13 @@ impl OrbitApp {
             current_station: None,
             search_query: String::new(),
             country_query: String::new(),
-            search_country: None,
+            genre_query: String::new(),
+            search_context: SearchContext::default(),
             search_results: Vec::new(),
             markers: Vec::new(),
             library_tab: LibraryTab::default(),
             country_filter: CountryFilterState::default(),
+            search_generation: 0,
             search_pending: false,
             search_empty: false,
             search_rx: None,
@@ -353,11 +410,19 @@ impl OrbitApp {
 
     fn start_search(&mut self) {
         let query = self.search_query.trim().to_owned();
-        if query.is_empty() || self.search_pending {
+        if query.is_empty() {
             return;
         }
 
-        self.search_country = None;
+        if self.search_context.is_active() {
+            self.country_filter.text = query;
+            return;
+        }
+        if self.search_pending {
+            return;
+        }
+
+        self.search_context.clear();
         self.begin_search(
             SearchParams {
                 name: Some(query),
@@ -365,16 +430,17 @@ impl OrbitApp {
                 hide_broken: true,
                 ..SearchParams::default()
             },
-            MARKER_RESULT_LIMIT,
+            SEARCH_RESULT_LIMIT,
         );
     }
 
     fn start_country_search(&mut self, country: Country) {
-        self.search_country = Some(country.clone());
+        let iso_a2 = country.iso_a2.clone();
+        self.search_context.activate_country(country);
         self.country_filter.reset();
         self.begin_search(
             SearchParams {
-                country_code: Some(country.iso_a2),
+                country_code: Some(iso_a2),
                 limit: COUNTRY_RESULT_LIMIT,
                 hide_broken: true,
                 ..SearchParams::default()
@@ -382,6 +448,47 @@ impl OrbitApp {
             COUNTRY_RESULT_LIMIT,
         );
         self.country_query.clear();
+    }
+
+    fn start_genre_search(&mut self, tag: String) {
+        let tag = tag.trim().to_lowercase();
+        if tag.is_empty() {
+            return;
+        }
+
+        self.search_context.activate_genre(tag.clone());
+        self.country_filter.reset();
+        self.begin_search(
+            SearchParams {
+                tag: Some(tag),
+                limit: GENRE_RESULT_LIMIT,
+                hide_broken: true,
+                ..SearchParams::default()
+            },
+            GENRE_RESULT_LIMIT,
+        );
+        self.genre_query.clear();
+    }
+
+    fn switch_mode(&mut self, mode: SearchMode) {
+        if !self.search_context.switch_mode(mode) {
+            return;
+        }
+
+        self.invalidate_search();
+        self.search_results.clear();
+        self.markers.clear();
+        self.country_filter.reset();
+        self.library_tab = LibraryTab::Results;
+    }
+
+    /// Отбрасывает незавершённый поиск: его ответ больше не применится.
+    fn invalidate_search(&mut self) {
+        self.search_generation = self.search_generation.wrapping_add(1);
+        self.search_rx = None;
+        self.search_pending = false;
+        self.search_empty = false;
+        self.search_error = None;
     }
 
     fn focus_country(&mut self, country: &Country) {
@@ -396,6 +503,8 @@ impl OrbitApp {
     }
 
     fn begin_search(&mut self, params: SearchParams, geo_limit: u32) {
+        self.search_generation = self.search_generation.wrapping_add(1);
+        let generation = self.search_generation;
         let (sender, receiver) = mpsc::unbounded_channel();
         self.search_rx = Some(receiver);
         self.search_pending = true;
@@ -430,7 +539,7 @@ impl OrbitApp {
                 }
                 Err(err) => Err(err),
             };
-            let _ = sender.send(result);
+            let _ = sender.send(SearchResponse { generation, result });
             waker();
         });
     }
@@ -442,19 +551,28 @@ impl OrbitApp {
         };
 
         match result {
-            Ok(Ok(outcome)) => {
-                self.search_empty = outcome.stations.is_empty();
-                self.search_results = outcome.stations;
-                self.markers = globe_view::build_markers(outcome.geo_stations);
-                self.search_pending = false;
-                self.search_rx = None;
+            Ok(response) if !response.is_current(self.search_generation) => {
+                debug!(
+                    generation = response.generation,
+                    current = self.search_generation,
+                    "устаревший ответ поиска отброшен"
+                );
             }
-            Ok(Err(err)) => {
-                self.search_error = Some(err.to_string());
-                self.markers.clear();
-                self.search_pending = false;
-                self.search_rx = None;
-            }
+            Ok(response) => match response.result {
+                Ok(outcome) => {
+                    self.search_empty = outcome.stations.is_empty();
+                    self.search_results = outcome.stations;
+                    self.markers = globe_view::build_markers(outcome.geo_stations);
+                    self.search_pending = false;
+                    self.search_rx = None;
+                }
+                Err(err) => {
+                    self.search_error = Some(err.to_string());
+                    self.markers.clear();
+                    self.search_pending = false;
+                    self.search_rx = None;
+                }
+            },
             Err(mpsc::error::TryRecvError::Empty) => {}
             Err(mpsc::error::TryRecvError::Disconnected) => {
                 self.search_error = Some("задача поиска завершилась".to_owned());
@@ -716,6 +834,10 @@ impl OrbitApp {
                         hud::HudState {
                             query: &mut self.search_query,
                             country_query: &mut self.country_query,
+                            genre_query: &mut self.genre_query,
+                            mode: self.search_context.mode,
+                            selected_genre: self.search_context.genre.as_deref(),
+                            context_active: self.search_context.is_active(),
                             geo: &self.geo,
                             now_playing: self.current_station.as_ref(),
                             playback: &playback,
@@ -757,7 +879,8 @@ impl OrbitApp {
                                     .as_ref()
                                     .map(|station| station.stationuuid.as_str()),
                                 geo: &self.geo,
-                                selected_country: self.search_country.as_ref(),
+                                selected_country: self.search_context.country.as_ref(),
+                                country_enabled: self.search_context.mode == SearchMode::Country,
                                 spectrum_overlay: &mut self.spectrum_overlay,
                                 spectrum_target,
                                 show_hint,
@@ -766,7 +889,8 @@ impl OrbitApp {
                     })
                     .inner;
                 actions.extend(globe_response.actions);
-                if let Some((x, y, z)) = globe_response.clicked_point
+                if self.search_context.mode == SearchMode::Country
+                    && let Some((x, y, z)) = globe_response.clicked_point
                     && let Some(country) = self.geo.country_at_sphere_point(x, y, z)
                 {
                     actions.push(UiAction::SelectCountry(country.clone()));
@@ -848,7 +972,8 @@ impl OrbitApp {
             palette,
             station_panel::PanelState {
                 tab: &mut self.library_tab,
-                country: self.search_country.as_ref(),
+                country: self.search_context.country.as_ref(),
+                genre: self.search_context.genre.as_deref(),
                 markers_total,
                 results: &self.search_results,
                 favorites: self.library.favorites(),
@@ -879,6 +1004,8 @@ impl OrbitApp {
                 self.focus_country(&country);
                 self.start_country_search(country);
             }
+            UiAction::SwitchMode(mode) => self.switch_mode(mode),
+            UiAction::SelectGenre(tag) => self.start_genre_search(tag),
             UiAction::RunSearch => self.start_search(),
             UiAction::ClearHistory => self.clear_history(ctx),
             UiAction::SetTheme(theme) => self.set_theme(ctx, theme),
@@ -987,6 +1114,56 @@ mod tests {
             geo_lat: None,
             geo_long: None,
         }
+    }
+
+    fn germany() -> Country {
+        Country {
+            name: "Germany".to_owned(),
+            iso_a2: "DE".to_owned(),
+            iso_a3: Some("DEU".to_owned()),
+        }
+    }
+
+    #[test]
+    fn switching_mode_resets_country_and_genre() {
+        let mut context = SearchContext::default();
+        assert_eq!(context.mode, SearchMode::Country);
+        context.activate_country(germany());
+        assert!(context.is_active());
+
+        assert!(context.switch_mode(SearchMode::GlobalGenre));
+        assert_eq!(context.mode, SearchMode::GlobalGenre);
+        assert!(!context.is_active(), "страна должна сбрасываться");
+        assert!(context.country.is_none());
+        assert!(!context.switch_mode(SearchMode::GlobalGenre));
+    }
+
+    #[test]
+    fn activating_genre_clears_country_and_vice_versa() {
+        let mut context = SearchContext::default();
+        context.activate_country(germany());
+        context.activate_genre("jazz".to_owned());
+
+        assert_eq!(context.mode, SearchMode::GlobalGenre);
+        assert_eq!(context.genre.as_deref(), Some("jazz"));
+        assert!(context.country.is_none(), "жанр сбрасывает страну");
+
+        context.activate_country(germany());
+        assert_eq!(context.mode, SearchMode::Country);
+        assert!(context.genre.is_none(), "страна сбрасывает жанр");
+    }
+
+    #[test]
+    fn stale_search_response_is_dropped() {
+        let response = SearchResponse {
+            generation: 7,
+            result: Err(RadioError::NotFound),
+        };
+        assert!(response.is_current(7));
+        assert!(
+            !response.is_current(8),
+            "ответ прошлого поколения не должен применяться"
+        );
     }
 
     #[test]

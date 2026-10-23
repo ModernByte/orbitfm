@@ -19,6 +19,9 @@ const MARKER_GROUP_SCALE: f64 = 100.0;
 const SPECTRUM_REPAINT: std::time::Duration = std::time::Duration::from_millis(33);
 const COUNTRY_FILL_ALPHA: u8 = 34;
 const COUNTRY_HOVER_ALPHA: u8 = 120;
+const WEIGHT_VOTES_SATURATION: f32 = 5_000.0;
+const WEIGHT_BITRATE_SATURATION: f32 = 320.0;
+const WEIGHT_VOTES_SHARE: f32 = 0.7;
 
 /// Станция (или группа станций), отображаемая на глобусе.
 #[derive(Debug, Clone)]
@@ -27,6 +30,8 @@ pub(crate) struct GlobeMarker {
     pub lat: f32,
     pub lon: f32,
     pub count: usize,
+    /// Визуальный вес 0..1 из `votes` и `bitrate`.
+    pub weight: f32,
 }
 
 pub(crate) struct GlobeState<'a> {
@@ -36,6 +41,8 @@ pub(crate) struct GlobeState<'a> {
     pub current_uuid: Option<&'a str>,
     pub geo: &'a GeoService,
     pub selected_country: Option<&'a Country>,
+    /// В режиме жанра страна не выбирается и не подсвечивается.
+    pub country_enabled: bool,
     pub spectrum_overlay: &'a mut SpectrumOverlay,
     pub spectrum_target: Option<SpectrumTarget>,
     pub show_hint: bool,
@@ -108,23 +115,26 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
         let hovered = sense
             .hover_pos()
             .and_then(|position| nearest_marker(&marker_screens, position));
-        let hovered_country = if sense.dragged_by(egui::PointerButton::Secondary) {
-            None
-        } else {
-            sense.hover_pos().and_then(|position| {
-                country_at_position(state.camera, globe_rect, state.geo, position)
-            })
-        };
+        let hovered_country =
+            if !state.country_enabled || sense.dragged_by(egui::PointerButton::Secondary) {
+                None
+            } else {
+                sense.hover_pos().and_then(|position| {
+                    country_at_position(state.camera, globe_rect, state.geo, position)
+                })
+            };
 
-        paint_country_highlights(
-            ui.painter(),
-            globe_rect,
-            state.camera,
-            state.geo,
-            state.selected_country,
-            hovered_country,
-            palette,
-        );
+        if state.country_enabled {
+            paint_country_highlights(
+                ui.painter(),
+                globe_rect,
+                state.camera,
+                state.geo,
+                state.selected_country,
+                hovered_country,
+                palette,
+            );
+        }
 
         if hovered.is_some() || hovered_country.is_some() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -142,6 +152,7 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
                         highlighted: state.current_uuid
                             == Some(marker.station.stationuuid.as_str()),
                         count: marker.count,
+                        weight: marker.weight,
                     }
                 })
                 .collect();
@@ -271,6 +282,15 @@ fn paint_hint(painter: &egui::Painter, globe_rect: egui::Rect, palette: &Palette
     painter.galley(background.min + padding, galley, palette.muted);
 }
 
+/// Визуальный вес маркера: голоса важнее битрейта, оба сжимаются насыщением.
+pub(crate) fn marker_weight(station: &Station) -> f32 {
+    let votes = (station.votes as f32 / WEIGHT_VOTES_SATURATION)
+        .sqrt()
+        .clamp(0.0, 1.0);
+    let bitrate = (station.bitrate as f32 / WEIGHT_BITRATE_SATURATION).clamp(0.0, 1.0);
+    (votes * WEIGHT_VOTES_SHARE + bitrate * (1.0 - WEIGHT_VOTES_SHARE)).clamp(0.0, 1.0)
+}
+
 pub(crate) fn build_markers(stations: Vec<Station>) -> Vec<GlobeMarker> {
     let mut markers: Vec<GlobeMarker> = Vec::new();
     let mut groups: HashMap<(i64, i64), usize> = HashMap::new();
@@ -283,12 +303,14 @@ pub(crate) fn build_markers(stations: Vec<Station>) -> Vec<GlobeMarker> {
         let Some((lat, lon)) = station_geo(&station) else {
             continue;
         };
+        let weight = marker_weight(&station);
         let key = (
             (lat * MARKER_GROUP_SCALE).round() as i64,
             (lon * MARKER_GROUP_SCALE).round() as i64,
         );
         if let Some(&index) = groups.get(&key) {
             markers[index].count += 1;
+            markers[index].weight = markers[index].weight.max(weight);
         } else {
             groups.insert(key, markers.len());
             markers.push(GlobeMarker {
@@ -296,6 +318,7 @@ pub(crate) fn build_markers(stations: Vec<Station>) -> Vec<GlobeMarker> {
                 lat: lat as f32,
                 lon: lon as f32,
                 count: 1,
+                weight,
             });
         }
     }
@@ -454,10 +477,48 @@ mod tests {
             lat: 52.52,
             lon: 13.405,
             count: 3,
+            weight: 0.4,
         };
         marker.station.name = "Groove\nSalad".to_owned();
 
         assert_eq!(marker_label(&marker), "Groove Salad · +2");
+    }
+
+    #[test]
+    fn marker_weight_combines_votes_and_bitrate() {
+        let mut station = sample_station();
+        station.votes = 0;
+        station.bitrate = 0;
+        assert_eq!(marker_weight(&station), 0.0);
+
+        let mut popular = sample_station();
+        popular.votes = 5_000;
+        popular.bitrate = 320;
+        assert!((marker_weight(&popular) - 1.0).abs() < 1e-5);
+
+        let mut quiet = sample_station();
+        quiet.votes = 100;
+        quiet.bitrate = 96;
+        assert!(marker_weight(&quiet) > 0.0 && marker_weight(&quiet) < marker_weight(&popular));
+        assert!(marker_weight(&popular) >= marker_weight(&quiet));
+    }
+
+    #[test]
+    fn grouped_markers_keep_the_heaviest_weight() {
+        let mut light = geo_station("light", 52.5200, 13.4050);
+        light.votes = 10;
+        light.bitrate = 64;
+        let mut heavy = geo_station("heavy", 52.5201, 13.4051);
+        heavy.votes = 4_000;
+        heavy.bitrate = 256;
+        let heaviest = marker_weight(&heavy);
+
+        let markers = build_markers(vec![light, heavy]);
+
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].count, 2);
+        assert!((markers[0].weight - heaviest).abs() < 1e-6);
+        assert!(markers[0].weight > 0.5, "вес группы берётся по максимуму");
     }
 
     #[test]
