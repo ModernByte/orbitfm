@@ -99,8 +99,8 @@
 
 Целевой UX и макет — [`docs/ui/design-vision.md`](ui/design-vision.md); фазы,
 контракты и тесты — [`docs/ui/implementation-plan.md`](ui/implementation-plan.md);
-решение — [ADR-0015](adr/0015-ux-редизайн-orbital-desk.md). MVP — фазы 1–4,
-фазы 5–6 могут выйти отдельным MINOR-релизом.
+решение — [ADR-0015](adr/0015-ux-редизайн-orbital-desk.md). MVP — фазы 1–5,
+фаза 6 может выйти отдельным MINOR-релизом.
 
 - [x] Фаза 1: UI-каркас — HUD, правый drawer, transport, `src/ui/`, глобус доминирует
   (Roulette перенесён в Фазу 4)
@@ -110,7 +110,8 @@
   поколение поиска и локальный фильтр в контексте
 - [x] Фаза 4: Roulette и MPRIS — `order=random`, `fly_to` 900 мс, toast с именем
   и страной, artist из страны/штата
-- [ ] Фаза 5: живой глобус — Fresnel pulse от FFT, heatmap выбранной страны
+- [x] Фаза 5: живой глобус — Fresnel pulse от FFT (сглаженные level/flux),
+  heatmap выбранной и наведённой страны по числу станций
 - [ ] Фаза 6: WindowMode Overlay/Listening, favicon-карточки, доступность
 - [ ] Синхронизировать `docs/interfaces/` и модули в фазах изменения контрактов
 

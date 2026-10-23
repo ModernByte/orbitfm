@@ -196,10 +196,10 @@ pub struct GlobeCallback {
 }
 
 impl GlobeCallback {
-    /// Снимает текущее состояние камеры для отрисовки кадра.
-    pub fn new(camera: &GlobeCamera, aspect: f32) -> Self {
+    /// Снимает текущее состояние камеры и сигнал эфира для отрисовки кадра.
+    pub fn new(camera: &GlobeCamera, aspect: f32, pulse: f32) -> Self {
         Self {
-            uniform: camera.uniform(aspect),
+            uniform: camera.uniform(aspect, pulse),
         }
     }
 }
@@ -232,8 +232,10 @@ impl CallbackTrait for GlobeCallback {
 }
 
 /// Добавляет callback с глобусом в painter.
-pub fn paint_globe(painter: &egui::Painter, rect: egui::Rect, camera: &GlobeCamera) {
-    let callback = GlobeCallback::new(camera, rect.aspect_ratio());
+///
+/// `pulse` — сигнал эфира 0..1, управляющий Fresnel-ободом атмосферы.
+pub fn paint_globe(painter: &egui::Painter, rect: egui::Rect, camera: &GlobeCamera, pulse: f32) {
+    let callback = GlobeCallback::new(camera, rect.aspect_ratio(), pulse);
     painter.add(egui_wgpu::Callback::new_paint_callback(rect, callback));
 }
 

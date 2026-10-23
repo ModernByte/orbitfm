@@ -40,6 +40,9 @@ struct FlyAnimation {
 pub(crate) struct CameraUniform {
     pub view_proj: [[f32; 4]; 4],
     pub light_direction: [f32; 4],
+    pub camera_position: [f32; 4],
+    /// `x` — сигнал эфира 0..1 для Fresnel-обода.
+    pub pulse: [f32; 4],
 }
 
 /// Орбитальная камера вокруг глобуса радиусом 1.
@@ -223,11 +226,19 @@ impl GlobeCamera {
             .then_some(position)
     }
 
-    pub(crate) fn uniform(&self, aspect: f32) -> CameraUniform {
+    pub(crate) fn uniform(&self, aspect: f32, pulse: f32) -> CameraUniform {
         let light = Vec3::new(0.5, 0.35, 0.8).normalize();
+        let eye = self.eye();
+        let pulse = if pulse.is_finite() {
+            pulse.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
         CameraUniform {
             view_proj: self.view_proj(aspect).to_cols_array_2d(),
             light_direction: [light.x, light.y, light.z, 0.0],
+            camera_position: [eye.x, eye.y, eye.z, 0.0],
+            pulse: [pulse, 0.0, 0.0, 0.0],
         }
     }
 }
@@ -454,5 +465,18 @@ mod tests {
         }
 
         assert!((camera.pitch - MAX_PITCH).abs() < 1e-5);
+    }
+
+    #[test]
+    fn uniform_carries_eye_and_clamps_pulse() {
+        let camera = GlobeCamera::default();
+        let uniform = camera.uniform(1.0, 2.5);
+
+        assert_eq!(uniform.pulse[0], 1.0);
+        let eye = camera.eye();
+        assert_eq!(&uniform.camera_position[..3], &[eye.x, eye.y, eye.z]);
+
+        assert_eq!(camera.uniform(1.0, f32::NAN).pulse[0], 0.0);
+        assert_eq!(camera.uniform(1.0, -1.0).pulse[0], 0.0);
     }
 }

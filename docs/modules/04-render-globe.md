@@ -40,7 +40,12 @@ impl GlobeRenderer {
     pub fn paint(&self, render_pass: &mut wgpu::RenderPass<'_>);
 }
 
-pub fn paint_globe(painter: &egui::Painter, rect: egui::Rect, camera: &GlobeCamera);
+pub fn paint_globe(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    camera: &GlobeCamera,
+    pulse: f32,
+);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CountryStyle {
@@ -103,12 +108,14 @@ pub struct SpectrumOverlay { /* сглаженные значения */ }
 impl SpectrumOverlay {
     pub fn update(&mut self, target: Option<SpectrumTarget>, dt: f32);
     pub fn is_visible(&self) -> bool;
+    pub fn pulse(&self) -> f32;
     pub fn paint(&self, painter: &egui::Painter, rect: egui::Rect, time: f64);
 }
 ```
 
-`CameraUniform` (`view_proj`, `light_direction`) и `GlobeCallback` — внутренние типы
-модуля. Полный контракт — `docs/interfaces/04-render.md`.
+`CameraUniform` (`view_proj`, `light_direction`, `camera_position`, `pulse`) и
+`GlobeCallback` — внутренние типы модуля. Полный контракт —
+`docs/interfaces/04-render.md`.
 
 ## 3. Интеграция с egui
 
@@ -116,7 +123,7 @@ impl SpectrumOverlay {
   `CreationContext::wgpu_render_state` и вставляются в
   `render_state.renderer.write().callback_resources`.
 - Каждый кадр `paint_globe` добавляет `egui_wgpu::Callback::new_paint_callback`;
-  `GlobeCallback::prepare` пишет uniform камеры, `paint` вызывает
+  `GlobeCallback::prepare` пишет uniform камеры и `pulse`, `paint` вызывает
   `GlobeRenderer::paint`.
 - Камера и ввод живут в `OrbitApp`, не в `GlobeRenderer`: рендер-модуль не знает о
   состоянии приложения.
@@ -154,7 +161,11 @@ impl SpectrumOverlay {
 - Сэмплер: `Repeat` по U, `ClampToEdge` по V, линейная фильтрация, без mipmap.
 - Освещение: фиксированное направление `(0.5, 0.35, 0.8)`, `ambient 0.25 + diffuse 0.75`.
 - Шейдер: `src/render/globe.wgsl`.
-- (Позже) Fresnel-атмосфера и подписи стран.
+- Fresnel-атмосфера: обод по краю сферы, `pow(1 - dot(normal, view), falloff)`,
+  где `falloff = mix(3.2, 1.8, pulse)`, яркость `0.14 + 0.55·pulse`; цвет
+  смещается от голубого к бирюзовому с ростом `pulse`. Позиция камеры приходит
+  в uniform (`camera_position`).
+- Подписи стран — вне текущего объёма; контуры и маркеры рисует egui-оверлей.
 
 ## 6. Контуры стран
 
@@ -165,9 +176,15 @@ impl SpectrumOverlay {
   линейной интерполяцией по `point · eye = 1`; невидимые участки отбрасываются.
 - Заливка строится только для кольца, целиком видимого на передней полусфере,
   и триангулируется методом уха; кольца площадью меньше 1 px² не заливаются.
-- Выбранная страна получает заливку `COUNTRY_FILL_ALPHA = 34` и контур 2 px,
-  hover — только контур 1.4 px с `COUNTRY_HOVER_ALPHA = 120`; цвета берутся из
-  акцента темы. Если страна уже выбрана, hover для неё не дублируется.
+- Заливка выбранной страны — heatmap: альфа растёт логарифмически от количества
+  загруженных станций страны (`heat_intensity = log10(n)/2`, ограничена
+  `[0.15, 1]`), от `COUNTRY_HEAT_MIN_ALPHA = 26` до `COUNTRY_HEAT_MAX_ALPHA = 96`;
+  контур — 2 px. Количество считается по маркерам (`GlobeMarker.count`,
+  регистронезависимое сравнение ISO-кода), поэтому grouping учитывается.
+  Hover — контур 1.4 px с `COUNTRY_HOVER_ALPHA = 120` и заливка
+  `COUNTRY_HOVER_FILL_ALPHA = 30`, пропорциональная heat, только при `count > 0`.
+  Цвета берутся из акцента темы. Если страна уже выбрана, hover для неё не
+  дублируется.
 - Отрисовка идёт через `egui::Painter` после `paint_globe` и до маркеров; GPU-
   ресурсы не создаются.
 
@@ -203,6 +220,9 @@ impl SpectrumOverlay {
   градиентная огибающая в лог-шкале 30 Гц–20 кГц, линия уровня и подпись
   `FFT · <частота> · <RMS> дБ`.
 - Оверлей не создаёт GPU-ресурсов и не участвует в wgpu-пайплайне глобуса.
+- `pulse()` даёт сигнал эфира для атмосферы: `0.75·level + 0.25·flux`,
+  ограничен `[0, 1]`; при невидимом оверлее — 0. App Core передаёт его в
+  `paint_globe`, поэтому при выключенном FFT и тишине обод затухает.
 - Метрики агрегированные, поэтому огибающая — художественная интерпретация,
   а не покадровый спектр по бинам (ADR-0010).
 
@@ -225,7 +245,12 @@ impl SpectrumOverlay {
   при полной видимости, обрезается по горизонту и замыкается в видимой части;
 - невалидные координаты кольца пропускаются;
 - спектральный оверлей принимает первый кадр без сглаживания, затухает без данных,
-  ограничивает частоты и игнорирует неположительный `dt`.
+  ограничивает частоты и игнорирует неположительный `dt`;
+- `pulse()` равен нулю без данных и следует за уровнем и flux при наличии сигнала;
+- uniform камеры несёт позицию `eye`, а `pulse` ограничивается `[0, 1]`
+  (нечисловое значение — 0);
+- heatmap стран: интенсивность растёт с количеством станций и насыщается,
+  группированные маркеры суммируются, сравнение ISO-кода регистронезависимо.
 
 ## 10. Связанные ADR
 

@@ -63,6 +63,17 @@ impl SpectrumOverlay {
         self.level > 0.005
     }
 
+    /// Сигнал эфира 0..1 для Fresnel-обода: сглаженные RMS и flux.
+    ///
+    /// Без данных возвращает 0, поэтому атмосфера глобуса затухает
+    /// вместе с оверлеем.
+    pub fn pulse(&self) -> f32 {
+        if !self.is_visible() {
+            return 0.0;
+        }
+        (self.level * 0.75 + self.flux * 0.25).clamp(0.0, 1.0)
+    }
+
     /// Рисует полупрозрачную спектральную ленту в переданном прямоугольнике.
     pub fn paint(&self, painter: &Painter, rect: Rect, time: f64) {
         if !self.is_visible() || rect.width() < 40.0 || rect.height() < 24.0 {
@@ -237,5 +248,35 @@ mod tests {
         let mut overlay = SpectrumOverlay::default();
         overlay.update(Some(target(-20.0)), 0.0);
         assert!(overlay.is_visible());
+    }
+
+    #[test]
+    fn pulse_is_zero_without_data() {
+        assert_eq!(SpectrumOverlay::default().pulse(), 0.0);
+
+        let mut overlay = SpectrumOverlay::default();
+        overlay.update(Some(target(-20.0)), 0.016);
+        for _ in 0..120 {
+            overlay.update(None, 1.0 / 30.0);
+        }
+        assert_eq!(overlay.pulse(), 0.0);
+    }
+
+    #[test]
+    fn pulse_follows_level_and_flux() {
+        let mut quiet = SpectrumOverlay::default();
+        quiet.update(Some(target(-50.0)), 0.016);
+
+        let mut loud = SpectrumOverlay::default();
+        loud.update(
+            Some(SpectrumTarget {
+                flux: 0.004,
+                ..target(-10.0)
+            }),
+            0.016,
+        );
+
+        assert!(quiet.pulse() > 0.0 && quiet.pulse() < loud.pulse());
+        assert!(loud.pulse() <= 1.0);
     }
 }

@@ -17,8 +17,10 @@ use super::{UiAction, single_line, truncate};
 const MARKER_CLICK_RADIUS: f32 = 10.0;
 const MARKER_GROUP_SCALE: f64 = 100.0;
 const SPECTRUM_REPAINT: std::time::Duration = std::time::Duration::from_millis(33);
-const COUNTRY_FILL_ALPHA: u8 = 34;
+const COUNTRY_HEAT_MIN_ALPHA: u8 = 26;
+const COUNTRY_HEAT_MAX_ALPHA: u8 = 96;
 const COUNTRY_HOVER_ALPHA: u8 = 120;
+const COUNTRY_HOVER_FILL_ALPHA: u8 = 30;
 const WEIGHT_VOTES_SATURATION: f32 = 5_000.0;
 const WEIGHT_BITRATE_SATURATION: f32 = 320.0;
 const WEIGHT_VOTES_SHARE: f32 = 0.7;
@@ -110,7 +112,11 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
             }
         }
 
-        paint_globe(ui.painter(), globe_rect, state.camera);
+        state
+            .spectrum_overlay
+            .update(state.spectrum_target, ui.input(|input| input.stable_dt));
+        let pulse = state.spectrum_overlay.pulse();
+        paint_globe(ui.painter(), globe_rect, state.camera, pulse);
 
         let hovered = sense
             .hover_pos()
@@ -130,8 +136,11 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
                 globe_rect,
                 state.camera,
                 state.geo,
-                state.selected_country,
-                hovered_country,
+                CountryHighlight {
+                    markers: state.markers,
+                    selected: state.selected_country,
+                    hovered: hovered_country,
+                },
                 palette,
             );
         }
@@ -170,9 +179,6 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
             );
         }
 
-        state
-            .spectrum_overlay
-            .update(state.spectrum_target, ui.input(|input| input.stable_dt));
         if state.spectrum_overlay.is_visible() {
             let strip = egui::Rect::from_min_max(
                 egui::pos2(globe_rect.left() + 16.0, globe_rect.bottom() - 76.0),
@@ -210,20 +216,26 @@ fn country_at_position<'a>(
     geo.country_at_sphere_point(f64::from(point.x), f64::from(point.y), f64::from(point.z))
 }
 
+struct CountryHighlight<'a> {
+    markers: &'a [GlobeMarker],
+    selected: Option<&'a Country>,
+    hovered: Option<&'a Country>,
+}
+
 fn paint_country_highlights(
     painter: &egui::Painter,
     globe_rect: egui::Rect,
     camera: &GlobeCamera,
     geo: &GeoService,
-    selected: Option<&Country>,
-    hovered: Option<&Country>,
+    highlight: CountryHighlight<'_>,
     palette: &Palette,
 ) {
     let accent = palette.accent;
 
-    if let Some(country) = selected
+    if let Some(country) = highlight.selected
         && let Some(shape) = geo.country_shape(&country.iso_a2)
     {
+        let count = country_station_count(highlight.markers, &country.iso_a2);
         paint_country(
             painter,
             globe_rect,
@@ -234,24 +246,34 @@ fn paint_country_highlights(
                     accent.r(),
                     accent.g(),
                     accent.b(),
-                    COUNTRY_FILL_ALPHA,
+                    heat_alpha(count),
                 )),
                 stroke: egui::Stroke::new(2.0, accent),
             },
         );
     }
 
-    if let Some(country) = hovered
-        && selected.is_none_or(|selected| selected.iso_a2 != country.iso_a2)
+    if let Some(country) = highlight.hovered
+        && highlight
+            .selected
+            .is_none_or(|selected| selected.iso_a2 != country.iso_a2)
         && let Some(shape) = geo.country_shape(&country.iso_a2)
     {
+        let count = country_station_count(highlight.markers, &country.iso_a2);
+        let heat = heat_intensity(count);
+        let fill_alpha = (f32::from(COUNTRY_HOVER_FILL_ALPHA) * (0.35 + 0.65 * heat)).round() as u8;
         paint_country(
             painter,
             globe_rect,
             camera,
             &shape.rings,
             CountryStyle {
-                fill: None,
+                fill: (count > 0).then_some(egui::Color32::from_rgba_unmultiplied(
+                    accent.r(),
+                    accent.g(),
+                    accent.b(),
+                    fill_alpha,
+                )),
                 stroke: egui::Stroke::new(
                     1.4,
                     egui::Color32::from_rgba_unmultiplied(
@@ -264,6 +286,28 @@ fn paint_country_highlights(
             },
         );
     }
+}
+
+/// Заливка растёт логарифмически: 1 станция → минимум, 100 → максимум.
+fn heat_intensity(count: usize) -> f32 {
+    if count == 0 {
+        return 0.0;
+    }
+    ((count as f32).log10() / 2.0).clamp(0.15, 1.0)
+}
+
+fn heat_alpha(count: usize) -> u8 {
+    let min = f32::from(COUNTRY_HEAT_MIN_ALPHA);
+    let span = f32::from(COUNTRY_HEAT_MAX_ALPHA - COUNTRY_HEAT_MIN_ALPHA);
+    (min + span * heat_intensity(count)).round() as u8
+}
+
+fn country_station_count(markers: &[GlobeMarker], iso_a2: &str) -> usize {
+    markers
+        .iter()
+        .filter(|marker| marker.station.countrycode.eq_ignore_ascii_case(iso_a2))
+        .map(|marker| marker.count)
+        .sum()
 }
 
 fn paint_hint(painter: &egui::Painter, globe_rect: egui::Rect, palette: &Palette) {
@@ -519,6 +563,35 @@ mod tests {
         assert_eq!(markers[0].count, 2);
         assert!((markers[0].weight - heaviest).abs() < 1e-6);
         assert!(markers[0].weight > 0.5, "вес группы берётся по максимуму");
+    }
+
+    #[test]
+    fn country_station_count_sums_grouped_markers() {
+        let mut berlin = geo_station("de1", 52.5200, 13.4050);
+        berlin.countrycode = "DE".to_owned();
+        let mut berlin_twin = geo_station("de2", 52.5201, 13.4051);
+        berlin_twin.countrycode = "DE".to_owned();
+        let mut paris = geo_station("fr", 48.8566, 2.3522);
+        paris.countrycode = "FR".to_owned();
+
+        let markers = build_markers(vec![berlin, berlin_twin, paris]);
+
+        assert_eq!(markers.len(), 2);
+        assert_eq!(country_station_count(&markers, "DE"), 2);
+        assert_eq!(country_station_count(&markers, "de"), 2);
+        assert_eq!(country_station_count(&markers, "FR"), 1);
+        assert_eq!(country_station_count(&markers, "US"), 0);
+    }
+
+    #[test]
+    fn heat_intensity_grows_and_saturates() {
+        assert_eq!(heat_intensity(0), 0.0);
+        assert!(heat_intensity(1) >= 0.15);
+        assert!(heat_intensity(10) > heat_intensity(1));
+        assert!((heat_intensity(100) - 1.0).abs() < 1e-6);
+        assert!((heat_intensity(10_000) - 1.0).abs() < 1e-6);
+        assert_eq!(heat_alpha(100), COUNTRY_HEAT_MAX_ALPHA);
+        assert_eq!(heat_alpha(0), COUNTRY_HEAT_MIN_ALPHA);
     }
 
     #[test]

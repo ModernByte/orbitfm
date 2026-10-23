@@ -74,8 +74,9 @@ impl GlobeRenderer {
     pub fn paint(&self, render_pass: &mut wgpu::RenderPass<'_>);
 }
 
-/// Добавляет paint callback глобуса в painter.
-pub fn paint_globe(painter: &egui::Painter, rect: egui::Rect, camera: &GlobeCamera);
+/// Добавляет paint callback глобуса в painter. `pulse` 0..1 задаёт яркость
+/// Fresnel-обода атмосферы; нечисловое значение считается нулём.
+pub fn paint_globe(painter: &egui::Painter, rect: egui::Rect, camera: &GlobeCamera, pulse: f32);
 
 /// Стиль страны: заливка и линия контура.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -154,14 +155,19 @@ impl SpectrumOverlay {
     /// Видим ли оверлей (есть данные или ещё не затух).
     pub fn is_visible(&self) -> bool;
 
+    /// Сигнал эфира 0..1 для Fresnel-атмосферы: `0.75·level + 0.25·flux`.
+    /// Без данных и после затухания — 0.
+    pub fn pulse(&self) -> f32;
+
     /// Рисует спектральную огибающую средствами egui.
     pub fn paint(&self, painter: &egui::Painter, rect: egui::Rect, time: f64);
 }
 ```
 
-`CameraUniform` — внутренний тип (`pub(crate)`), содержащий `view_proj` и
-`light_direction`. `GlobeCallback` реализует `egui_wgpu::CallbackTrait` и не входит
-в публичный экспорт: снаружи используется `paint_globe`.
+`CameraUniform` — внутренний тип (`pub(crate)`), содержащий `view_proj`,
+`light_direction`, позицию камеры `camera_position` и `pulse`. `GlobeCallback`
+реализует `egui_wgpu::CallbackTrait` и не входит в публичный экспорт: снаружи
+используется `paint_globe`.
 
 ## Семантика
 
@@ -178,7 +184,11 @@ impl SpectrumOverlay {
   для проецирования маркеров станций.
 - `paint_globe` не создаёт ресурсов: `GlobeRenderer` должен быть заранее вставлен в
   `callback_resources` (это делает `OrbitApp::new`). Если ресурса нет, callback
-  пропускает отрисовку.
+  пропускает отрисовку. `pulse` ограничивается `[0, 1]`, нечисловое значение
+  заменяется нулём и передаётся в шейдер через `CameraUniform`.
+- Атмосфера — Fresnel-обод в фрагментном шейдере: `pow(1 - dot(normal, view),
+  mix(3.2, 1.8, pulse)) · (0.14 + 0.55·pulse)`; цвет сдвигается от голубого к
+  бирюзовому с ростом `pulse`. Позиция камеры берётся из `camera_position`.
 - Координатное соглашение сферы: `x = cos φ · sin λ`, `y = sin φ`, `z = cos φ · cos λ`;
   `+Z` — Гринвич, `+Y` — север.
 - `SpectrumOverlay::update` на первом кадре принимает значения без сглаживания, затем
@@ -189,6 +199,9 @@ impl SpectrumOverlay {
   30 Гц–20 кГц, линию уровня и подпись `FFT · <частота> · <RMS> дБ`.
   Модуль не знает о `AudioEngine` и `SpectrumFrame`: App Core передаёт срез
   `SpectrumTarget`.
+- `SpectrumOverlay::pulse` — смесь сглаженного уровня и flux (`0.75/0.25`),
+  ограниченная `[0, 1]`; при невидимом оверлее возвращает 0. App Core передаёт
+  значение в `paint_globe`; при выключенном FFT и тишине атмосфера затухает.
 - `paint_country` рисует кольца страны через `egui::Painter` поверх wgpu-callback:
   контур разбивается на видимые дуги с пересечением горизонта; заливка строится
   только для кольца, целиком видимого на передней полусфере, и триангулируется
@@ -208,7 +221,9 @@ impl SpectrumOverlay {
 
 - Depth buffer не используется: сфера выпуклая, backface culling достаточен.
 - Текстура без mipmap, фильтрация линейная.
-- Атмосфера и подписи стран — вне текущего объёма; маркеры станций и контуры
-  стран реализованы egui-оверлеем (ADR-0012), без GPU-ресурсов.
+- Атмосфера — только Fresnel-обод сферы; облака, ночная сторона и свечение
+  поверхности не моделируются.
+- Подписи стран — вне текущего объёма; маркеры станций и контуры стран
+  реализованы egui-оверлеем (ADR-0012), без GPU-ресурсов.
 - Спектральный оверлей показывает агрегированные метрики, а не полосы по бинам
   (ADR-0010); это художественная огибающая, а не точный анализатор спектра.
