@@ -95,7 +95,7 @@
 Публикация в общий магазин `noctalia-dev/community-plugins` не выполняется:
 плагин распространяется как git-источник `ModernByte/orbitfm`.
 
-## Этап 8: UX «Orbital Desk» — запланирован
+## Этап 8: UX «Orbital Desk» — в работе
 
 Целевой UX и макет — [`docs/ui/design-vision.md`](ui/design-vision.md); фазы,
 контракты и тесты — [`docs/ui/implementation-plan.md`](ui/implementation-plan.md);
@@ -104,7 +104,8 @@
 
 - [x] Фаза 1: UI-каркас — HUD, правый drawer, transport, `src/ui/`, глобус доминирует
   (Roulette перенесён в Фазу 4)
-- [ ] Фаза 2: режим «Страна» — hover/контур, фильтры и сортировка, country search
+- [x] Фаза 2: режим «Страна» — hover/контур выбранной страны, поиск страны в HUD,
+  локальные фильтры и сортировка, карточки станций, лимит 100
 - [ ] Фаза 3: режим «Жанр» — `SearchMode`, tag-поиск, маркеры с весом
 - [ ] Фаза 4: Roulette и MPRIS — `order=random`, `fly_to`, toast, метаданные
 - [ ] Фаза 5: живой глобус — Fresnel pulse от FFT, heatmap выбранной страны

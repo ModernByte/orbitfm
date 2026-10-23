@@ -1,14 +1,15 @@
 # Модуль: Geo / Spatial Raycasting
 
 **Путь в коде:** `src/geo/`  
-**Ответственность:** Загрузка границ стран, R-Tree индекс, преобразование координат, Point-in-Polygon.  
+**Ответственность:** Загрузка границ стран, R-Tree индекс, преобразование координат, Point-in-Polygon, поиск стран и кольца для контуров.  
 **Зависимости:** geo, geojson, rstar
 
 ---
 
 ## 1. Назначение
 
-По клику на 3D-глобусе определить страну.  
+По клику или наведению на 3D-глобус определить страну, найти страну по названию
+или ISO-коду и отдать её кольца для контура.  
 Работает полностью offline.
 
 ## 2. Публичный интерфейс
@@ -28,13 +29,29 @@ impl GeoService {
 
     /// Находит страну по точке на сфере (x, y, z).
     pub fn country_at_sphere_point(&self, x: f64, y: f64, z: f64) -> Option<&Country>;
+
+    /// Ищет страны по названию или ISO-коду (без учёта регистра).
+    pub fn search_countries(&self, query: &str, limit: usize) -> Vec<&Country>;
+
+    /// Кольца границ страны по ISO 3166-1 alpha-2.
+    pub fn country_shape(&self, iso_a2: &str) -> Option<&CountryShape>;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Country {
     pub name: String,
     pub iso_a2: String,          // ISO 3166-1 alpha-2
     pub iso_a3: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CountryShape {
+    pub rings: Vec<Vec<[f64; 2]>>,   // [lon, lat], градусы
+}
+
+impl CountryShape {
+    /// Центр крупнейшего кольца (lat, lon) для доворота камеры.
+    pub fn focus_point(&self) -> Option<(f64, f64)>;
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -46,7 +63,9 @@ pub enum GeoError {
 }
 ```
 
-Геометрия (`MultiPolygon<f64>`) хранится внутри `GeoService` и наружу не выходит.
+Геометрия (`MultiPolygon<f64>`) и R-Tree хранятся внутри `GeoService`; наружу
+выходят только `Country` и кольца `CountryShape` без доменных типов рендера.
+Дополнительно строится индекс `HashMap<iso_a2, index>` для `country_shape`.
 Для приложения используется `from_embedded`; `load` остаётся контрактом модуля для
 альтернативных датасетов.
 
@@ -64,6 +83,14 @@ pub enum GeoError {
 4. Точная проверка `geo::Contains<Point>` для `MultiPolygon`.
 5. Полигоны антимеридиана уже разделены в датасете Natural Earth; отдельная
    нормализация при загрузке не выполняется. Это проверено тестом для Fiji.
+6. При загрузке для каждой страны сохраняются кольца (`shape_from_geometry`):
+   замыкающая точка и дубликаты удаляются, кольца короче трёх точек отбрасываются.
+7. `search_countries` фильтрует страны по вхождению запроса в название либо по
+   точному совпадению с `iso_a2`/`iso_a3`, сортирует по названию и обрезает до
+   `limit`; пустой запрос даёт пустой список.
+8. `CountryShape::focus_point` выбирает крупнейшее кольцо, раскрывает долготы
+   относительно первой точки (антимеридиан), усредняет координаты и нормализует
+   долготу в `[-180, 180]`.
 
 ## 4. Данные
 
@@ -90,8 +117,13 @@ pub enum GeoError {
 - fallback `ISO_A2_EH` для FR/NO;
 - Fiji через антимеридиан;
 - океан, невалидные координаты и NaN → `None`;
-- `country_at_sphere_point` согласован с `country_at`.
+- `country_at_sphere_point` согласован с `country_at`;
+- поиск по названию и ISO, пустой запрос, сортировка и лимит;
+- выдача колец страны, валидность координат и `None` для неизвестного ISO;
+- точка фокуса лежит внутри страны, Фиджи остаётся у антимеридиана, пустая
+  форма даёт `None`.
 
 ## 7. Связанные ADR
 
 - ADR-0008: Геопространственный поиск
+- ADR-0015: UX-редизайн «Orbital Desk» (поиск страны, контур, доворот камеры)

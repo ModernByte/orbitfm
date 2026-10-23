@@ -4,9 +4,10 @@ use std::collections::{HashMap, HashSet};
 
 use eframe::egui;
 
+use crate::geo::{Country, GeoService};
 use crate::render::{
-    GlobeCamera, GlobeInput, MarkerColors, MarkerVisual, SpectrumOverlay, SpectrumTarget,
-    paint_globe, paint_markers, sphere_point,
+    CountryStyle, GlobeCamera, GlobeInput, MarkerColors, MarkerVisual, SpectrumOverlay,
+    SpectrumTarget, paint_country, paint_globe, paint_markers, sphere_point,
 };
 use crate::services::Station;
 
@@ -16,6 +17,8 @@ use super::{UiAction, single_line, truncate};
 const MARKER_CLICK_RADIUS: f32 = 10.0;
 const MARKER_GROUP_SCALE: f64 = 100.0;
 const SPECTRUM_REPAINT: std::time::Duration = std::time::Duration::from_millis(33);
+const COUNTRY_FILL_ALPHA: u8 = 34;
+const COUNTRY_HOVER_ALPHA: u8 = 120;
 
 /// Станция (или группа станций), отображаемая на глобусе.
 #[derive(Debug, Clone)]
@@ -31,6 +34,8 @@ pub(crate) struct GlobeState<'a> {
     pub ready: bool,
     pub markers: &'a [GlobeMarker],
     pub current_uuid: Option<&'a str>,
+    pub geo: &'a GeoService,
+    pub selected_country: Option<&'a Country>,
     pub spectrum_overlay: &'a mut SpectrumOverlay,
     pub spectrum_target: Option<SpectrumTarget>,
     pub show_hint: bool,
@@ -103,7 +108,25 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
         let hovered = sense
             .hover_pos()
             .and_then(|position| nearest_marker(&marker_screens, position));
-        if hovered.is_some() {
+        let hovered_country = if sense.dragged_by(egui::PointerButton::Secondary) {
+            None
+        } else {
+            sense.hover_pos().and_then(|position| {
+                country_at_position(state.camera, globe_rect, state.geo, position)
+            })
+        };
+
+        paint_country_highlights(
+            ui.painter(),
+            globe_rect,
+            state.camera,
+            state.geo,
+            state.selected_country,
+            hovered_country,
+            palette,
+        );
+
+        if hovered.is_some() || hovered_country.is_some() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         } else if sense.dragged_by(egui::PointerButton::Secondary) {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
@@ -164,6 +187,72 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
     });
 
     response
+}
+
+fn country_at_position<'a>(
+    camera: &GlobeCamera,
+    viewport: egui::Rect,
+    geo: &'a GeoService,
+    position: egui::Pos2,
+) -> Option<&'a Country> {
+    let point = camera.screen_to_sphere(position, viewport)?;
+    geo.country_at_sphere_point(f64::from(point.x), f64::from(point.y), f64::from(point.z))
+}
+
+fn paint_country_highlights(
+    painter: &egui::Painter,
+    globe_rect: egui::Rect,
+    camera: &GlobeCamera,
+    geo: &GeoService,
+    selected: Option<&Country>,
+    hovered: Option<&Country>,
+    palette: &Palette,
+) {
+    let accent = palette.accent;
+
+    if let Some(country) = selected
+        && let Some(shape) = geo.country_shape(&country.iso_a2)
+    {
+        paint_country(
+            painter,
+            globe_rect,
+            camera,
+            &shape.rings,
+            CountryStyle {
+                fill: Some(egui::Color32::from_rgba_unmultiplied(
+                    accent.r(),
+                    accent.g(),
+                    accent.b(),
+                    COUNTRY_FILL_ALPHA,
+                )),
+                stroke: egui::Stroke::new(2.0, accent),
+            },
+        );
+    }
+
+    if let Some(country) = hovered
+        && selected.is_none_or(|selected| selected.iso_a2 != country.iso_a2)
+        && let Some(shape) = geo.country_shape(&country.iso_a2)
+    {
+        paint_country(
+            painter,
+            globe_rect,
+            camera,
+            &shape.rings,
+            CountryStyle {
+                fill: None,
+                stroke: egui::Stroke::new(
+                    1.4,
+                    egui::Color32::from_rgba_unmultiplied(
+                        accent.r(),
+                        accent.g(),
+                        accent.b(),
+                        COUNTRY_HOVER_ALPHA,
+                    ),
+                ),
+            },
+        );
+    }
 }
 
 fn paint_hint(painter: &egui::Painter, globe_rect: egui::Rect, palette: &Palette) {
@@ -287,6 +376,9 @@ mod tests {
             tags: "jazz".to_owned(),
             countrycode: "US".to_owned(),
             language: "english".to_owned(),
+            votes: 120,
+            country: "United States".to_owned(),
+            state: "New York".to_owned(),
             bitrate: 128,
             codec: "MP3".to_owned(),
             geo_lat: None,
@@ -366,5 +458,25 @@ mod tests {
         marker.station.name = "Groove\nSalad".to_owned();
 
         assert_eq!(marker_label(&marker), "Groove Salad · +2");
+    }
+
+    #[test]
+    fn hover_hits_country_under_cursor() {
+        let geo = GeoService::from_embedded().expect("встроенный датасет");
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+
+        let mut camera = GlobeCamera::default();
+        assert!(
+            country_at_position(&camera, viewport, &geo, viewport.center()).is_none(),
+            "в центре по умолчанию океан"
+        );
+
+        camera.fly_to(52.52, 13.405, std::time::Duration::from_millis(80));
+        while camera.is_animating() {
+            camera.update(0.05, &GlobeInput::default());
+        }
+        let country = country_at_position(&camera, viewport, &geo, viewport.center())
+            .expect("после доворота под курсором Германия");
+        assert_eq!(country.iso_a2, "DE");
     }
 }

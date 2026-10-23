@@ -1,6 +1,7 @@
 //! Интерактивный 3D-глобус: камера, wgpu-рендер и интеграция с egui.
 
 mod camera;
+mod countries;
 mod globe;
 mod markers;
 mod spectrum;
@@ -8,6 +9,7 @@ mod spectrum;
 use eframe::egui::{Pos2, Vec2};
 
 pub use camera::GlobeCamera;
+pub use countries::{CountryStyle, paint_country};
 pub use globe::{GlobeRenderer, paint_globe};
 pub use markers::{MarkerColors, MarkerVisual, paint_markers, sphere_point};
 pub use spectrum::{SpectrumOverlay, SpectrumTarget};

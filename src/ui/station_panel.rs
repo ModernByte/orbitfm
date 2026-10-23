@@ -7,7 +7,8 @@ use crate::services::Station;
 
 use super::icons;
 use super::palette::Palette;
-use super::{UiAction, single_line, truncate};
+use super::station_filter::{self, CountryFilterState, GenreTag, StationSort};
+use super::{UiAction, country_label, single_line, truncate};
 
 /// Активная вкладка списка станций.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -28,6 +29,7 @@ pub(crate) struct PanelState<'a> {
     pub pending: bool,
     pub empty: bool,
     pub error: Option<&'a str>,
+    pub filter: &'a mut CountryFilterState,
 }
 
 pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: PanelState<'_>) -> Vec<UiAction> {
@@ -80,13 +82,21 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: PanelState<'_>) 
             return;
         }
 
+        let country_mode = state.country.is_some();
+        let filtered = if country_mode {
+            station_filter::filtered_results(state.results, state.filter)
+        } else {
+            state.results.iter().collect()
+        };
+
         ui.add_space(6.0);
         ui.horizontal_wrapped(|ui| {
-            ui.selectable_value(
-                state.tab,
-                LibraryTab::Results,
-                format!("Результаты ({})", state.results.len()),
-            );
+            let results_label = if country_mode && state.filter.is_active() {
+                format!("Результаты ({} из {})", filtered.len(), state.results.len())
+            } else {
+                format!("Результаты ({})", filtered.len())
+            };
+            ui.selectable_value(state.tab, LibraryTab::Results, results_label);
             ui.selectable_value(
                 state.tab,
                 LibraryTab::Favorites,
@@ -99,6 +109,11 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: PanelState<'_>) 
             );
         });
         ui.separator();
+
+        if country_mode && *state.tab == LibraryTab::Results && !state.results.is_empty() {
+            draw_country_filters(ui, palette, state.filter);
+            ui.add_space(4.0);
+        }
 
         egui::ScrollArea::vertical()
             .id_salt("station_panel_scroll")
@@ -115,6 +130,25 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: PanelState<'_>) 
                                 "Выберите страну или найдите станцию по имени."
                             };
                             ui.label(egui::RichText::new(message).color(palette.muted));
+                        } else if filtered.is_empty() {
+                            ui.add_space(8.0);
+                            ui.label(
+                                egui::RichText::new("В этом секторе пока тихо")
+                                    .size(13.0)
+                                    .color(palette.muted),
+                            );
+                            ui.label(
+                                egui::RichText::new("Под фильтры не попала ни одна станция.")
+                                    .size(11.0)
+                                    .color(palette.muted),
+                            );
+                            if ui.button("Сбросить фильтры").clicked() {
+                                state.filter.reset();
+                            }
+                        } else if country_mode {
+                            for station in &filtered {
+                                station_card(ui, palette, station, state.favorites, &mut actions);
+                            }
                         } else {
                             for station in state.results {
                                 station_row(ui, palette, station, state.favorites, &mut actions);
@@ -154,6 +188,136 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: PanelState<'_>) 
     actions
 }
 
+fn draw_country_filters(ui: &mut egui::Ui, palette: &Palette, filter: &mut CountryFilterState) {
+    ui.add(
+        egui::TextEdit::singleline(&mut filter.text)
+            .hint_text("Имя, жанр или штат")
+            .desired_width(f32::INFINITY),
+    );
+    ui.horizontal_wrapped(|ui| {
+        if ui.selectable_label(filter.genre.is_none(), "Все").clicked() {
+            filter.genre = None;
+        }
+        for genre in GenreTag::ALL {
+            let selected = filter.genre == Some(genre);
+            if ui.selectable_label(selected, genre.label()).clicked() {
+                filter.genre = if selected { None } else { Some(genre) };
+            }
+        }
+    });
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new("Сортировка")
+                .size(11.0)
+                .color(palette.muted),
+        );
+        egui::ComboBox::from_id_salt("country_station_sort")
+            .selected_text(filter.sort.label())
+            .width(140.0)
+            .show_ui(ui, |ui| {
+                for sort in StationSort::ALL {
+                    ui.selectable_value(&mut filter.sort, sort, sort.label());
+                }
+            });
+    });
+}
+
+fn station_card(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    station: &Station,
+    favorites: &[Station],
+    actions: &mut Vec<UiAction>,
+) {
+    let favorite = favorites
+        .iter()
+        .any(|item| item.stationuuid == station.stationuuid);
+    let (hint, color) = if favorite {
+        ("Убрать из избранного", palette.accent)
+    } else {
+        ("Добавить в избранное", palette.muted)
+    };
+
+    egui::Frame::default()
+        .fill(palette.subtle_fill)
+        .stroke(egui::Stroke::new(1.0, palette.card_stroke))
+        .corner_radius(egui::CornerRadius::same(10))
+        .inner_margin(egui::Margin::symmetric(10, 7))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                if icons::star_button(ui, favorite, color, hint).clicked() {
+                    actions.push(UiAction::ToggleFavorite(station.clone()));
+                }
+                if ui
+                    .add(egui::Button::selectable(false, card_name(station)).truncate())
+                    .on_hover_text(single_line(&station.name))
+                    .clicked()
+                {
+                    actions.push(UiAction::Play(station.clone()));
+                }
+            });
+
+            let meta = station_meta(station);
+            if !meta.is_empty() {
+                ui.label(egui::RichText::new(meta).size(10.5).color(palette.muted));
+            }
+            let extra = station_extra(station);
+            if !extra.is_empty() {
+                ui.label(egui::RichText::new(extra).size(10.5).color(palette.muted));
+            }
+        });
+    ui.add_space(6.0);
+}
+
+fn card_name(station: &Station) -> String {
+    let name = single_line(&station.name);
+    if name.is_empty() {
+        "Без названия".to_owned()
+    } else {
+        truncate(&name, 34)
+    }
+}
+
+fn station_meta(station: &Station) -> String {
+    let mut parts = Vec::new();
+
+    let state_name = single_line(&station.state);
+    let country = single_line(&station.country);
+    let location = match (state_name.is_empty(), country.is_empty()) {
+        (false, false) => format!("{state_name}, {country}"),
+        (false, true) => state_name,
+        (true, false) => country,
+        (true, true) => single_line(&station.countrycode),
+    };
+    if !location.is_empty() {
+        parts.push(location);
+    }
+    if station.bitrate > 0 {
+        parts.push(format!("{} kbps", station.bitrate));
+    }
+    let codec = single_line(&station.codec);
+    if !codec.is_empty() {
+        parts.push(codec);
+    }
+
+    parts.join(" · ")
+}
+
+fn station_extra(station: &Station) -> String {
+    let mut parts = Vec::new();
+
+    let tags = single_line(&station.tags);
+    if !tags.is_empty() {
+        parts.push(truncate(&tags, 56));
+    }
+    if station.votes > 0 {
+        parts.push(format!("голосов: {}", station.votes));
+    }
+
+    parts.join(" · ")
+}
+
 fn station_row(
     ui: &mut egui::Ui,
     palette: &Palette,
@@ -182,20 +346,6 @@ fn station_row(
             actions.push(UiAction::Play(station.clone()));
         }
     });
-}
-
-pub(crate) fn country_label(country: &Country) -> String {
-    let name = single_line(&country.name);
-    let name = if name.is_empty() {
-        country.iso_a2.clone()
-    } else {
-        name
-    };
-
-    match country.iso_a3.as_deref() {
-        Some(iso_a3) => format!("{name} ({}, {iso_a3})", country.iso_a2),
-        None => format!("{name} ({})", country.iso_a2),
-    }
 }
 
 pub(crate) fn station_label(station: &Station) -> String {
@@ -241,31 +391,14 @@ mod tests {
             tags: "jazz".to_owned(),
             countrycode: "US".to_owned(),
             language: "english".to_owned(),
+            votes: 120,
+            country: "United States".to_owned(),
+            state: "New York".to_owned(),
             bitrate: 128,
             codec: "MP3".to_owned(),
             geo_lat: None,
             geo_long: None,
         }
-    }
-
-    #[test]
-    fn country_label_includes_iso_codes() {
-        let country = Country {
-            name: "Germany".to_owned(),
-            iso_a2: "DE".to_owned(),
-            iso_a3: Some("DEU".to_owned()),
-        };
-        assert_eq!(country_label(&country), "Germany (DE, DEU)");
-    }
-
-    #[test]
-    fn country_label_falls_back_to_iso_codes() {
-        let country = Country {
-            name: "  ".to_owned(),
-            iso_a2: "XK".to_owned(),
-            iso_a3: None,
-        };
-        assert_eq!(country_label(&country), "XK (XK)");
     }
 
     #[test]
@@ -284,5 +417,37 @@ mod tests {
             station_label(&station),
             "Без названия — US · MP3 · 128 kbps"
         );
+    }
+
+    #[test]
+    fn card_meta_shows_state_country_bitrate_and_codec() {
+        assert_eq!(
+            station_meta(&sample_station()),
+            "New York, United States · 128 kbps · MP3"
+        );
+
+        let mut station = sample_station();
+        station.state.clear();
+        station.country.clear();
+        assert_eq!(station_meta(&station), "US · 128 kbps · MP3");
+    }
+
+    #[test]
+    fn card_extra_shows_tags_and_votes() {
+        assert_eq!(station_extra(&sample_station()), "jazz · голосов: 120");
+
+        let mut station = sample_station();
+        station.tags.clear();
+        station.votes = 0;
+        assert_eq!(station_extra(&station), "");
+    }
+
+    #[test]
+    fn card_name_is_single_line_and_truncated() {
+        let mut station = sample_station();
+        station.name = "Very Long Radio Station Name With Many Words In It".to_owned();
+        let name = card_name(&station);
+        assert!(name.ends_with('…'));
+        assert!(name.chars().count() <= 34);
     }
 }

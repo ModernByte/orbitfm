@@ -1,7 +1,7 @@
 # Модуль: Render / 3D Globe
 
 **Путь в коде:** `src/render/`  
-**Ответственность:** Отрисовка 3D-сферы, камера, взаимодействие мыши, интеграция с egui через PaintCallback, спектральный оверлей.
+**Ответственность:** Отрисовка 3D-сферы, камера, взаимодействие мыши, интеграция с egui через PaintCallback, контуры стран, спектральный оверлей.
 **Зависимости:** egui-wgpu, wgpu, glam, bytemuck, image
 
 ---
@@ -15,14 +15,16 @@
 
 ```rust
 pub use camera::GlobeCamera;
+pub use countries::{CountryStyle, paint_country};
 pub use globe::{GlobeRenderer, paint_globe};
 pub use markers::{MarkerColors, MarkerVisual, paint_markers, sphere_point};
 pub use spectrum::{SpectrumOverlay, SpectrumTarget};
 
-pub struct GlobeCamera { /* yaw, pitch, distance, velocities */ }
+pub struct GlobeCamera { /* yaw, pitch, distance, velocities, fly */ }
 
 impl GlobeCamera {
     pub fn update(&mut self, dt: f32, input: &GlobeInput);
+    pub fn fly_to(&mut self, lat: f64, lon: f64, duration: std::time::Duration);
     pub fn is_animating(&self) -> bool;
     pub fn eye(&self) -> glam::Vec3;
     pub fn view_proj(&self, aspect: f32) -> glam::Mat4;
@@ -39,6 +41,20 @@ impl GlobeRenderer {
 }
 
 pub fn paint_globe(painter: &egui::Painter, rect: egui::Rect, camera: &GlobeCamera);
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CountryStyle {
+    pub fill: Option<egui::Color32>,
+    pub stroke: egui::Stroke,
+}
+
+pub fn paint_country(
+    painter: &egui::Painter,
+    viewport: egui::Rect,
+    camera: &GlobeCamera,
+    rings: &[Vec<[f64; 2]>],
+    style: CountryStyle,
+);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MarkerVisual {
@@ -121,6 +137,10 @@ impl SpectrumOverlay {
 - `project_on_sphere`: точка единичной сферы → view-projection → экранные координаты;
   `None` для задней полусферы (`point · eye <= 1`), нечисловых значений и выхода
   за viewport.
+- `fly_to(lat, lon, duration)` — плавный доворот к точке: `yaw` идёт по кратчайшей
+  дуге, `pitch` ограничен ±85°, прогресс сглаживается smoothstep, минимальная
+  длительность — 50 мс. Перетаскивание отменяет анимацию; `is_animating` возвращает
+  `true` и во время доворота.
 - Начальная ориентация: yaw=0, pitch=0 — перед камерой Гринвич/Африка, север сверху.
 
 ## 5. Визуал (MVP)
@@ -135,7 +155,22 @@ impl SpectrumOverlay {
 - Шейдер: `src/render/globe.wgsl`.
 - (Позже) Fresnel-атмосфера и подписи стран.
 
-## 6. Маркеры станций
+## 6. Контуры стран
+
+- `render/countries.rs` принимает кольца `[lon, lat]` и `CountryStyle`, не зная о
+  `Country` и `GeoService`; Application Core выбирает страну и стиль.
+- Кольца сгущаются дугами не более 2° и проецируются через `project_on_sphere`.
+- Контур разбивается на видимые дуги: пересечение с горизонтом вычисляется
+  линейной интерполяцией по `point · eye = 1`; невидимые участки отбрасываются.
+- Заливка строится только для кольца, целиком видимого на передней полусфере,
+  и триангулируется методом уха; кольца площадью меньше 1 px² не заливаются.
+- Выбранная страна получает заливку `COUNTRY_FILL_ALPHA = 34` и контур 2 px,
+  hover — только контур 1.4 px с `COUNTRY_HOVER_ALPHA = 120`; цвета берутся из
+  акцента темы. Если страна уже выбрана, hover для неё не дублируется.
+- Отрисовка идёт через `egui::Painter` после `paint_globe` и до маркеров; GPU-
+  ресурсы не создаются.
+
+## 7. Маркеры станций
 
 - `render/markers.rs` не создаёт GPU-ресурсов и не зависит от доменных типов.
   Application Core валидирует координаты, группирует станции и передаёт
@@ -153,7 +188,7 @@ impl SpectrumOverlay {
 - Поведение взаимодействия (радиус 10 px, приоритет над страной) определяет
   Application Core; см. ADR-0012.
 
-## 7. Спектральный оверлей
+## 8. Спектральный оверлей
 
 - `SpectrumTarget` — срез метрик (`centroid_hz`, `spread_hz`, `flux`, `flatness`,
   `rms_db`) без зависимости от аудио-модуля.
@@ -166,7 +201,7 @@ impl SpectrumOverlay {
 - Метрики агрегированные, поэтому огибающая — художественная интерпретация,
   а не покадровый спектр по бинам (ADR-0010).
 
-## 8. Тесты
+## 9. Тесты
 
 - все треугольники меша обращены наружу;
 - вершины лежат на единичной сфере, UV в `[0, 1]`;
@@ -178,12 +213,17 @@ impl SpectrumOverlay {
 - `project_on_sphere` проецирует видимую точку в центр, учитывает широту/долготу и
   отсекает заднюю полусферу, пустой viewport и нечисловые координаты;
 - `sphere_point` следует соглашению сферы и возвращает нормализованные векторы;
+- `fly_to` центрирует заданную точку и идёт кратчайшим путём через антимеридиан;
+- контур страны триангулируется для выпуклого и вогнутого колец, заливается только
+  при полной видимости, обрезается по горизонту и замыкается в видимой части;
+- невалидные координаты кольца пропускаются;
 - спектральный оверлей принимает первый кадр без сглаживания, затухает без данных,
   ограничивает частоты и игнорирует неположительный `dt`.
 
-## 9. Связанные ADR
+## 10. Связанные ADR
 
 - ADR-0002: Выбор GUI-стека
 - ADR-0008: Геопространственный поиск
 - ADR-0010: Экспериментальный FFT-визуализатор
 - ADR-0012: Маркеры станций на глобусе
+- ADR-0015: UX-редизайн «Orbital Desk» (контуры стран, `fly_to`)

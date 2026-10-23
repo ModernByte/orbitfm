@@ -52,6 +52,12 @@ pub struct Station {
     #[serde(default)]
     pub language: String,
     #[serde(default)]
+    pub votes: u32,
+    #[serde(default)]
+    pub country: String,
+    #[serde(default)]
+    pub state: String,
+    #[serde(default)]
     pub bitrate: u32,
     #[serde(default)]
     pub codec: String,
@@ -402,6 +408,9 @@ mod tests {
             tags: "jazz".to_owned(),
             countrycode: "US".to_owned(),
             language: "english".to_owned(),
+            votes: 120,
+            country: "United States".to_owned(),
+            state: "New York".to_owned(),
             bitrate: 128,
             codec: "MP3".to_owned(),
             geo_lat: None,
@@ -450,6 +459,36 @@ mod tests {
         let stations: Vec<Station> = serde_json::from_str(json).expect("фикстура должна парситься");
         assert_eq!(stations[0].geo_lat, Some(52.52));
         assert_eq!(stations[0].geo_long, Some(13.405));
+    }
+
+    #[test]
+    fn station_defaults_missing_library_fields() {
+        let json = r#"{
+            "stationuuid": "c685c086-b716-4edd-b313-d4a7baf1084c",
+            "name": "Legacy Radio"
+        }"#;
+
+        let station: Station = serde_json::from_str(json).expect("старый JSON должен читаться");
+        assert_eq!(station.votes, 0);
+        assert_eq!(station.country, "");
+        assert_eq!(station.state, "");
+    }
+
+    #[test]
+    fn station_parses_popularity_and_location_names() {
+        let json = r#"{
+            "stationuuid": "c685c086-b716-4edd-b313-d4a7baf1084c",
+            "name": "Berlin Jazz",
+            "votes": 421,
+            "country": "Germany",
+            "state": "Berlin",
+            "countrycode": "DE"
+        }"#;
+
+        let station: Station = serde_json::from_str(json).expect("ответ API должен читаться");
+        assert_eq!(station.votes, 421);
+        assert_eq!(station.country, "Germany");
+        assert_eq!(station.state, "Berlin");
     }
 
     #[test]

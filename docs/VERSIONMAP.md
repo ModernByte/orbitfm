@@ -13,7 +13,7 @@
 | 0.4.0  | Реализовано (без релиза) | Noctalia plugin + window rules Niri/Hyprland | Этап 5 |
 | 0.5.0  | В работе     | Полировка, кроссплатформа (SMTC/macOS), FFT, упаковка     | FFT, AppImage, Flatpak, CI macOS/Windows и сборка MSI/DMG готовы; SMTC и Now Playing остаются |
 | 0.6.0  | Реализовано (без релиза) | Маркеры станций на глобусе, избранное и история, темы, каталог Noctalia | Этап 7 завершён; плагин доступен как git-источник, внешняя публикация не выполняется |
-| 0.7.0  | В работе     | UX «Orbital Desk»: Focus-раскладка, режимы Country/GlobalGenre, фильтры и сортировка, hover/контур страны, Roulette + fly-to, MPRIS metadata | Этап 8, фазы 1–4 (MVP); фаза 1 (UI-каркас) завершена; см. ADR-0015 |
+| 0.7.0  | В работе     | UX «Orbital Desk»: Focus-раскладка, режим «Страна» (hover/контур, поиск страны в HUD, фильтры и сортировка), режим GlobalGenre, Roulette + fly-to, MPRIS metadata | Этап 8, фазы 1–4 (MVP); фазы 1 (UI-каркас) и 2 (режим «Страна») завершены; см. ADR-0015 |
 | 0.8.0  | Запланировано | Fresnel pulse от FFT, heatmap выбранной страны, WindowMode Overlay/Listening, favicon-карточки | Этап 8, фазы 5–6; отдельный MINOR-релиз |
 | 1.0.0  | Цель         | Стабильный релиз                                          |                             |
 

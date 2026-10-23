@@ -20,7 +20,7 @@
 
 ## 3. Состояние приложения
 
-Текущее состояние (Этап 8, фаза 1):
+Текущее состояние (Этап 8, фазы 1–2):
 
 ```rust
 pub struct AppState {
@@ -55,10 +55,12 @@ pub struct OrbitApp {
     current_url: Option<String>,
     current_station: Option<Station>,
     search_query: String,
+    country_query: String,
     search_country: Option<Country>,
     search_results: Vec<Station>,
     markers: Vec<GlobeMarker>,
     library_tab: LibraryTab,
+    country_filter: CountryFilterState,
     search_pending: bool,
     search_empty: bool,
     search_rx: Option<mpsc::UnboundedReceiver<Result<SearchOutcome, RadioError>>>,
@@ -74,10 +76,14 @@ pub struct OrbitApp {
 `globe_ready` — результат создания `GlobeRenderer` из `CreationContext::wgpu_render_state`.
 `spectrum_enabled` синхронизируется с аудио-ядром в `logic()`, `spectrum_overlay` хранит
 сглаженное состояние оверлея; ошибки включения фильтра показываются тостом.
-`search_country` хранит страну, выбранную на глобусе, и сбрасывается при поиске по
-названию; `search_empty` отмечает успешный ответ без станций. `SearchOutcome` —
-внутренний тип с результатами основного и гео-запроса; `GlobeMarker` (в
-`ui/globe_view.rs`) хранит представителя группы, координаты и количество станций.
+`search_country` хранит страну, выбранную на глобусе или в HUD, и сбрасывается при
+поиске по названию; `country_query` — текст поиска страны в HUD (очищается после
+выбора); `country_filter` — локальные фильтры и сортировка панели страны
+(`text`, `genre`, `sort`), которые не делают сетевых запросов и сбрасываются при
+новом выборе страны. `search_empty` отмечает успешный ответ без станций.
+`SearchOutcome` — внутренний тип с результатами основного и гео-запроса;
+`GlobeMarker` (в `ui/globe_view.rs`) хранит представителя группы, координаты и
+количество станций.
 
 `current_url` заполняется из `AudioEvent::Started` и из запуска станции; `Stopped`/`Error`
 его больше не очищают — последний URL нужен MPRIS для повторного запуска.
@@ -92,7 +98,7 @@ pub struct OrbitApp {
 `settings` хранит тему и акцент (см. §10). `panel_open` управляет видимостью drawer,
 `hint_until` — срок жизни подсказки первого запуска, `toast` — одно текущее сообщение.
 
-### 3.1. UI-слой (Фаза 1)
+### 3.1. UI-слой (Фазы 1–2)
 
 UI вынесен из `app.rs` в `src/ui/`:
 
@@ -100,10 +106,11 @@ UI вынесен из `app.rs` в `src/ui/`:
 src/ui/
 ├── mod.rs            # UiAction, playback_label, single_line, truncate
 ├── palette.rs        # Palette, configure_style, theme_* / accent_*
-├── hud.rs            # верхний HUD: поиск, now-playing, громкость, меню
-├── station_panel.rs  # правый drawer: вкладки, строки станций, избранное/история
+├── hud.rs            # верхний HUD: поиск станции и страны, now-playing, громкость, меню
+├── station_filter.rs # локальные жанровые фильтры и сортировка панели страны
+├── station_panel.rs  # правый drawer: вкладки, фильтры, карточки/строки станций
 ├── transport.rs      # нижний transport: play/pause, stop, звезда, детали, FFT
-├── globe_view.rs     # ввод камеры, маркеры, FFT-оверлей, подсказка
+├── globe_view.rs     # ввод камеры, маркеры, контуры стран, FFT-оверлей, подсказка
 ├── toast.rs          # одно сообщение на 3 секунды
 └── icons.rs          # векторные иконки star/play/stop
 ```
@@ -111,8 +118,10 @@ src/ui/
 Правила:
 
 - UI-модули получают только нужные срезы состояния, возвращают `Vec<UiAction>`;
-- текстовое поле поиска и активная вкладка редактируются напрямую через `&mut`;
-- UI не вызывает `AudioEngine`, `RadioBrowserClient`, `StationLibrary` и `SettingsStore`;
+- текстовые поля поиска станции/страны, активная вкладка и фильтры страны
+  редактируются напрямую через `&mut`;
+- UI не вызывает `AudioEngine`, `RadioBrowserClient`, `StationLibrary` и `SettingsStore`
+  (поиск страны идёт через `GeoService::search_countries` — это чистый offline-запрос);
 - `app.rs` — единственная точка побочных эффектов: `apply_actions` выполняет
   `Play`, `ToggleFavorite`, `SelectCountry`, `RunSearch`, `ClearHistory`, `SetTheme`,
   `SetAccent`, `ToggleSpectrum`, `SetVolume`, `TogglePlayback`, `Stop`, `Hide`, `Quit`,
@@ -127,7 +136,7 @@ src/ui/
 
 | Зона | Размер | Содержимое |
 |------|--------|------------|
-| HUD | 58 px, не более 20% высоты окна | логотип, поиск и «Найти», now-playing, громкость, «Список», «Настройки» |
+| HUD | 58 px, не более 20% высоты окна | логотип, «Страна», поиск станции и «Найти», now-playing, громкость, «Список», «Настройки» |
 | Контент | остальная высота | глобус на всю ширину; правый drawer 310 px, не более 42% ширины |
 | Transport | 48 px, не более 15% высоты окна | play/pause, stop, звезда, codec/kbps/страна, FFT |
 
@@ -194,18 +203,24 @@ IPC- и MPRIS-команды обрабатываются и в скрытом �
 1. ПКМ + drag → `GlobeInput::drag_delta`; колесо при наведении → `scroll_delta`;
    ЛКМ → `primary_clicked`.
 2. `GlobeCamera::update(stable_dt, &input)` обновляет ориентацию, инерцию и зум.
-3. При клике сначала проверяется ближайший маркер в радиусе 10 px: он приоритетнее
+3. Hover страны: `screen_to_sphere(hover_pos)` → `country_at_sphere_point`
+   (при ПКМ-drag hover отключается). `globe_view` рисует контур наведённой страны;
+   выбранная страна получает акцентный контур 2 px и заливку. Курсор
+   `PointingHand` — над страной или маркером, `Grabbing` — при вращении.
+4. При клике сначала проверяется ближайший маркер в радиусе 10 px: он приоритетнее
    выбора страны и возвращает `UiAction::Play`.
-4. Если маркера нет, `screen_to_sphere` даёт точку сферы; `app.rs` передаёт её в
+5. Если маркера нет, `screen_to_sphere` даёт точку сферы; `app.rs` передаёт её в
    `GeoService::country_at_sphere_point` и при попадании создаёт
-   `UiAction::SelectCountry`.
-5. Найденная страна передаётся в `start_country_search`: `search_country`
-   устанавливается, выполняется запрос `countrycode=<ISO alpha-2>`, `limit = 30`,
-   `hide_broken = true`.
-6. Маркеры проецируются через `project_on_sphere`; наведение показывает подпись и
+   `UiAction::SelectCountry`. Тот же путь используется для выбора из HUD.
+6. `apply_actions` вызывает `focus_country`: `country_shape(...).focus_point()`
+   запускает `GlobeCamera::fly_to` на 650 мс (центр крупнейшего кольца, корректно
+   на антимеридиане). Затем `start_country_search` устанавливает `search_country`,
+   сбрасывает локальные фильтры и запрашивает `countrycode=<ISO alpha-2>`,
+   `limit = 100`, `hide_broken = true`.
+7. Маркеры проецируются через `project_on_sphere`; наведение показывает подпись и
    курсор-указатель, активная станция подсвечивается. `paint_globe` добавляет paint
-   callback, затем `paint_markers` рисует egui-оверлей; пока камера `is_animating`,
-   запрашивается repaint.
+   callback, затем `paint_country_highlights` и `paint_markers` рисуют egui-оверлей;
+   пока камера `is_animating`, запрашивается repaint.
 
 Клик по океану или территории без валидного ISO-кода ничего не меняет. При
 `globe_ready = false` вместо глобуса рисуется заглушка, ввод игнорируется.
@@ -230,14 +245,25 @@ IPC- и MPRIS-команды обрабатываются и в скрытом �
   `hide_broken = true`; `search_country` сбрасывается. Запрос выполняется в
   tokio-задаче, результат приходит через `mpsc` и будит GUI.
 - Параллельно с основным запросом выполняется гео-запрос с теми же фильтрами,
-  `has_geo_info = true`, `limit = 60`; его ошибка логируется и не влияет на список.
-  Результат используется только для маркеров.
+  `has_geo_info = true`; лимит — 60 для поиска по названию и 100 для страны. Его
+  ошибка логируется и не влияет на список; результат используется только для маркеров.
 - Маркеры строятся из гео-станций: координаты должны быть конечными, лежать в
   `[-90, 90]`/`[-180, 180]` и не быть `(0, 0)`; станции с координатами, округлёнными
   до 2 знаков, объединяются, дубликаты по UUID отбрасываются.
 - Поиск по стране использует тот же канал и отличается только `SearchParams`
-  (`country_code`, без `name`); заголовок `Страна: …` остаётся до следующего
+  (`country_code`, без `name`, `limit = 100`); гео-запрос для маркеров тоже
+  выполняется с `limit = 100`. Заголовок `Страна: …` остаётся до следующего
   поиска по названию.
+- HUD «Страна» вызывает `GeoService::search_countries` (до 6 подсказок) при каждом
+  изменении запроса; Enter выбирает первую, клик — выбранную. Оба пути создают
+  `UiAction::SelectCountry`, очищают `country_query` и после выбора сбрасывают
+  `country_filter`.
+- Панель страны применяет `station_filter::filtered_results` к уже загруженным
+  результатам: текст ищется в `name/tags/country/state`, жанровые чипы проверяют
+  теги без учёта регистра, сортировка — по `votes`, `bitrate` или имени. Это
+  локальные операции без сети; карточки показывают state/country, kbps, codec,
+  теги и голоса. При пустом результате фильтров — «В этом секторе пока тихо» и
+  кнопка «Сбросить фильтры», сохраняющая выбранную сортировку.
 - Пустой успешный ответ выставляет `search_empty`; UI показывает «Станции не найдены».
 - Новый поиск очищает маркеры; ошибка основного запроса также очищает их.
 - Выбор результата или IPC `play <uuid>` вызывает `start_station`:
@@ -310,8 +336,10 @@ artUrl, `url_resolved` → `xesam:url`. Без станции используе
 
 ## 13. Текущие ограничения
 
-- Roulette, режимы Country/GlobalGenre, hover/контур страны, fly-to и heatmap ещё не
-  реализованы: это фазы 2–5 Этапа 8 (ADR-0015)
+- Roulette, режим «Глобальный жанр», переключатель режимов и heatmap ещё не
+  реализованы: это фазы 3–5 Этапа 8 (ADR-0015); сейчас режим страны активен, пока
+  выбрана страна, а `fly_to` используется только для выбора страны
+- Hover страны вычисляется raycast-ом каждый кадр без кэша последней точки
 - `Next`/`Previous` из MPRIS не переключают станции: история не является очередью
   воспроизведения, для переключения нужен отдельный плейлист (ADR-0013)
 - На глобусе нет подписей стран и атмосферы; маркеры группируются только по
