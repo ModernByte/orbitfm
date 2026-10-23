@@ -3,6 +3,7 @@
 //! Границы стран загружаются из GeoJSON (Natural Earth 110m) и индексируются
 //! R-Tree по bounding box. Точная проверка выполняется через Point-in-Polygon.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
@@ -13,7 +14,7 @@ const EMBEDDED_WORLD: &str = include_str!("../../assets/geojson/world-110m.json"
 const INVALID_PROPERTY: &str = "-99";
 
 /// Информация о стране.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Country {
     /// Название страны (ADMIN из Natural Earth).
     pub name: String,
@@ -21,6 +22,45 @@ pub struct Country {
     pub iso_a2: String,
     /// ISO 3166-1 alpha-3, если известен.
     pub iso_a3: Option<String>,
+}
+
+/// Кольца границ страны в градусах `[lon, lat]`.
+///
+/// Включает внешние контуры и отверстия (озёра), без доменных типов —
+/// пригодно для проекции и отрисовки в слое render.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CountryShape {
+    pub rings: Vec<Vec<[f64; 2]>>,
+}
+
+impl CountryShape {
+    /// Центр крупнейшего кольца — точка для мягкого доворота камеры.
+    ///
+    /// Долготы соседних точек раскрываются относительно первой точки кольца,
+    /// поэтому страны на антимеридиане не дают центр в Африке.
+    pub fn focus_point(&self) -> Option<(f64, f64)> {
+        let ring = self.rings.iter().max_by_key(|ring| ring.len())?;
+        let first = *ring.first()?;
+        let mut lon_sum = 0.0;
+        let mut lat_sum = 0.0;
+        for [lon, lat] in ring {
+            let mut lon = *lon;
+            while lon - first[0] > 180.0 {
+                lon -= 360.0;
+            }
+            while lon - first[0] < -180.0 {
+                lon += 360.0;
+            }
+            lon_sum += lon;
+            lat_sum += lat;
+        }
+        let count = ring.len() as f64;
+        Some((lat_sum / count, normalize_longitude(lon_sum / count)))
+    }
+}
+
+fn normalize_longitude(lon: f64) -> f64 {
+    (lon + 180.0).rem_euclid(360.0) - 180.0
 }
 
 /// Ошибки геосервиса.
@@ -37,6 +77,7 @@ pub enum GeoError {
 struct CountryEntry {
     country: Country,
     geometry: MultiPolygon<f64>,
+    shape: CountryShape,
 }
 
 struct IndexedCountry {
@@ -56,6 +97,7 @@ impl RTreeObject for IndexedCountry {
 pub struct GeoService {
     countries: Vec<CountryEntry>,
     index: RTree<IndexedCountry>,
+    by_iso: HashMap<String, usize>,
 }
 
 impl GeoService {
@@ -102,6 +144,40 @@ impl GeoService {
         self.country_at(lat, lon)
     }
 
+    /// Ищет страны по названию или ISO-коду без учёта регистра.
+    ///
+    /// Пустой запрос даёт пустой результат: подсказки появляются только
+    /// после ввода. Результаты отсортированы по названию.
+    pub fn search_countries(&self, query: &str, limit: usize) -> Vec<&Country> {
+        let query = query.trim().to_lowercase();
+        if query.is_empty() || limit == 0 {
+            return Vec::new();
+        }
+
+        let mut matches: Vec<&Country> = self
+            .countries
+            .iter()
+            .map(|entry| &entry.country)
+            .filter(|country| {
+                country.name.to_lowercase().contains(&query)
+                    || country.iso_a2.eq_ignore_ascii_case(&query)
+                    || country
+                        .iso_a3
+                        .as_deref()
+                        .is_some_and(|iso| iso.eq_ignore_ascii_case(&query))
+            })
+            .collect();
+        matches.sort_by_cached_key(|country| country.name.to_lowercase());
+        matches.truncate(limit);
+        matches
+    }
+
+    /// Кольца границ страны по ISO 3166-1 alpha-2.
+    pub fn country_shape(&self, iso_a2: &str) -> Option<&CountryShape> {
+        let index = *self.by_iso.get(&iso_a2.trim().to_uppercase())?;
+        Some(&self.countries[index].shape)
+    }
+
     fn parse(raw: &str) -> Result<Self, GeoError> {
         let collection: geojson::FeatureCollection = raw
             .parse()
@@ -109,6 +185,7 @@ impl GeoService {
 
         let mut countries = Vec::new();
         let mut indexed = Vec::new();
+        let mut by_iso = HashMap::new();
 
         for feature in collection.features {
             let Some((country, geometry)) = convert_feature(feature) else {
@@ -125,7 +202,15 @@ impl GeoService {
                 entry: countries.len(),
                 envelope,
             });
-            countries.push(CountryEntry { country, geometry });
+            by_iso
+                .entry(country.iso_a2.clone())
+                .or_insert(countries.len());
+            let shape = shape_from_geometry(&geometry);
+            countries.push(CountryEntry {
+                country,
+                geometry,
+                shape,
+            });
         }
 
         if countries.is_empty() {
@@ -135,8 +220,26 @@ impl GeoService {
         Ok(Self {
             countries,
             index: RTree::bulk_load(indexed),
+            by_iso,
         })
     }
+}
+
+fn shape_from_geometry(geometry: &MultiPolygon<f64>) -> CountryShape {
+    let mut rings = Vec::new();
+    for polygon in &geometry.0 {
+        for ring in std::iter::once(polygon.exterior()).chain(polygon.interiors()) {
+            let mut coords: Vec<[f64; 2]> = ring.coords().map(|coord| [coord.x, coord.y]).collect();
+            if coords.len() > 1 && coords.first() == coords.last() {
+                coords.pop();
+            }
+            coords.dedup();
+            if coords.len() >= 3 {
+                rings.push(coords);
+            }
+        }
+    }
+    CountryShape { rings }
 }
 
 fn convert_feature(feature: geojson::Feature) -> Option<(Country, MultiPolygon<f64>)> {
@@ -299,5 +402,89 @@ mod tests {
             "DE"
         );
         assert!(service.country_at_sphere_point(0.0, 0.0, 0.0).is_none());
+    }
+
+    #[test]
+    fn searches_countries_by_name_and_iso() {
+        let service = service();
+
+        let by_name = service.search_countries("  germ  ", 5);
+        assert_eq!(
+            by_name.first().map(|country| country.iso_a2.as_str()),
+            Some("DE")
+        );
+
+        let by_iso = service.search_countries("de", 5);
+        assert!(
+            by_iso.iter().any(|country| country.iso_a2 == "DE"),
+            "ISO-код должен находить Германию"
+        );
+        assert_eq!(service.search_countries("   ", 5).len(), 0);
+        assert_eq!(service.search_countries("germ", 0).len(), 0);
+    }
+
+    #[test]
+    fn search_results_are_sorted_and_limited() {
+        let service = service();
+
+        let matches = service.search_countries("a", 7);
+        assert_eq!(matches.len(), 7);
+        let names: Vec<String> = matches
+            .iter()
+            .map(|country| country.name.to_lowercase())
+            .collect();
+        let mut sorted = names.clone();
+        sorted.sort();
+        assert_eq!(names, sorted);
+    }
+
+    #[test]
+    fn exposes_country_shape_rings() {
+        let service = service();
+
+        let shape = service
+            .country_shape("de")
+            .expect("Германия должна иметь контур");
+        assert!(!shape.rings.is_empty());
+        assert!(
+            shape.rings.iter().all(|ring| ring.len() >= 3
+                && ring.iter().all(|[lon, lat]| {
+                    (-180.0..=180.0).contains(lon) && (-90.0..=90.0).contains(lat)
+                })),
+            "кольца должны содержать валидные координаты"
+        );
+        assert!(service.country_shape("XX").is_none());
+    }
+
+    #[test]
+    fn focus_point_lies_inside_country() {
+        let service = service();
+
+        let shape = service.country_shape("DE").expect("контур Германии");
+        let (lat, lon) = shape.focus_point().expect("точка фокуса");
+        assert!(lat > 47.0 && lat < 56.0, "широта Германии: {lat}");
+        assert!(lon > 5.0 && lon < 16.0, "долгота Германии: {lon}");
+        assert!(
+            service
+                .country_at(lat, lon)
+                .is_some_and(|country| country.iso_a2 == "DE")
+        );
+    }
+
+    #[test]
+    fn focus_point_keeps_antimeridian_country_together() {
+        let service = service();
+
+        let shape = service.country_shape("FJ").expect("контур Фиджи");
+        let (_, lon) = shape.focus_point().expect("точка фокуса");
+        assert!(
+            lon.abs() > 170.0,
+            "Фиджи должна остаться у антимеридиана: {lon}"
+        );
+    }
+
+    #[test]
+    fn focus_point_of_empty_shape_is_none() {
+        assert!(CountryShape::default().focus_point().is_none());
     }
 }

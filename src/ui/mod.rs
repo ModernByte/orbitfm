@@ -7,6 +7,7 @@ pub(crate) mod globe_view;
 pub(crate) mod hud;
 pub(crate) mod icons;
 pub(crate) mod palette;
+pub(crate) mod station_filter;
 pub(crate) mod station_panel;
 pub(crate) mod toast;
 pub(crate) mod transport;
@@ -50,6 +51,20 @@ pub(crate) fn single_line(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+pub(crate) fn country_label(country: &Country) -> String {
+    let name = single_line(&country.name);
+    let name = if name.is_empty() {
+        country.iso_a2.clone()
+    } else {
+        name
+    };
+
+    match country.iso_a3.as_deref() {
+        Some(iso_a3) => format!("{name} ({}, {iso_a3})", country.iso_a2),
+        None => format!("{name} ({})", country.iso_a2),
+    }
+}
+
 pub(crate) fn truncate(value: &str, max_chars: usize) -> String {
     if value.chars().count() <= max_chars {
         return value.to_owned();
@@ -84,5 +99,25 @@ mod tests {
     #[test]
     fn single_line_collapses_whitespace() {
         assert_eq!(single_line("Radio\n  Nova\tLive"), "Radio Nova Live");
+    }
+
+    #[test]
+    fn country_label_includes_iso_codes() {
+        let country = Country {
+            name: "Germany".to_owned(),
+            iso_a2: "DE".to_owned(),
+            iso_a3: Some("DEU".to_owned()),
+        };
+        assert_eq!(country_label(&country), "Germany (DE, DEU)");
+    }
+
+    #[test]
+    fn country_label_falls_back_to_iso_codes() {
+        let country = Country {
+            name: "  ".to_owned(),
+            iso_a2: "XK".to_owned(),
+            iso_a3: None,
+        };
+        assert_eq!(country_label(&country), "XK (XK)");
     }
 }

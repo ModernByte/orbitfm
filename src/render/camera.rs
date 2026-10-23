@@ -1,5 +1,7 @@
 //! Камера глобуса: орбитальное вращение, зум и преобразование экран → сфера.
 
+use std::time::Duration;
+
 use eframe::egui::{Pos2, Rect, Vec2};
 use glam::camera::rh::{proj::directx, view};
 use glam::{Mat4, Vec3, Vec4};
@@ -19,6 +21,18 @@ const DRAG_SENSITIVITY: f32 = 0.006;
 const INERTIA_DAMPING: f32 = 6.0;
 const INERTIA_STOP: f32 = 0.01;
 const MAX_PITCH: f32 = 85.0 * std::f32::consts::PI / 180.0;
+const MIN_FLY_DURATION: f32 = 0.05;
+
+/// Плавный доворот камеры к стране; отменяется перетаскиванием.
+#[derive(Debug, Clone, Copy)]
+struct FlyAnimation {
+    start_yaw: f32,
+    target_yaw: f32,
+    start_pitch: f32,
+    target_pitch: f32,
+    elapsed: f32,
+    duration: f32,
+}
 
 /// Униформ-данные камеры для шейдера.
 #[repr(C)]
@@ -36,6 +50,7 @@ pub struct GlobeCamera {
     distance: f32,
     yaw_velocity: f32,
     pitch_velocity: f32,
+    fly: Option<FlyAnimation>,
 }
 
 impl Default for GlobeCamera {
@@ -46,16 +61,53 @@ impl Default for GlobeCamera {
             distance: DEFAULT_DISTANCE,
             yaw_velocity: 0.0,
             pitch_velocity: 0.0,
+            fly: None,
         }
     }
 }
 
 impl GlobeCamera {
+    /// Плавно переводит камеру к точке `(lat, lon)` за `duration`.
+    ///
+    /// Доворот идёт по кратчайшей дуге долготы; широта ограничивается
+    /// допустимым наклоном камеры. Текущая инерция сбрасывается.
+    pub fn fly_to(&mut self, lat: f64, lon: f64, duration: Duration) {
+        let target_pitch = (lat as f32).to_radians().clamp(-MAX_PITCH, MAX_PITCH);
+        let target_yaw = (lon as f32).to_radians();
+        let delta_yaw = shortest_delta(self.yaw, target_yaw);
+        self.fly = Some(FlyAnimation {
+            start_yaw: self.yaw,
+            target_yaw: self.yaw + delta_yaw,
+            start_pitch: self.pitch,
+            target_pitch,
+            elapsed: 0.0,
+            duration: duration.as_secs_f32().max(MIN_FLY_DURATION),
+        });
+        self.yaw_velocity = 0.0;
+        self.pitch_velocity = 0.0;
+    }
+
     /// Обновляет камеру по вводу за кадр.
     pub fn update(&mut self, dt: f32, input: &GlobeInput) {
         let dt = dt.clamp(0.001, 0.05);
 
         if input.drag_delta != Vec2::ZERO {
+            self.fly = None;
+        }
+
+        if let Some(fly) = self.fly.as_mut() {
+            fly.elapsed += dt;
+            let progress = (fly.elapsed / fly.duration).clamp(0.0, 1.0);
+            let eased = smoothstep(progress);
+            self.yaw = fly.start_yaw + (fly.target_yaw - fly.start_yaw) * eased;
+            self.pitch = fly.start_pitch + (fly.target_pitch - fly.start_pitch) * eased;
+
+            if progress >= 1.0 {
+                self.yaw = fly.target_yaw;
+                self.pitch = fly.target_pitch;
+                self.fly = None;
+            }
+        } else if input.drag_delta != Vec2::ZERO {
             let yaw_delta = -input.drag_delta.x * DRAG_SENSITIVITY;
             let pitch_delta = input.drag_delta.y * DRAG_SENSITIVITY;
 
@@ -92,9 +144,9 @@ impl GlobeCamera {
         }
     }
 
-    /// Идёт ли инерционное движение, требующее перерисовки.
+    /// Идёт ли инерционное движение или доворот, требующие перерисовки.
     pub fn is_animating(&self) -> bool {
-        self.yaw_velocity != 0.0 || self.pitch_velocity != 0.0
+        self.fly.is_some() || self.yaw_velocity != 0.0 || self.pitch_velocity != 0.0
     }
 
     /// Позиция камеры в мировых координатах.
@@ -183,6 +235,15 @@ impl GlobeCamera {
 fn unproject(inverse_view_proj: Mat4, x: f32, y: f32, z: f32) -> Option<Vec3> {
     let clip = inverse_view_proj * Vec4::new(x, y, z, 1.0);
     (clip.w.abs() > f32::EPSILON).then(|| clip.truncate() / clip.w)
+}
+
+fn shortest_delta(from: f32, to: f32) -> f32 {
+    let tau = std::f32::consts::TAU;
+    (to - from + std::f32::consts::PI).rem_euclid(tau) - std::f32::consts::PI
+}
+
+fn smoothstep(t: f32) -> f32 {
+    t * t * (3.0 - 2.0 * t)
 }
 
 #[cfg(test)]
@@ -332,5 +393,66 @@ mod tests {
 
         assert!((camera.pitch - MAX_PITCH).abs() < 1e-5);
         assert!(camera.eye().is_finite());
+    }
+
+    #[test]
+    fn fly_to_centers_requested_point() {
+        let mut camera = GlobeCamera::default();
+        camera.fly_to(52.52, 13.405, Duration::from_millis(400));
+
+        while camera.is_animating() {
+            camera.update(0.05, &GlobeInput::default());
+        }
+
+        let hit = camera
+            .screen_to_sphere(viewport().center(), viewport())
+            .expect("после доворота центр должен попадать в сферу");
+        let lat = hit.y.asin().to_degrees();
+        let lon = hit.x.atan2(hit.z).to_degrees();
+        assert!((lat - 52.52).abs() < 1e-3, "широта: {lat}");
+        assert!((lon - 13.405).abs() < 1e-3, "долгота: {lon}");
+    }
+
+    #[test]
+    fn fly_uses_shortest_way_across_antimeridian() {
+        let mut camera = GlobeCamera {
+            yaw: 350_f32.to_radians(),
+            ..GlobeCamera::default()
+        };
+        camera.fly_to(0.0, 10.0, Duration::from_secs(1));
+        camera.update(0.016, &GlobeInput::default());
+
+        let yaw_degrees = camera.yaw.to_degrees();
+        assert!(
+            yaw_degrees > 350.0 && yaw_degrees < 351.0,
+            "камера должна идти на восток через 0°, а не на запад: {yaw_degrees}"
+        );
+    }
+
+    #[test]
+    fn drag_cancels_fly() {
+        let mut camera = GlobeCamera::default();
+        camera.fly_to(-33.87, 151.21, Duration::from_millis(500));
+        camera.update(
+            0.016,
+            &GlobeInput {
+                drag_delta: Vec2::new(12.0, 0.0),
+                ..GlobeInput::default()
+            },
+        );
+
+        assert!(camera.fly.is_none());
+    }
+
+    #[test]
+    fn fly_respects_pitch_limit() {
+        let mut camera = GlobeCamera::default();
+        camera.fly_to(89.0, 0.0, Duration::from_millis(100));
+
+        while camera.is_animating() {
+            camera.update(0.05, &GlobeInput::default());
+        }
+
+        assert!((camera.pitch - MAX_PITCH).abs() < 1e-5);
     }
 }

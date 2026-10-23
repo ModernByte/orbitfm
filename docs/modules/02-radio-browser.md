@@ -63,6 +63,9 @@ pub struct Station {
     pub tags: String,
     pub countrycode: String,
     pub language: String,
+    pub votes: u32,                        // serde(default) → 0
+    pub country: String,                   // serde(default) → ""
+    pub state: String,                     // serde(default) → ""
     pub bitrate: u32,
     pub codec: String,
     pub geo_lat: Option<f64>,              // широта, если известна
@@ -70,6 +73,8 @@ pub struct Station {
 }
 ```
 
+`votes`, `country` и `state` используются панелью страны для сортировки и карточек;
+благодаря `serde(default)` снимки `library.json` прежних версий читаются без миграции.
 Полная семантика — `docs/interfaces/02-radio.md`.
 
 ## 4. Discovery и пул серверов
@@ -124,6 +129,7 @@ pub struct Station {
 
 - разбор станции с пустыми `homepage`/`favicon` → `None`;
 - разбор `geo_lat`/`geo_long`, включая `null`;
+- разбор `votes`/`country`/`state` и значения по умолчанию для старого JSON;
 - построение query без пустых фильтров и с `has_geo_info=true`;
 - валидация UUID (включая попытку path traversal);
 - попадание в кэш по UUID;

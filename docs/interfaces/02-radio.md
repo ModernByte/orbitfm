@@ -29,6 +29,15 @@ pub struct Station {
     pub tags: String,
     pub countrycode: String,
     pub language: String,
+    /// Число голосов каталога; отсутствие в JSON → 0.
+    #[serde(default)]
+    pub votes: u32,
+    /// Название страны; отсутствие в JSON → пустая строка.
+    #[serde(default)]
+    pub country: String,
+    /// Штат/регион; отсутствие в JSON → пустая строка.
+    #[serde(default)]
+    pub state: String,
     pub bitrate: u32,
     pub codec: String,
     /// Широта, если каталог её знает.
@@ -81,6 +90,9 @@ impl RadioBrowserClient {
 - `new()` не выполняет сетевых запросов и не может упасть; DNS-discovery
   `all.api.radio-browser.info` выполняется перед первым запросом (лениво) либо заранее
   фоновым прогревом в `main`.
+- `Station` сериализуется в `library.json`; поля `votes`, `country`, `state` имеют
+  `serde(default)` (0 и пустые строки), поэтому снимки, записанные до Этапа 8,
+  читаются без миграции.
 - Клиент дешёво клонируется (`Arc` внутри) и используется из GUI и фоновых задач.
 - `search` всегда передаёт `hidebroken`, `order=votes`, `reverse=true`; `limit` и `offset`
   добавляются только при значении больше нуля. Пустые строковые фильтры отбрасываются,

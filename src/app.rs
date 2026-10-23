@@ -15,6 +15,7 @@ use crate::services::{RadioBrowserClient, RadioError, SearchParams, Station};
 use crate::settings::{AccentColor, SettingsStore, ThemeMode};
 use crate::ui::globe_view::{self, GlobeMarker, GlobeState};
 use crate::ui::palette::{self, Palette};
+use crate::ui::station_filter::CountryFilterState;
 use crate::ui::station_panel::{self, LibraryTab};
 use crate::ui::toast::Toast;
 use crate::ui::transport::{self, TransportState};
@@ -22,6 +23,7 @@ use crate::ui::{self, UiAction, hud};
 
 const WINDOW_TITLE: &str = "OrbitFM";
 const SEARCH_RESULT_LIMIT: u32 = 30;
+const COUNTRY_RESULT_LIMIT: u32 = 100;
 const MARKER_RESULT_LIMIT: u32 = 60;
 const STATION_LOOKUP_TIMEOUT: Duration = Duration::from_secs(8);
 const HUD_HEIGHT: f32 = 58.0;
@@ -104,10 +106,12 @@ pub struct OrbitApp {
     current_url: Option<String>,
     current_station: Option<Station>,
     search_query: String,
+    country_query: String,
     search_country: Option<Country>,
     search_results: Vec<Station>,
     markers: Vec<GlobeMarker>,
     library_tab: LibraryTab,
+    country_filter: CountryFilterState,
     search_pending: bool,
     search_empty: bool,
     search_rx: Option<mpsc::UnboundedReceiver<Result<SearchOutcome, RadioError>>>,
@@ -173,10 +177,12 @@ impl OrbitApp {
             current_url: None,
             current_station: None,
             search_query: String::new(),
+            country_query: String::new(),
             search_country: None,
             search_results: Vec::new(),
             markers: Vec::new(),
             library_tab: LibraryTab::default(),
+            country_filter: CountryFilterState::default(),
             search_pending: false,
             search_empty: false,
             search_rx: None,
@@ -352,25 +358,44 @@ impl OrbitApp {
         }
 
         self.search_country = None;
-        self.begin_search(SearchParams {
-            name: Some(query),
-            limit: SEARCH_RESULT_LIMIT,
-            hide_broken: true,
-            ..SearchParams::default()
-        });
+        self.begin_search(
+            SearchParams {
+                name: Some(query),
+                limit: SEARCH_RESULT_LIMIT,
+                hide_broken: true,
+                ..SearchParams::default()
+            },
+            MARKER_RESULT_LIMIT,
+        );
     }
 
     fn start_country_search(&mut self, country: Country) {
         self.search_country = Some(country.clone());
-        self.begin_search(SearchParams {
-            country_code: Some(country.iso_a2),
-            limit: SEARCH_RESULT_LIMIT,
-            hide_broken: true,
-            ..SearchParams::default()
-        });
+        self.country_filter.reset();
+        self.begin_search(
+            SearchParams {
+                country_code: Some(country.iso_a2),
+                limit: COUNTRY_RESULT_LIMIT,
+                hide_broken: true,
+                ..SearchParams::default()
+            },
+            COUNTRY_RESULT_LIMIT,
+        );
+        self.country_query.clear();
     }
 
-    fn begin_search(&mut self, params: SearchParams) {
+    fn focus_country(&mut self, country: &Country) {
+        if let Some((lat, lon)) = self
+            .geo
+            .country_shape(&country.iso_a2)
+            .and_then(|shape| shape.focus_point())
+        {
+            self.globe_camera
+                .fly_to(lat, lon, Duration::from_millis(650));
+        }
+    }
+
+    fn begin_search(&mut self, params: SearchParams, geo_limit: u32) {
         let (sender, receiver) = mpsc::unbounded_channel();
         self.search_rx = Some(receiver);
         self.search_pending = true;
@@ -382,7 +407,7 @@ impl OrbitApp {
 
         let mut geo_params = params.clone();
         geo_params.has_geo_info = true;
-        geo_params.limit = MARKER_RESULT_LIMIT;
+        geo_params.limit = geo_limit;
 
         let radio = self.radio.clone();
         let waker = self.wake.waker();
@@ -690,6 +715,8 @@ impl OrbitApp {
                         &palette,
                         hud::HudState {
                             query: &mut self.search_query,
+                            country_query: &mut self.country_query,
+                            geo: &self.geo,
                             now_playing: self.current_station.as_ref(),
                             playback: &playback,
                             volume,
@@ -729,6 +756,8 @@ impl OrbitApp {
                                     .current_station
                                     .as_ref()
                                     .map(|station| station.stationuuid.as_str()),
+                                geo: &self.geo,
+                                selected_country: self.search_country.as_ref(),
                                 spectrum_overlay: &mut self.spectrum_overlay,
                                 spectrum_target,
                                 show_hint,
@@ -827,6 +856,7 @@ impl OrbitApp {
                 pending: self.search_pending,
                 empty: self.search_empty,
                 error: self.search_error.as_deref(),
+                filter: &mut self.country_filter,
             },
         )
     }
@@ -845,7 +875,10 @@ impl OrbitApp {
                 }
             }
             UiAction::ToggleFavorite(station) => self.toggle_favorite(ctx, &station),
-            UiAction::SelectCountry(country) => self.start_country_search(country),
+            UiAction::SelectCountry(country) => {
+                self.focus_country(&country);
+                self.start_country_search(country);
+            }
             UiAction::RunSearch => self.start_search(),
             UiAction::ClearHistory => self.clear_history(ctx),
             UiAction::SetTheme(theme) => self.set_theme(ctx, theme),
@@ -946,6 +979,9 @@ mod tests {
             tags: "jazz".to_owned(),
             countrycode: "US".to_owned(),
             language: "english".to_owned(),
+            votes: 120,
+            country: "United States".to_owned(),
+            state: "New York".to_owned(),
             bitrate: 128,
             codec: "MP3".to_owned(),
             geo_lat: None,
