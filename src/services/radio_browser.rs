@@ -13,7 +13,7 @@ use tokio::sync::{Mutex as AsyncMutex, RwLock};
 
 use super::discovery::{API_BASE_URL, API_HOST, discover_servers};
 
-const USER_AGENT: &str = "OrbitFM/1.0 (ModernByte; Linux; Rust)";
+pub(crate) const USER_AGENT: &str = "OrbitFM/1.0 (ModernByte; Linux; Rust)";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const STATION_CACHE_CAPACITY: usize = 512;
 const RANDOM_ATTEMPTS: usize = 3;

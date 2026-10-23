@@ -10,16 +10,19 @@ use crate::geo::{Country, GeoService};
 use crate::ipc::{IpcCommand, IpcRequest, WakeFn};
 use crate::library::StationLibrary;
 use crate::media::{MediaCommand, MediaControls, PlaybackInfo};
-use crate::render::{GlobeCamera, GlobeRenderer, SpectrumOverlay, SpectrumTarget};
-use crate::services::{RadioBrowserClient, RadioError, SearchParams, Station};
+use crate::render::{GlobeCamera, GlobeRenderer, SpectrumOverlay, SpectrumTarget, VisualizerModel};
+use crate::services::{RadioBrowserClient, RadioError, SearchParams, Station, USER_AGENT};
 use crate::settings::{AccentColor, SettingsStore, ThemeMode};
-use crate::ui::globe_view::{self, GlobeMarker, GlobeState};
+use crate::ui::globe_view::{self, CalloutState, GlobeMarker, GlobeState};
+use crate::ui::images::{FaviconCache, decode_favicon};
+use crate::ui::layout::DeskLayout;
 use crate::ui::palette::{self, Palette};
-use crate::ui::station_filter::CountryFilterState;
+use crate::ui::station_filter::{self, CountryFilterState};
 use crate::ui::station_panel::{self, LibraryTab};
 use crate::ui::toast::Toast;
 use crate::ui::transport::{self, TransportState};
-use crate::ui::{self, SearchMode, UiAction, hud};
+use crate::ui::widgets;
+use crate::ui::{self, SearchMode, UiAction, hud, overlays};
 
 const WINDOW_TITLE: &str = "OrbitFM";
 const SEARCH_RESULT_LIMIT: u32 = 100;
@@ -27,12 +30,8 @@ const COUNTRY_RESULT_LIMIT: u32 = 100;
 const GENRE_RESULT_LIMIT: u32 = 200;
 const ROULETTE_FLY_MS: u64 = 900;
 const STATION_LOOKUP_TIMEOUT: Duration = Duration::from_secs(8);
-const HUD_HEIGHT: f32 = 58.0;
-const TRANSPORT_HEIGHT: f32 = 48.0;
-const PANEL_WIDTH: f32 = 310.0;
-const NARROW_WIDTH: f32 = 900.0;
-const LAYOUT_GAP: f32 = 8.0;
-const HINT_SECONDS: f64 = 10.0;
+/// Скрытие окна на Wayland = сжатие поверхности до 1×1 px (ADR-0018).
+const HIDDEN_SIZE: f32 = 1.0;
 
 struct SearchOutcome {
     stations: Vec<Station>,
@@ -121,12 +120,15 @@ impl WakeHandle {
 #[derive(Debug)]
 pub struct AppState {
     pub window_visible: bool,
+    /// Размер окна до скрытия; нужен для восстановления после «hide» (ADR-0018).
+    pub restore_size: Option<egui::Vec2>,
 }
 
 impl Default for AppState {
     fn default() -> Self {
         Self {
             window_visible: true,
+            restore_size: None,
         }
     }
 }
@@ -156,7 +158,10 @@ pub struct OrbitApp {
     globe_camera: GlobeCamera,
     globe_ready: bool,
     spectrum_overlay: SpectrumOverlay,
+    /// Callout выбранной/наведённой страны с fade-переходами.
+    callout: CalloutState,
     spectrum_enabled: bool,
+    visualizer: VisualizerModel,
     current_url: Option<String>,
     current_station: Option<Station>,
     search_query: String,
@@ -175,7 +180,9 @@ pub struct OrbitApp {
     roulette_pending: bool,
     roulette_rx: Option<mpsc::UnboundedReceiver<Result<Station, RadioError>>>,
     panel_open: bool,
-    hint_until: f64,
+    show_help: bool,
+    favicons: FaviconCache,
+    http: reqwest::Client,
     toast: Toast,
     runtime: tokio::runtime::Handle,
     quitting: bool,
@@ -198,8 +205,8 @@ impl OrbitApp {
             runtime,
         } = services;
         palette::configure_style(&cc.egui_ctx, settings.settings());
+        install_emoji_font(&cc.egui_ctx);
         wake.install(cc.egui_ctx.clone());
-        let now = cc.egui_ctx.input(|input| input.time);
         let audio_events = audio.subscribe();
         let globe_ready = if let Some(render_state) = &cc.wgpu_render_state {
             let renderer = GlobeRenderer::new(
@@ -217,6 +224,8 @@ impl OrbitApp {
             warn!("wgpu render state недоступен: 3D-глобус отключён");
             false
         };
+        let initial_help = !settings.settings().help_seen;
+        let visualizer = VisualizerModel::new(usize::from(settings.settings().viz_bars));
         Self {
             state: AppState::default(),
             commands,
@@ -231,7 +240,9 @@ impl OrbitApp {
             globe_camera: GlobeCamera::default(),
             globe_ready,
             spectrum_overlay: SpectrumOverlay::default(),
+            callout: CalloutState::default(),
             spectrum_enabled: false,
+            visualizer,
             current_url: None,
             current_station: None,
             search_query: String::new(),
@@ -250,10 +261,42 @@ impl OrbitApp {
             roulette_pending: false,
             roulette_rx: None,
             panel_open: true,
-            hint_until: now + HINT_SECONDS,
+            show_help: initial_help,
+            favicons: FaviconCache::new(),
+            http: reqwest::Client::builder()
+                .user_agent(USER_AGENT)
+                .timeout(Duration::from_secs(6))
+                .build()
+                .unwrap_or_default(),
             toast: Toast::default(),
             runtime,
             quitting: false,
+        }
+    }
+
+    /// Фоновые favicon-загрузки: очередь → `reqwest` → декод → текстура.
+    fn poll_favicons(&mut self, ctx: &egui::Context) {
+        self.favicons.begin_frame();
+        self.favicons.poll(ctx);
+        let sender = self.favicons.sender();
+        for url in self.favicons.take_fetches() {
+            let http = self.http.clone();
+            let sender = sender.clone();
+            self.runtime.spawn(async move {
+                let image = match http.get(&url).send().await {
+                    Ok(response) if response.status().is_success() => {
+                        match response.bytes().await {
+                            Ok(bytes) => decode_favicon(&bytes),
+                            Err(_) => None,
+                        }
+                    }
+                    _ => None,
+                };
+                let _ = sender.send((url, image));
+            });
+        }
+        if self.favicons.is_busy() {
+            ctx.request_repaint_after(Duration::from_millis(120));
         }
     }
 
@@ -335,14 +378,14 @@ impl OrbitApp {
 
         match result {
             Ok(result) => result,
-            Err(_) => Err(RadioError::Network("таймаут каталога станций".to_owned())),
+            Err(_) => Err(RadioError::Network("stations catalog timeout".to_owned())),
         }
     }
 
     fn start_station(&mut self, ctx: &egui::Context, station: Station) -> Result<(), String> {
         let url = station.url_resolved.trim().to_owned();
         if url.is_empty() {
-            return Err("у станции нет url_resolved".to_owned());
+            return Err("station has no url_resolved".to_owned());
         }
 
         self.runtime
@@ -353,8 +396,7 @@ impl OrbitApp {
         self.current_station = Some(station.clone());
         if let Err(err) = self.library.record_played(&station) {
             warn!(error = %err, "не удалось сохранить историю станций");
-            self.toast
-                .error(ctx, format!("История не сохранена: {err}"));
+            self.toast.error(ctx, format!("History not saved: {err}"));
         }
         self.spawn_click(station.stationuuid);
         self.sync_media();
@@ -366,18 +408,18 @@ impl OrbitApp {
             Ok(favorite) => debug!(favorite, "избранное обновлено"),
             Err(err) => {
                 warn!(error = %err, "не удалось сохранить избранное");
-                self.toast
-                    .error(ctx, format!("Избранное не сохранено: {err}"));
+                self.toast.error(ctx, format!("Favorites not saved: {err}"));
             }
         }
     }
 
     fn clear_history(&mut self, ctx: &egui::Context) {
         match self.library.clear_history() {
-            Ok(()) => self.toast.info(ctx, "История очищена"),
+            Ok(()) => self.toast.info(ctx, "History cleared"),
             Err(err) => {
                 warn!(error = %err, "не удалось очистить историю");
-                self.toast.error(ctx, format!("История не очищена: {err}"));
+                self.toast
+                    .error(ctx, format!("Failed to clear history: {err}"));
             }
         }
     }
@@ -387,7 +429,7 @@ impl OrbitApp {
             Ok(()) => {}
             Err(err) => {
                 warn!(error = %err, "не удалось сохранить тему");
-                self.toast.error(ctx, format!("Тема не сохранена: {err}"));
+                self.toast.error(ctx, format!("Theme not saved: {err}"));
             }
         }
         palette::configure_style(ctx, self.settings.settings());
@@ -398,7 +440,7 @@ impl OrbitApp {
             Ok(()) => {}
             Err(err) => {
                 warn!(error = %err, "не удалось сохранить акцент");
-                self.toast.error(ctx, format!("Акцент не сохранён: {err}"));
+                self.toast.error(ctx, format!("Accent not saved: {err}"));
             }
         }
         palette::configure_style(ctx, self.settings.settings());
@@ -443,15 +485,8 @@ impl OrbitApp {
         let iso_a2 = country.iso_a2.clone();
         self.search_context.activate_country(country);
         self.country_filter.reset();
-        self.begin_search(
-            SearchParams {
-                country_code: Some(iso_a2),
-                limit: COUNTRY_RESULT_LIMIT,
-                hide_broken: true,
-                ..SearchParams::default()
-            },
-            COUNTRY_RESULT_LIMIT,
-        );
+        let limit = COUNTRY_RESULT_LIMIT;
+        self.begin_search(country_search_params(&iso_a2), limit);
         self.country_query.clear();
     }
 
@@ -580,7 +615,7 @@ impl OrbitApp {
             },
             Err(mpsc::error::TryRecvError::Empty) => {}
             Err(mpsc::error::TryRecvError::Disconnected) => {
-                self.search_error = Some("задача поиска завершилась".to_owned());
+                self.search_error = Some("search task ended unexpectedly".to_owned());
                 self.search_pending = false;
                 self.search_rx = None;
             }
@@ -624,21 +659,23 @@ impl OrbitApp {
                                 Duration::from_millis(ROULETTE_FLY_MS),
                             );
                         }
-                        self.toast.info(ctx, format!("Рулетка: {label}"));
+                        self.toast.info(ctx, format!("Roulette: {label}"));
                     }
-                    Err(err) => self.toast.error(ctx, format!("Рулетка не запущена: {err}")),
+                    Err(err) => self
+                        .toast
+                        .error(ctx, format!("Roulette did not start: {err}")),
                 }
             }
             Ok(Err(err)) => {
                 self.roulette_pending = false;
                 self.roulette_rx = None;
-                self.toast.error(ctx, format!("Рулетка: {err}"));
+                self.toast.error(ctx, format!("Roulette: {err}"));
             }
             Err(mpsc::error::TryRecvError::Empty) => {}
             Err(mpsc::error::TryRecvError::Disconnected) => {
                 self.roulette_pending = false;
                 self.roulette_rx = None;
-                self.toast.error(ctx, "Рулетка: задача завершилась");
+                self.toast.error(ctx, "Roulette: task ended unexpectedly");
             }
         }
     }
@@ -664,17 +701,17 @@ impl OrbitApp {
         }
     }
 
-    fn process_media_commands(&mut self) {
+    fn process_media_commands(&mut self, ctx: &egui::Context) {
         while let Some(command) = self
             .media
             .as_mut()
             .and_then(|media| media.events().try_recv().ok())
         {
-            self.execute_media_command(command);
+            self.execute_media_command(ctx, command);
         }
     }
 
-    fn execute_media_command(&mut self, command: MediaCommand) {
+    fn execute_media_command(&mut self, ctx: &egui::Context, command: MediaCommand) {
         match command {
             MediaCommand::Stop => {
                 if let Err(err) = self.stop_playback() {
@@ -714,9 +751,51 @@ impl OrbitApp {
                 }
                 PlaybackState::Reconnecting => {}
             },
-            MediaCommand::Next | MediaCommand::Previous => {
-                debug!("переключение станций из MPRIS пока не поддерживается");
+            MediaCommand::Next => self.play_relative(ctx, 1),
+            MediaCommand::Previous => self.play_relative(ctx, -1),
+        }
+    }
+
+    /// Снимок видимого списка станций — очередь навигации prev/next.
+    fn visible_queue(&self) -> Vec<Station> {
+        match self.library_tab {
+            LibraryTab::Favorites => self.library.favorites().to_vec(),
+            LibraryTab::History => self.library.history().to_vec(),
+            LibraryTab::Results => {
+                let context_mode =
+                    self.search_context.country.is_some() || self.search_context.genre.is_some();
+                if context_mode {
+                    station_filter::filtered_results(&self.search_results, &self.country_filter)
+                        .into_iter()
+                        .cloned()
+                        .collect()
+                } else {
+                    self.search_results.clone()
+                }
             }
+        }
+    }
+
+    /// Шаг по видимому списку с wrap; при пустой очереди — no-op.
+    fn play_relative(&mut self, ctx: &egui::Context, step: i8) {
+        let queue = self.visible_queue();
+        if queue.is_empty() {
+            return;
+        }
+        let current = self.current_station.as_ref().and_then(|station| {
+            queue
+                .iter()
+                .position(|item| item.stationuuid == station.stationuuid)
+        });
+        let next = match current {
+            Some(index) => {
+                (index as isize + step as isize).rem_euclid(queue.len() as isize) as usize
+            }
+            None if step >= 0 => 0,
+            None => queue.len() - 1,
+        };
+        if let Err(err) = self.start_station(ctx, queue[next].clone()) {
+            self.toast.error(ctx, err);
         }
     }
 
@@ -804,6 +883,27 @@ impl OrbitApp {
         }
     }
 
+    fn set_viz_bars(&mut self, ctx: &egui::Context, bars: u8) {
+        match self.settings.set_viz_bars(bars) {
+            Ok(()) => {}
+            Err(err) => {
+                warn!(error = %err, "не удалось сохранить число столбцов");
+                self.toast.error(ctx, format!("Setting not saved: {err}"));
+            }
+        }
+        self.visualizer = VisualizerModel::new(usize::from(self.settings.settings().viz_bars));
+    }
+
+    /// Карточка управления показана один раз; дальше её зовут вручную по `?`.
+    fn mark_help_seen(&mut self) {
+        if self.settings.settings().help_seen {
+            return;
+        }
+        if let Err(err) = self.settings.set_help_seen() {
+            warn!(error = %err, "не удалось сохранить признак просмотренной карточки");
+        }
+    }
+
     fn set_spectrum_enabled(&mut self, ctx: &egui::Context, enabled: bool) {
         match self
             .runtime
@@ -814,17 +914,37 @@ impl OrbitApp {
             }
             Err(err) => {
                 self.spectrum_enabled = self.audio.spectrum_enabled();
-                self.toast.error(ctx, format!("FFT недоступен: {err}"));
+                self.toast.error(ctx, format!("FFT unavailable: {err}"));
             }
         }
     }
 
+    /// Показ/скрытие окна. На Wayland `Visible` — no-op (winit), поэтому скрытие
+    /// заодно сжимает поверхность до 1×1 (ADR-0018): окно не занимает место в
+    /// раскладке композитора, процесс и воспроизведение остаются живыми.
     fn set_window_visible(&mut self, ctx: &egui::Context, visible: bool) {
         self.state.window_visible = visible;
-        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(visible));
         if visible {
+            let size = self
+                .state
+                .restore_size
+                .take()
+                .unwrap_or_else(|| egui::vec2(crate::WINDOW_SIZE[0], crate::WINDOW_SIZE[1]));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(egui::vec2(
+                crate::WINDOW_MIN_SIZE[0],
+                crate::WINDOW_MIN_SIZE[1],
+            )));
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        } else {
+            let current = ctx.input(|input| input.viewport().inner_rect);
+            self.state.restore_size = current.map(|rect| rect.size());
+            let hidden = egui::vec2(HIDDEN_SIZE, HIDDEN_SIZE);
+            ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(hidden));
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(hidden));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         }
         ctx.request_repaint();
     }
@@ -840,8 +960,6 @@ impl OrbitApp {
         let palette = Palette::for_ui(ctx.theme(), settings.accent);
         let playback = self.audio.state();
         let volume = self.audio.volume();
-        let now = ctx.input(|input| input.time);
-        let show_hint = now < self.hint_until;
         let markers_total: usize = self.markers.iter().map(|marker| marker.count).sum();
         let current_favorite = self
             .current_station
@@ -855,76 +973,36 @@ impl OrbitApp {
             flatness: frame.flatness,
             rms_db: frame.rms_db,
         });
-        let narrow = ui.available_width() < NARROW_WIDTH;
+        // Визуализатор живёт кадрами: без данных или в паузе — idle-дыхание.
+        let viz_active = self.spectrum_enabled
+            && matches!(
+                playback,
+                PlaybackState::Playing | PlaybackState::Buffering | PlaybackState::Reconnecting
+            );
+        self.visualizer.advance(
+            if viz_active {
+                spectrum_target.as_ref()
+            } else {
+                None
+            },
+            ctx.input(|input| input.stable_dt),
+            ctx.input(|input| input.time),
+        );
         let mut actions = Vec::new();
 
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::default()
                     .fill(egui::Color32::TRANSPARENT)
-                    .inner_margin(egui::Margin::same(8)),
+                    .inner_margin(egui::Margin::same(0)),
             )
             .show(ui, |ui| {
                 let viewport = ui.available_rect_before_wrap();
-                let hud_height = HUD_HEIGHT.min(viewport.height() * 0.2).max(48.0);
-                let transport_height = TRANSPORT_HEIGHT.min(viewport.height() * 0.15).max(40.0);
-                let content_height =
-                    (viewport.height() - hud_height - transport_height - LAYOUT_GAP * 2.0)
-                        .max(120.0);
+                let layout = DeskLayout::compute(viewport, self.panel_open, self.show_help);
 
-                let hud_rect = egui::Rect::from_min_size(
-                    viewport.min,
-                    egui::vec2(viewport.width(), hud_height),
-                );
-                let content_rect = egui::Rect::from_min_size(
-                    egui::pos2(viewport.left(), hud_rect.bottom() + LAYOUT_GAP),
-                    egui::vec2(viewport.width(), content_height),
-                );
-                let transport_rect = egui::Rect::from_min_size(
-                    egui::pos2(viewport.left(), content_rect.bottom() + LAYOUT_GAP),
-                    egui::vec2(viewport.width(), transport_height),
-                );
-
-                ui.scope_builder(egui::UiBuilder::new().max_rect(hud_rect), |ui| {
-                    actions.extend(hud::show(
-                        ui,
-                        &palette,
-                        hud::HudState {
-                            query: &mut self.search_query,
-                            country_query: &mut self.country_query,
-                            genre_query: &mut self.genre_query,
-                            mode: self.search_context.mode,
-                            selected_genre: self.search_context.genre.as_deref(),
-                            context_active: self.search_context.is_active(),
-                            geo: &self.geo,
-                            now_playing: self.current_station.as_ref(),
-                            playback: &playback,
-                            volume,
-                            settings,
-                            panel_open: self.panel_open,
-                        },
-                    ));
-                });
-
-                let panel_width = if self.panel_open && !narrow {
-                    PANEL_WIDTH.min(content_rect.width() * 0.42)
-                } else {
-                    0.0
-                };
-                let globe_width = (content_rect.width()
-                    - if panel_width > 0.0 {
-                        panel_width + LAYOUT_GAP
-                    } else {
-                        0.0
-                    })
-                .max(100.0);
-                let globe_rect = egui::Rect::from_min_size(
-                    content_rect.min,
-                    egui::vec2(globe_width, content_rect.height()),
-                );
-
+                // Глобус — нижний слой: full-bleed на всё окно.
                 let globe_response = ui
-                    .scope_builder(egui::UiBuilder::new().max_rect(globe_rect), |ui| {
+                    .scope_builder(egui::UiBuilder::new().max_rect(layout.globe), |ui| {
                         globe_view::show(
                             ui,
                             &palette,
@@ -941,7 +1019,8 @@ impl OrbitApp {
                                 country_enabled: self.search_context.mode == SearchMode::Country,
                                 spectrum_overlay: &mut self.spectrum_overlay,
                                 spectrum_target,
-                                show_hint,
+                                layout,
+                                callout: &mut self.callout,
                             },
                         )
                     })
@@ -953,71 +1032,101 @@ impl OrbitApp {
                 {
                     actions.push(UiAction::SelectCountry(country.clone()));
                 }
-                if globe_response.interacted {
-                    self.hint_until = 0.0;
-                }
 
-                if panel_width > 0.0 {
-                    let panel_rect = egui::Rect::from_min_size(
-                        egui::pos2(globe_rect.right() + LAYOUT_GAP, content_rect.top()),
-                        egui::vec2(panel_width, content_rect.height()),
-                    );
-                    ui.scope_builder(egui::UiBuilder::new().max_rect(panel_rect), |ui| {
-                        actions.extend(self.draw_station_panel(ui, &palette, markers_total));
-                    });
-                }
-
-                ui.scope_builder(egui::UiBuilder::new().max_rect(transport_rect), |ui| {
-                    actions.extend(transport::show(
+                // Плавающие стеклянные зоны рисуются поверх глобуса в этом же
+                // слоёном проходе; их геометрию задаёт DeskLayout. Фон — градиент
+                // с бликом — рисуется до содержимого: `egui::Frame` умеет только
+                // сплошную заливку, поэтому он прозрачный.
+                let floating = |rect: egui::Rect| {
+                    egui::UiBuilder::new()
+                        .max_rect(rect)
+                        .layout(egui::Layout::left_to_right(egui::Align::Center))
+                };
+                widgets::glass_panel(ui.painter(), layout.hud, &palette, 16.0, 1.0);
+                ui.scope_builder(floating(layout.hud), |ui| {
+                    actions.extend(hud::show(
                         ui,
                         &palette,
-                        TransportState {
+                        hud::HudState {
+                            query: &mut self.search_query,
+                            country_query: &mut self.country_query,
+                            genre_query: &mut self.genre_query,
+                            mode: self.search_context.mode,
+                            selected_genre: self.search_context.genre.as_deref(),
+                            context_active: self.search_context.is_active(),
+                            geo: &self.geo,
+                            now_playing: self.current_station.as_ref(),
+                            favicons: &mut self.favicons,
                             playback: &playback,
-                            current: self.current_station.as_ref(),
-                            favorite: current_favorite,
-                            can_resume,
-                            spectrum_enabled: self.spectrum_enabled,
-                            roulette_pending: self.roulette_pending,
+                            settings,
+                            panel_open: self.panel_open,
+                            help_open: self.show_help,
                         },
                     ));
                 });
 
-                if self.panel_open && narrow {
-                    let overlay_width =
-                        PANEL_WIDTH.min((content_rect.width() - LAYOUT_GAP * 2.0).max(220.0));
-                    let overlay_height = (content_rect.height() - LAYOUT_GAP * 2.0).max(160.0);
-                    let position = egui::pos2(
-                        content_rect.right() - overlay_width - LAYOUT_GAP,
-                        content_rect.top() + LAYOUT_GAP,
+                if let Some(panel_rect) = layout.panel {
+                    widgets::glass_panel(ui.painter(), panel_rect, &palette, 16.0, 1.0);
+                    ui.scope_builder(
+                        egui::UiBuilder::new()
+                            .max_rect(panel_rect)
+                            .layout(egui::Layout::top_down(egui::Align::Min)),
+                        |ui| {
+                            actions.extend(self.draw_station_panel(ui, &palette, markers_total));
+                        },
                     );
-                    egui::Area::new(egui::Id::unique("orbitfm_station_panel_overlay"))
-                        .fixed_pos(position)
-                        .order(egui::Order::Foreground)
-                        .show(&ctx, |ui| {
-                            ui.allocate_ui_with_layout(
-                                egui::vec2(overlay_width, overlay_height),
-                                egui::Layout::top_down(egui::Align::Min),
-                                |ui| {
-                                    actions.extend(self.draw_station_panel(
-                                        ui,
-                                        &palette,
-                                        markers_total,
-                                    ));
-                                },
-                            );
-                        });
                 }
+
+                widgets::glass_panel(ui.painter(), layout.transport, &palette, 16.0, 1.0);
+                ui.scope_builder(
+                    egui::UiBuilder::new()
+                        .max_rect(layout.transport)
+                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                    |ui| {
+                        actions.extend(transport::show(
+                            ui,
+                            &palette,
+                            TransportState {
+                                playback: &playback,
+                                current: self.current_station.as_ref(),
+                                favorite: current_favorite,
+                                can_resume,
+                                spectrum_enabled: self.spectrum_enabled,
+                                roulette_pending: self.roulette_pending,
+                                volume,
+                                visualizer: &self.visualizer,
+                                favicons: &mut self.favicons,
+                            },
+                        ));
+                    },
+                );
+
+                if let Some(help_rect) = layout.help {
+                    widgets::glass_panel(ui.painter(), help_rect, &palette, 14.0, 1.0);
+                    ui.scope_builder(
+                        egui::UiBuilder::new()
+                            .max_rect(help_rect)
+                            .layout(egui::Layout::top_down(egui::Align::Min)),
+                        |ui| {
+                            overlays::help_card(ui, &palette);
+                        },
+                    );
+                }
+                widgets::glass_panel(ui.painter(), layout.legend, &palette, 14.0, 1.0);
+                ui.scope_builder(
+                    egui::UiBuilder::new()
+                        .max_rect(layout.legend)
+                        .layout(egui::Layout::top_down(egui::Align::Min)),
+                    |ui| {
+                        overlays::density_legend(ui, &palette);
+                    },
+                );
 
                 self.toast.draw(&ctx, &palette);
                 ui.allocate_rect(viewport, egui::Sense::hover());
             });
 
         self.apply_actions(&ctx, actions);
-
-        if show_hint {
-            let remaining = self.hint_until - now;
-            ctx.request_repaint_after(Duration::from_secs_f64(remaining.max(0.0)));
-        }
     }
 
     fn draw_station_panel(
@@ -1041,6 +1150,11 @@ impl OrbitApp {
                 empty: self.search_empty,
                 error: self.search_error.as_deref(),
                 filter: &mut self.country_filter,
+                favicons: &mut self.favicons,
+                playing_uuid: self
+                    .current_station
+                    .as_ref()
+                    .map(|station| station.stationuuid.as_str()),
             },
         )
     }
@@ -1054,12 +1168,14 @@ impl OrbitApp {
     fn apply_action(&mut self, ctx: &egui::Context, action: UiAction) {
         match action {
             UiAction::Play(station) => {
+                self.mark_help_seen();
                 if let Err(err) = self.start_station(ctx, station) {
                     self.toast.error(ctx, err);
                 }
             }
             UiAction::ToggleFavorite(station) => self.toggle_favorite(ctx, &station),
             UiAction::SelectCountry(country) => {
+                self.mark_help_seen();
                 self.focus_country(&country);
                 self.start_country_search(country);
             }
@@ -1071,12 +1187,13 @@ impl OrbitApp {
             UiAction::SetTheme(theme) => self.set_theme(ctx, theme),
             UiAction::SetAccent(accent) => self.set_accent(ctx, accent),
             UiAction::ToggleSpectrum(enabled) => self.set_spectrum_enabled(ctx, enabled),
+            UiAction::SetVizBars(bars) => self.set_viz_bars(ctx, bars),
             UiAction::SetVolume(volume) => {
                 if let Err(err) = self.runtime.block_on(self.audio.set_volume(volume)) {
-                    self.toast
-                        .error(ctx, format!("Громкость не изменена: {err}"));
+                    self.toast.error(ctx, format!("Volume not changed: {err}"));
                 }
             }
+            UiAction::PlayRelative(step) => self.play_relative(ctx, step),
             UiAction::TogglePlayback => {
                 if let Err(err) = self.toggle_playback() {
                     self.toast.error(ctx, err);
@@ -1090,18 +1207,54 @@ impl OrbitApp {
             UiAction::Hide => self.set_window_visible(ctx, false),
             UiAction::Quit => self.request_quit(ctx),
             UiAction::TogglePanel => self.panel_open = !self.panel_open,
+            UiAction::ToggleHelp => {
+                self.show_help = !self.show_help;
+                self.mark_help_seen();
+            }
         }
         ctx.request_repaint();
     }
+}
+
+/// Ставит системный цветной emoji-шрифт в запас Proportional, чтобы флаги стран
+/// (`flag_emoji`) рисовались глифами, а не tofu-квадратами. Чтение файла —
+/// побочный эффект, поэтому живёт в App, а не в UI-модулях. Если шрифт не найден,
+/// молча пропускаем: UI работает без флагов, как и раньше.
+fn install_emoji_font(ctx: &egui::Context) {
+    const PATHS: &[&str] = &[
+        "/usr/share/fonts/noto/NotoColorEmoji.ttf",
+        "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+        "/usr/share/fonts/google-noto-emoji/NotoColorEmoji.ttf",
+        "/usr/share/fonts/TTF/NotoColorEmoji.ttf",
+    ];
+    let Some(bytes) = PATHS
+        .iter()
+        .map(std::path::Path::new)
+        .find(|path| path.is_file())
+        .and_then(|path| std::fs::read(path).ok())
+    else {
+        debug!("цветной emoji-шрифт не найден: флаги стран будут пропущены");
+        return;
+    };
+    ctx.add_font(egui::FontInsert::new(
+        "Noto Color Emoji",
+        egui::FontData::from_owned(bytes),
+        vec![egui::InsertFontFamily {
+            family: egui::FontFamily::Proportional,
+            priority: egui::FontPriority::Lowest,
+        }],
+    ));
+    debug!("цветной emoji-шрифт подключён: флаги стран будут рисоваться");
 }
 
 impl eframe::App for OrbitApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.process_audio_events();
         self.process_commands(ctx);
-        self.process_media_commands();
+        self.process_media_commands(ctx);
         self.poll_search();
         self.poll_roulette(ctx);
+        self.poll_favicons(ctx);
         self.sync_media();
         self.spectrum_enabled = self.audio.spectrum_enabled();
 
@@ -1112,6 +1265,11 @@ impl eframe::App for OrbitApp {
             )
         {
             ctx.request_repaint_after(Duration::from_millis(33));
+        }
+
+        if self.show_help && ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+            self.show_help = false;
+            self.mark_help_seen();
         }
 
         if ctx.input(|input| input.viewport().close_requested()) {
@@ -1141,7 +1299,7 @@ fn roulette_label(station: &Station) -> String {
         (false, false) => format!("{name} — {country}"),
         (false, true) => name,
         (true, false) => country,
-        (true, true) => "станция без названия".to_owned(),
+        (true, true) => "unnamed station".to_owned(),
     }
 }
 
@@ -1177,6 +1335,17 @@ fn format_status(
     }
     status.push_str(&format!("\nvolume {volume:.2}\nwindow {window}"));
     status
+}
+
+/// Запрос «только станции выбранной страны» (ТЗ §5.3): фильтр по ISO без примеси
+/// других стран и мёртвых потоков.
+fn country_search_params(iso_a2: &str) -> SearchParams {
+    SearchParams {
+        country_code: Some(iso_a2.to_owned()),
+        limit: COUNTRY_RESULT_LIMIT,
+        hide_broken: true,
+        ..SearchParams::default()
+    }
 }
 
 #[cfg(test)]
@@ -1263,7 +1432,7 @@ mod tests {
         assert_eq!(roulette_label(&station), "Test Radio");
 
         station.name.clear();
-        assert_eq!(roulette_label(&station), "станция без названия");
+        assert_eq!(roulette_label(&station), "unnamed station");
     }
 
     #[test]
@@ -1321,5 +1490,17 @@ mod tests {
             ),
             "status error\nvolume 0.50\nwindow hidden"
         );
+    }
+
+    #[test]
+    fn country_request_lists_only_that_country() {
+        let params = country_search_params("de");
+        assert_eq!(params.country_code.as_deref(), Some("de"));
+        assert!(
+            params.name.is_none() && params.tag.is_none() && params.language.is_none(),
+            "выбор страны не должен подмешивать другие фильтры"
+        );
+        assert!(params.hide_broken, "мёртвые потоки страны не показываем");
+        assert_eq!(params.limit, COUNTRY_RESULT_LIMIT);
     }
 }

@@ -12,7 +12,7 @@ const FOV_Y_RADIANS: f32 = std::f32::consts::FRAC_PI_4;
 const NEAR_PLANE: f32 = 0.1;
 const FAR_PLANE: f32 = 50.0;
 
-const DEFAULT_DISTANCE: f32 = 2.8;
+const DEFAULT_DISTANCE: f32 = 2.5;
 const MIN_DISTANCE: f32 = 1.4;
 const MAX_DISTANCE: f32 = 6.0;
 const ZOOM_SENSITIVITY: f32 = 0.002;
@@ -227,7 +227,7 @@ impl GlobeCamera {
     }
 
     pub(crate) fn uniform(&self, aspect: f32, pulse: f32) -> CameraUniform {
-        let light = Vec3::new(0.5, 0.35, 0.8).normalize();
+        let light = Vec3::new(0.35, 0.28, 0.90).normalize();
         let eye = self.eye();
         let pulse = if pulse.is_finite() {
             pulse.clamp(0.0, 1.0)
@@ -314,9 +314,11 @@ mod tests {
     fn projection_respects_latitude_and_longitude() {
         let camera = GlobeCamera::default();
         let rect = viewport();
+        // Афины, а не Берлин: на дефолтной дистанции 2.5 Земля занимает весь
+        // вьюпорт, и высокая широта уже обрезана его краем.
         let position = camera
-            .project_on_sphere(sphere_point(52.52, 13.405), rect)
-            .expect("Берлин должен быть виден");
+            .project_on_sphere(sphere_point(37.97, 23.72), rect)
+            .expect("Афины должны быть видны");
 
         assert!(
             position.x > rect.center().x,

@@ -18,10 +18,14 @@ eframe = { version = "0.37", default-features = false, features = [
     "x11",
 ] }
 egui-wgpu = "0.37"
+# egui 0.37 не прокидывает epaint/color_fonts, а цветные эмодзи-флаги нужны по эскизу.
+# Прямая зависимость включает фичу через feature-unification; новых crate'ов нет
+# (vello_cpu/skrifa уже в дереве). Обоснование — ADR-0017.
+epaint = { version = "0.37", features = ["color_fonts"] }
 geo = { version = "0.33", default-features = false }
 geojson = "1.0"
 glam = "0.34"
-image = { version = "0.25", default-features = false, features = ["jpeg"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "ico"] }
 libc = "0.2"
 libmpv2 = { version = "6.0", default-features = false }
 playwire = "2.0"
@@ -47,5 +51,13 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2.5"
 wgpu = "30"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# Системный трей по SNI (ADR-0020). Только Linux: на других ОС модуль — no-op.
+ksni = { version = "0.3.7", features = ["blocking"], optional = true }
+
 [dev-dependencies]
 tempfile = "3"
+
+[features]
+default = ["tray"]
+tray = ["dep:ksni"]

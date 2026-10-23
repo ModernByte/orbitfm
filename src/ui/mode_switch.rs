@@ -3,6 +3,7 @@
 use eframe::egui;
 
 use super::palette::Palette;
+use super::widgets::pill;
 use super::{SearchMode, UiAction};
 
 /// Предустановленные жанры глобального поиска (теги Radio Browser).
@@ -43,32 +44,33 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: ModeState<'_>) -
 
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        if ui
-            .selectable_label(mode == SearchMode::Country, "Страна")
-            .clicked()
+        if pill(ui, palette, "Country", mode == SearchMode::Country).clicked()
             && mode != SearchMode::Country
         {
             actions.push(UiAction::SwitchMode(SearchMode::Country));
         }
-        if ui
-            .selectable_label(mode == SearchMode::GlobalGenre, "Жанр")
-            .clicked()
+        if pill(ui, palette, "Genre", mode == SearchMode::GlobalGenre).clicked()
             && mode != SearchMode::GlobalGenre
         {
             actions.push(UiAction::SwitchMode(SearchMode::GlobalGenre));
         }
 
         if mode == SearchMode::GlobalGenre {
-            let label = selected_genre.map_or_else(|| "Выбрать жанр".to_owned(), genre_label);
+            let label = selected_genre.map_or_else(|| "Pick genre".to_owned(), genre_label);
             let button = ui
-                .button(label)
-                .on_hover_text("Глобальный поиск станций по жанру");
+                .add(
+                    egui::Button::new(egui::RichText::new(label).size(13.0).color(palette.text))
+                        .fill(palette.chip_fill)
+                        .stroke(egui::Stroke::new(1.0, palette.chip_stroke))
+                        .corner_radius(egui::CornerRadius::same(14)),
+                )
+                .on_hover_text("Search stations by genre worldwide");
             let popup_id = egui::Popup::default_response_id(&button);
             egui::Popup::menu(&button)
                 .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                 .show(|ui| {
                     ui.set_min_width(260.0);
-                    ui.label(egui::RichText::new("Глобальный жанр").strong());
+                    ui.label(egui::RichText::new("Global genre").strong());
                     ui.horizontal_wrapped(|ui| {
                         for tag in GENRE_PRESETS {
                             let selected = selected_genre == Some(tag);
@@ -81,19 +83,19 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: ModeState<'_>) -
                     ui.add_space(4.0);
                     let response = ui.add(
                         egui::TextEdit::singleline(genre_query)
-                            .hint_text("Свой тег, например ambient")
+                            .hint_text("Custom tag, e.g. ambient")
                             .desired_width(240.0),
                     );
                     let enter = response.lost_focus()
                         && ui.input(|input| input.key_pressed(egui::Key::Enter));
                     ui.label(
                         egui::RichText::new(
-                            "Поиск по всему миру, станции без координат остаются в списке.",
+                            "Worldwide search; stations without coordinates stay in the list.",
                         )
                         .size(10.5)
                         .color(palette.muted),
                     );
-                    if ui.button("Искать").clicked() || enter {
+                    if ui.button("Search").clicked() || enter {
                         let tag = genre_query.trim();
                         if !tag.is_empty() {
                             actions.push(UiAction::SelectGenre(tag.to_owned()));

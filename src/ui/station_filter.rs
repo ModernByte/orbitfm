@@ -58,9 +58,9 @@ impl StationSort {
 
     pub(crate) fn label(self) -> &'static str {
         match self {
-            StationSort::Popularity => "Популярность",
-            StationSort::Bitrate => "Битрат",
-            StationSort::Name => "Имя",
+            StationSort::Popularity => "Popularity",
+            StationSort::Bitrate => "Bitrate",
+            StationSort::Name => "Name",
         }
     }
 }
@@ -71,10 +71,12 @@ pub(crate) struct CountryFilterState {
     pub text: String,
     pub genre: Option<GenreTag>,
     pub sort: StationSort,
+    /// Компактные строки списка (переключатель плотности).
+    pub compact_rows: bool,
 }
 
 impl CountryFilterState {
-    /// Сбрасывает текстовый фильтр и жанр, сохраняя выбранную сортировку.
+    /// Сбрасывает текстовый фильтр и жанр, сохраняя сортировку и плотность.
     pub(crate) fn reset(&mut self) {
         self.text.clear();
         self.genre = None;
@@ -236,11 +238,13 @@ mod tests {
             text: "jazz".to_owned(),
             genre: Some(GenreTag::Jazz),
             sort: StationSort::Name,
+            compact_rows: true,
         };
         assert!(filter.is_active());
 
         filter.reset();
         assert!(!filter.is_active());
         assert_eq!(filter.sort, StationSort::Name);
+        assert!(filter.compact_rows, "плотность — настройка вида, не фильтр");
     }
 }

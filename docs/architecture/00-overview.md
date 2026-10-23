@@ -76,6 +76,8 @@ OrbitFM — кроссплатформенное десктоп-приложен
 | Избранное и история    | serde_json + XDG                 | Небольшой JSON в `$XDG_DATA_HOME`, атомарная запись (ADR-0013) |
 | Темы и акцент          | serde_json + XDG                 | Настройки оформления в `$XDG_CONFIG_HOME`, атомарная запись (ADR-0014) |
 | UX «Orbital Desk»      | egui + существующий render/geo   | Focus-раскладка, режимы Country/GlobalGenre, контур страны; без новых зависимостей в MVP (ADR-0015) |
+| Favicon-аватары        | reqwest + image (png/ico)        | Асинхронный кэш `FaviconCache` в presentation-слое, без новых crate'ов (ADR-0016) |
+| Флаги стран            | epaint `color_fonts` + системный Noto Color Emoji | Цветной флаг-эмодзи в тултипе глобуса; feature включается прямой зависимостью, деградация без шрифта (ADR-0017) |
 | Интеграция с Noctalia  | plugin.toml + Luau               | docs.noctalia.dev                                           |
 
 ## 6. Именование (ModernByte)

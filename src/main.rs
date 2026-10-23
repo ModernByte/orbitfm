@@ -25,6 +25,10 @@ use services::RadioBrowserClient;
 use settings::SettingsStore;
 
 const APP_ID: &str = "org.modernbyte.OrbitFM";
+/// Размер окна по умолчанию: восстанавливается после скрытия (ADR-0018).
+pub(crate) const WINDOW_SIZE: [f32; 2] = [920.0, 660.0];
+/// Нижний лимит размера окна в обычном (не скрытом) состоянии.
+pub(crate) const WINDOW_MIN_SIZE: [f32; 2] = [720.0, 480.0];
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 const RETRY_ATTEMPTS: usize = 5;
 const RETRY_DELAY: Duration = Duration::from_millis(50);
@@ -147,6 +151,10 @@ fn launch(runtime: &tokio::runtime::Runtime, command: &IpcCommand, explicit: boo
     let commands = server.commands();
     let audio = AudioEngine::new().context("не удалось инициализировать аудио-ядро")?;
     let geo = GeoService::from_embedded().context("не удалось загрузить границы стран")?;
+    // `ksni` через feature-unification включает tokio-бэкенд у zbus, а zbus при
+    // регистрации object server вызывает `tokio::task::spawn`, которому нужен
+    // контекст рантайма на текущем потоке. Без `enter` старт падает паникой.
+    let _media_runtime = runtime.enter();
     let media = match MediaControls::new(wake.waker()) {
         Ok(media) => Some(media),
         Err(err) => {
@@ -154,6 +162,7 @@ fn launch(runtime: &tokio::runtime::Runtime, command: &IpcCommand, explicit: boo
             None
         }
     };
+    drop(_media_runtime);
     let radio = RadioBrowserClient::new();
     let library = match StationLibrary::load_default() {
         Ok(library) => {
@@ -272,8 +281,8 @@ fn run_gui(
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("OrbitFM")
             .with_app_id(APP_ID)
-            .with_inner_size([920.0, 660.0])
-            .with_min_inner_size([720.0, 480.0])
+            .with_inner_size(WINDOW_SIZE)
+            .with_min_inner_size(WINDOW_MIN_SIZE)
             .with_transparent(true),
         renderer: eframe::Renderer::Wgpu,
         ..Default::default()

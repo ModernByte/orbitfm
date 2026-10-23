@@ -5,6 +5,7 @@ mod countries;
 mod globe;
 mod markers;
 mod spectrum;
+mod visualizer;
 
 use eframe::egui::{Pos2, Vec2};
 
@@ -13,6 +14,7 @@ pub use countries::{CountryStyle, paint_country};
 pub use globe::{GlobeRenderer, paint_globe};
 pub use markers::{MarkerColors, MarkerVisual, paint_markers, sphere_point};
 pub use spectrum::{SpectrumOverlay, SpectrumTarget};
+pub use visualizer::{VisualizerModel, bar_color};
 
 /// Ввод пользователя для глобуса.
 #[derive(Debug, Clone, Default)]

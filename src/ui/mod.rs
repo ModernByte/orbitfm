@@ -6,12 +6,17 @@
 pub(crate) mod globe_view;
 pub(crate) mod hud;
 pub(crate) mod icons;
+pub(crate) mod images;
+pub(crate) mod layout;
 pub(crate) mod mode_switch;
+pub(crate) mod overlays;
 pub(crate) mod palette;
 pub(crate) mod station_filter;
 pub(crate) mod station_panel;
+pub(crate) mod station_row;
 pub(crate) mod toast;
 pub(crate) mod transport;
+pub(crate) mod widgets;
 
 use crate::audio::PlaybackState;
 use crate::geo::Country;
@@ -42,22 +47,27 @@ pub(crate) enum UiAction {
     SetTheme(ThemeMode),
     SetAccent(AccentColor),
     ToggleSpectrum(bool),
+    /// Число столбцов визуализатора: 16, 24 или 32 (ADR-0019).
+    SetVizBars(u8),
     SetVolume(f64),
     TogglePlayback,
     Stop,
+    /// Соседняя станция видимого списка: -1 — назад, +1 — вперёд, с wrap.
+    PlayRelative(i8),
     Hide,
     Quit,
     TogglePanel,
+    ToggleHelp,
 }
 
 pub(crate) fn playback_label(state: &PlaybackState) -> String {
     match state {
-        PlaybackState::Stopped => "остановлено".to_owned(),
-        PlaybackState::Playing => "играет".to_owned(),
-        PlaybackState::Paused => "пауза".to_owned(),
-        PlaybackState::Buffering => "буферизация".to_owned(),
-        PlaybackState::Reconnecting => "переподключение".to_owned(),
-        PlaybackState::Error(message) => format!("ошибка: {message}"),
+        PlaybackState::Stopped => "stopped".to_owned(),
+        PlaybackState::Playing => "on air".to_owned(),
+        PlaybackState::Paused => "paused".to_owned(),
+        PlaybackState::Buffering => "buffering".to_owned(),
+        PlaybackState::Reconnecting => "reconnecting".to_owned(),
+        PlaybackState::Error(message) => format!("error: {message}"),
     }
 }
 
@@ -95,11 +105,11 @@ mod tests {
 
     #[test]
     fn playback_labels_are_human_readable() {
-        assert_eq!(playback_label(&PlaybackState::Stopped), "остановлено");
-        assert_eq!(playback_label(&PlaybackState::Playing), "играет");
+        assert_eq!(playback_label(&PlaybackState::Stopped), "stopped");
+        assert_eq!(playback_label(&PlaybackState::Playing), "on air");
         assert_eq!(
-            playback_label(&PlaybackState::Error("таймаут".to_owned())),
-            "ошибка: таймаут"
+            playback_label(&PlaybackState::Error("timeout".to_owned())),
+            "error: timeout"
         );
     }
 

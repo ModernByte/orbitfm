@@ -67,13 +67,24 @@ impl AccentColor {
 pub struct Settings {
     pub theme: ThemeMode,
     pub accent: AccentColor,
+    /// Число столбцов визуализатора: 16, 24 или 32 (ADR-0019).
+    pub viz_bars: u8,
+    /// Карточка управления уже показывалась — дальше она только по `?`.
+    pub help_seen: bool,
 }
+
+/// Доступные варианты числа столбцов визуализатора.
+pub const VIZ_BAR_CHOICES: [u8; 3] = [16, 24, 32];
+/// Значение по умолчанию (ТЗ: 24 столбца).
+pub const DEFAULT_VIZ_BARS: u8 = 24;
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
             theme: ThemeMode::System,
             accent: AccentColor::Blue,
+            viz_bars: DEFAULT_VIZ_BARS,
+            help_seen: false,
         }
     }
 }
@@ -104,12 +115,13 @@ pub struct SettingsStore {
 impl SettingsStore {
     /// Загружает настройки из файла. Отсутствующий файл — значения по умолчанию.
     pub fn load(path: PathBuf) -> Result<Self, SettingsError> {
-        let settings = match fs::read(&path) {
+        let mut settings = match fs::read(&path) {
             Ok(bytes) => serde_json::from_slice::<Settings>(&bytes)
                 .map_err(|err| SettingsError::Parse(format!("{}: {err}", path.display())))?,
             Err(err) if err.kind() == ErrorKind::NotFound => Settings::default(),
             Err(err) => return Err(SettingsError::Read(format!("{}: {err}", path.display()))),
         };
+        settings.viz_bars = nearest_viz_bars(settings.viz_bars);
         Ok(Self {
             path: Some(path),
             settings,
@@ -153,6 +165,24 @@ impl SettingsStore {
         self.save()
     }
 
+    pub fn set_viz_bars(&mut self, bars: u8) -> Result<(), SettingsError> {
+        let bars = nearest_viz_bars(bars);
+        if self.settings.viz_bars == bars {
+            return Ok(());
+        }
+        self.settings.viz_bars = bars;
+        self.save()
+    }
+
+    /// Запоминает, что карточка управления уже показывалась.
+    pub fn set_help_seen(&mut self) -> Result<(), SettingsError> {
+        if self.settings.help_seen {
+            return Ok(());
+        }
+        self.settings.help_seen = true;
+        self.save()
+    }
+
     fn save(&self) -> Result<(), SettingsError> {
         let Some(path) = &self.path else {
             return Ok(());
@@ -172,6 +202,15 @@ impl SettingsStore {
             SettingsError::Write(format!("{}: {err}", path.display()))
         })
     }
+}
+
+/// Ближайший допустимый вариант числа столбцов: файл настроек правят руками.
+fn nearest_viz_bars(bars: u8) -> u8 {
+    VIZ_BAR_CHOICES
+        .iter()
+        .copied()
+        .min_by_key(|choice| (i16::from(*choice) - i16::from(bars)).abs())
+        .unwrap_or(DEFAULT_VIZ_BARS)
 }
 
 /// Стандартный путь настроек по XDG Base Directory Specification.
@@ -251,6 +290,39 @@ mod tests {
         let store = SettingsStore::load(path).unwrap();
         assert_eq!(store.settings().theme, ThemeMode::Dark);
         assert_eq!(store.settings().accent, AccentColor::Blue);
+        assert_eq!(store.settings().viz_bars, DEFAULT_VIZ_BARS);
+        assert!(!store.settings().help_seen);
+    }
+
+    #[test]
+    fn roundtrip_persists_visualizer_and_help() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        {
+            let mut store = SettingsStore::load(path.clone()).unwrap();
+            store.set_viz_bars(32).unwrap();
+            store.set_help_seen().unwrap();
+        }
+
+        let store = SettingsStore::load(path).unwrap();
+        assert_eq!(store.settings().viz_bars, 32);
+        assert!(store.settings().help_seen);
+    }
+
+    #[test]
+    fn out_of_range_bar_count_snaps_to_nearest_choice() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        fs::write(&path, b"{\"viz_bars\":200}").unwrap();
+        assert_eq!(SettingsStore::load(path).unwrap().settings().viz_bars, 32);
+
+        let path = directory.path().join("low.json");
+        fs::write(&path, b"{\"viz_bars\":19}").unwrap();
+        assert_eq!(SettingsStore::load(path).unwrap().settings().viz_bars, 16);
+
+        let mut store = SettingsStore::ephemeral();
+        store.set_viz_bars(70).unwrap();
+        assert_eq!(store.settings().viz_bars, 32);
     }
 
     #[test]
