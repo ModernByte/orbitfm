@@ -33,6 +33,14 @@
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.7.0-rc.1" date="2026-10-23">
+      <description>
+        <p>OrbitFM 0.7.0-rc.1 — UX «Orbital Desk»: плавающая раскладка с full-bleed
+        глобусом, режимы «Страна» и «Жанр», рулетка, синтетический аудиовизуализатор,
+        country callout с флагом, маркеры с размером от популярности и цветом от
+        битрейта, favicon-кэш и полировка по визуальному эскизу.</p>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-10-22">
       <description>
         <p>OrbitFM 0.1.0 — первый прототип: глобус, Radio Browser, libmpv, MPRIS, IPC и FFT.</p>
