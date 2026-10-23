@@ -146,6 +146,9 @@ egui input → ui/* → UiAction
 
 ### Фаза 1. UI-каркас Orbital Desk
 
+**Статус:** выполнена (2026-10-23). Roulette из п. 3 перенесён в Фазу 4 и появляется
+вместе с `random_station` и `fly_to`; остальные пункты закрыты.
+
 **Задачи**
 
 1. Вынести `Palette`, `configure_style`, `theme_*`, `accent_*` в `ui/palette.rs` без
@@ -156,7 +159,7 @@ egui input → ui/* → UiAction
    - центр: глобус на всю доступную высоту (не менее 60% контента);
    - правый drawer 300–320 px, сворачиваемый; на узком окне (< 900 px) —
      overlay-панель поверх глобуса с кнопкой закрытия;
-   - нижний transport: play/stop, favorite, Roulette, codec/bitrate, FFT.
+   - нижний transport: play/stop, favorite, codec/bitrate, FFT (Roulette — Фаза 4).
 4. Убрать постоянный футер с двумя строками подсказок; заменить `on_hover_text` и
    короткой подсказкой при первом запуске (без сохранения флага в MVP).
 5. Перенести существующие вкладки, звезду, избранное/историю, темы и FFT в новую
