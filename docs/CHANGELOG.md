@@ -397,6 +397,8 @@
 - CONTRIBUTING — ссылки на шаблоны и patterns
 
 ### Исправлено
+- Flatpak: `packaging/linux/flatpak-cargo-sources.json` дополнен крейтами `arc-swap`,
+  `crossbeam-queue`, `ksni` и `pastey` — CI-проверка сверяет vendored-список с `Cargo.lock`
 - Паника на старте: `ksni` через feature-unification включает tokio-бэкенд у `zbus`,
   а инициализация MPRIS в `playwire` при регистрации object server вызывает
   `tokio::task::spawn`, которому нужен контекст рантайма на текущем потоке.
