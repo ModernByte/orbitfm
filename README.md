@@ -46,6 +46,12 @@ CI собирает и тестирует проект на Linux и macOS, пр
 медиа-интеграции — привязка SMTC к HWND и Now Playing на macOS — пока не
 реализованы.
 
+Следующий этап — UX «Orbital Desk»: Focus-раскладка с доминирующим глобусом,
+режимы «Страна» и «Глобальный жанр», фильтры/сортировка, hover-контур страны,
+Radio Roulette с перелётом камеры и визуализация эфира. Целевой UX и план —
+[`docs/ui/design-vision.md`](docs/ui/design-vision.md) и
+[`docs/ui/implementation-plan.md`](docs/ui/implementation-plan.md).
+
 Границы стран (Natural Earth 110m) и текстура Земли встроены в бинарник, поэтому
 глобус работает offline.
 
@@ -100,6 +106,8 @@ CI собирает и тестирует проект на Linux и macOS, пр
 |----------|----------|
 | [SRS](orbitfm_srs.md) | Технические требования и инженерная спецификация |
 | [Архитектура](docs/architecture/00-overview.md) | Высокоуровневый обзор |
+| [UX «Orbital Desk»](docs/ui/design-vision.md) | Целевой интерфейс и референс-макет |
+| [План UX-редизайна](docs/ui/implementation-plan.md) | Фазы, контракты и тесты Этапа 8 |
 | [ADR](docs/adr/) | Architecture Decision Records |
 | [ROADMAP](docs/ROADMAP.md) | План развития |
 | [CONTRIBUTING](docs/CONTRIBUTING.md) | Правила разработки и стиль кода |

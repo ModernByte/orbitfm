@@ -2,9 +2,9 @@
 
 **Проект:** OrbitFM  
 **Организация:** ModernByte (https://github.com/ModernByte)  
-**Версия документа:** 0.1.0-draft  
+**Версия документа:** 0.2.0-draft  
 **Статус:** Черновик  
-**Дата:** 2026-10-21  
+**Дата:** 2026-10-23  
 **Авторы:** Юрий Анатольевич (code_warlord), ModernByte Architecture  
 
 ---
@@ -75,6 +75,7 @@ OrbitFM — кроссплатформенное десктоп-приложен
 | Медиа-кнопки / MPRIS   | playwire                         | Кроссплатформенный API; Linux — MPRIS v2 через zbus         |
 | Избранное и история    | serde_json + XDG                 | Небольшой JSON в `$XDG_DATA_HOME`, атомарная запись (ADR-0013) |
 | Темы и акцент          | serde_json + XDG                 | Настройки оформления в `$XDG_CONFIG_HOME`, атомарная запись (ADR-0014) |
+| UX «Orbital Desk»      | egui + существующий render/geo   | Focus-раскладка, режимы Country/GlobalGenre, контур страны; без новых зависимостей в MVP (ADR-0015) |
 | Интеграция с Noctalia  | plugin.toml + Luau               | docs.noctalia.dev                                           |
 
 ## 6. Именование (ModernByte)
@@ -110,6 +111,8 @@ OrbitFM — кроссплатформенное десктоп-приложен
 - `docs/modules/` — детальные спецификации подсистем
 - `docs/interfaces/` — контракты модулей и IPC
 - `docs/patterns/00-overview.md` — каталог паттернов проектирования
+- `docs/ui/design-vision.md` — целевой UX и макет
+- `docs/ui/implementation-plan.md` — фазы UX-редизайна
 - `docs/AGENTS.md` — правила агентов, модульность, perf
 - `docs/templates/` — merge-чеклист, статусы
 - `.github/` — шаблоны PR, issue, convention коммитов

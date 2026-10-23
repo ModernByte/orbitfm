@@ -1,7 +1,7 @@
 # Roadmap OrbitFM
 
 **Организация:** ModernByte  
-**Последнее обновление:** 2026-10-22  
+**Последнее обновление:** 2026-10-23  
 
 ## Завершено: Проектирование и документация
 
@@ -21,6 +21,8 @@
 - [x] ADR-0012 (Маркеры станций)
 - [x] ADR-0013 (Избранное и история)
 - [x] ADR-0014 (Темы и кастомизация)
+- [x] ADR-0015 (UX-редизайн «Orbital Desk»)
+- [x] UX-спецификация `docs/ui/design-vision.md` и план реализации
 - [x] VERSIONMAP
 - [x] CHANGELOG (инициализация)
 - [x] README
@@ -92,6 +94,21 @@
 
 Публикация в общий магазин `noctalia-dev/community-plugins` не выполняется:
 плагин распространяется как git-источник `ModernByte/orbitfm`.
+
+## Этап 8: UX «Orbital Desk» — запланирован
+
+Целевой UX и макет — [`docs/ui/design-vision.md`](ui/design-vision.md); фазы,
+контракты и тесты — [`docs/ui/implementation-plan.md`](ui/implementation-plan.md);
+решение — [ADR-0015](adr/0015-ux-редизайн-orbital-desk.md). MVP — фазы 1–4,
+фазы 5–6 могут выйти отдельным MINOR-релизом.
+
+- [ ] Фаза 1: UI-каркас — HUD, правый drawer, transport, `src/ui/`, глобус доминирует
+- [ ] Фаза 2: режим «Страна» — hover/контур, фильтры и сортировка, country search
+- [ ] Фаза 3: режим «Жанр» — `SearchMode`, tag-поиск, маркеры с весом
+- [ ] Фаза 4: Roulette и MPRIS — `order=random`, `fly_to`, toast, метаданные
+- [ ] Фаза 5: живой глобус — Fresnel pulse от FFT, heatmap выбранной страны
+- [ ] Фаза 6: WindowMode Overlay/Listening, favicon-карточки, доступность
+- [ ] Синхронизировать `docs/interfaces/` и модули в фазах изменения контрактов
 
 ---
 
