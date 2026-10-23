@@ -102,7 +102,8 @@
 решение — [ADR-0015](adr/0015-ux-редизайн-orbital-desk.md). MVP — фазы 1–4,
 фазы 5–6 могут выйти отдельным MINOR-релизом.
 
-- [ ] Фаза 1: UI-каркас — HUD, правый drawer, transport, `src/ui/`, глобус доминирует
+- [x] Фаза 1: UI-каркас — HUD, правый drawer, transport, `src/ui/`, глобус доминирует
+  (Roulette перенесён в Фазу 4)
 - [ ] Фаза 2: режим «Страна» — hover/контур, фильтры и сортировка, country search
 - [ ] Фаза 3: режим «Жанр» — `SearchMode`, tag-поиск, маркеры с весом
 - [ ] Фаза 4: Roulette и MPRIS — `order=random`, `fly_to`, toast, метаданные

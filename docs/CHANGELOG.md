@@ -8,6 +8,16 @@
 ## [Unreleased]
 
 ### Добавлено
+- Этап 8, фаза 1 — UI-каркас «Orbital Desk»:
+  - UI вынесен из `app.rs` в `src/ui/` (`hud`, `station_panel`, `transport`,
+    `globe_view`, `toast`, `palette`, `icons`); модули возвращают `UiAction`,
+    побочные эффекты выполняет `OrbitApp`
+  - Focus-раскладка: HUD 58 px, глобус в центре, drawer 310 px справа, transport
+    48 px; при ширине окна < 900 px drawer становится overlay с кнопкой закрытия
+  - векторные иконки play/pause, stop и звезды вместо Unicode-глифов, которых нет
+    в шрифте egui; длинные названия станций обрезаются с многоточием
+  - тосты (3 с) для ошибок и подтверждений, подсказка первого запуска (10 с)
+  - темы и акцент перенесены в меню «Настройки», FFT — в нижний transport
 - UX-редизайн «Orbital Desk» зафиксирован документально (Этап 8):
   - `docs/ui/design-vision.md` — целевой UX, референс-макет Focus, режимы
     Country/GlobalGenre, состояния и критерии приёмки

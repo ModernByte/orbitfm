@@ -1,4 +1,3 @@
-use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -11,41 +10,30 @@ use crate::geo::{Country, GeoService};
 use crate::ipc::{IpcCommand, IpcRequest, WakeFn};
 use crate::library::StationLibrary;
 use crate::media::{MediaCommand, MediaControls, PlaybackInfo};
-use crate::render::{
-    GlobeCamera, GlobeInput, GlobeRenderer, MarkerColors, MarkerVisual, SpectrumOverlay,
-    SpectrumTarget, paint_globe, paint_markers, sphere_point,
-};
+use crate::render::{GlobeCamera, GlobeRenderer, SpectrumOverlay, SpectrumTarget};
 use crate::services::{RadioBrowserClient, RadioError, SearchParams, Station};
-use crate::settings::{AccentColor, Settings, SettingsStore, ThemeMode};
+use crate::settings::{AccentColor, SettingsStore, ThemeMode};
+use crate::ui::globe_view::{self, GlobeMarker, GlobeState};
+use crate::ui::palette::{self, Palette};
+use crate::ui::station_panel::{self, LibraryTab};
+use crate::ui::toast::Toast;
+use crate::ui::transport::{self, TransportState};
+use crate::ui::{self, UiAction, hud};
 
 const WINDOW_TITLE: &str = "OrbitFM";
-const CARD_ALPHA: u8 = 236;
 const SEARCH_RESULT_LIMIT: u32 = 30;
 const MARKER_RESULT_LIMIT: u32 = 60;
-const MARKER_CLICK_RADIUS: f32 = 10.0;
-const MARKER_GROUP_SCALE: f64 = 100.0;
 const STATION_LOOKUP_TIMEOUT: Duration = Duration::from_secs(8);
-
-#[derive(Debug, Clone)]
-struct StationMarker {
-    station: Station,
-    lat: f32,
-    lon: f32,
-    count: usize,
-}
+const HUD_HEIGHT: f32 = 58.0;
+const TRANSPORT_HEIGHT: f32 = 48.0;
+const PANEL_WIDTH: f32 = 310.0;
+const NARROW_WIDTH: f32 = 900.0;
+const LAYOUT_GAP: f32 = 8.0;
+const HINT_SECONDS: f64 = 10.0;
 
 struct SearchOutcome {
     stations: Vec<Station>,
     geo_stations: Vec<Station>,
-}
-
-/// Активная вкладка списка станций под поиском.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-enum LibraryTab {
-    #[default]
-    Results,
-    Favorites,
-    History,
 }
 
 /// Разделяемый с IPC-сервером слот для пробуждения GUI-цикла.
@@ -109,24 +97,24 @@ pub struct OrbitApp {
     media: Option<MediaControls>,
     library: StationLibrary,
     settings: SettingsStore,
-    settings_error: Option<String>,
     globe_camera: GlobeCamera,
     globe_ready: bool,
     spectrum_overlay: SpectrumOverlay,
     spectrum_enabled: bool,
-    spectrum_error: Option<String>,
     current_url: Option<String>,
     current_station: Option<Station>,
     search_query: String,
     search_country: Option<Country>,
     search_results: Vec<Station>,
-    markers: Vec<StationMarker>,
+    markers: Vec<GlobeMarker>,
     library_tab: LibraryTab,
-    library_error: Option<String>,
     search_pending: bool,
     search_empty: bool,
     search_rx: Option<mpsc::UnboundedReceiver<Result<SearchOutcome, RadioError>>>,
     search_error: Option<String>,
+    panel_open: bool,
+    hint_until: f64,
+    toast: Toast,
     runtime: tokio::runtime::Handle,
     quitting: bool,
 }
@@ -147,8 +135,9 @@ impl OrbitApp {
             settings,
             runtime,
         } = services;
-        configure_style(&cc.egui_ctx, settings.settings());
+        palette::configure_style(&cc.egui_ctx, settings.settings());
         wake.install(cc.egui_ctx.clone());
+        let now = cc.egui_ctx.input(|input| input.time);
         let audio_events = audio.subscribe();
         let globe_ready = if let Some(render_state) = &cc.wgpu_render_state {
             let renderer = GlobeRenderer::new(
@@ -177,12 +166,10 @@ impl OrbitApp {
             media,
             library,
             settings,
-            settings_error: None,
             globe_camera: GlobeCamera::default(),
             globe_ready,
             spectrum_overlay: SpectrumOverlay::default(),
             spectrum_enabled: false,
-            spectrum_error: None,
             current_url: None,
             current_station: None,
             search_query: String::new(),
@@ -190,11 +177,13 @@ impl OrbitApp {
             search_results: Vec::new(),
             markers: Vec::new(),
             library_tab: LibraryTab::default(),
-            library_error: None,
             search_pending: false,
             search_empty: false,
             search_rx: None,
             search_error: None,
+            panel_open: true,
+            hint_until: now + HINT_SECONDS,
+            toast: Toast::default(),
             runtime,
             quitting: false,
         }
@@ -229,13 +218,13 @@ impl OrbitApp {
                 "ok".to_owned()
             }
             IpcCommand::Play { station_uuid } => match self.resolve_station(station_uuid) {
-                Ok(station) => match self.start_station(station) {
+                Ok(station) => match self.start_station(ctx, station) {
                     Ok(()) => "ok".to_owned(),
                     Err(err) => format!("error {err}"),
                 },
                 Err(err) => format!("error {err}"),
             },
-            IpcCommand::Stop => match self.runtime.block_on(self.audio.stop()) {
+            IpcCommand::Stop => match self.stop_playback() {
                 Ok(()) => "ok".to_owned(),
                 Err(err) => format!("error {err}"),
             },
@@ -282,7 +271,7 @@ impl OrbitApp {
         }
     }
 
-    fn start_station(&mut self, station: Station) -> Result<(), String> {
+    fn start_station(&mut self, ctx: &egui::Context, station: Station) -> Result<(), String> {
         let url = station.url_resolved.trim().to_owned();
         if url.is_empty() {
             return Err("у станции нет url_resolved".to_owned());
@@ -294,61 +283,57 @@ impl OrbitApp {
 
         self.current_url = Some(url);
         self.current_station = Some(station.clone());
-        match self.library.record_played(&station) {
-            Ok(()) => self.library_error = None,
-            Err(err) => {
-                warn!(error = %err, "не удалось сохранить историю станций");
-                self.library_error = Some(err.to_string());
-            }
+        if let Err(err) = self.library.record_played(&station) {
+            warn!(error = %err, "не удалось сохранить историю станций");
+            self.toast
+                .error(ctx, format!("История не сохранена: {err}"));
         }
         self.spawn_click(station.stationuuid);
         self.sync_media();
         Ok(())
     }
 
-    fn toggle_favorite(&mut self, station: &Station) {
+    fn toggle_favorite(&mut self, ctx: &egui::Context, station: &Station) {
         match self.library.toggle_favorite(station) {
-            Ok(favorite) => {
-                debug!(favorite, "избранное обновлено");
-                self.library_error = None;
-            }
+            Ok(favorite) => debug!(favorite, "избранное обновлено"),
             Err(err) => {
                 warn!(error = %err, "не удалось сохранить избранное");
-                self.library_error = Some(err.to_string());
+                self.toast
+                    .error(ctx, format!("Избранное не сохранено: {err}"));
             }
         }
     }
 
-    fn clear_history(&mut self) {
+    fn clear_history(&mut self, ctx: &egui::Context) {
         match self.library.clear_history() {
-            Ok(()) => self.library_error = None,
+            Ok(()) => self.toast.info(ctx, "История очищена"),
             Err(err) => {
                 warn!(error = %err, "не удалось очистить историю");
-                self.library_error = Some(err.to_string());
+                self.toast.error(ctx, format!("История не очищена: {err}"));
             }
         }
     }
 
     fn set_theme(&mut self, ctx: &egui::Context, theme: ThemeMode) {
         match self.settings.set_theme(theme) {
-            Ok(()) => self.settings_error = None,
+            Ok(()) => {}
             Err(err) => {
                 warn!(error = %err, "не удалось сохранить тему");
-                self.settings_error = Some(err.to_string());
+                self.toast.error(ctx, format!("Тема не сохранена: {err}"));
             }
         }
-        configure_style(ctx, self.settings.settings());
+        palette::configure_style(ctx, self.settings.settings());
     }
 
     fn set_accent(&mut self, ctx: &egui::Context, accent: AccentColor) {
         match self.settings.set_accent(accent) {
-            Ok(()) => self.settings_error = None,
+            Ok(()) => {}
             Err(err) => {
                 warn!(error = %err, "не удалось сохранить акцент");
-                self.settings_error = Some(err.to_string());
+                self.toast.error(ctx, format!("Акцент не сохранён: {err}"));
             }
         }
-        configure_style(ctx, self.settings.settings());
+        palette::configure_style(ctx, self.settings.settings());
     }
 
     fn spawn_click(&self, station_uuid: String) {
@@ -435,7 +420,7 @@ impl OrbitApp {
             Ok(Ok(outcome)) => {
                 self.search_empty = outcome.stations.is_empty();
                 self.search_results = outcome.stations;
-                self.markers = build_markers(outcome.geo_stations);
+                self.markers = globe_view::build_markers(outcome.geo_stations);
                 self.search_pending = false;
                 self.search_rx = None;
             }
@@ -452,18 +437,6 @@ impl OrbitApp {
                 self.search_rx = None;
             }
         }
-    }
-
-    fn marker_screens(&self, viewport: egui::Rect) -> Vec<(usize, egui::Pos2)> {
-        self.markers
-            .iter()
-            .enumerate()
-            .filter_map(|(index, marker)| {
-                self.globe_camera
-                    .project_on_sphere(sphere_point(marker.lat, marker.lon), viewport)
-                    .map(|position| (index, position))
-            })
-            .collect()
     }
 
     fn process_audio_events(&mut self) {
@@ -500,7 +473,7 @@ impl OrbitApp {
     fn execute_media_command(&mut self, command: MediaCommand) {
         match command {
             MediaCommand::Stop => {
-                if let Err(err) = self.runtime.block_on(self.audio.stop()) {
+                if let Err(err) = self.stop_playback() {
                     warn!(error = %err, "не удалось остановить воспроизведение из MPRIS");
                 }
             }
@@ -509,14 +482,32 @@ impl OrbitApp {
                     warn!(error = %err, "не удалось изменить громкость из MPRIS");
                 }
             }
-            MediaCommand::Play => self.resume_playback(),
-            MediaCommand::Pause => self.set_audio_paused(true),
-            MediaCommand::PlayPause => match self.audio.state() {
-                PlaybackState::Paused => self.set_audio_paused(false),
-                PlaybackState::Playing | PlaybackState::Buffering => {
-                    self.set_audio_paused(true);
+            MediaCommand::Play => {
+                if let Err(err) = self.resume_playback() {
+                    warn!(error = %err, "не удалось возобновить воспроизведение из MPRIS");
                 }
-                PlaybackState::Stopped | PlaybackState::Error(_) => self.resume_playback(),
+            }
+            MediaCommand::Pause => {
+                if let Err(err) = self.set_audio_paused(true) {
+                    warn!(error = %err, "не удалось поставить на паузу из MPRIS");
+                }
+            }
+            MediaCommand::PlayPause => match self.audio.state() {
+                PlaybackState::Paused => {
+                    if let Err(err) = self.set_audio_paused(false) {
+                        warn!(error = %err, "не удалось снять паузу из MPRIS");
+                    }
+                }
+                PlaybackState::Playing | PlaybackState::Buffering => {
+                    if let Err(err) = self.set_audio_paused(true) {
+                        warn!(error = %err, "не удалось поставить на паузу из MPRIS");
+                    }
+                }
+                PlaybackState::Stopped | PlaybackState::Error(_) => {
+                    if let Err(err) = self.resume_playback() {
+                        warn!(error = %err, "не удалось запустить воспроизведение из MPRIS");
+                    }
+                }
                 PlaybackState::Reconnecting => {}
             },
             MediaCommand::Next | MediaCommand::Previous => {
@@ -525,24 +516,41 @@ impl OrbitApp {
         }
     }
 
-    fn set_audio_paused(&mut self, paused: bool) {
-        if let Err(err) = self.runtime.block_on(self.audio.set_paused(paused)) {
-            warn!(error = %err, "не удалось изменить паузу из MPRIS");
+    fn set_audio_paused(&mut self, paused: bool) -> Result<(), String> {
+        self.runtime
+            .block_on(self.audio.set_paused(paused))
+            .map_err(|err| err.to_string())
+    }
+
+    fn resume_playback(&mut self) -> Result<(), String> {
+        match self.audio.state() {
+            PlaybackState::Paused => self.set_audio_paused(false),
+            PlaybackState::Playing | PlaybackState::Buffering | PlaybackState::Reconnecting => {
+                Ok(())
+            }
+            PlaybackState::Stopped | PlaybackState::Error(_) => match self.current_url.clone() {
+                Some(url) => self
+                    .runtime
+                    .block_on(self.audio.play(&url))
+                    .map_err(|err| err.to_string()),
+                None => Ok(()),
+            },
         }
     }
 
-    fn resume_playback(&mut self) {
+    fn toggle_playback(&mut self) -> Result<(), String> {
         match self.audio.state() {
             PlaybackState::Paused => self.set_audio_paused(false),
-            PlaybackState::Playing | PlaybackState::Buffering | PlaybackState::Reconnecting => {}
-            PlaybackState::Stopped | PlaybackState::Error(_) => {
-                if let Some(url) = self.current_url.clone()
-                    && let Err(err) = self.runtime.block_on(self.audio.play(&url))
-                {
-                    warn!(error = %err, "не удалось возобновить воспроизведение из MPRIS");
-                }
-            }
+            PlaybackState::Playing | PlaybackState::Buffering => self.set_audio_paused(true),
+            PlaybackState::Reconnecting => Ok(()),
+            PlaybackState::Stopped | PlaybackState::Error(_) => self.resume_playback(),
         }
+    }
+
+    fn stop_playback(&mut self) -> Result<(), String> {
+        self.runtime
+            .block_on(self.audio.stop())
+            .map_err(|err| err.to_string())
     }
 
     fn sync_media(&mut self) {
@@ -557,7 +565,7 @@ impl OrbitApp {
             Some(station) => {
                 let tags = station.tags.trim();
                 (
-                    single_line(&station.name),
+                    ui::single_line(&station.name),
                     (!tags.is_empty()).then(|| tags.to_owned()),
                     station.favicon.clone(),
                     if station.url_resolved.trim().is_empty() {
@@ -595,18 +603,17 @@ impl OrbitApp {
         }
     }
 
-    fn set_spectrum_enabled(&mut self, enabled: bool) {
+    fn set_spectrum_enabled(&mut self, ctx: &egui::Context, enabled: bool) {
         match self
             .runtime
             .block_on(self.audio.set_spectrum_enabled(enabled))
         {
             Ok(()) => {
                 self.spectrum_enabled = enabled;
-                self.spectrum_error = None;
             }
             Err(err) => {
-                self.spectrum_error = Some(err.to_string());
                 self.spectrum_enabled = self.audio.spectrum_enabled();
+                self.toast.error(ctx, format!("FFT недоступен: {err}"));
             }
         }
     }
@@ -630,455 +637,241 @@ impl OrbitApp {
         let ctx = ui.ctx().clone();
         let settings = self.settings.settings();
         let palette = Palette::for_ui(ctx.theme(), settings.accent);
-        let playback = playback_label(&self.audio.state());
-        let volume = self.audio.volume() * 100.0;
-        let mut hide_requested = false;
-        let mut quit_requested = false;
-        let mut search_requested = false;
-        let mut spectrum_requested: Option<bool> = None;
-        let mut theme_change: Option<ThemeMode> = None;
-        let mut accent_change: Option<AccentColor> = None;
-        let mut selected_station: Option<Station> = None;
-        let mut selected_country: Option<Country> = None;
-        let mut favorite_toggle: Option<Station> = None;
-        let mut clear_history_requested = false;
-
-        let card = egui::Frame::default()
-            .fill(palette.card_fill)
-            .stroke(egui::Stroke::new(1.0, palette.card_stroke))
-            .corner_radius(egui::CornerRadius::same(18))
-            .inner_margin(egui::Margin::same(22));
-
-        let outer = egui::Frame::default()
-            .fill(egui::Color32::TRANSPARENT)
-            .inner_margin(egui::Margin::same(8));
-
-        egui::CentralPanel::default().frame(outer).show(ui, |ui| {
-            card.show(ui, |ui| {
-                ui.set_min_width(ui.available_width());
-                ui.set_min_height(ui.available_height());
-
-                ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        ui.label(egui::RichText::new(WINDOW_TITLE).size(26.0).strong());
-                        ui.label(
-                            egui::RichText::new("3D Interactive Global Radio Player")
-                                .size(12.0)
-                                .color(palette.muted),
-                        );
-                    });
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Выход").clicked() {
-                            quit_requested = true;
-                        }
-                        if ui.button("Скрыть").clicked() {
-                            hide_requested = true;
-                        }
-                        let mut spectrum = self.spectrum_enabled;
-                        if ui
-                            .checkbox(&mut spectrum, "FFT")
-                            .on_hover_text(
-                                "Экспериментальный FFT-визуализатор: агрегированные \
-                                 метрики mpv (без PCM)",
-                            )
-                            .changed()
-                        {
-                            spectrum_requested = Some(spectrum);
-                        }
-                    });
-                });
-
-                ui.add_space(6.0);
-                ui.separator();
-                ui.add_space(6.0);
-
-                egui::Frame::default()
-                    .fill(palette.subtle_fill)
-                    .corner_radius(egui::CornerRadius::same(12))
-                    .inner_margin(egui::Margin::symmetric(16, 10))
-                    .show(ui, |ui| {
-                        ui.set_min_width(ui.available_width());
-                        ui.label(egui::RichText::new("Состояние").strong());
-                        ui.label(format!(
-                            "Окно: {}",
-                            if self.state.window_visible {
-                                "видимо"
-                            } else {
-                                "скрыто"
-                            }
-                        ));
-                        ui.label(format!("Воспроизведение: {playback}"));
-                        if let Some(station) = &self.current_station {
-                            ui.horizontal(|ui| {
-                                let favorite = self.library.is_favorite(&station.stationuuid);
-                                let (star, hint) = if favorite {
-                                    ("★", "Убрать из избранного")
-                                } else {
-                                    ("☆", "Добавить в избранное")
-                                };
-                                if ui.small_button(star).on_hover_text(hint).clicked() {
-                                    favorite_toggle = Some(station.clone());
-                                }
-                                ui.label(format!("Станция: {}", single_line(&station.name)));
-                            });
-                        }
-                        ui.label(
-                            egui::RichText::new(format!("Громкость: {volume:.0}%"))
-                                .color(palette.muted),
-                        );
-                        if let Some(error) = &self.spectrum_error {
-                            ui.label(egui::RichText::new(error).size(11.0).color(palette.error));
-                        }
-                        if let Some(error) = &self.library_error {
-                            ui.label(egui::RichText::new(error).size(11.0).color(palette.error));
-                        }
-                        if let Some(error) = &self.settings_error {
-                            ui.label(egui::RichText::new(error).size(11.0).color(palette.error));
-                        }
-                    });
-
-                ui.add_space(6.0);
-                egui::CollapsingHeader::new("Оформление")
-                    .default_open(false)
-                    .show(ui, |ui| {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.label("Тема:");
-                            for mode in ThemeMode::ALL {
-                                if ui
-                                    .selectable_label(settings.theme == mode, theme_label(mode))
-                                    .clicked()
-                                    && settings.theme != mode
-                                {
-                                    theme_change = Some(mode);
-                                }
-                            }
-                        });
-                        ui.horizontal_wrapped(|ui| {
-                            ui.label("Акцент:");
-                            for accent in AccentColor::ALL {
-                                let selected = settings.accent == accent;
-                                let stroke = if selected {
-                                    egui::Stroke::new(2.0, ui.visuals().strong_text_color())
-                                } else {
-                                    egui::Stroke::new(1.0, palette.card_stroke)
-                                };
-                                let response = ui
-                                    .add(
-                                        egui::Button::new("")
-                                            .fill(accent_color(accent))
-                                            .stroke(stroke)
-                                            .min_size(egui::vec2(24.0, 18.0)),
-                                    )
-                                    .on_hover_text(accent_label(accent));
-                                if response.clicked() && !selected {
-                                    accent_change = Some(accent);
-                                }
-                            }
-                        });
-                    });
-
-                ui.add_space(10.0);
-
-                ui.horizontal(|ui| {
-                    let response = ui.add(
-                        egui::TextEdit::singleline(&mut self.search_query)
-                            .hint_text("Поиск станции")
-                            .desired_width((ui.available_width() - 92.0).max(80.0)),
-                    );
-                    let enter = response.lost_focus()
-                        && ui.input(|input| input.key_pressed(egui::Key::Enter));
-                    if ui.button("Найти").clicked() || enter {
-                        search_requested = true;
-                    }
-                });
-                if let Some(country) = &self.search_country {
-                    ui.label(
-                        egui::RichText::new(format!("Страна: {}", country_label(country)))
-                            .color(palette.accent)
-                            .strong(),
-                    );
-                }
-                if !self.markers.is_empty() {
-                    let total: usize = self.markers.iter().map(|marker| marker.count).sum();
-                    ui.label(
-                        egui::RichText::new(format!("Маркеры: {total} станций с координатами"))
-                            .size(11.0)
-                            .color(palette.muted),
-                    );
-                }
-                if self.search_pending {
-                    ui.label(egui::RichText::new("Поиск…").color(palette.muted));
-                }
-                if let Some(error) = &self.search_error {
-                    ui.label(egui::RichText::new(error).color(palette.error));
-                }
-                if self.search_empty && !self.search_pending && self.search_error.is_none() {
-                    ui.label(egui::RichText::new("Станции не найдены").color(palette.muted));
-                }
-                let has_library =
-                    !self.library.favorites().is_empty() || !self.library.history().is_empty();
-                if !self.search_results.is_empty() || has_library {
-                    ui.add_space(4.0);
-                    let favorites_count = self.library.favorites().len();
-                    let history_count = self.library.history().len();
-                    ui.horizontal(|ui| {
-                        ui.selectable_value(
-                            &mut self.library_tab,
-                            LibraryTab::Results,
-                            format!("Результаты ({})", self.search_results.len()),
-                        );
-                        ui.selectable_value(
-                            &mut self.library_tab,
-                            LibraryTab::Favorites,
-                            format!("Избранное ({favorites_count})"),
-                        );
-                        ui.selectable_value(
-                            &mut self.library_tab,
-                            LibraryTab::History,
-                            format!("История ({history_count})"),
-                        );
-                    });
-                    egui::ScrollArea::vertical()
-                        .id_salt("station_library")
-                        .max_height(132.0)
-                        .show(ui, |ui| match self.library_tab {
-                            LibraryTab::Results => {
-                                if self.search_results.is_empty() {
-                                    ui.label(
-                                        egui::RichText::new("Станции не найдены")
-                                            .color(palette.muted),
-                                    );
-                                } else {
-                                    for station in &self.search_results {
-                                        station_row(
-                                            ui,
-                                            station,
-                                            self.library.is_favorite(&station.stationuuid),
-                                            &mut selected_station,
-                                            &mut favorite_toggle,
-                                        );
-                                    }
-                                }
-                            }
-                            LibraryTab::Favorites => {
-                                if self.library.favorites().is_empty() {
-                                    ui.label(
-                                        egui::RichText::new("В избранном пока пусто")
-                                            .color(palette.muted),
-                                    );
-                                } else {
-                                    for station in self.library.favorites() {
-                                        station_row(
-                                            ui,
-                                            station,
-                                            true,
-                                            &mut selected_station,
-                                            &mut favorite_toggle,
-                                        );
-                                    }
-                                }
-                            }
-                            LibraryTab::History => {
-                                if self.library.history().is_empty() {
-                                    ui.label(
-                                        egui::RichText::new("История пока пуста")
-                                            .color(palette.muted),
-                                    );
-                                } else {
-                                    for station in self.library.history() {
-                                        station_row(
-                                            ui,
-                                            station,
-                                            self.library.is_favorite(&station.stationuuid),
-                                            &mut selected_station,
-                                            &mut favorite_toggle,
-                                        );
-                                    }
-                                    if ui.button("Очистить историю").clicked() {
-                                        clear_history_requested = true;
-                                    }
-                                }
-                            }
-                        });
-                }
-
-                ui.add_space(10.0);
-
-                let height = (ui.available_height() - 72.0).max(120.0);
-                let (globe_rect, response) = ui.allocate_exact_size(
-                    egui::vec2(ui.available_width(), height),
-                    egui::Sense::click_and_drag(),
-                );
-                ui.painter().rect_filled(
-                    globe_rect,
-                    egui::CornerRadius::same(14),
-                    palette.globe_fill,
-                );
-
-                if self.globe_ready {
-                    let mut globe_input = GlobeInput::default();
-                    if response.dragged_by(egui::PointerButton::Secondary) {
-                        globe_input.drag_delta = ui.input(|input| input.pointer.delta());
-                    }
-                    if response.hovered() {
-                        globe_input.scroll_delta = ui.input(|input| input.smooth_scroll_delta.y);
-                    }
-                    if response.clicked_by(egui::PointerButton::Primary) {
-                        globe_input.primary_clicked = response.interact_pointer_pos();
-                    }
-                    let dt = ui.input(|input| input.stable_dt);
-                    self.globe_camera.update(dt, &globe_input);
-
-                    let marker_screens = self.marker_screens(globe_rect);
-
-                    if let Some(position) = globe_input.primary_clicked {
-                        if let Some(index) = nearest_marker(&marker_screens, position) {
-                            selected_station = Some(self.markers[index].station.clone());
-                        } else if let Some(point) =
-                            self.globe_camera.screen_to_sphere(position, globe_rect)
-                            && let Some(country) = self.geo.country_at_sphere_point(
-                                f64::from(point.x),
-                                f64::from(point.y),
-                                f64::from(point.z),
-                            )
-                        {
-                            selected_country = Some(country.clone());
-                        }
-                    }
-
-                    paint_globe(ui.painter(), globe_rect, &self.globe_camera);
-
-                    let hovered = response
-                        .hover_pos()
-                        .and_then(|position| nearest_marker(&marker_screens, position));
-                    if hovered.is_some() {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                    }
-                    if !marker_screens.is_empty() {
-                        let current_station = self
-                            .current_station
-                            .as_ref()
-                            .map(|station| station.stationuuid.as_str());
-                        let visuals: Vec<MarkerVisual> = marker_screens
-                            .iter()
-                            .map(|(index, position)| {
-                                let marker = &self.markers[*index];
-                                MarkerVisual {
-                                    pos: *position,
-                                    highlighted: current_station
-                                        == Some(marker.station.stationuuid.as_str()),
-                                    count: marker.count,
-                                }
-                            })
-                            .collect();
-                        let hovered_label = hovered.map(|index| marker_label(&self.markers[index]));
-                        paint_markers(
-                            ui.painter(),
-                            globe_rect,
-                            &visuals,
-                            hovered,
-                            hovered_label.as_deref(),
-                            MarkerColors {
-                                marker: palette.marker,
-                                ..MarkerColors::default()
-                            },
-                        );
-                    }
-                } else {
-                    ui.painter().text(
-                        globe_rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        "3D-глобус недоступен",
-                        egui::FontId::proportional(16.0),
-                        palette.muted,
-                    );
-                }
-
-                let spectrum_target = self.audio.spectrum().map(|frame| SpectrumTarget {
-                    centroid_hz: frame.centroid_hz,
-                    spread_hz: frame.spread_hz,
-                    flux: frame.flux,
-                    flatness: frame.flatness,
-                    rms_db: frame.rms_db,
-                });
-                self.spectrum_overlay
-                    .update(spectrum_target, ui.input(|input| input.stable_dt));
-                if self.spectrum_overlay.is_visible() {
-                    let strip = egui::Rect::from_min_max(
-                        egui::pos2(globe_rect.left() + 16.0, globe_rect.bottom() - 76.0),
-                        egui::pos2(globe_rect.right() - 16.0, globe_rect.bottom() - 14.0),
-                    );
-                    self.spectrum_overlay
-                        .paint(ui.painter(), strip, ui.input(|input| input.time));
-                    ui.ctx().request_repaint_after(Duration::from_millis(33));
-                }
-
-                if self.globe_camera.is_animating() {
-                    ui.ctx().request_repaint();
-                }
-
-                ui.add_space(6.0);
-                ui.label(
-                    egui::RichText::new(
-                        "ЛКМ — выбрать страну или станцию · ПКМ + перетаскивание — \
-                         вращение · колесо — масштаб",
-                    )
-                    .size(11.0)
-                    .color(palette.muted),
-                );
-
-                ui.add_space(4.0);
-                ui.label(
-                    egui::RichText::new(
-                        "Закрытие окна скрывает его — процесс продолжает работу. \
-                         Управление: orbitfm toggle | status | quit",
-                    )
-                    .size(11.0)
-                    .color(palette.muted),
-                );
-            });
+        let playback = self.audio.state();
+        let volume = self.audio.volume();
+        let now = ctx.input(|input| input.time);
+        let show_hint = now < self.hint_until;
+        let markers_total: usize = self.markers.iter().map(|marker| marker.count).sum();
+        let current_favorite = self
+            .current_station
+            .as_ref()
+            .is_some_and(|station| self.library.is_favorite(&station.stationuuid));
+        let can_resume = self.current_url.is_some();
+        let spectrum_target = self.audio.spectrum().map(|frame| SpectrumTarget {
+            centroid_hz: frame.centroid_hz,
+            spread_hz: frame.spread_hz,
+            flux: frame.flux,
+            flatness: frame.flatness,
+            rms_db: frame.rms_db,
         });
+        let narrow = ui.available_width() < NARROW_WIDTH;
+        let mut actions = Vec::new();
 
-        if search_requested {
-            self.start_search();
-            ctx.request_repaint();
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::default()
+                    .fill(egui::Color32::TRANSPARENT)
+                    .inner_margin(egui::Margin::same(8)),
+            )
+            .show(ui, |ui| {
+                let viewport = ui.available_rect_before_wrap();
+                let hud_height = HUD_HEIGHT.min(viewport.height() * 0.2).max(48.0);
+                let transport_height = TRANSPORT_HEIGHT.min(viewport.height() * 0.15).max(40.0);
+                let content_height =
+                    (viewport.height() - hud_height - transport_height - LAYOUT_GAP * 2.0)
+                        .max(120.0);
+
+                let hud_rect = egui::Rect::from_min_size(
+                    viewport.min,
+                    egui::vec2(viewport.width(), hud_height),
+                );
+                let content_rect = egui::Rect::from_min_size(
+                    egui::pos2(viewport.left(), hud_rect.bottom() + LAYOUT_GAP),
+                    egui::vec2(viewport.width(), content_height),
+                );
+                let transport_rect = egui::Rect::from_min_size(
+                    egui::pos2(viewport.left(), content_rect.bottom() + LAYOUT_GAP),
+                    egui::vec2(viewport.width(), transport_height),
+                );
+
+                ui.scope_builder(egui::UiBuilder::new().max_rect(hud_rect), |ui| {
+                    actions.extend(hud::show(
+                        ui,
+                        &palette,
+                        hud::HudState {
+                            query: &mut self.search_query,
+                            now_playing: self.current_station.as_ref(),
+                            playback: &playback,
+                            volume,
+                            settings,
+                            panel_open: self.panel_open,
+                        },
+                    ));
+                });
+
+                let panel_width = if self.panel_open && !narrow {
+                    PANEL_WIDTH.min(content_rect.width() * 0.42)
+                } else {
+                    0.0
+                };
+                let globe_width = (content_rect.width()
+                    - if panel_width > 0.0 {
+                        panel_width + LAYOUT_GAP
+                    } else {
+                        0.0
+                    })
+                .max(100.0);
+                let globe_rect = egui::Rect::from_min_size(
+                    content_rect.min,
+                    egui::vec2(globe_width, content_rect.height()),
+                );
+
+                let globe_response = ui
+                    .scope_builder(egui::UiBuilder::new().max_rect(globe_rect), |ui| {
+                        globe_view::show(
+                            ui,
+                            &palette,
+                            GlobeState {
+                                camera: &mut self.globe_camera,
+                                ready: self.globe_ready,
+                                markers: &self.markers,
+                                current_uuid: self
+                                    .current_station
+                                    .as_ref()
+                                    .map(|station| station.stationuuid.as_str()),
+                                spectrum_overlay: &mut self.spectrum_overlay,
+                                spectrum_target,
+                                show_hint,
+                            },
+                        )
+                    })
+                    .inner;
+                actions.extend(globe_response.actions);
+                if let Some((x, y, z)) = globe_response.clicked_point
+                    && let Some(country) = self.geo.country_at_sphere_point(x, y, z)
+                {
+                    actions.push(UiAction::SelectCountry(country.clone()));
+                }
+                if globe_response.interacted {
+                    self.hint_until = 0.0;
+                }
+
+                if panel_width > 0.0 {
+                    let panel_rect = egui::Rect::from_min_size(
+                        egui::pos2(globe_rect.right() + LAYOUT_GAP, content_rect.top()),
+                        egui::vec2(panel_width, content_rect.height()),
+                    );
+                    ui.scope_builder(egui::UiBuilder::new().max_rect(panel_rect), |ui| {
+                        actions.extend(self.draw_station_panel(ui, &palette, markers_total));
+                    });
+                }
+
+                ui.scope_builder(egui::UiBuilder::new().max_rect(transport_rect), |ui| {
+                    actions.extend(transport::show(
+                        ui,
+                        &palette,
+                        TransportState {
+                            playback: &playback,
+                            current: self.current_station.as_ref(),
+                            favorite: current_favorite,
+                            can_resume,
+                            spectrum_enabled: self.spectrum_enabled,
+                        },
+                    ));
+                });
+
+                if self.panel_open && narrow {
+                    let overlay_width =
+                        PANEL_WIDTH.min((content_rect.width() - LAYOUT_GAP * 2.0).max(220.0));
+                    let overlay_height = (content_rect.height() - LAYOUT_GAP * 2.0).max(160.0);
+                    let position = egui::pos2(
+                        content_rect.right() - overlay_width - LAYOUT_GAP,
+                        content_rect.top() + LAYOUT_GAP,
+                    );
+                    egui::Area::new(egui::Id::unique("orbitfm_station_panel_overlay"))
+                        .fixed_pos(position)
+                        .order(egui::Order::Foreground)
+                        .show(&ctx, |ui| {
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(overlay_width, overlay_height),
+                                egui::Layout::top_down(egui::Align::Min),
+                                |ui| {
+                                    actions.extend(self.draw_station_panel(
+                                        ui,
+                                        &palette,
+                                        markers_total,
+                                    ));
+                                },
+                            );
+                        });
+                }
+
+                self.toast.draw(&ctx, &palette);
+                ui.allocate_rect(viewport, egui::Sense::hover());
+            });
+
+        self.apply_actions(&ctx, actions);
+
+        if show_hint {
+            let remaining = self.hint_until - now;
+            ctx.request_repaint_after(Duration::from_secs_f64(remaining.max(0.0)));
         }
-        if let Some(theme) = theme_change {
-            self.set_theme(&ctx, theme);
-            ctx.request_repaint();
+    }
+
+    fn draw_station_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        palette: &Palette,
+        markers_total: usize,
+    ) -> Vec<UiAction> {
+        station_panel::show(
+            ui,
+            palette,
+            station_panel::PanelState {
+                tab: &mut self.library_tab,
+                country: self.search_country.as_ref(),
+                markers_total,
+                results: &self.search_results,
+                favorites: self.library.favorites(),
+                history: self.library.history(),
+                pending: self.search_pending,
+                empty: self.search_empty,
+                error: self.search_error.as_deref(),
+            },
+        )
+    }
+
+    fn apply_actions(&mut self, ctx: &egui::Context, actions: Vec<UiAction>) {
+        for action in actions {
+            self.apply_action(ctx, action);
         }
-        if let Some(accent) = accent_change {
-            self.set_accent(&ctx, accent);
-            ctx.request_repaint();
-        }
-        if let Some(enabled) = spectrum_requested {
-            self.set_spectrum_enabled(enabled);
-            ctx.request_repaint();
-        }
-        if let Some(country) = selected_country {
-            self.start_country_search(country);
-            ctx.request_repaint();
-        }
-        if let Some(station) = selected_station {
-            match self.start_station(station) {
-                Ok(()) => self.search_error = None,
-                Err(err) => self.search_error = Some(err),
+    }
+
+    fn apply_action(&mut self, ctx: &egui::Context, action: UiAction) {
+        match action {
+            UiAction::Play(station) => {
+                if let Err(err) = self.start_station(ctx, station) {
+                    self.toast.error(ctx, err);
+                }
             }
+            UiAction::ToggleFavorite(station) => self.toggle_favorite(ctx, &station),
+            UiAction::SelectCountry(country) => self.start_country_search(country),
+            UiAction::RunSearch => self.start_search(),
+            UiAction::ClearHistory => self.clear_history(ctx),
+            UiAction::SetTheme(theme) => self.set_theme(ctx, theme),
+            UiAction::SetAccent(accent) => self.set_accent(ctx, accent),
+            UiAction::ToggleSpectrum(enabled) => self.set_spectrum_enabled(ctx, enabled),
+            UiAction::SetVolume(volume) => {
+                if let Err(err) = self.runtime.block_on(self.audio.set_volume(volume)) {
+                    self.toast
+                        .error(ctx, format!("Громкость не изменена: {err}"));
+                }
+            }
+            UiAction::TogglePlayback => {
+                if let Err(err) = self.toggle_playback() {
+                    self.toast.error(ctx, err);
+                }
+            }
+            UiAction::Stop => {
+                if let Err(err) = self.stop_playback() {
+                    self.toast.error(ctx, err);
+                }
+            }
+            UiAction::Hide => self.set_window_visible(ctx, false),
+            UiAction::Quit => self.request_quit(ctx),
+            UiAction::TogglePanel => self.panel_open = !self.panel_open,
         }
-        if let Some(station) = favorite_toggle {
-            self.toggle_favorite(&station);
-            ctx.request_repaint();
-        }
-        if clear_history_requested {
-            self.clear_history();
-            ctx.request_repaint();
-        }
-        if hide_requested {
-            self.set_window_visible(&ctx, false);
-        }
-        if quit_requested {
-            self.request_quit(&ctx);
-        }
+        ctx.request_repaint();
     }
 }
 
@@ -1130,283 +923,12 @@ fn format_status(
     let mut status = format!("status {}", state.as_str());
     if let Some(station) = station {
         status.push_str("\nstationuuid ");
-        status.push_str(&single_line(&station.stationuuid));
+        status.push_str(&ui::single_line(&station.stationuuid));
         status.push_str("\nname ");
-        status.push_str(&single_line(&station.name));
+        status.push_str(&ui::single_line(&station.name));
     }
     status.push_str(&format!("\nvolume {volume:.2}\nwindow {window}"));
     status
-}
-
-fn build_markers(stations: Vec<Station>) -> Vec<StationMarker> {
-    let mut markers: Vec<StationMarker> = Vec::new();
-    let mut groups: HashMap<(i64, i64), usize> = HashMap::new();
-    let mut seen = HashSet::new();
-
-    for station in stations {
-        if !seen.insert(station.stationuuid.clone()) {
-            continue;
-        }
-        let Some((lat, lon)) = station_geo(&station) else {
-            continue;
-        };
-        let key = (
-            (lat * MARKER_GROUP_SCALE).round() as i64,
-            (lon * MARKER_GROUP_SCALE).round() as i64,
-        );
-        if let Some(&index) = groups.get(&key) {
-            markers[index].count += 1;
-        } else {
-            groups.insert(key, markers.len());
-            markers.push(StationMarker {
-                station,
-                lat: lat as f32,
-                lon: lon as f32,
-                count: 1,
-            });
-        }
-    }
-
-    markers
-}
-
-fn station_geo(station: &Station) -> Option<(f64, f64)> {
-    let lat = station.geo_lat?;
-    let lon = station.geo_long?;
-    if !lat.is_finite()
-        || !lon.is_finite()
-        || !(-90.0..=90.0).contains(&lat)
-        || !(-180.0..=180.0).contains(&lon)
-    {
-        return None;
-    }
-    if lat == 0.0 && lon == 0.0 {
-        return None;
-    }
-    Some((lat, lon))
-}
-
-fn nearest_marker(screens: &[(usize, egui::Pos2)], position: egui::Pos2) -> Option<usize> {
-    screens
-        .iter()
-        .filter_map(|(index, marker)| {
-            let distance = (*marker - position).length();
-            (distance <= MARKER_CLICK_RADIUS).then_some((distance, *index))
-        })
-        .min_by(|left, right| left.0.total_cmp(&right.0))
-        .map(|(_, index)| index)
-}
-
-fn marker_label(marker: &StationMarker) -> String {
-    let name = single_line(&marker.station.name);
-    let name = if name.is_empty() {
-        "Без названия".to_owned()
-    } else {
-        truncate(&name, 40)
-    };
-
-    if marker.count > 1 {
-        format!("{name} · +{}", marker.count - 1)
-    } else {
-        name
-    }
-}
-
-fn station_row(
-    ui: &mut egui::Ui,
-    station: &Station,
-    favorite: bool,
-    selected_station: &mut Option<Station>,
-    favorite_toggle: &mut Option<Station>,
-) {
-    ui.horizontal(|ui| {
-        let (star, hint) = if favorite {
-            ("★", "Убрать из избранного")
-        } else {
-            ("☆", "Добавить в избранное")
-        };
-        if ui.small_button(star).on_hover_text(hint).clicked() {
-            *favorite_toggle = Some(station.clone());
-        }
-        if ui.selectable_label(false, station_label(station)).clicked() {
-            *selected_station = Some(station.clone());
-        }
-    });
-}
-
-fn single_line(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn truncate(value: &str, max_chars: usize) -> String {
-    if value.chars().count() <= max_chars {
-        return value.to_owned();
-    }
-
-    let mut truncated: String = value.chars().take(max_chars.saturating_sub(1)).collect();
-    truncated.push('…');
-    truncated
-}
-
-fn country_label(country: &Country) -> String {
-    let name = single_line(&country.name);
-    let name = if name.is_empty() {
-        country.iso_a2.clone()
-    } else {
-        name
-    };
-
-    match country.iso_a3.as_deref() {
-        Some(iso_a3) => format!("{name} ({}, {iso_a3})", country.iso_a2),
-        None => format!("{name} ({})", country.iso_a2),
-    }
-}
-
-fn station_label(station: &Station) -> String {
-    let name = single_line(&station.name);
-    let name = if name.is_empty() {
-        "Без названия".to_owned()
-    } else {
-        truncate(&name, 48)
-    };
-
-    let mut details = Vec::new();
-    let country = station.countrycode.trim();
-    if !country.is_empty() {
-        details.push(country.to_owned());
-    }
-    let codec = station.codec.trim();
-    if !codec.is_empty() {
-        details.push(codec.to_owned());
-    }
-    if station.bitrate > 0 {
-        details.push(format!("{} kbps", station.bitrate));
-    }
-
-    if details.is_empty() {
-        name
-    } else {
-        format!("{name} — {}", details.join(" · "))
-    }
-}
-
-fn playback_label(state: &PlaybackState) -> String {
-    match state {
-        PlaybackState::Stopped => "остановлено".to_owned(),
-        PlaybackState::Playing => "играет".to_owned(),
-        PlaybackState::Paused => "пауза".to_owned(),
-        PlaybackState::Buffering => "буферизация".to_owned(),
-        PlaybackState::Reconnecting => "переподключение".to_owned(),
-        PlaybackState::Error(message) => format!("ошибка: {message}"),
-    }
-}
-
-fn configure_style(ctx: &egui::Context, settings: Settings) {
-    ctx.set_theme(theme_preference(settings.theme));
-
-    let accent = accent_color(settings.accent);
-    let selection_text = contrast_text(accent);
-    for theme in [egui::Theme::Dark, egui::Theme::Light] {
-        let mut visuals = match theme {
-            egui::Theme::Dark => egui::Visuals::dark(),
-            egui::Theme::Light => egui::Visuals::light(),
-        };
-        visuals.panel_fill = egui::Color32::TRANSPARENT;
-        visuals.window_fill = egui::Color32::TRANSPARENT;
-        visuals.selection.bg_fill = accent;
-        visuals.selection.stroke = egui::Stroke::new(1.0, selection_text);
-        visuals.hyperlink_color = match theme {
-            egui::Theme::Dark => accent,
-            egui::Theme::Light => shade(accent, 0.6),
-        };
-        ctx.set_visuals_of(theme, visuals);
-    }
-}
-
-fn theme_preference(mode: ThemeMode) -> egui::ThemePreference {
-    match mode {
-        ThemeMode::System => egui::ThemePreference::System,
-        ThemeMode::Dark => egui::ThemePreference::Dark,
-        ThemeMode::Light => egui::ThemePreference::Light,
-    }
-}
-
-fn theme_label(mode: ThemeMode) -> &'static str {
-    match mode {
-        ThemeMode::System => "Системная",
-        ThemeMode::Dark => "Тёмная",
-        ThemeMode::Light => "Светлая",
-    }
-}
-
-fn accent_label(accent: AccentColor) -> &'static str {
-    match accent {
-        AccentColor::Blue => "Орбита",
-        AccentColor::Green => "Изумруд",
-        AccentColor::Amber => "Янтарь",
-        AccentColor::Violet => "Фиалка",
-        AccentColor::Rose => "Роза",
-        AccentColor::Cyan => "Океан",
-    }
-}
-
-fn accent_color(accent: AccentColor) -> egui::Color32 {
-    let [red, green, blue] = accent.rgb();
-    egui::Color32::from_rgb(red, green, blue)
-}
-
-fn contrast_text(color: egui::Color32) -> egui::Color32 {
-    let luma =
-        0.299 * f32::from(color.r()) + 0.587 * f32::from(color.g()) + 0.114 * f32::from(color.b());
-    if luma > 150.0 {
-        egui::Color32::BLACK
-    } else {
-        egui::Color32::WHITE
-    }
-}
-
-fn shade(color: egui::Color32, factor: f32) -> egui::Color32 {
-    let scale = |channel: u8| (f32::from(channel) * factor).round() as u8;
-    egui::Color32::from_rgb(scale(color.r()), scale(color.g()), scale(color.b()))
-}
-
-struct Palette {
-    card_fill: egui::Color32,
-    card_stroke: egui::Color32,
-    muted: egui::Color32,
-    error: egui::Color32,
-    subtle_fill: egui::Color32,
-    globe_fill: egui::Color32,
-    accent: egui::Color32,
-    marker: egui::Color32,
-}
-
-impl Palette {
-    fn for_ui(theme: egui::Theme, accent: AccentColor) -> Self {
-        let marker = accent_color(accent);
-        match theme {
-            egui::Theme::Dark => Self {
-                card_fill: egui::Color32::from_rgba_unmultiplied(12, 15, 23, CARD_ALPHA),
-                card_stroke: egui::Color32::from_rgba_unmultiplied(255, 255, 255, 20),
-                muted: egui::Color32::from_rgb(150, 158, 176),
-                error: egui::Color32::from_rgb(255, 128, 128),
-                subtle_fill: egui::Color32::from_rgba_unmultiplied(255, 255, 255, 8),
-                globe_fill: egui::Color32::from_rgba_unmultiplied(255, 255, 255, 7),
-                accent: marker,
-                marker,
-            },
-            egui::Theme::Light => Self {
-                card_fill: egui::Color32::from_rgba_unmultiplied(246, 248, 252, CARD_ALPHA),
-                card_stroke: egui::Color32::from_rgba_unmultiplied(15, 20, 30, 40),
-                muted: egui::Color32::from_rgb(88, 97, 116),
-                error: egui::Color32::from_rgb(176, 40, 40),
-                subtle_fill: egui::Color32::from_rgba_unmultiplied(15, 20, 30, 10),
-                globe_fill: egui::Color32::from_rgba_unmultiplied(15, 20, 30, 8),
-                accent: shade(marker, 0.6),
-                marker,
-            },
-        }
-    }
 }
 
 #[cfg(test)]
@@ -1468,171 +990,5 @@ mod tests {
             ),
             "status error\nvolume 0.50\nwindow hidden"
         );
-    }
-
-    #[test]
-    fn playback_labels_are_human_readable() {
-        assert_eq!(playback_label(&PlaybackState::Stopped), "остановлено");
-        assert_eq!(playback_label(&PlaybackState::Playing), "играет");
-        assert_eq!(
-            playback_label(&PlaybackState::Error("таймаут".to_owned())),
-            "ошибка: таймаут"
-        );
-    }
-
-    #[test]
-    fn truncates_by_characters() {
-        assert_eq!(truncate("коротко", 10), "коротко");
-        assert_eq!(truncate("abcdef", 4), "abc…");
-        assert_eq!(truncate("абвгде", 4), "абв…");
-    }
-
-    #[test]
-    fn country_label_includes_iso_codes() {
-        let country = Country {
-            name: "Germany".to_owned(),
-            iso_a2: "DE".to_owned(),
-            iso_a3: Some("DEU".to_owned()),
-        };
-        assert_eq!(country_label(&country), "Germany (DE, DEU)");
-    }
-
-    #[test]
-    fn country_label_falls_back_to_iso_codes() {
-        let country = Country {
-            name: "  ".to_owned(),
-            iso_a2: "XK".to_owned(),
-            iso_a3: None,
-        };
-        assert_eq!(country_label(&country), "XK (XK)");
-    }
-
-    #[test]
-    fn station_label_includes_country_codec_and_bitrate() {
-        assert_eq!(
-            station_label(&sample_station()),
-            "Test Radio — US · MP3 · 128 kbps"
-        );
-    }
-
-    #[test]
-    fn station_label_falls_back_for_empty_name() {
-        let mut station = sample_station();
-        station.name = "   ".to_owned();
-        assert_eq!(
-            station_label(&station),
-            "Без названия — US · MP3 · 128 kbps"
-        );
-    }
-
-    fn geo_station(uuid: &str, lat: f64, lon: f64) -> Station {
-        let mut station = sample_station();
-        station.stationuuid = uuid.to_owned();
-        station.geo_lat = Some(lat);
-        station.geo_long = Some(lon);
-        station
-    }
-
-    #[test]
-    fn marker_groups_stations_with_shared_coordinates() {
-        let markers = build_markers(vec![
-            geo_station("a", 52.5200, 13.4050),
-            geo_station("b", 52.5201, 13.4051),
-            geo_station("c", 48.8566, 2.3522),
-        ]);
-
-        assert_eq!(markers.len(), 2);
-        assert_eq!(markers[0].count, 2);
-        assert_eq!(markers[1].count, 1);
-        assert_eq!(markers[0].station.stationuuid, "a");
-    }
-
-    #[test]
-    fn markers_skip_missing_invalid_and_zero_coordinates() {
-        let mut missing = sample_station();
-        missing.stationuuid = "missing".to_owned();
-
-        let mut zero = geo_station("zero", 0.0, 0.0);
-        zero.stationuuid = "zero".to_owned();
-
-        let markers = build_markers(vec![
-            missing,
-            zero,
-            geo_station("nan", f64::NAN, 13.0),
-            geo_station("range", 91.0, 13.0),
-            geo_station("valid", 52.52, 13.405),
-        ]);
-
-        assert_eq!(markers.len(), 1);
-        assert_eq!(markers[0].station.stationuuid, "valid");
-    }
-
-    #[test]
-    fn markers_deduplicate_by_uuid() {
-        let markers = build_markers(vec![
-            geo_station("same", 52.52, 13.405),
-            geo_station("same", 48.85, 2.35),
-        ]);
-
-        assert_eq!(markers.len(), 1);
-        assert_eq!(markers[0].station.stationuuid, "same");
-    }
-
-    #[test]
-    fn nearest_marker_uses_click_radius() {
-        let screens = vec![(0, egui::pos2(10.0, 10.0)), (1, egui::pos2(100.0, 100.0))];
-
-        assert_eq!(nearest_marker(&screens, egui::pos2(14.0, 12.0)), Some(0));
-        assert_eq!(nearest_marker(&screens, egui::pos2(50.0, 50.0)), None);
-    }
-
-    #[test]
-    fn marker_label_reports_group_size() {
-        let mut marker = StationMarker {
-            station: geo_station("a", 52.52, 13.405),
-            lat: 52.52,
-            lon: 13.405,
-            count: 3,
-        };
-        marker.station.name = "Groove\nSalad".to_owned();
-
-        assert_eq!(marker_label(&marker), "Groove Salad · +2");
-    }
-
-    #[test]
-    fn theme_preference_maps_all_modes() {
-        assert_eq!(
-            theme_preference(ThemeMode::System),
-            egui::ThemePreference::System
-        );
-        assert_eq!(
-            theme_preference(ThemeMode::Dark),
-            egui::ThemePreference::Dark
-        );
-        assert_eq!(
-            theme_preference(ThemeMode::Light),
-            egui::ThemePreference::Light
-        );
-    }
-
-    #[test]
-    fn contrast_text_picks_readable_foreground() {
-        assert_eq!(
-            contrast_text(accent_color(AccentColor::Amber)),
-            egui::Color32::BLACK
-        );
-        assert_eq!(
-            contrast_text(egui::Color32::from_rgb(20, 30, 60)),
-            egui::Color32::WHITE
-        );
-    }
-
-    #[test]
-    fn light_palette_darkens_accent_but_keeps_marker_bright() {
-        let dark = Palette::for_ui(egui::Theme::Dark, AccentColor::Blue);
-        let light = Palette::for_ui(egui::Theme::Light, AccentColor::Blue);
-        assert_eq!(dark.accent, dark.marker);
-        assert_ne!(light.accent, light.marker);
-        assert!(light.accent.r() < light.marker.r());
     }
 }

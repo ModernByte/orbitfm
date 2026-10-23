@@ -13,6 +13,7 @@ mod media;
 mod render;
 mod services;
 mod settings;
+mod ui;
 
 use app::{AppServices, OrbitApp, WakeHandle};
 use audio::AudioEngine;
