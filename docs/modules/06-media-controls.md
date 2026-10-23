@@ -92,8 +92,10 @@ playwire вызывает колбэк в рабочем потоке D-Bus. К�
 | `Paused` | `false` | `Paused` |
 | `Playing`, `Buffering`, `Reconnecting` | `true` | `Playing` |
 
-Метаданные берутся из текущей станции: `name` → title, `tags` → artist, `favicon` →
-artUrl, `url_resolved` → `xesam:url`. Если станция неизвестна, используется URL потока.
+Метаданные берутся из текущей станции: `name` → title, `favicon` → artUrl,
+`url_resolved` → `xesam:url`. Artist формирует Application Core: «штат, страна»,
+иначе страна/штат по отдельности, иначе теги станции (Этап 8, фаза 4). Если станция
+неизвестна, используется URL потока.
 
 ## 7. Ограничения
 

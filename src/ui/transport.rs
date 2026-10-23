@@ -15,6 +15,7 @@ pub(crate) struct TransportState<'a> {
     pub favorite: bool,
     pub can_resume: bool,
     pub spectrum_enabled: bool,
+    pub roulette_pending: bool,
 }
 
 pub(crate) fn show(
@@ -54,6 +55,22 @@ pub(crate) fn show(
                 if icons::star_button(ui, state.favorite, star_color, star_hint).clicked() {
                     actions.push(UiAction::ToggleFavorite(station.clone()));
                 }
+            }
+
+            let roulette_label = if state.roulette_pending {
+                "Рулетка…"
+            } else {
+                "Рулетка"
+            };
+            if ui
+                .add_enabled(
+                    !state.roulette_pending,
+                    egui::Button::new(egui::RichText::new(roulette_label).size(12.0)),
+                )
+                .on_hover_text("Случайная станция мира с перелётом к ней")
+                .clicked()
+            {
+                actions.push(UiAction::Roulette);
             }
 
             ui.add_space(6.0);

@@ -37,6 +37,7 @@ pub(crate) enum UiAction {
     SwitchMode(SearchMode),
     SelectGenre(String),
     RunSearch,
+    Roulette,
     ClearHistory,
     SetTheme(ThemeMode),
     SetAccent(AccentColor),
