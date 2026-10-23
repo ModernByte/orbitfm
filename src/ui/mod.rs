@@ -6,6 +6,7 @@
 pub(crate) mod globe_view;
 pub(crate) mod hud;
 pub(crate) mod icons;
+pub(crate) mod mode_switch;
 pub(crate) mod palette;
 pub(crate) mod station_filter;
 pub(crate) mod station_panel;
@@ -17,12 +18,24 @@ use crate::geo::Country;
 use crate::services::Station;
 use crate::settings::{AccentColor, ThemeMode};
 
+/// Активный режим поиска станций.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum SearchMode {
+    /// Страна на глобусе → станции `countrycode`.
+    #[default]
+    Country,
+    /// Глобальный жанр → станции `tag` по всему миру.
+    GlobalGenre,
+}
+
 /// Действие, которое UI просит выполнить у Application Core.
 #[derive(Debug, Clone)]
 pub(crate) enum UiAction {
     Play(Station),
     ToggleFavorite(Station),
     SelectCountry(Country),
+    SwitchMode(SearchMode),
+    SelectGenre(String),
     RunSearch,
     ClearHistory,
     SetTheme(ThemeMode),
