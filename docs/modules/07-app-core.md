@@ -20,7 +20,7 @@
 
 ## 3. Состояние приложения
 
-Текущее состояние (Этап 8, фазы 1–3):
+Текущее состояние (Этап 8, фазы 1–4):
 
 ```rust
 pub struct AppState {
@@ -67,6 +67,8 @@ pub struct OrbitApp {
     search_empty: bool,
     search_rx: Option<mpsc::UnboundedReceiver<SearchResponse>>,
     search_error: Option<String>,
+    roulette_pending: bool,
+    roulette_rx: Option<mpsc::UnboundedReceiver<Result<Station, RadioError>>>,
     panel_open: bool,
     hint_until: f64,
     toast: Toast,
@@ -86,6 +88,8 @@ pub struct OrbitApp {
 страны/жанра. `search_generation` — счётчик поколений: каждый запуск поиска
 увеличивает его, а `SearchResponse` несёт номер, по которому `poll_search`
 отбрасывает устаревшие ответы. `search_empty` отмечает успешный ответ без станций.
+`roulette_pending` блокирует повторный запуск Roulette, `roulette_rx` принимает
+результат фонового `random_station`.
 `SearchOutcome` — внутренний тип с результатами основного и гео-запроса;
 `GlobeMarker` (в `ui/globe_view.rs`) хранит представителя группы, координаты,
 количество станций и вес для размера маркера.
@@ -103,7 +107,7 @@ pub struct OrbitApp {
 `settings` хранит тему и акцент (см. §10). `panel_open` управляет видимостью drawer,
 `hint_until` — срок жизни подсказки первого запуска, `toast` — одно текущее сообщение.
 
-### 3.1. UI-слой (Фазы 1–3)
+### 3.1. UI-слой (Фазы 1–4)
 
 UI вынесен из `app.rs` в `src/ui/`:
 
@@ -115,7 +119,7 @@ src/ui/
 ├── mode_switch.rs    # переключатель «Страна | Жанр» и popup выбора жанра
 ├── station_filter.rs # локальные жанровые фильтры и сортировка панели
 ├── station_panel.rs  # правый drawer: вкладки, фильтры, карточки/строки станций
-├── transport.rs      # нижний transport: play/pause, stop, звезда, детали, FFT
+├── transport.rs      # нижний transport: play/pause, stop, звезда, Roulette, детали, FFT
 ├── globe_view.rs     # ввод камеры, маркеры и вес, контуры стран, FFT-оверлей, подсказка
 ├── toast.rs          # одно сообщение на 3 секунды
 └── icons.rs          # векторные иконки star/play/stop
@@ -130,8 +134,9 @@ src/ui/
   (поиск страны идёт через `GeoService::search_countries` — это чистый offline-запрос);
 - `app.rs` — единственная точка побочных эффектов: `apply_actions` выполняет
   `Play`, `ToggleFavorite`, `SelectCountry`, `SwitchMode`, `SelectGenre`,
-  `RunSearch`, `ClearHistory`, `SetTheme`, `SetAccent`, `ToggleSpectrum`,
-  `SetVolume`, `TogglePlayback`, `Stop`, `Hide`, `Quit`, `TogglePanel`.
+  `RunSearch`, `Roulette`, `ClearHistory`, `SetTheme`, `SetAccent`,
+  `ToggleSpectrum`, `SetVolume`, `TogglePlayback`, `Stop`, `Hide`, `Quit`,
+  `TogglePanel`.
 
 `UiAction` — внутренний тип, не публичный контракт. `render` по-прежнему не импортирует
 доменные типы: `globe_view` передаёт в `paint_globe` камеру и готовые маркеры.
@@ -144,7 +149,7 @@ src/ui/
 |------|--------|------------|
 | HUD | 58 px, не более 20% высоты окна | логотип, «Страна/Жанр», выбор жанра, поиск станции/страны и «Найти/Фильтр», now-playing, громкость, «Список», «Настройки» |
 | Контент | остальная высота | глобус на всю ширину; правый drawer 310 px, не более 42% ширины |
-| Transport | 48 px, не более 15% высоты окна | play/pause, stop, звезда, codec/kbps/страна, FFT |
+| Transport | 48 px, не более 15% высоты окна | play/pause, stop, звезда, «Рулетка», codec/kbps/страна, FFT |
 
 Минимальные высоты: HUD — 48 px, transport — 40 px. При ширине окна < 900 px drawer
 становится `Area` поверх глобуса (foreground, 310 px) с кнопкой «×»; глобус занимает
@@ -187,8 +192,9 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
 2. Обрабатывает очередь `IpcRequest` и отвечает через `IpcRequest::try_respond`.
 3. Разбирает `MediaCommand` от MPRIS.
 4. Забирает результат фонового поиска (`poll_search`).
-5. Синхронизирует состояние с MPRIS (`sync_media`).
-6. Перехватывает закрытие окна (`close_requested`) и превращает его в Hide, если это не
+5. Забирает результат Roulette (`poll_roulette`).
+6. Синхронизирует состояние с MPRIS (`sync_media`).
+7. Перехватывает закрытие окна (`close_requested`) и превращает его в Hide, если это не
    `quit`.
 
 `ui()` рисует Focus-раскладку только при видимом окне. В eframe 0.37 скрытое окно не
@@ -296,12 +302,25 @@ IPC- и MPRIS-команды обрабатываются и в скрытом �
 - `play <uuid>` сначала ищет станцию в последних результатах поиска, затем вызывает
   `get_station` с таймаутом 8 с; таймаут маппится в `RadioError::Network`.
 
+### 8.1. Roulette
+
+- Кнопка «Рулетка» в transport вызывает `start_roulette`; пока `roulette_pending`,
+  повторные нажатия игнорируются, кнопка заблокирована.
+- `RadioBrowserClient::random_station` выполняется в tokio-задаче (до трёх попыток,
+  станция обязана иметь поток и координаты); результат приходит через `mpsc` и будит GUI.
+- `poll_roulette` запускает станцию, при успехе перелетает камерой за 900 мс
+  (`ROULETTE_FLY_MS`) к её координатам и показывает тост «Рулетка: имя — страна».
+  Ошибка каталога или запуска показывается тостом и не меняет текущий эфир.
+- Запуск идёт через `start_station`: станция попадает в историю, отправляется click,
+  обновляет MPRIS; перетаскивание отменяет перелёт, как и у выбора страны.
+- IPC-команды Roulette нет: действие доступно только из GUI (ADR-0015).
+
 ## 9. Избранное и история
 
 - `StationLibrary` загружается в `main` до запуска GUI; ошибка загрузки даёт
   эфемерную библиотеку без файла (ADR-0013).
 - Успешный `start_station` (строка результатов, избранного или истории, маркер,
-  IPC `play`) вызывает `record_played`: станция перемещается в начало истории,
+  Roulette, IPC `play`) вызывает `record_played`: станция перемещается в начало истории,
   история ограничена 20 записями. Возобновление из MPRIS (`Play`/`PlayPause`)
   историю не меняет.
 - Переключение звезды вызывает `toggle_favorite` и запрашивает repaint; звезда есть
@@ -346,8 +365,10 @@ IPC- и MPRIS-команды обрабатываются и в скрытом �
 - `Paused` → трек есть, `Paused`;
 - `Playing`/`Buffering`/`Reconnecting` → трек есть, `Playing`.
 
-Метаданные берутся из `current_station`: `name` → title, `tags` → artist, `favicon` →
-artUrl, `url_resolved` → `xesam:url`. Без станции используется URL потока.
+Метаданные берутся из `current_station`: `name` → title, `favicon` → artUrl,
+`url_resolved` → `xesam:url`. Artist — «штат, страна» (или одно из полей), при
+отсутствии локации — теги станции; пустые значения отбрасываются. Без станции
+используется URL потока.
 
 ## 12. Жизненный цикл окна
 
@@ -360,8 +381,9 @@ artUrl, `url_resolved` → `xesam:url`. Без станции используе
 
 ## 13. Текущие ограничения
 
-- Roulette и heatmap ещё не реализованы: это фазы 4–5 Этапа 8 (ADR-0015);
-  `fly_to` пока используется только для выбора страны
+- Heatmap и Fresnel pulse ещё не реализованы: это фаза 5 Этапа 8 (ADR-0015)
+- Roulette доступна только из GUI и всегда запускает воспроизведение; «только
+  показать станцию без эфира» не поддерживается
 - Вес маркера учитывает только голоса и битрейт; популярность жанра и свежесть
   станции не участвуют
 - Hover страны вычисляется raycast-ом каждый кадр без кэша последней точки

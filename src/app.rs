@@ -25,6 +25,7 @@ const WINDOW_TITLE: &str = "OrbitFM";
 const SEARCH_RESULT_LIMIT: u32 = 100;
 const COUNTRY_RESULT_LIMIT: u32 = 100;
 const GENRE_RESULT_LIMIT: u32 = 200;
+const ROULETTE_FLY_MS: u64 = 900;
 const STATION_LOOKUP_TIMEOUT: Duration = Duration::from_secs(8);
 const HUD_HEIGHT: f32 = 58.0;
 const TRANSPORT_HEIGHT: f32 = 48.0;
@@ -171,6 +172,8 @@ pub struct OrbitApp {
     search_empty: bool,
     search_rx: Option<mpsc::UnboundedReceiver<SearchResponse>>,
     search_error: Option<String>,
+    roulette_pending: bool,
+    roulette_rx: Option<mpsc::UnboundedReceiver<Result<Station, RadioError>>>,
     panel_open: bool,
     hint_until: f64,
     toast: Toast,
@@ -244,6 +247,8 @@ impl OrbitApp {
             search_empty: false,
             search_rx: None,
             search_error: None,
+            roulette_pending: false,
+            roulette_rx: None,
             panel_open: true,
             hint_until: now + HINT_SECONDS,
             toast: Toast::default(),
@@ -582,6 +587,62 @@ impl OrbitApp {
         }
     }
 
+    fn start_roulette(&mut self) {
+        if self.roulette_pending {
+            return;
+        }
+        self.roulette_pending = true;
+        let (sender, receiver) = mpsc::unbounded_channel();
+        self.roulette_rx = Some(receiver);
+        let radio = self.radio.clone();
+        let waker = self.wake.waker();
+        self.runtime.spawn(async move {
+            let result = radio.random_station().await;
+            let _ = sender.send(result);
+            waker();
+        });
+    }
+
+    fn poll_roulette(&mut self, ctx: &egui::Context) {
+        let result = match self.roulette_rx.as_mut() {
+            Some(receiver) => receiver.try_recv(),
+            None => return,
+        };
+
+        match result {
+            Ok(Ok(station)) => {
+                self.roulette_pending = false;
+                self.roulette_rx = None;
+                let label = roulette_label(&station);
+                let target = station.geo_lat.zip(station.geo_long);
+                match self.start_station(ctx, station) {
+                    Ok(()) => {
+                        if let Some((lat, lon)) = target {
+                            self.globe_camera.fly_to(
+                                lat,
+                                lon,
+                                Duration::from_millis(ROULETTE_FLY_MS),
+                            );
+                        }
+                        self.toast.info(ctx, format!("Рулетка: {label}"));
+                    }
+                    Err(err) => self.toast.error(ctx, format!("Рулетка не запущена: {err}")),
+                }
+            }
+            Ok(Err(err)) => {
+                self.roulette_pending = false;
+                self.roulette_rx = None;
+                self.toast.error(ctx, format!("Рулетка: {err}"));
+            }
+            Err(mpsc::error::TryRecvError::Empty) => {}
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                self.roulette_pending = false;
+                self.roulette_rx = None;
+                self.toast.error(ctx, "Рулетка: задача завершилась");
+            }
+        }
+    }
+
     fn process_audio_events(&mut self) {
         loop {
             match self.audio_events.try_recv() {
@@ -705,19 +766,16 @@ impl OrbitApp {
         );
         let fallback_url = self.current_url.clone().unwrap_or_default();
         let (base_title, artist, art_url, url) = match &self.current_station {
-            Some(station) => {
-                let tags = station.tags.trim();
-                (
-                    ui::single_line(&station.name),
-                    (!tags.is_empty()).then(|| tags.to_owned()),
-                    station.favicon.clone(),
-                    if station.url_resolved.trim().is_empty() {
-                        fallback_url
-                    } else {
-                        station.url_resolved.clone()
-                    },
-                )
-            }
+            Some(station) => (
+                ui::single_line(&station.name),
+                mpris_artist(station),
+                station.favicon.clone(),
+                if station.url_resolved.trim().is_empty() {
+                    fallback_url
+                } else {
+                    station.url_resolved.clone()
+                },
+            ),
             None => (fallback_url.clone(), None, None, fallback_url),
         };
         let title = if has_track {
@@ -919,6 +977,7 @@ impl OrbitApp {
                             favorite: current_favorite,
                             can_resume,
                             spectrum_enabled: self.spectrum_enabled,
+                            roulette_pending: self.roulette_pending,
                         },
                     ));
                 });
@@ -1007,6 +1066,7 @@ impl OrbitApp {
             UiAction::SwitchMode(mode) => self.switch_mode(mode),
             UiAction::SelectGenre(tag) => self.start_genre_search(tag),
             UiAction::RunSearch => self.start_search(),
+            UiAction::Roulette => self.start_roulette(),
             UiAction::ClearHistory => self.clear_history(ctx),
             UiAction::SetTheme(theme) => self.set_theme(ctx, theme),
             UiAction::SetAccent(accent) => self.set_accent(ctx, accent),
@@ -1041,6 +1101,7 @@ impl eframe::App for OrbitApp {
         self.process_commands(ctx);
         self.process_media_commands();
         self.poll_search();
+        self.poll_roulette(ctx);
         self.sync_media();
         self.spectrum_enabled = self.audio.spectrum_enabled();
 
@@ -1071,6 +1132,33 @@ impl eframe::App for OrbitApp {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         [0.0, 0.0, 0.0, 0.0]
     }
+}
+
+fn roulette_label(station: &Station) -> String {
+    let name = ui::single_line(&station.name);
+    let country = ui::single_line(&station.country);
+    match (name.is_empty(), country.is_empty()) {
+        (false, false) => format!("{name} — {country}"),
+        (false, true) => name,
+        (true, false) => country,
+        (true, true) => "станция без названия".to_owned(),
+    }
+}
+
+fn mpris_artist(station: &Station) -> Option<String> {
+    let state = ui::single_line(&station.state);
+    let country = ui::single_line(&station.country);
+    let location = match (state.is_empty(), country.is_empty()) {
+        (false, false) => Some(format!("{state}, {country}")),
+        (false, true) => Some(state),
+        (true, false) => Some(country),
+        (true, true) => None,
+    };
+
+    location.or_else(|| {
+        let tags = ui::single_line(&station.tags);
+        (!tags.is_empty()).then_some(tags)
+    })
 }
 
 fn format_status(
@@ -1164,6 +1252,36 @@ mod tests {
             !response.is_current(8),
             "ответ прошлого поколения не должен применяться"
         );
+    }
+
+    #[test]
+    fn roulette_label_includes_country() {
+        let mut station = sample_station();
+        assert_eq!(roulette_label(&station), "Test Radio — United States");
+
+        station.country.clear();
+        assert_eq!(roulette_label(&station), "Test Radio");
+
+        station.name.clear();
+        assert_eq!(roulette_label(&station), "станция без названия");
+    }
+
+    #[test]
+    fn mpris_artist_prefers_location_over_tags() {
+        let mut station = sample_station();
+        assert_eq!(
+            mpris_artist(&station).as_deref(),
+            Some("New York, United States")
+        );
+
+        station.state.clear();
+        assert_eq!(mpris_artist(&station).as_deref(), Some("United States"));
+
+        station.country.clear();
+        assert_eq!(mpris_artist(&station).as_deref(), Some("jazz"));
+
+        station.tags.clear();
+        assert_eq!(mpris_artist(&station), None);
     }
 
     #[test]

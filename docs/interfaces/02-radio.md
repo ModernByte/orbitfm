@@ -74,6 +74,9 @@ impl RadioBrowserClient {
     /// Поиск станций.
     pub async fn search(&self, params: SearchParams) -> Result<Vec<Station>, RadioError>;
 
+    /// Случайная станция с координатами для Roulette (до трёх попыток).
+    pub async fn random_station(&self) -> Result<Station, RadioError>;
+
     /// Получить станцию по UUID (сначала из кэша).
     pub async fn get_station(&self, station_uuid: &str) -> Result<Station, RadioError>;
 
@@ -99,6 +102,11 @@ impl RadioBrowserClient {
   значения обрезаются по краям. Станции без `url_resolved` в результат не попадают.
 - При `has_geo_info = true` добавляется фильтр `has_geo_info=true`; клиент не проверяет
   координаты — это делает вызывающая сторона (`geo_lat`/`geo_long` могут быть `null`).
+- `random_station` запрашивает `/json/stations/search` с
+  `order=random&limit=1&has_geo_info=true&hidebroken=true` и не передаёт `reverse`.
+  Станция принимается только с непустым `url_resolved` и валидными координатами
+  (конечные, в диапазонах, не `(0, 0)`); иначе выполняется до трёх попыток, после
+  чего возвращается `NotFound`. Найденная станция попадает в кэш.
 - `get_station` проверяет формат UUID (`InvalidUuid`) и сначала ищет станцию в кэше;
   при промахе запрашивает `/json/stations/byuuid/<uuid>` и возвращает `NotFound` для
   пустого ответа.

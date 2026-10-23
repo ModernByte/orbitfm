@@ -32,6 +32,9 @@ impl RadioBrowserClient {
 
     pub async fn search(&self, params: SearchParams) -> Result<Vec<Station>, RadioError>;
 
+    /// Случайная станция с координатами для Roulette (до трёх попыток).
+    pub async fn random_station(&self) -> Result<Station, RadioError>;
+
     pub async fn get_station(&self, station_uuid: &str) -> Result<Station, RadioError>;
 
     /// Обязательно при старте воспроизведения.
@@ -105,6 +108,7 @@ pub struct Station {
 | Метод | Эндпоинт | Назначение |
 |-------|----------|------------|
 | GET | `/json/stations/search` | Поиск; `hidebroken`, `order=votes`, `reverse=true`, фильтры `name`, `countrycode`, `tag`, `language`, `has_geo_info`, `limit`, `offset` |
+| GET | `/json/stations/search` (Roulette) | `order=random&limit=1&has_geo_info=true&hidebroken=true`, без `reverse`; до трёх попыток при невалидной станции |
 | GET | `/json/stations/byuuid/<uuid>` | Станция по UUID |
 | GET | `/json/url/<uuid>` | Click-tracking при старте воспроизведения |
 
@@ -113,10 +117,15 @@ pub struct Station {
 `has_geo_info=true` включается только при `SearchParams::has_geo_info`. Валидацию
 координат и группировку маркеров выполняет Application Core (ADR-0012).
 
+`random_station` сам проверяет станцию для Roulette: непустой `url_resolved`, конечные
+координаты в допустимых диапазонах и не `(0, 0)`. Если Radio Browser вернул неподходящую
+станцию, запрос повторяется (до трёх раз), затем возвращается `NotFound`.
+
 ## 7. Кэш и валидация
 
 - In-memory кэш `HashMap<String, Station>` до 512 записей; при переполнении очищается.
-- `search` запоминает все найденные станции, `get_station` — полученную станцию.
+- `search` запоминает все найденные станции, `get_station` и `random_station` —
+  полученную станцию.
 - `get_station` и `send_click` требуют UUID формата `8-4-4-4-12` (hex); иначе
   `RadioError::InvalidUuid`. Это защищает URL от подстановки произвольного пути.
 
@@ -131,10 +140,13 @@ pub struct Station {
 - разбор `geo_lat`/`geo_long`, включая `null`;
 - разбор `votes`/`country`/`state` и значения по умолчанию для старого JSON;
 - построение query без пустых фильтров и с `has_geo_info=true`;
+- query Roulette: `order=random`, `limit=1`, `has_geo_info`, без `reverse`;
+- отбор станции Roulette по URL и координатам (включая `(0, 0)` и NaN);
 - валидация UUID (включая попытку path traversal);
 - попадание в кэш по UUID;
 - ротация пула сохраняет все серверы;
-- живой тест `searches_and_fetches_live_station` (SomaFM, `--ignored`, требует сеть).
+- живой тест `searches_and_fetches_live_station` (SomaFM + Roulette, `--ignored`,
+  требует сеть).
 
 ## 10. Связанные ADR
 

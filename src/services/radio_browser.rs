@@ -16,6 +16,7 @@ use super::discovery::{API_BASE_URL, API_HOST, discover_servers};
 const USER_AGENT: &str = "OrbitFM/1.0 (ModernByte; Linux; Rust)";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const STATION_CACHE_CAPACITY: usize = 512;
+const RANDOM_ATTEMPTS: usize = 3;
 
 /// Параметры поиска станций.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -124,6 +125,26 @@ impl RadioBrowserClient {
             .collect();
         self.remember(&stations);
         Ok(stations)
+    }
+
+    /// Случайная станция с известными координатами для Roulette.
+    ///
+    /// Radio Browser иногда отдаёт станции без потока или координат даже при
+    /// `has_geo_info=true`, поэтому делается до трёх попыток.
+    pub async fn random_station(&self) -> Result<Station, RadioError> {
+        let query = random_query();
+        for attempt in 0..RANDOM_ATTEMPTS {
+            let stations: Vec<Station> = self.get_json("/json/stations/search", &query).await?;
+            if let Some(station) = stations.into_iter().find(is_roulette_candidate) {
+                self.remember(std::slice::from_ref(&station));
+                return Ok(station);
+            }
+            tracing::debug!(
+                attempt,
+                "Roulette: станция без потока или координат, повтор"
+            );
+        }
+        Err(RadioError::NotFound)
     }
 
     /// Возвращает станцию по UUID (сначала из кэша).
@@ -347,6 +368,29 @@ fn search_query(params: &SearchParams) -> Vec<(&'static str, String)> {
     query
 }
 
+fn random_query() -> Vec<(&'static str, String)> {
+    vec![
+        ("hidebroken", "true".to_owned()),
+        ("order", "random".to_owned()),
+        ("limit", "1".to_owned()),
+        ("has_geo_info", "true".to_owned()),
+    ]
+}
+
+fn is_roulette_candidate(station: &Station) -> bool {
+    if station.url_resolved.trim().is_empty() {
+        return false;
+    }
+    let (Some(lat), Some(lon)) = (station.geo_lat, station.geo_long) else {
+        return false;
+    };
+    lat.is_finite()
+        && lon.is_finite()
+        && (-90.0..=90.0).contains(&lat)
+        && (-180.0..=180.0).contains(&lon)
+        && (lat != 0.0 || lon != 0.0)
+}
+
 fn trimmed(value: &Option<String>) -> Option<String> {
     value
         .as_deref()
@@ -518,6 +562,43 @@ mod tests {
     }
 
     #[test]
+    fn random_query_requests_single_station_with_geo() {
+        let query = random_query();
+
+        assert!(query.contains(&("order", "random".to_owned())));
+        assert!(query.contains(&("limit", "1".to_owned())));
+        assert!(query.contains(&("has_geo_info", "true".to_owned())));
+        assert!(query.contains(&("hidebroken", "true".to_owned())));
+        assert!(!query.iter().any(|(key, _)| *key == "reverse"));
+    }
+
+    #[test]
+    fn roulette_candidate_requires_stream_and_valid_coordinates() {
+        let mut station = sample_station("c685c086-b716-4edd-b313-d4a7baf1084c");
+        station.geo_lat = Some(52.52);
+        station.geo_long = Some(13.405);
+        assert!(is_roulette_candidate(&station));
+
+        station.url_resolved.clear();
+        assert!(!is_roulette_candidate(&station));
+
+        let mut station = sample_station("c685c086-b716-4edd-b313-d4a7baf1084c");
+        assert!(!is_roulette_candidate(&station), "нет координат");
+
+        station.geo_lat = Some(0.0);
+        station.geo_long = Some(0.0);
+        assert!(!is_roulette_candidate(&station), "нулевые координаты");
+
+        station.geo_lat = Some(95.0);
+        station.geo_long = Some(13.405);
+        assert!(!is_roulette_candidate(&station), "широта вне диапазона");
+
+        station.geo_lat = Some(f64::NAN);
+        station.geo_long = Some(13.405);
+        assert!(!is_roulette_candidate(&station), "нечисловая широта");
+    }
+
+    #[test]
     fn omits_geo_filter_by_default() {
         let query = search_query(&SearchParams::default());
 
@@ -566,5 +647,12 @@ mod tests {
             .await
             .expect("не удалось получить станцию по UUID");
         assert_eq!(station.stationuuid, stations[0].stationuuid);
+
+        let random = client
+            .random_station()
+            .await
+            .expect("Roulette не вернула станцию");
+        assert!(!random.url_resolved.trim().is_empty());
+        assert!(random.geo_lat.is_some() && random.geo_long.is_some());
     }
 }
