@@ -13,9 +13,9 @@
     Country/GlobalGenre, состояния и критерии приёмки
   - `docs/ui/implementation-plan.md` — шесть фаз, изменения модулей `ui`/`geo`/
     `render`/`radio`, планируемые контракты, тесты и Definition of Done
-  - ADR-0015: UI выносится в `src/ui/`, вводятся `SearchMode`, локальные фильтры,
-    контур страны, `fly_to`, `random_station` и Fresnel pulse; формат library/
-    settings не меняется
+  - ADR-0015 (запланировано): UI выносится в `src/ui/`, вводятся `SearchMode`,
+    локальные фильтры, контур страны, `fly_to`, `random_station` и Fresnel pulse;
+    формат library/settings не меняется
   - ROADMAP Этап 8 и VERSIONMAP 0.7.0/0.8.0; внешняя публикация плагина и
     установщиков по-прежнему не выполняется
 - Нативные CI-джобы:
