@@ -1,3 +1,4 @@
+use std::io::IsTerminal;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -360,6 +361,7 @@ fn init_tracing() {
         .with_env_filter(filter)
         .with_target(false)
         .compact()
+        .with_ansi(std::io::stderr().is_terminal())
         .with_writer(std::io::stderr)
         .init();
 }
