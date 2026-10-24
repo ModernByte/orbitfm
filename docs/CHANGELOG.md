@@ -5,7 +5,12 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),  
 проект следует [Semantic Versioning](https://semver.org/lang/ru/).
 
-## [Unreleased]
+## [0.8.0-rc.1] - 2026-10-24
+
+Второй публичный пре-релиз: Application Core, честное скрытие окна, системный
+трей, режимы окна Overlay/Listening и доступность (Этап 8, фаза 7). Пакеты:
+AppImage и Flatpak для Linux x86_64, MSI для Windows x64, DMG для macOS — все без
+подписи и нотаризации.
 
 ### Добавлено
 - ADR-0018 (принято, редакция 2) — честное «close = hide» на целевом Wayland/niri:

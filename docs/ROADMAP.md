@@ -104,12 +104,12 @@
 Публикация в общий магазин `noctalia-dev/community-plugins` не выполняется:
 плагин распространяется как git-источник `ModernByte/orbitfm`.
 
-## Этап 8: UX «Orbital Desk» — завершён (релиз 0.8.0 готовится)
+## Этап 8: UX «Orbital Desk» — завершён (0.8.0-rc.1 выкатан)
 
 Целевой UX и макет — [`docs/ui/design-vision.md`](ui/design-vision.md); фазы,
 контракты и тесты — [`docs/ui/implementation-plan.md`](ui/implementation-plan.md);
 решение — [ADR-0015](adr/0015-ux-редизайн-orbital-desk.md). Фазы 1–7
-реализованы; фаза 6 вошла в 0.7.0-rc.1, фаза 7 выходит отдельным MINOR-релизом 0.8.0.
+реализованы; фаза 6 вошла в 0.7.0-rc.1, фаза 7 вышла пре-релизом 0.8.0-rc.1.
 
 - [x] Фаза 1: UI-каркас — HUD, правый drawer, transport, `src/ui/`, глобус доминирует
   (Roulette перенесён в Фазу 4)

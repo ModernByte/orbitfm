@@ -33,6 +33,15 @@
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.8.0-rc.1" date="2026-10-24">
+      <description>
+        <p>OrbitFM 0.8.0-rc.1 — Application Core и честное скрытие окна: эфир,
+        IPC, MPRIS и трей продолжают работу без UI-цикла. Режимы окна
+        Focus/Overlay/Listening с капсульными раскладками, иконка в системном
+        трее, клавиатурная навигация и focus-ring, cava-визуализатор, пульс
+        глобуса в такт музыке и авто-вращение после простоя.</p>
+      </description>
+    </release>
     <release version="0.7.0-rc.1" date="2026-10-23">
       <description>
         <p>OrbitFM 0.7.0-rc.1 — UX «Orbital Desk»: плавающая раскладка с full-bleed

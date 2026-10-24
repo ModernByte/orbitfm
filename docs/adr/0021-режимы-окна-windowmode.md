@@ -209,7 +209,7 @@ presentation-слоя на штатном egui-фокусе, без новых �
    `window_mode`, `set_window_mode`, `take_reopen`, `restore_size(mode)`, новый порядок
    `run_session`), `docs/modules/05-ipc.md`, `docs/ui/design-vision.md` § 2 и
    `docs/ui/implementation-plan.md` (Фаза 7 закрыта/начата), `wm-configs/`,
-   `docs/ROADMAP.md`, `docs/CHANGELOG.md`, `docs/VERSIONMAP.md` (0.8.0).
+   `docs/ROADMAP.md`, `docs/CHANGELOG.md`, `docs/VERSIONMAP.md` (0.8.0-rc.1).
 
 ## Последствия
 
