@@ -148,10 +148,13 @@ pub struct GlobeMotion {
     pub ripple_phase: f32,
     /// Музыкальная добавка к yaw, рад; камера решает, применять ли её.
     pub yaw_sway: f32,
-    /// Переворот камеры; включается в фазе 3.
+    /// Переворот камеры, рад. Анимацией владеет `GlobeCamera`; микшер
+    /// оставляет ноль, а presentation-слой кладёт сюда фактический roll кадра.
     pub roll: f32,
-    /// Усиление Fresnel-кромки, 0..=0.15.
+    /// Усиление Fresnel-кромки onset'ом, `0.0..=0.15`.
     pub flash: f32,
+    /// Импульс последнего onset `0.0..1.0`; затухает за ~0,18 с.
+    pub pulse: f32,
     /// Фаза бита 0..1; 0 — момент onset.
     pub beat_phase: f32,
     /// Время микшера, с.
@@ -171,6 +174,7 @@ impl Default for GlobeMotion {
             yaw_sway: 0.0,
             roll: 0.0,
             flash: 0.0,
+            pulse: 0.0,
             beat_phase: 0.0,
             time: 0.0,
             style: MotionStyle::Auto,
@@ -200,6 +204,17 @@ impl GlobeMotion {
     /// Значения `CameraUniform.motion2`: flash, style_id, beat_phase, time.
     pub fn uniform2_values(&self) -> [f32; 4] {
         [self.flash, self.style.id(), self.beat_phase, self.time]
+    }
+
+    /// Ослабляет геометрию, пока пользователь управляет камерой:
+    /// squash и рябь — до 35 % на полном приоритете (ADR-0028).
+    pub fn with_camera_priority(self, priority: f32) -> Self {
+        let factor = 1.0 - 0.65 * priority.clamp(0.0, 1.0);
+        Self {
+            deform: GlobeDeform::new(1.0 + (self.deform.scale_y() - 1.0) * factor),
+            ripple: self.ripple * factor,
+            ..self
+        }
     }
 }
 
@@ -762,6 +777,7 @@ impl MotionMixer {
                 yaw_sway: params.sway * sway,
                 roll: 0.0,
                 flash,
+                pulse: beat.pulse,
                 beat_phase: beat.phase,
                 time: self.time,
                 style,
@@ -776,6 +792,7 @@ impl MotionMixer {
             yaw_sway: 0.0,
             roll: 0.0,
             flash: 0.0,
+            pulse: 0.0,
             beat_phase: 0.0,
             time: self.time,
             style,
@@ -1188,6 +1205,25 @@ mod tests {
     }
 
     #[test]
+    fn camera_priority_weakens_geometry_to_thirty_five_percent() {
+        let motion = GlobeMotion {
+            deform: GlobeDeform::new(0.98),
+            ripple: 0.004,
+            ..GlobeMotion::default()
+        };
+
+        let weakened = motion.with_camera_priority(1.0);
+        assert!((weakened.deform.scale_y() - (1.0 - 0.02 * 0.35)).abs() < 1e-6);
+        assert!((weakened.ripple - 0.004 * 0.35).abs() < 1e-6);
+        assert!((motion.with_camera_priority(0.0).deform.scale_y() - 0.98).abs() < 1e-6);
+        assert!(
+            (motion.with_camera_priority(2.0).deform.scale_y() - weakened.deform.scale_y()).abs()
+                < 1e-6,
+            "приоритет ограничен единицей"
+        );
+    }
+
+    #[test]
     fn detector_tracks_regular_onsets() {
         let mut detector = OnsetDetector::default();
         let mut state = BeatState::default();
@@ -1403,6 +1439,31 @@ mod tests {
         );
         assert!(motion.intensity > 0.0);
         assert_eq!(motion.uniform2_values()[1], MotionStyle::BeatMarch.id());
+    }
+
+    #[test]
+    fn mixer_exposes_onset_pulse_and_clears_it_when_off() {
+        let mut mixer = MotionMixer::default();
+        let mut peak = 0.0_f32;
+        for frame in 0..(2.0 * 20.0) as usize {
+            let bass = if frame % 10 == 0 { 1.0 } else { 0.08 };
+            let motion = mixer.update(
+                Some(pulse(bass)),
+                MotionReactivity::Normal,
+                MotionStyle::SoftPulse,
+                ONSET_STEP,
+            );
+            peak = peak.max(motion.pulse);
+        }
+        assert!(peak > 0.0, "onset должен попадать в GlobeMotion.pulse");
+
+        let off = mixer.update(
+            Some(pulse(1.0)),
+            MotionReactivity::Off,
+            MotionStyle::SoftPulse,
+            ONSET_STEP,
+        );
+        assert_eq!(off.pulse, 0.0);
     }
 
     #[test]

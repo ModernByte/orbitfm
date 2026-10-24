@@ -177,8 +177,9 @@ presentation-слоем позже — в `logic()` следующего кад�
 6. `Escape` закрывает карточку управления (`session.show_help = false` + `mark_help_seen`).
 7. Repaint-политика: при включённом визуализаторе и `Playing`/`Buffering` — repaint через 33 мс
    (`SPECTRUM_REPAINT`); `draw_layers` добавляет кадры движения (33 мс при активном
-   эфире, 66 мс для idle-дыхания; при `Off`/Reduce motion — без лишних кадров);
-   пульс маркеров запрашивает repaint сам `globe_view`.
+   эфире, 66 мс для idle-дыхания; при `Off`/Reduce motion — без лишних кадров;
+   идущий переворот камеры также продлевает repaint; пульс маркеров запрашивает
+   repaint сам `globe_view`.
 
 `ui()` вызывает `draw()`: `Frame::capture` снимает читаемое состояние в снапшот,
 `egui::CentralPanel` с прозрачной рамкой рисует `draw_layers` (глобус → HUD → панель →
@@ -312,8 +313,10 @@ focusable, ↑/↓ переводят фокус на соседа по види
   воспроизведение; число столбцов (16/24/32) выбирается в попапе шестерёнки
   (`UiAction::SetVizBars` → `Settings::viz_bars`, модель перестраивается на месте);
 - секция `Motion` в попапе шестерёнки: реактивность Off/Low/Normal/High,
-  `Reduce motion` и `Motion style` (`UiAction::SetMotionStyle` →
-  `Session::set_motion_style`); ошибка сохранения показывается тостом;
+  `Reduce motion`, `Allow flips` и `Motion style` (`UiAction::SetMotionStyle` →
+  `Session::set_motion_style`, `UiAction::SetAllowFlips` →
+  `Session::set_allow_flips`); переключатель переворотов недоступен при
+  `Off`/Reduce motion; ошибка сохранения показывается тостом;
 - сглаженный сигнал эфира (`0.75·level + 0.25·flux`) передаётся в кольцо
   Listening: оно пульсирует при Playing и затухает при Stop и выключенном
   визуализаторе; глобус живёт по ADR-0028 (squash, рябь, стиль и `flash` от
@@ -343,7 +346,7 @@ focusable, ↑/↓ переводят фокус на соседа по види
 и через методы ядра — `Session::start_station`, `focus_country`, `start_country_search`,
 `start_genre_search`, `start_search`, `switch_mode`, `start_roulette`, `toggle_favorite`,
 `clear_history`, `set_theme`, `set_accent`, `set_visualizer_enabled`, `set_viz_bars`,
-`set_motion`, `set_motion_style`, `set_reduce_motion`,
+`set_motion`, `set_motion_style`, `set_allow_flips`, `set_reduce_motion`,
 `set_volume`, `play_relative`, `toggle_playback`, `stop_playback`, `hide`, `quit`,
 `window_mode`/`set_window_mode`, `motion_reactivity`, `tick`, `take_intent`, `take_notices`,
 `panel_open`/`show_help`.

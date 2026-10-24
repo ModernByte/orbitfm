@@ -273,6 +273,18 @@ fn right_side(
                     {
                         menu_action = Some(UiAction::SetReduceMotion(reduce_motion));
                     }
+                    let flips_available = state.settings.motion != MotionReactivity::Off
+                        && !state.settings.reduce_motion;
+                    let mut allow_flips = state.settings.allow_flips;
+                    ui.add_enabled_ui(flips_available, |ui| {
+                        if ui
+                            .checkbox(&mut allow_flips, "Allow flips")
+                            .on_hover_text("Roll the camera on strong beats after a pause")
+                            .changed()
+                        {
+                            menu_action = Some(UiAction::SetAllowFlips(allow_flips));
+                        }
+                    });
                     ui.add_space(4.0);
                     ui.label(
                         egui::RichText::new("Motion style")

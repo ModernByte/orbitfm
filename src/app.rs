@@ -266,6 +266,9 @@ impl<'a> OrbitApp<'a> {
                             backdrop: density == LayoutDensity::Full,
                             ring: &*orbit_ring,
                             layout,
+                            allow_flips: frame.settings.allow_flips
+                                && density == LayoutDensity::Full
+                                && frame.motion_reactivity.is_enabled(),
                             callout,
                         },
                     )
@@ -500,7 +503,7 @@ impl<'a> OrbitApp<'a> {
 
         if frame.motion_reactivity.is_enabled() {
             // Активный эфир — 30 fps; idle-дыханию хватает 15 fps.
-            let cadence = if motion.intensity > 0.01 {
+            let cadence = if motion.intensity > 0.01 || session.globe_camera.is_flipping() {
                 SPECTRUM_REPAINT
             } else {
                 MOTION_IDLE_REPAINT
@@ -561,6 +564,11 @@ impl<'a> OrbitApp<'a> {
             }
             UiAction::SetMotionStyle(style) => {
                 if let Err(err) = self.session.set_motion_style(style) {
+                    self.toast.error(ctx, format!("Motion not saved: {err}"));
+                }
+            }
+            UiAction::SetAllowFlips(allow) => {
+                if let Err(err) = self.session.set_allow_flips(allow) {
                     self.toast.error(ctx, format!("Motion not saved: {err}"));
                 }
             }

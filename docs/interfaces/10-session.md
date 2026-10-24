@@ -74,6 +74,7 @@ Application Core — слой, который переживает закрыт�
 | `set_visualizer_enabled` | `pub(crate) fn set_visualizer_enabled(&mut self, enabled: bool) -> Result<(), String>` | Пользовательский переключатель визуализатора и кольца; включает или выключает аудио-анализ по `analysis_needed`, при ошибке поле откатывается к значению движка (ADR-0028) |
 | `set_motion` | `pub(crate) fn set_motion(&mut self, motion: MotionReactivity) -> Result<(), String>` | Сохраняет реактивность движения и пересчитывает необходимость анализа |
 | `set_motion_style` | `pub(crate) fn set_motion_style(&mut self, style: MotionStyle) -> Result<(), String>` | Сохраняет характер движения (`Auto` или один из шести стилей) |
+| `set_allow_flips` | `pub(crate) fn set_allow_flips(&mut self, allow: bool) -> Result<(), String>` | Сохраняет разрешение переворотов камеры (ADR-0028) |
 | `set_reduce_motion` | `pub(crate) fn set_reduce_motion(&mut self, reduce: bool) -> Result<(), String>` | Сохраняет Reduce motion и пересчитывает необходимость анализа |
 | `motion_reactivity` | `pub(crate) fn motion_reactivity(&self) -> MotionReactivity` | Эффективная реактивность: Reduce motion → `Off`; Focus — настройка, Overlay — не выше `Low`, Listening — `Off` |
 | `analysis_needed` | `pub(crate) fn analysis_needed(&self) -> bool` | `visualizer_enabled \|\| (motion.is_enabled() && !reduce_motion)` — анализ нужен хотя бы одному потребителю |
@@ -207,7 +208,7 @@ pub(crate) const LISTENING_TITLE: &str = "OrbitFM · Listening";
 - геометрия окна хранится как `[f32; 2]`, а не `egui::Vec2`;
 - ошибки возвращаются как `Result<_, String>` (`start_station`, `set_volume`,
   `set_theme`, `set_accent`, `set_viz_bars`, `set_visualizer_enabled`,
-  `set_motion`, `set_reduce_motion`), а не как
+  `set_motion`, `set_motion_style`, `set_allow_flips`, `set_reduce_motion`), а не как
   доменный тип UI;
 - способ сообщить пользователю выбирает вызывающий: UI показывает `Toast`
   (`Notice`, а также собственные `Err` от методов), припаркованный цикл пишет

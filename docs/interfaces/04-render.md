@@ -18,24 +18,45 @@ pub struct GlobeInput {
 
 /// Орбитальная камера вокруг глобуса радиусом 1.
 #[derive(Debug)]
-pub struct GlobeCamera { /* yaw, pitch, distance, velocities, fly, idle */ }
+pub struct GlobeCamera {
+    /* yaw, pitch, distance, velocities, fly, idle,
+       priority, sway, flip, roll, flip_cooldown, flip_direction */
+}
 
 impl Default for GlobeCamera { /* ... */ }
 
 impl GlobeCamera {
-    /// Обновляет ориентацию, инерцию, зум и авто-вращение по вводу за кадр.
-    /// `dt` — сглаженный интервал физики; `elapsed` — фактический интервал
-    /// кадра для отсчёта простоя (после сна окна `stable_dt` остаётся малым).
-    pub fn advance(&mut self, dt: f32, elapsed: f32, input: &GlobeInput);
+    /// Обновляет ориентацию, инерцию, зум, авто-вращение, музыкальную качку
+    /// и перевороты по вводу за кадр. `dt` — сглаженный интервал физики;
+    /// `elapsed` — фактический интервал кадра для отсчёта простоя (после сна
+    /// окна `stable_dt` остаётся малым). `motion` задаёт `yaw_sway` и `pulse`;
+    /// `allow_flips` приходит из Core с учётом режима окна и Reduce motion.
+    pub fn advance(
+        &mut self,
+        dt: f32,
+        elapsed: f32,
+        input: &GlobeInput,
+        motion: &GlobeMotion,
+        allow_flips: bool,
+    );
 
     /// Плавно переводит камеру к точке `(lat, lon)` за `duration`.
     /// Идёт по кратчайшей дуге долготы; инерция сбрасывается; перетаскивание
     /// отменяет доворот.
     pub fn fly_to(&mut self, lat: f64, lon: f64, duration: std::time::Duration);
 
-    /// Идёт ли движение, требующее перерисовки: доворот, инерция или
-    /// авто-вращение в простое.
+    /// Идёт ли движение, требующее перерисовки: доворот, инерция,
+    /// авто-вращение в простое или переворот.
     pub fn is_animating(&self) -> bool;
+
+    /// Идёт ли переворот или его остаточный roll.
+    pub fn is_flipping(&self) -> bool;
+
+    /// Текущий roll камеры вокруг оси взгляда, рад.
+    pub fn roll(&self) -> f32;
+
+    /// Приоритет пользователя: 0 — камера свободна, 1 — ей управляют.
+    pub fn camera_priority(&self) -> f32;
 
     /// Идёт ли медленное авто-вращение после 4 с без взаимодействия.
     pub fn is_idle_spinning(&self) -> bool;
@@ -87,7 +108,7 @@ impl GlobeRenderer {
 }
 
 /// Добавляет paint callback глобуса в painter. `motion` задаёт squash,
-/// рябь и flash текущего кадра.
+/// рябь и flash текущего кадра; roll уже входит в `view_proj` камеры.
 pub fn paint_globe(
     painter: &egui::Painter,
     rect: egui::Rect,
@@ -177,12 +198,16 @@ pub struct GlobeMotion {
     /// Амплитуда радиальной ряби, `0.0..=0.004`.
     pub ripple: f32,
     pub ripple_phase: f32,
-    /// Музыкальная добавка к yaw, рад; камера решает, применять ли её (Phase 3).
+    /// Музыкальная добавка к yaw, рад; камера решает, применять ли её.
     pub yaw_sway: f32,
-    /// Переворот камеры; включается в Phase 3.
+    /// Фактический roll камеры, рад. Микшер оставляет 0; анимацией владеет
+    /// `GlobeCamera`, presentation-слой кладёт сюда снимок кадра.
     pub roll: f32,
     /// Усиление Fresnel-кромки onset'ом, `0.0..=0.15`.
     pub flash: f32,
+    /// Импульс последнего onset `0.0..=1.0`; затухает за ~0,18 с и служит
+    /// триггером переворота.
+    pub pulse: f32,
     /// Фаза бита `0.0..1.0`; 0 — момент onset.
     pub beat_phase: f32,
     /// Время микшера, с.
@@ -201,6 +226,8 @@ impl GlobeMotion {
     pub fn uniform_values(&self) -> [f32; 4];
     /// Значения `CameraUniform.motion2`: `[flash, style_id, beat_phase, time]`.
     pub fn uniform2_values(&self) -> [f32; 4];
+    /// Ослабляет squash и ripple до 35 % при полном приоритете камеры.
+    pub fn with_camera_priority(self, priority: f32) -> Self;
 }
 
 /// Spring-squash, огибающие, onset/beat, стили и idle-дыхание;
@@ -288,6 +315,18 @@ impl SpectrumOverlay {
   восток. Доворот `fly_to` и любое взаимодействие сбрасывают отсчёт. Наведение
   курсора простоем не считается. `idle_countdown` возвращает остаток паузы,
   `is_idle_spinning` — факт вращения.
+- Музыкальный sway входит в `eye()` как добавка `yaw_sway·(1 − priority)`.
+  Приоритет сглаживается с τ 80 мс: drag/zoom/клик/`fly_to` за 150–250 мс
+  выводят его к 1, после отпускания — обратно к 0. Squash и ripple при полном
+  приоритете ослаблены до 35 % (`GlobeMotion::with_camera_priority`).
+- Переворот — roll камеры вокруг оси взгляда: `projection · rotation_z(roll) ·
+  view`. Анимацией владеет `GlobeCamera`; триггер — фронт `pulse ≥ 0,6`.
+  Длительность 0,9 с (диапазон 0,6–1,2 с), кулдаун 12 с, направление
+  чередуется. Старт только при `allow_flips`, простое ≥2 с, отсутствии
+  drag/`fly_to`, приоритете ≤0,5 и pitch не у края ±85° (запас 5°).
+  Взаимодействие или снятие `allow_flips` отменяет переворот, остаточный roll
+  затухает с τ 80 мс. Все проекции и hit-test используют одну матрицу,
+  поэтому согласованы автоматически.
 - `screen_to_sphere_deformed` переводит луч (`eye`, near, far) в пространство
   единичной сферы обратным масштабом `GlobeDeform::to_unit` и возвращает точку
   единичной сферы для `GeoService`; без деформации это прежний
@@ -329,7 +368,9 @@ impl SpectrumOverlay {
 - Стилевые добавки: `yaw_sway = params.sway·(sin(2π·beat_phase)·gate +
   params.drift·sin(drift_phase))`; `flash = params.flash·pulse·gate·release`
   (≤0,15); рябь — `ripple_limit·release·(params.ripple·high_env + 0,3·drift·
-  (0,5 + 0,5·sin(drift_phase)))`; `roll` остаётся нулём до Phase 3.
+  (0,5 + 0,5·sin(drift_phase)))`. `pulse` — затухающий импульс onset'а
+  (τ 0,18 с); микшер выставляет `roll = 0`, фактический roll кадра пишет
+  presentation-слой из `GlobeCamera`.
 - `projected_radius(viewport)` — экранный радиус силуэта единичной сферы:
   `focal = 0.5·height / tan(FOV/2)`, `radius = focal / sqrt(distance² − 1)`.
   Нулевой или нечисловой viewport даёт 0. Центр силуэта совпадает с центром

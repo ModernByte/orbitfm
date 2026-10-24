@@ -3,9 +3,11 @@
 **Организация:** ModernByte  
 **Дата:** 2026-10-24  
 **Статус:** Принято. Phase 0 (полосы эфира), Phase 1 (ядро движения, squash,
-idle-дыхание, деформация всех слоёв) и Phase 2 (onset/beat, шесть стилей, Auto
-с гистерезисом, uniform `motion2`, flash) реализованы. Фазы 3–4 — план. Документ
-фиксирует концепцию, контракты и поэтапный план.  
+idle-дыхание, деформация всех слоёв), Phase 2 (onset/beat, шесть стилей, Auto
+с гистерезисом, uniform `motion2`, flash) и Phase 3 (sway камеры, перевороты,
+приоритет взаимодействия и режимы) реализованы. Phase 4 — полировка, live-look
+и платформенная приёмка. Документ фиксирует концепцию, контракты и поэтапный
+план.  
 **Связанные решения:** [ADR-0027](../adr/0027-трёхполосный-анализ-эфира.md) (полосы),
 [ADR-0028](../adr/0028-аудио-реактивная-деформация-глобуса.md) (движение),
 [ADR-0029](../adr/0029-орбитальное-аудиокольцо.md) (кольцо за глобусом);
@@ -50,13 +52,13 @@ idle-дыхание, деформация всех слоёв) и Phase 2 (onset
 |------|-------------|
 | `SpectrumFrame` с centroid, spread, rolloff, flatness, flux, RMS | Bass/Mid/High приходят в `bands` |
 | `SpectrumTarget.bands` (Phase 0) | Bass/High ведут squash и рябь, Bass/flux — onset, доли полос — Auto (Phase 1–2) |
-| `MotionMixer`, `GlobeDeform`, `GlobeMotion` (Phase 1–2) | Onset, beat и шесть стилей реализованы; sway/roll камеры и перевороты — Phase 3 |
+| `MotionMixer`, `GlobeDeform`, `GlobeMotion` (Phase 1–3) | Onset, beat, шесть стилей, sway и перевороты реализованы; live-приёмка — Phase 4 |
 | `SpectrumOverlay`: сглаженные level/flux, `pulse()` | Питает кольцо Listening; на глобус не идёт |
 | Fresnel-обод в `globe.wgsl` | `flash` от onset усиливает кромку; фонового аудио-пульса нет |
-| Авто-вращение после 4 с простоя (ADR-0023) | Музыкальная качка и перевороты — Phase 3 |
-| `GlobeCamera` с orbit/inertia/fly_to/idle | Нет roll и музыкальных offset'ов (Phase 3) |
-| Маркеры, страны и hit-test используют общий `GlobeDeform` | Деформация согласована (Phase 1) |
-| `Settings`: тема, акцент, `viz_bars`, `help_seen`, `motion`, `motion_style`, `allow_flips`, `reduce_motion` | Стиль выбирается в HUD; flips ждут Phase 3 |
+| Авто-вращение после 4 с простоя (ADR-0023) | Остаётся базовым слоем; музыкальная качка и перевороты — Phase 3 |
+| `GlobeCamera` с orbit/inertia/fly_to/idle | Sway, приоритет и camera roll реализованы (Phase 3) |
+| Маркеры, страны и hit-test используют общий `GlobeDeform` | Деформация и roll согласованы (Phase 1, 3) |
+| `Settings`: тема, акцент, `viz_bars`, `help_seen`, `motion`, `motion_style`, `allow_flips`, `reduce_motion` | Стиль и `Allow flips` выбираются в HUD; flips реализованы |
 | `OrbitRing`: круговой слой за глобусом (ADR-0029) | Не деформирует планету; питается шестью агрегатами, а не полосами |
 | cava-визуализатор синтетический (ADR-0022) | Полосы не дают per-bin спектр; это не меняется |
 
@@ -178,14 +180,24 @@ Auto:
 
 ### 4.5. Камера и перевороты
 
-- `yaw_sway` — добавка к yaw камеры, только когда нет drag/zoom/click/fly_to;
-- при взаимодействии качка и roll гасятся за 150–250 мс, squash/ripple
-  ослабляются до 35 %;
+- `yaw_sway` — добавка к yaw камеры, только когда нет drag/zoom/click/fly_to:
+  `sway = motion.yaw_sway·(1 − priority)`;
+- `priority` сглаживается с τ 80 мс: при взаимодействии 150–250 мс выводят его
+  к 1, после отпускания качка возвращается плавно; squash/ripple при полном
+  приоритете ослаблены до 35 % (`with_camera_priority`);
 - авто-вращение ADR-0023 остаётся базовым слоем;
-- переворот — **roll камеры** вокруг оси взгляда, а не поворот модели;
-- перевороты: default off, 0,6–1,2 с, кулдаун 12 с (диапазон 8–20 с),
-  только на сильном onset, только при простое ≥ 2 с;
-- в Overlay/Listening и при Reduce motion перевороты запрещены.
+- переворот — **roll камеры** вокруг оси взгляда, а не поворот модели:
+  `projection · rotation_z(roll) · view`; все проекции и hit-test используют
+  одну матрицу;
+- триггер — фронт `pulse ≥ 0,6`; перевороты: default off, 0,9 с (диапазон
+  0,6–1,2 с), кулдаун 12 с (диапазон 8–20 с), направление чередуется;
+- старт только при `allow_flips`, простое ≥ 2 с, отсутствии drag/`fly_to`,
+  `priority ≤ 0,5` и pitch не у края ±85° (запас 5°);
+- drag, `fly_to` или снятие `allow_flips` отменяют переворот, остаточный roll
+  затухает с τ 80 мс;
+- в Overlay/Listening и при Reduce motion перевороты запрещены: `allow_flips`
+  для камеры вычисляется как настройка ∧ `Full` ∧ включённая эффективная
+  реактивность; в HUD переключатель недоступен при Off/Reduce motion.
 
 ### 4.6. Stop и idle
 
@@ -299,15 +311,15 @@ analysis_needed = visualizer_enabled
 | `src/audio/worker.rs` | `@level` + `@spectrum`, выбор stereo/mono-графа, fallback, чтение 12 ключей |
 | `src/render/spectrum.rs` | `SpectrumTarget.bands`, нормирование полос |
 | `src/render/motion.rs` | **новый**: `GlobeMotion`, `MotionMixer`, `GlobeDeform`, onset/beat, шесть стилей и Auto |
-| `src/render/camera.rs` | `roll`, музыкальные offset'ы, `view_proj` с roll |
+| `src/render/camera.rs` | `priority`, `sway`, flip-анимация, `roll`, `view_proj` с roll |
 | `src/render/globe.rs` | `CameraUniform.motion/motion2`, `GlobeCallback` с `GlobeMotion` |
 | `src/render/globe.wgsl` | squash, ripple, flash |
 | `src/render/countries.rs` | проекция колец через `GlobeDeform` |
-| `src/ui/globe_view.rs` | deform в маркерах/странах/hit-test, repaint |
-| `src/app.rs` | `MotionMixer`, `SpectrumTarget` с полосами, настройки в `Frame` |
+| `src/ui/globe_view.rs` | deform в маркерах/странах/hit-test, `allow_flips`, repaint |
+| `src/app.rs` | `MotionMixer`, `SpectrumTarget` с полосами, настройки в `Frame`, режимные ограничения |
 | `src/settings/mod.rs` | новые поля и enum'ы |
-| `src/ui/hud.rs` | секция Motion |
-| `src/ui/mod.rs` | `UiAction::SetMotion*` |
+| `src/ui/hud.rs` | секция Motion и `Allow flips` |
+| `src/ui/mod.rs` | `UiAction::SetMotion*`, `SetAllowFlips` |
 | `src/session/{mod,commands}.rs` | сеттеры настроек и `analysis_needed` |
 | `docs/interfaces/01-audio.md`, `docs/modules/01-audio-engine.md` | контракт полос (Phase 0) |
 | `docs/interfaces/{04-render,09-settings}.md`, `docs/modules/{04-render-globe,10-settings}.md` | контракт движения (Phase 1–3) |
@@ -404,7 +416,7 @@ niri остаётся в Phase 4.
 отложена до Phase 4: текущая среда не даёт открыть HUD и управлять эфиром
 без вмешательства в запущенный экземпляр.
 
-### Phase 3 — Камера, перевороты и режимы
+### Phase 3 — Камера, перевороты и режимы — реализовано
 
 **Задачи:**
 
@@ -420,6 +432,18 @@ niri остаётся в Phase 4.
 - переворот не запускается при `fly_to`, клике, Overlay/Listening;
 - Reduce motion и Off полностью исключают качку/roll;
 - hit-test и страны согласованы после roll (общая `view_proj`).
+
+Проверено 2026-10-24 на Linux: `cargo fmt`, `cargo clippy --all-targets --
+-D warnings` и `cargo test` (278 тестов) чисты. Покрыто unit-тестами: sway
+следует за свободной камерой, гаснет при drag и плавно возвращается; squash
+и рябь ослабляются до 35 % на полном приоритете; переворот не стартует без
+разрешения, простоя, при крайнем pitch и вне фронта onset; длительность 0,9 с
+и кулдаун 12 с соблюдаются; drag отменяет переворот с затуханием roll;
+повёрнутая матрица сохраняет согласованность `project_on_sphere` и
+`screen_to_sphere_deformed`; `allow_flips` переживает roundtrip настроек.
+Режимные ограничения вычисляются в `app.rs` (`Full` ∧ реактивность ∧
+настройка) и проверены через существующие тесты `motion_reactivity`;
+живая проверка на niri — Phase 4.
 
 ### Phase 4 — Полировка и приёмка
 
@@ -461,7 +485,13 @@ niri остаётся в Phase 4.
   без полос;
 - ручной стиль без полос уходит в Soft Pulse; стилевые добавки соблюдают
   лимиты реактивности;
-- приоритет камеры: drag/zoom/fly гасят sway и flips;
+- приоритет камеры: drag/zoom/fly гасят sway и flips; squash/ripple
+  ослабляются до 35 %, после отпускания sway возвращается;
+- перевороты: старт только при разрешении, простое ≥2 с, сильном onset и
+  pitch не у края; длительность 0,9 с, кулдаун 12 с; drag отменяет
+  переворот, остаточный roll затухает;
+- roll: `project_on_sphere` и `screen_to_sphere_deformed` согласованы после
+  поворота матрицы, радиус проекции сохраняется;
 - режимы: Overlay ≤ Low, Listening Off;
 - `GlobeDeform`: прямой/обратный ray roundtrip, идентичность;
 - `CameraUniform` POD/размер/выравнивание.
@@ -509,8 +539,10 @@ niri остаётся в Phase 4.
 5. **Idle-дыхание на старте.** Дышать сразу при запуске или только после
    первого Play/Stop? Предлагается сразу, но с 15 fps; нужно подтвердить.
 6. **Перевороты.** Camera roll визуально эквивалентен перевороту планеты,
-   но свет остаётся мировым. Устраивает ли это как «переворот»? Если нужен
-   именно поворот модели — потребуется общая модельная матрица, это дороже.
+   но свет остаётся мировым. В Phase 3 принят именно camera roll: он дешевле
+   общей модельной матрицы и автоматически согласует mesh, маркеры, страны и
+   hit-test. Вопрос о повороте модели закрыт, если live-приёмка Phase 4 не
+   выявит визуальной проблемы.
 
 ---
 

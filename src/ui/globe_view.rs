@@ -169,6 +169,8 @@ pub(crate) struct GlobeState<'a> {
     pub ring: &'a OrbitRing,
     /// Плавающие зоны HUD: ввод под ними не доходит до глобуса.
     pub layout: DeskLayout,
+    /// Перевороты разрешены: Focus, движение включено и настройка активна.
+    pub allow_flips: bool,
     /// Callout страны: переживает кадр ради fade-in/out (ТЗ §1.2).
     pub callout: &'a mut CalloutState,
 }
@@ -226,8 +228,17 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
     }
 
     let (dt, elapsed) = ui.input(|input| (input.stable_dt, input.unstable_dt));
-    state.camera.advance(dt, elapsed, &input);
-    let deform = state.motion.deform;
+    state
+        .camera
+        .advance(dt, elapsed, &input, state.motion, state.allow_flips);
+    // Пока камера под управлением пользователя, squash и рябь ослабляются
+    // до 35 %; качка гасится самим камерным приоритетом (ADR-0028).
+    let mut motion = state
+        .motion
+        .with_camera_priority(state.camera.camera_priority());
+    // Переворот живёт в камере: снимок отражает фактический roll кадра.
+    motion.roll = state.camera.roll();
+    let deform = motion.deform;
 
     let marker_screens = marker_screens(state.camera, state.markers, globe_rect, &deform);
 
@@ -255,7 +266,7 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
         paint_vignette(ui.painter(), globe_rect);
     }
 
-    paint_globe(ui.painter(), globe_rect, state.camera, state.motion);
+    paint_globe(ui.painter(), globe_rect, state.camera, &motion);
 
     let hovered = hover_pos.and_then(|position| nearest_marker(&marker_screens, position));
     let hovered_country =

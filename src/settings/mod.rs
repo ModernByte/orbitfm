@@ -338,6 +338,14 @@ impl SettingsStore {
         self.save()
     }
 
+    pub fn set_allow_flips(&mut self, allow: bool) -> Result<(), SettingsError> {
+        if self.settings.allow_flips == allow {
+            return Ok(());
+        }
+        self.settings.allow_flips = allow;
+        self.save()
+    }
+
     pub fn set_motion_style(&mut self, style: MotionStyle) -> Result<(), SettingsError> {
         if self.settings.motion_style == style {
             return Ok(());
@@ -477,6 +485,19 @@ mod tests {
         assert_eq!(store.settings().motion_style, MotionStyle::GrooveSway);
         assert!(!store.settings().allow_flips);
         assert!(store.settings().reduce_motion);
+    }
+
+    #[test]
+    fn roundtrip_persists_allow_flips() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        {
+            let mut store = SettingsStore::load(path.clone()).unwrap();
+            store.set_allow_flips(true).unwrap();
+        }
+
+        let store = SettingsStore::load(path).unwrap();
+        assert!(store.settings().allow_flips);
     }
 
     #[test]

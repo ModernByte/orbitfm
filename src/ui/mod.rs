@@ -49,6 +49,8 @@ pub(crate) enum UiAction {
     SetMotion(MotionReactivity),
     /// Характер движения: Auto или один из шести стилей.
     SetMotionStyle(MotionStyle),
+    /// Перевороты камеры на сильном onset (ADR-0028).
+    SetAllowFlips(bool),
     /// Reduce motion: выключить геометрическое движение, оставив эфир.
     SetReduceMotion(bool),
     SetVolume(f64),

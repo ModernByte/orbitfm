@@ -195,7 +195,7 @@ src/ui/
 - `src/app.rs` — единственная точка побочных эффектов: `apply_actions`/`apply_action`
   выполняют `Play`, `ToggleFavorite`, `SelectCountry`, `SwitchMode`, `SelectGenre`,
   `RunSearch`, `Roulette`, `ClearHistory`, `SetTheme`, `SetAccent`, `ToggleSpectrum`,
-  `SetVizBars`, `SetMotion`, `SetMotionStyle`, `SetReduceMotion`, `SetVolume`, `TogglePlayback`, `Stop`,
+  `SetVizBars`, `SetMotion`, `SetMotionStyle`, `SetAllowFlips`, `SetReduceMotion`, `SetVolume`, `TogglePlayback`, `Stop`,
   `PlayRelative`, `Hide`, `Quit`,
   `TogglePanel`, `ToggleHelp`, `SetWindowMode`, превращая каждое в вызов метода
   `Session`, и после каждого действия просят repaint.
@@ -310,11 +310,14 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
 1. ПКМ + drag → `GlobeInput::drag_delta`; колесо при наведении → `scroll_delta`;
    ЛКМ → `primary_clicked`. Ввод под плавающими зонами отсекается
    `DeskLayout::blocks_point`.
-2. `GlobeCamera::advance(stable_dt, &input)` обновляет ориентацию, инерцию и зум.
-   `OrbitRing::paint` рисует кольцо до `paint_globe`, поэтому сфера перекрывает
-   его внутреннюю часть (ADR-0029). `GlobeState.motion` пришёл из `MotionMixer`;
-   `globe_view` один раз за кадр получает `GlobeMotion.deform` и передаёт его
-   шейдеру, странам, маркерам, callout и hit-test.
+2. `GlobeCamera::advance(stable_dt, elapsed, &input, &motion, allow_flips)`
+   обновляет ориентацию, инерцию, зум, музыкальный sway и перевороты.
+   `allow_flips` вычисляется здесь: настройка `allow_flips` ∧ `Full` ∧
+   эффективная реактивность включена; `OrbitRing::paint` рисует кольцо до
+   `paint_globe`, поэтому сфера перекрывает его внутреннюю часть (ADR-0029).
+   `GlobeState.motion` пришёл из `MotionMixer`; `globe_view` один раз за кадр
+   получает `GlobeMotion` с ослабленной при взаимодействии геометрией и
+   передаёт `deform` шейдеру, странам, маркерам, callout и hit-test.
 3. Hover страны (только в режиме «Страна»):
    `screen_to_sphere_deformed(hover_pos, viewport, &deform)` →
    `country_at_sphere_point` (при ПКМ-drag hover отключается). `globe_view` рисует
@@ -403,7 +406,8 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
   агрегатов, `dt` и времени. В Overlay/Listening кольцо не рисуется.
 - Пока визуализатор активен, `logic()` просит кадр каждые ~33 мс. `draw_layers`
   добавляет кадры движения: ~33 мс при `motion.intensity > 0.01`, ~66 мс для
-  idle-дыхания и ни одного лишнего кадра при `Off`/Reduce motion. В `globe_view`
+  idle-дыхания, кадры на время переворота (`globe_camera.is_flipping()`) и ни
+  одного лишнего кадра при `Off`/Reduce motion. В `globe_view`
   repaint запрашивается на ~33 мс при играющем маркере, анимирующемся кольце или
   авто-вращении; при ручном вращении и довороте — без задержки; до начала
   авто-вращения окно будится к концу 4-секундной паузы.

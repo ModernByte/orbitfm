@@ -45,6 +45,24 @@ struct FlyAnimation {
     duration: f32,
 }
 
+/// Переворот камеры вокруг оси взгляда (ADR-0028).
+#[derive(Debug, Clone, Copy)]
+struct FlipAnimation {
+    elapsed: f32,
+    duration: f32,
+    direction: f32,
+}
+
+/// Перевороты: длительность, кулдаун и порог сильного onset.
+const FLIP_DURATION: f32 = 0.9;
+const FLIP_COOLDOWN: f32 = 12.0;
+const FLIP_IDLE: f32 = 2.0;
+const FLIP_PULSE: f32 = 0.6;
+const FLIP_PITCH_MARGIN: f32 = 5.0 * std::f32::consts::PI / 180.0;
+/// Сглаживание приоритета камеры и остаточного roll, с.
+const CAMERA_PRIORITY_TAU: f32 = 0.08;
+const ROLL_RELEASE_TAU: f32 = 0.08;
+
 /// Униформ-данные камеры для шейдера.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -69,6 +87,16 @@ pub struct GlobeCamera {
     fly: Option<FlyAnimation>,
     /// Сколько секунд прошло без взаимодействия с глобусом.
     idle: f32,
+    /// 1 — пользователь управляет камерой, 0 — камера свободна; сглажено.
+    priority: f32,
+    /// Музыкальная добавка к yaw с учётом приоритета, рад.
+    sway: f32,
+    flip: Option<FlipAnimation>,
+    /// Текущий roll камеры, рад.
+    roll: f32,
+    flip_cooldown: f32,
+    flip_direction: f32,
+    last_pulse: f32,
 }
 
 impl Default for GlobeCamera {
@@ -81,6 +109,13 @@ impl Default for GlobeCamera {
             pitch_velocity: 0.0,
             fly: None,
             idle: 0.0,
+            priority: 0.0,
+            sway: 0.0,
+            flip: None,
+            roll: 0.0,
+            flip_cooldown: 0.0,
+            flip_direction: 1.0,
+            last_pulse: 0.0,
         }
     }
 }
@@ -111,12 +146,22 @@ impl GlobeCamera {
     /// совпадает со сглаженным).
     #[cfg(test)]
     pub fn update(&mut self, dt: f32, input: &GlobeInput) {
-        self.advance(dt, dt, input);
+        self.advance(dt, dt, input, &GlobeMotion::default(), false);
     }
 
     /// То же, но с реальным временем кадра: после сна приложения `stable_dt`
     /// остаётся маленьким, а простой нужно считать по фактическому интервалу.
-    pub fn advance(&mut self, dt: f32, elapsed: f32, input: &GlobeInput) {
+    ///
+    /// `motion` задаёт музыкальную качку и импульс onset; `allow_flips`
+    /// приходит из Core с учётом режима окна и Reduce motion.
+    pub fn advance(
+        &mut self,
+        dt: f32,
+        elapsed: f32,
+        input: &GlobeInput,
+        motion: &GlobeMotion,
+        allow_flips: bool,
+    ) {
         let dt = dt.clamp(0.001, 0.05);
         let elapsed = elapsed.clamp(0.0, 60.0);
         let interacting = input.drag_delta != Vec2::ZERO
@@ -187,15 +232,89 @@ impl GlobeCamera {
             // континенты уходят вправо — как при реальном вращении.
             self.yaw = (self.yaw - IDLE_SPIN_RATE * ramp * dt).rem_euclid(std::f32::consts::TAU);
         }
+
+        let priority_target = if interacting || self.fly.is_some() {
+            1.0
+        } else {
+            0.0
+        };
+        self.priority = approach(self.priority, priority_target, dt, CAMERA_PRIORITY_TAU);
+        self.sway = motion.yaw_sway * (1.0 - self.priority);
+        self.advance_flip(dt, motion.pulse, allow_flips, interacting);
     }
 
-    /// Идёт ли движение, требующее перерисовки: доворот, инерция или
-    /// авто-вращение в простое.
+    /// Музыкальный roll: переворот запускается только на сильном onset,
+    /// при простое и свободной камере (ADR-0028).
+    fn advance_flip(&mut self, dt: f32, pulse: f32, allow_flips: bool, interacting: bool) {
+        self.flip_cooldown = (self.flip_cooldown - dt).max(0.0);
+        let blocked = interacting || self.fly.is_some() || self.priority > 0.5;
+        let strong_onset = pulse >= FLIP_PULSE && self.last_pulse < FLIP_PULSE;
+        self.last_pulse = pulse;
+
+        if let Some(flip) = self.flip.as_mut() {
+            if blocked || !allow_flips {
+                self.flip = None;
+            } else {
+                flip.elapsed += dt;
+                let progress = (flip.elapsed / flip.duration).clamp(0.0, 1.0);
+                self.roll = flip.direction * std::f32::consts::TAU * smoothstep(progress);
+                if progress >= 1.0 {
+                    self.flip = None;
+                    self.roll = 0.0;
+                    self.flip_cooldown = FLIP_COOLDOWN;
+                }
+                return;
+            }
+        }
+
+        if self.flip.is_none()
+            && !blocked
+            && allow_flips
+            && self.roll == 0.0
+            && self.flip_cooldown <= 0.0
+            && self.idle >= FLIP_IDLE
+            && self.pitch.abs() < MAX_PITCH - FLIP_PITCH_MARGIN
+            && strong_onset
+        {
+            self.flip_direction = -self.flip_direction;
+            self.flip = Some(FlipAnimation {
+                elapsed: 0.0,
+                duration: FLIP_DURATION,
+                direction: self.flip_direction,
+            });
+        }
+
+        if self.flip.is_none() && self.roll != 0.0 {
+            self.roll = approach(self.roll, 0.0, dt, ROLL_RELEASE_TAU);
+            if self.roll.abs() < 1e-4 {
+                self.roll = 0.0;
+            }
+        }
+    }
+
+    /// Идёт ли движение, требующее перерисовки: доворот, инерция,
+    /// авто-вращение в простое или переворот.
     pub fn is_animating(&self) -> bool {
         self.fly.is_some()
             || self.yaw_velocity != 0.0
             || self.pitch_velocity != 0.0
             || self.is_idle_spinning()
+            || self.is_flipping()
+    }
+
+    /// Идёт ли переворот или его остаточный roll.
+    pub fn is_flipping(&self) -> bool {
+        self.flip.is_some() || self.roll != 0.0
+    }
+
+    /// Текущий roll камеры вокруг оси взгляда, рад.
+    pub fn roll(&self) -> f32 {
+        self.roll
+    }
+
+    /// 0 — камера свободна, 1 — пользователь управляет движением.
+    pub fn camera_priority(&self) -> f32 {
+        self.priority
     }
 
     /// Сколько секунд осталось до авто-вращения. `None`, если доворот уже
@@ -215,20 +334,26 @@ impl GlobeCamera {
 
     /// Позиция камеры в мировых координатах.
     pub fn eye(&self) -> Vec3 {
+        let yaw = (self.yaw + self.sway).rem_euclid(std::f32::consts::TAU);
         let cos_pitch = self.pitch.cos();
         Vec3::new(
-            cos_pitch * self.yaw.sin(),
+            cos_pitch * yaw.sin(),
             self.pitch.sin(),
-            cos_pitch * self.yaw.cos(),
+            cos_pitch * yaw.cos(),
         ) * self.distance
     }
 
-    /// Матрица вида и проекции для текущего aspect.
+    /// Матрица вида и проекции для текущего aspect. Музыкальная качка
+    /// входит в позицию камеры, переворот — поворотом вокруг оси взгляда.
     pub fn view_proj(&self, aspect: f32) -> Mat4 {
         let view = view::look_at_mat4(self.eye(), Vec3::ZERO, Vec3::Y);
         let projection =
             directx::perspective(FOV_Y_RADIANS, aspect.max(0.01), NEAR_PLANE, FAR_PLANE);
-        projection * view
+        if self.roll == 0.0 {
+            projection * view
+        } else {
+            projection * Mat4::from_rotation_z(self.roll) * view
+        }
     }
 
     /// Радиус силуэта единичной сферы на экране в пикселях. Центр силуэта
@@ -330,6 +455,11 @@ fn unproject(inverse_view_proj: Mat4, x: f32, y: f32, z: f32) -> Option<Vec3> {
 fn shortest_delta(from: f32, to: f32) -> f32 {
     let tau = std::f32::consts::TAU;
     (to - from + std::f32::consts::PI).rem_euclid(tau) - std::f32::consts::PI
+}
+
+fn approach(current: f32, target: f32, dt: f32, tau: f32) -> f32 {
+    let coefficient = 1.0 - (-dt / tau).exp();
+    current + (target - current) * coefficient
 }
 
 fn smoothstep(t: f32) -> f32 {
@@ -613,7 +743,13 @@ mod tests {
     fn idle_uses_real_elapsed_time() {
         let mut camera = GlobeCamera::default();
         // `stable_dt` после сна маленький, фактический интервал — большой.
-        camera.advance(0.016, 4.0, &GlobeInput::default());
+        camera.advance(
+            0.016,
+            4.0,
+            &GlobeInput::default(),
+            &GlobeMotion::default(),
+            false,
+        );
 
         assert!(camera.is_idle_spinning());
         assert!(camera.is_animating());
@@ -719,5 +855,169 @@ mod tests {
             .expect("луч должен пересекать единичную сферу");
 
         assert!((hit - unit).length() < 1e-3, "hit: {hit:?}");
+    }
+
+    #[test]
+    fn sway_follows_free_camera_and_yields_to_interaction() {
+        let mut camera = GlobeCamera::default();
+        let motion = GlobeMotion {
+            yaw_sway: 0.12,
+            ..GlobeMotion::default()
+        };
+        camera.advance(0.05, 0.05, &GlobeInput::default(), &motion, false);
+
+        assert!((camera.sway - 0.12).abs() < 1e-6);
+        let eye = camera.eye();
+        assert!((eye.x - 0.12_f32.sin() * DEFAULT_DISTANCE).abs() < 1e-3);
+
+        let drag = GlobeInput {
+            drag_delta: Vec2::new(1.0, 0.0),
+            ..GlobeInput::default()
+        };
+        for _ in 0..10 {
+            camera.advance(0.05, 0.05, &drag, &motion, false);
+        }
+        assert!(camera.camera_priority() > 0.95);
+        assert!(camera.sway.abs() < 0.01, "sway: {}", camera.sway);
+
+        for _ in 0..10 {
+            camera.advance(0.05, 0.05, &GlobeInput::default(), &motion, false);
+        }
+        assert!(camera.camera_priority() < 0.05);
+        assert!(
+            (camera.sway - 0.12).abs() < 0.01,
+            "sway возвращается плавно: {}",
+            camera.sway
+        );
+    }
+
+    #[test]
+    fn flips_require_idle_permission_and_strong_onset() {
+        let strong = GlobeMotion {
+            pulse: 0.9,
+            ..GlobeMotion::default()
+        };
+        let quiet = GlobeMotion::default();
+
+        let mut fresh = GlobeCamera::default();
+        fresh.advance(0.05, 0.05, &GlobeInput::default(), &strong, true);
+        assert!(!fresh.is_flipping(), "без простоя переворот запрещён");
+
+        let mut denied = GlobeCamera::default();
+        for _ in 0..55 {
+            denied.advance(0.05, 0.05, &GlobeInput::default(), &quiet, true);
+        }
+        denied.advance(0.05, 0.05, &GlobeInput::default(), &strong, false);
+        assert!(!denied.is_flipping(), "allow_flips = false запрещает roll");
+
+        let mut tilted = GlobeCamera {
+            pitch: MAX_PITCH,
+            ..GlobeCamera::default()
+        };
+        for _ in 0..55 {
+            tilted.advance(0.05, 0.05, &GlobeInput::default(), &quiet, true);
+        }
+        tilted.advance(0.05, 0.05, &GlobeInput::default(), &strong, true);
+        assert!(!tilted.is_flipping(), "у края pitch переворот запрещён");
+
+        let mut camera = GlobeCamera::default();
+        for _ in 0..55 {
+            camera.advance(0.05, 0.05, &GlobeInput::default(), &quiet, true);
+        }
+        camera.advance(0.05, 0.05, &GlobeInput::default(), &strong, true);
+        assert!(camera.is_flipping(), "сильный onset после простоя");
+    }
+
+    #[test]
+    fn flip_rolls_then_locks_cooldown() {
+        let strong = GlobeMotion {
+            pulse: 0.9,
+            ..GlobeMotion::default()
+        };
+        let quiet = GlobeMotion::default();
+        let mut camera = GlobeCamera::default();
+        for _ in 0..55 {
+            camera.advance(0.05, 0.05, &GlobeInput::default(), &quiet, true);
+        }
+        camera.advance(0.05, 0.05, &GlobeInput::default(), &strong, true);
+
+        for _ in 0..4 {
+            camera.advance(0.05, 0.05, &GlobeInput::default(), &quiet, true);
+        }
+        assert!(camera.roll().abs() > 0.1, "roll: {}", camera.roll());
+
+        for _ in 0..20 {
+            camera.advance(0.05, 0.05, &GlobeInput::default(), &quiet, true);
+        }
+        assert!(!camera.is_flipping());
+        assert_eq!(camera.roll(), 0.0);
+        assert!(camera.flip_cooldown > 11.0);
+
+        camera.advance(0.05, 0.05, &GlobeInput::default(), &strong, true);
+        assert!(
+            !camera.is_flipping(),
+            "в кулдауне новый переворот не начинается"
+        );
+    }
+
+    #[test]
+    fn drag_cancels_flip_and_releases_roll() {
+        let strong = GlobeMotion {
+            pulse: 0.9,
+            ..GlobeMotion::default()
+        };
+        let quiet = GlobeMotion::default();
+        let mut camera = GlobeCamera::default();
+        for _ in 0..55 {
+            camera.advance(0.05, 0.05, &GlobeInput::default(), &quiet, true);
+        }
+        camera.advance(0.05, 0.05, &GlobeInput::default(), &strong, true);
+        for _ in 0..2 {
+            camera.advance(0.05, 0.05, &GlobeInput::default(), &quiet, true);
+        }
+        assert!(camera.roll() != 0.0);
+
+        let drag = GlobeInput {
+            drag_delta: Vec2::new(2.0, 0.0),
+            ..GlobeInput::default()
+        };
+        camera.advance(0.05, 0.05, &drag, &quiet, true);
+        assert!(camera.flip.is_none(), "drag отменяет переворот");
+
+        for _ in 0..20 {
+            camera.advance(0.05, 0.05, &GlobeInput::default(), &quiet, true);
+        }
+        assert_eq!(camera.roll(), 0.0);
+        assert!(!camera.is_flipping());
+    }
+
+    #[test]
+    fn roll_rotates_projection_and_hit_test_together() {
+        let mut camera = GlobeCamera::default();
+        let rect = viewport();
+        let point = sphere_point(0.0, 20.0);
+        let before = camera
+            .project_on_sphere(point, rect)
+            .expect("точка видна до переворота");
+
+        camera.roll = std::f32::consts::FRAC_PI_2;
+        let after = camera
+            .project_on_sphere(point, rect)
+            .expect("точка видна после переворота");
+        let center = rect.center();
+        let radius_before = (before - center).length();
+        let radius_after = (after - center).length();
+
+        assert!((after.x - center.x).abs() < 1.0, "after: {after:?}");
+        assert!(after.y < center.y, "after: {after:?}");
+        assert!(
+            (radius_before - radius_after).abs() < 1e-3,
+            "roll сохраняет радиус: {radius_before} vs {radius_after}"
+        );
+
+        let hit = camera
+            .screen_to_sphere_deformed(after, rect, &GlobeDeform::IDENTITY)
+            .expect("луч должен пересекать сферу");
+        assert!((hit - point).length() < 1e-3, "hit: {hit:?}");
     }
 }

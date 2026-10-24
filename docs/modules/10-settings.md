@@ -30,7 +30,7 @@ ADR-0028.
 | `help_seen` | `true` после первого показа карточки управления | `false` |
 | `motion` | `off`, `low`, `normal`, `high` | `normal` |
 | `motion_style` | `auto`, `soft-pulse`, `groove-sway`, `bass-drop`, `ambient-drift`, `sparkle-twitch`, `beat-march` | `auto` |
-| `allow_flips` | перевороты камеры на onset (Phase 3) | `false` |
+| `allow_flips` | перевороты камеры на onset | `false` |
 | `reduce_motion` | отключает геометрию и качку, эфир продолжается | `false` |
 
 Акценты — пресеты с фиксированными RGB-компонентами (`AccentColor::rgb`).
@@ -77,9 +77,10 @@ $HOME/.config/orbitfm/settings.json   (если XDG_CONFIG_HOME не задан/
   Этапа 9); качества и рейтинга в цвете больше нет.
 - Меню «Настройки» в HUD содержит выбор темы и шесть акцентных образцов;
   ошибки хранилища показываются тостом.
-- Секция `Motion` в HUD: чипы `Off`/`Low`/`Normal`/`High`, чекбокс
-  `Reduce motion` и выбор `Motion style` (`Auto` или один из шести стилей);
-  изменения применяются сразу и сохраняются. При `reduce_motion` эффективная
+- Секция `Motion` в HUD: чипы `Off`/`Low`/`Normal`/`High`, чекбоксы
+  `Reduce motion` и `Allow flips`, выбор `Motion style` (`Auto` или один из
+  шести стилей); изменения применяются сразу и сохраняются. `Allow flips`
+  недоступен при `Off` и `reduce_motion`. При `reduce_motion` эффективная
   реактивность — `Off`, но настройка `motion` не перезаписывается.
 - Число столбцов визуализатора (`viz_bars`) меняется в меню «Настройки» и
   применяется к следующему кадру.
@@ -97,7 +98,8 @@ $HOME/.config/orbitfm/settings.json   (если XDG_CONFIG_HOME не задан/
 
 Unit-тесты в `src/settings/mod.rs` покрывают XDG-пути и fallback на `HOME`,
 значения по умолчанию, roundtrip темы, акцента и настроек движения (включая
-`motion_style`), недостающие поля, повреждённый файл и эфемерное хранилище.
+`motion_style` и `allow_flips`), недостающие поля, повреждённый файл и эфемерное
+хранилище.
 В `app.rs` проверяются маппинг режима темы, выбор контрастного текста и
 затемнение акцента в светлой палитре.
 

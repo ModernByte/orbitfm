@@ -123,6 +123,7 @@ impl SettingsStore {
     pub fn set_help_seen(&mut self) -> Result<(), SettingsError>;
     pub fn set_motion(&mut self, motion: MotionReactivity) -> Result<(), SettingsError>;
     pub fn set_motion_style(&mut self, style: MotionStyle) -> Result<(), SettingsError>;
+    pub fn set_allow_flips(&mut self, allow: bool) -> Result<(), SettingsError>;
     pub fn set_reduce_motion(&mut self, reduce: bool) -> Result<(), SettingsError>;
 }
 
@@ -149,6 +150,7 @@ egui, GUI и доменных модулей: Application Core переводи�
 | `set_help_seen` | Одноразово фиксирует показ карточки управления |
 | `set_motion` / `set_reduce_motion` | Меняет реактивность движения и Reduce motion; сохраняет только при изменении |
 | `set_motion_style` | Меняет характер движения (`Auto` или один из шести стилей); сохраняет только при изменении |
+| `set_allow_flips` | Разрешает перевороты камеры; по умолчанию `false`, сохраняет только при изменении |
 
 ## 3. Расположение и формат
 
@@ -204,6 +206,7 @@ Application Core затемняет акцент для текста (ссылк
 - `missing_fields_use_defaults` (включая `motion`, `motion_style`, `allow_flips`,
   `reduce_motion`)
 - `roundtrip_persists_motion_preferences` (включая `motion_style`)
+- `roundtrip_persists_allow_flips`
 - `motion_reactivity_caps_and_limits`
 - `motion_styles_have_ids_labels_and_band_requirements`
 - `roundtrip_persists_visualizer_and_help`

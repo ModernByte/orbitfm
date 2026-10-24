@@ -118,6 +118,12 @@ impl super::Session {
             .map_err(|err| err.to_string())
     }
 
+    pub(crate) fn set_allow_flips(&mut self, allow: bool) -> Result<(), String> {
+        self.settings
+            .set_allow_flips(allow)
+            .map_err(|err| err.to_string())
+    }
+
     /// Анализ включён, если он нужен визуализатору или движению глобуса.
     fn sync_analysis(&mut self) -> Result<(), String> {
         let needed = self.analysis_needed();
