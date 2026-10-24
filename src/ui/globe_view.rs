@@ -12,6 +12,7 @@ use crate::render::{
 use crate::session::markers::GlobeMarker;
 
 use super::layout::DeskLayout;
+use super::orbit_ring::OrbitRing;
 use super::palette::{Palette, heat_color};
 use super::station_row::row_place;
 use super::widgets::{faded, flag_emoji, glass_panel};
@@ -159,10 +160,11 @@ pub(crate) struct GlobeState<'a> {
     pub selected_country: Option<&'a Country>,
     /// В режиме жанра страна не выбирается и не подсвечивается.
     pub country_enabled: bool,
-    /// Сглаженный сигнал эфира 0..1: App обновляет его и для капсул без глобуса.
-    pub pulse: f32,
     /// Full-bleed космос Focus; у мини-глобуса капсулы фон прозрачный.
     pub backdrop: bool,
+    /// Орбитальное аудиокольцо: рисуется до wgpu-callback'а, поэтому планета
+    /// перекрывает его внутреннюю часть (ADR-0029).
+    pub ring: &'a OrbitRing,
     /// Плавающие зоны HUD: ввод под ними не доходит до глобуса.
     pub layout: DeskLayout,
     /// Callout страны: переживает кадр ради fade-in/out (ТЗ §1.2).
@@ -185,10 +187,12 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
     if state.backdrop {
         paint_space(ui.painter(), globe_rect, palette);
         paint_starfield(ui.painter(), globe_rect);
-        paint_vignette(ui.painter(), globe_rect);
     }
 
     if !state.ready {
+        if state.backdrop {
+            paint_vignette(ui.painter(), globe_rect);
+        }
         ui.painter().text(
             globe_rect.center(),
             egui::Align2::CENTER_CENTER,
@@ -235,8 +239,17 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
         }
     }
 
-    let pulse = state.pulse;
-    paint_globe(ui.painter(), globe_rect, state.camera, pulse);
+    if state.backdrop {
+        state.ring.paint(
+            ui.painter(),
+            globe_rect.center(),
+            state.camera.projected_radius(globe_rect),
+            palette,
+        );
+        paint_vignette(ui.painter(), globe_rect);
+    }
+
+    paint_globe(ui.painter(), globe_rect, state.camera);
 
     let hovered = hover_pos.and_then(|position| nearest_marker(&marker_screens, position));
     let hovered_country = if !state.country_enabled
@@ -327,8 +340,8 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
         ui.ctx().request_repaint_after(CALLOUT_REPAINT);
     }
 
-    if pulse > 0.005 || any_playing {
-        // Пульс обода и пульс играющего маркера живут на кадрах — держим ~30 fps.
+    if any_playing || (state.backdrop && state.ring.is_animating()) {
+        // Пульс маркера и орбитальное кольцо живут на кадрах — держим ~30 fps.
         ui.ctx().request_repaint_after(SPECTRUM_REPAINT);
     }
 

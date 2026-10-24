@@ -101,8 +101,8 @@ pub(crate) fn spawn(
 | Поле снимка | Что показывает хост |
 |-------------|---------------------|
 | `window_visible` | подпись пункта «Show window» / «Hide window» |
-| `playing` | `Status::Active`, если `playing` или `window_visible`, иначе `Status::Passive`; `CheckmarkItem` «Play/Pause» |
-| `station` | `ToolTip.description`; `None` → `"Nothing playing"` |
+| `playing` | `Status::Active`, если `playing` или `window_visible`, иначе `Status::Passive`; `CheckmarkItem` «Play/Pause»; префикс `Now playing:` / `Paused:` в первой строке меню |
+| `station` | `ToolTip.description`; первая (неактивная) строка меню; `None` → `"Nothing playing"` |
 | `theme` | `selected` в `RadioGroup` System / Dark / Light |
 
 `playing` — то же определение, что у MPRIS и `status`: `Playing`, `Buffering`

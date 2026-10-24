@@ -12,7 +12,9 @@ const FOV_Y_RADIANS: f32 = std::f32::consts::FRAC_PI_4;
 const NEAR_PLANE: f32 = 0.1;
 const FAR_PLANE: f32 = 50.0;
 
-const DEFAULT_DISTANCE: f32 = 2.5;
+/// Дистанция по умолчанию оставляет вокруг планеты место для орбитального
+/// аудиокольца (ADR-0029); ближе можно приблизиться колесом.
+const DEFAULT_DISTANCE: f32 = 3.2;
 const MIN_DISTANCE: f32 = 1.4;
 const MAX_DISTANCE: f32 = 6.0;
 const ZOOM_SENSITIVITY: f32 = 0.002;
@@ -50,8 +52,6 @@ pub(crate) struct CameraUniform {
     pub view_proj: [[f32; 4]; 4],
     pub light_direction: [f32; 4],
     pub camera_position: [f32; 4],
-    /// `x` — сигнал эфира 0..1 для Fresnel-обода.
-    pub pulse: [f32; 4],
 }
 
 /// Орбитальная камера вокруг глобуса радиусом 1.
@@ -227,6 +227,17 @@ impl GlobeCamera {
         projection * view
     }
 
+    /// Радиус силуэта единичной сферы на экране в пикселях. Центр силуэта
+    /// совпадает с центром viewport'а: камера всегда смотрит в начало координат.
+    pub fn projected_radius(&self, viewport: Rect) -> f32 {
+        if !viewport.is_finite() || viewport.height() <= 0.0 {
+            return 0.0;
+        }
+        let focal = viewport.height() * 0.5 / (FOV_Y_RADIANS * 0.5).tan();
+        let depth = (self.distance * self.distance - 1.0).max(1e-4).sqrt();
+        focal / depth
+    }
+
     /// Пересечение луча из экранной точки со сферой радиусом 1.
     pub fn screen_to_sphere(&self, screen_pos: Pos2, viewport: Rect) -> Option<Vec3> {
         if viewport.width() <= 0.0 || viewport.height() <= 0.0 || !viewport.contains(screen_pos) {
@@ -283,19 +294,13 @@ impl GlobeCamera {
             .then_some(position)
     }
 
-    pub(crate) fn uniform(&self, aspect: f32, pulse: f32) -> CameraUniform {
+    pub(crate) fn uniform(&self, aspect: f32) -> CameraUniform {
         let light = Vec3::new(0.35, 0.28, 0.90).normalize();
         let eye = self.eye();
-        let pulse = if pulse.is_finite() {
-            pulse.clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
         CameraUniform {
             view_proj: self.view_proj(aspect).to_cols_array_2d(),
             light_direction: [light.x, light.y, light.z, 0.0],
             camera_position: [eye.x, eye.y, eye.z, 0.0],
-            pulse: [pulse, 0.0, 0.0, 0.0],
         }
     }
 }
@@ -371,8 +376,6 @@ mod tests {
     fn projection_respects_latitude_and_longitude() {
         let camera = GlobeCamera::default();
         let rect = viewport();
-        // Афины, а не Берлин: на дефолтной дистанции 2.5 Земля занимает весь
-        // вьюпорт, и высокая широта уже обрезана его краем.
         let position = camera
             .project_on_sphere(sphere_point(37.97, 23.72), rect)
             .expect("Афины должны быть видны");
@@ -608,15 +611,48 @@ mod tests {
     }
 
     #[test]
-    fn uniform_carries_eye_and_clamps_pulse() {
+    fn projected_radius_fits_default_framing() {
         let camera = GlobeCamera::default();
-        let uniform = camera.uniform(1.0, 2.5);
+        let radius = camera.projected_radius(viewport());
 
-        assert_eq!(uniform.pulse[0], 1.0);
+        assert!(radius.is_finite() && radius > 0.0);
+        assert!(
+            radius < viewport().height() * 0.5,
+            "дефолтная дистанция должна оставлять место кольцу за планетой"
+        );
+    }
+
+    #[test]
+    fn projected_radius_grows_when_zooming_in() {
+        let near = GlobeCamera {
+            distance: 2.0,
+            ..GlobeCamera::default()
+        };
+        let far = GlobeCamera {
+            distance: 4.0,
+            ..GlobeCamera::default()
+        };
+
+        assert!(near.projected_radius(viewport()) > far.projected_radius(viewport()));
+        assert_eq!(GlobeCamera::default().projected_radius(Rect::NOTHING), 0.0);
+    }
+
+    #[test]
+    fn uniform_carries_eye_and_light() {
+        let camera = GlobeCamera::default();
+        let uniform = camera.uniform(1.0);
+
         let eye = camera.eye();
         assert_eq!(&uniform.camera_position[..3], &[eye.x, eye.y, eye.z]);
 
-        assert_eq!(camera.uniform(1.0, f32::NAN).pulse[0], 0.0);
-        assert_eq!(camera.uniform(1.0, -1.0).pulse[0], 0.0);
+        let light = Vec3::from_slice(&uniform.light_direction[..3]);
+        assert!((light.length() - 1.0).abs() < 1e-5);
+        assert!(
+            uniform
+                .view_proj
+                .iter()
+                .flatten()
+                .all(|value| value.is_finite())
+        );
     }
 }

@@ -84,10 +84,9 @@ impl GlobeRenderer {
     pub fn paint(&self, render_pass: &mut wgpu::RenderPass<'_>);
 }
 
-/// Добавляет paint callback глобуса в painter. `pulse` 0..1 задаёт яркость
-/// Fresnel-обода атмосферы и геометрический пульс вершин (`1 + 0.005·pulse`);
-/// нечисловое значение считается нулём.
-pub fn paint_globe(painter: &egui::Painter, rect: egui::Rect, camera: &GlobeCamera, pulse: f32);
+/// Добавляет paint callback глобуса в painter. Аудио-пульс не передаётся:
+/// Fresnel-обод атмосферы статичен.
+pub fn paint_globe(painter: &egui::Painter, rect: egui::Rect, camera: &GlobeCamera);
 
 /// Стиль страны: заливка и линия контура.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -162,8 +161,8 @@ impl SpectrumOverlay {
     /// Видим ли оверлей (есть данные или ещё не затух).
     pub fn is_visible(&self) -> bool;
 
-    /// Сигнал эфира 0..1 для Fresnel-атмосферы: `0.75·level + 0.25·flux`.
-    /// Без данных и после затухания — 0.
+    /// Сигнал эфира 0..1 для кольца Listening: `0.75·level + 0.25·flux`.
+    /// Без данных и после затухания — 0. На глобус не передаётся.
     pub fn pulse(&self) -> f32;
 
     /// Рисует спектральную огибающую средствами egui.
@@ -172,7 +171,7 @@ impl SpectrumOverlay {
 ```
 
 `CameraUniform` — внутренний тип (`pub(crate)`), содержащий `view_proj`,
-`light_direction`, позицию камеры `camera_position` и `pulse`. `GlobeCallback`
+`light_direction` и позицию камеры `camera_position`. `GlobeCallback`
 реализует `egui_wgpu::CallbackTrait` и не входит в публичный экспорт: снаружи
 используется `paint_globe`.
 
@@ -195,15 +194,20 @@ impl SpectrumOverlay {
 - `project_on_sphere` — обратная операция: отсекает точки задней полусферы
   (`point · eye <= 1`), нечисловые координаты и результат вне viewport. Используется
   для проецирования маркеров станций.
+- `projected_radius(viewport)` — экранный радиус силуэта единичной сферы:
+  `focal = 0.5·height / tan(FOV/2)`, `radius = focal / sqrt(distance² − 1)`.
+  Нулевой или нечисловой viewport даёт 0. Центр силуэта совпадает с центром
+  viewport'а; радиус питает орбитальное аудиокольцо (ADR-0029).
 - `paint_globe` не создаёт ресурсов: `GlobeRenderer` должен быть заранее вставлен в
   `callback_resources` (это делает `OrbitApp::new`). Если ресурса нет, callback
-  пропускает отрисовку. `pulse` ограничивается `[0, 1]`, нечисловое значение
-  заменяется нулём и передаётся в шейдер через `CameraUniform`. В вершинном
-  шейдере радиус умножается на `1 + 0.005·pulse`; hit-test и проекция маркеров
-  остаются на сфере радиуса 1.
-- Атмосфера — Fresnel-обод в фрагментном шейдере: `pow(1 - dot(normal, view),
-  mix(3.2, 1.8, pulse)) · (0.14 + 0.55·pulse)`; цвет сдвигается от голубого к
-  бирюзовому с ростом `pulse`. Позиция камеры берётся из `camera_position`.
+  пропускает отрисовку. Вершинный шейдер не масштабирует радиус; hit-test и
+  проекция маркеров остаются на сфере радиуса 1. Всё, что painter рисует до
+  вызова `paint_globe`, оказывается за сферой; этим пользуется орбитальное
+  аудиокольцо (ADR-0029).
+- Атмосфера — статичный Fresnel-обод в фрагментном шейдере:
+  `pow(1 - dot(normal, view), 3.2) · 0.12`; поверх лежит узкая кромка
+  `pow(1 - facing, 9) · 0.2`. Аудио-пульс удалён 2026-10-24 (ADR-0023,
+  ADR-0028); позиция камеры берётся из `camera_position`.
 - Координатное соглашение сферы: `x = cos φ · sin λ`, `y = sin φ`, `z = cos φ · cos λ`;
   `+Z` — Гринвич, `+Y` — север.
 - `SpectrumOverlay::update` на первом кадре принимает значения без сглаживания, затем
@@ -214,8 +218,8 @@ impl SpectrumOverlay {
   `SpectrumFrame`: App Core передаёт срез `SpectrumTarget`.
 - `SpectrumOverlay::pulse` — смесь сглаженного уровня и flux (`0.75/0.25`),
   ограниченная `[0, 1]`; при невидимом оверлее возвращает 0. App Core передаёт
-  значение в `paint_globe`; при выключенном визуализаторе и тишине атмосфера
-  затухает.
+  значение в кольцо Listening; при выключенном визуализаторе и тишине кольцо
+  затухает. На `paint_globe` сигнал не влияет.
 - `paint_country` рисует кольца страны через `egui::Painter` поверх wgpu-callback:
   контур разбивается на видимые дуги с пересечением горизонта; заливка строится
   только для кольца, целиком видимого на передней полусфере, и триангулируется

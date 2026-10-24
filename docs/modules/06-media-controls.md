@@ -1,8 +1,8 @@
 # Модуль: Media Controls
 
 **Путь в коде:** `src/media/`  
-**Ответственность:** Интеграция с системными медиа-клавишами и виджетами (MPRIS v2 на Linux; SMTC/Now Playing — позже).  
-**Зависимости:** playwire 2.0 (Linux-бэкенд — MPRIS через zbus), tokio
+**Ответственность:** Интеграция с системными медиа-клавишами и виджетами (MPRIS v2 на Linux; SMTC/Now Playing — по мере платформенной проверки).
+**Зависимости:** playwire 2.0 (Linux-бэкенд — MPRIS через zbus), tokio; на Windows — `windows` (Win32) для скрытого окна SMTC
 
 ---
 
@@ -59,8 +59,21 @@ pub enum MediaCommand {
 ## 3. Платформенные особенности
 
 - **Linux:** MPRIS v2 через playwire (zbus). Имя — `org.mpris.MediaPlayer2.OrbitFM`.
-- **Windows:** System Media Transport Controls — Этап 6.
-- **macOS:** MPNowPlayingInfoCenter + remote commands — Этап 6.
+- **Windows:** System Media Transport Controls. playwire 2.0 требует HWND при
+  создании (`PlayerConfig::hwnd`). `src/media/host_window.rs` создаёт на выделенном
+  потоке скрытое top-level окно (`WS_POPUP` + `WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`,
+  без `WS_VISIBLE`) и передаёт его дескриптор в конфиг (ADR-0024). Окно живёт весь
+  процесс, поэтому SMTC не зависит от показа/скрытия окна eframe (ADR-0018). Ошибка
+  создания окна не фатальна — приложение работает без медиа-контролов. Рантайм-проверка
+  на Windows ожидается.
+- **macOS:** MPNowPlayingInfoCenter + remote commands через playwire; код
+  платформенно-нейтрален, рантайм-проверка на macOS ожидается. Обработчики
+  `MPRemoteCommandCenter` приходят на главный run loop
+  (`playwire-2.0.0/src/platform/macos.rs:54-56`). При скрытом окне главный поток
+  занят `Session::park` (ADR-0018), поэтому remote-команды не доставляются;
+  метаданные при этом публикуются через `set_state`. Исправление — ADR-0026
+  (предложено): на macOS скрывать окно через `Visible(false)`, не останавливая
+  run loop.
 
 ## 4. Конфигурация MPRIS
 
@@ -104,7 +117,11 @@ playwire вызывает колбэк в рабочем потоке D-Bus. К�
 - `Next` / `Previous` ходят по видимой очереди с циклом; при пустом списке это no-op,
   и способности выключены. Отдельного плейлиста нет (ADR-0013).
 - Перемотка (seek) не поддерживается для живого радио.
-- Windows/macOS-бэкенды не проверялись.
+- Windows-бэкенд SMTC и macOS Now Playing не проверялись в рантайме (Linux-окружение
+  разработки); Windows-код проверяется компиляцией и clippy в CI.
+- На macOS при скрытом окне remote-команды не доставляются: `Session::park`
+  останавливает главный run loop. ADR-0026 (предложено) переводит macOS на
+  скрытое окно eframe, сохраняя run loop.
 
 ## 8. Тестирование
 
@@ -116,3 +133,6 @@ playwire вызывает колбэк в рабочем потоке D-Bus. К�
 ## 9. Связанные ADR
 
 - ADR-0006: Медиа-контроли
+- ADR-0018: Скрытие окна закрытием вьюпорта
+- ADR-0024: Выделенное окно для Windows SMTC
+- ADR-0026 (предложено): macOS — строка меню и Now Playing при скрытом окне

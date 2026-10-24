@@ -47,6 +47,8 @@ pub(crate) struct OrbitApp<'a> {
     session: &'a mut Session,
     globe_ready: bool,
     spectrum_overlay: SpectrumOverlay,
+    /// Орбитальное аудиокольцо Focus (ADR-0029).
+    orbit_ring: OrbitRing,
     /// Callout выбранной/наведённой страны с fade-переходами.
     callout: CalloutState,
     visualizer: VisualizerModel,
@@ -62,15 +64,21 @@ pub(crate) struct OrbitApp<'a> {
 - `globe_ready` — результат создания `GlobeRenderer` из
   `CreationContext::wgpu_render_state`; без него глобус заменяется заглушкой, а ввод
   игнорируется. Признак per-run, потому что wgpu-ресурсы умирают вместе с прогоном.
-- `spectrum_overlay` — сглаженное состояние Fresnel-обода глобуса (живёт кадрами).
+- `spectrum_overlay` — сглаженные level/flux эфира для кольца Listening (живёт кадрами).
+- `orbit_ring` — модель и painter кругового аудиокольца за планетой (ADR-0029):
+  presence, сглаженные метрики, 120 столбцов, комета и искры; живёт кадрами рядом
+  с `SpectrumOverlay` и не переживает скрытие окна.
 - `callout` — карточка страны (текущая и уходящая) с альфой, чтобы fade-in/out переживал
   кадры (ТЗ §1.2).
 - `visualizer` — уровни, пики и фазы столбцов визуализатора (ADR-0022); строится по
   `Settings::viz_bars` и пересоздаётся действием `UiAction::SetVizBars`.
 - `favicons` — `FaviconCache`: машина состояний Queued/Loading/Ready/Failed и текстуры,
   привязанные к `egui::Context` этого прогона (ADR-0016). После закрытия окна пуст —
-  при следующем показе иконки грузятся заново.
-- `http` — `reqwest::Client` с `USER_AGENT` и таймаутом 6 с для загрузки иконок.
+  при следующем показе иконки грузятся заново. Декодируются только PNG/JPEG/WebP
+  до 512 px по стороне и 512 КиБ; SVG/GIF/ICO отклоняются (ADR-0025).
+- `http` — `reqwest::Client` с `USER_AGENT`, таймаутом 6 с и лимитом 3 редиректов;
+  для favicon проверяются `http(s)`-схема, MIME-allowlist и потоковый лимит тела
+  512 КиБ (ADR-0025).
 - `toast` — одно текущее сообщение (3 секунды).
 
 Всё остальное живёт в `Session`: подсистемы (`audio`, `geo`, `radio`, `media`, `library`,
@@ -151,7 +159,7 @@ src/ui/
 │                     # Radio Roulette, codec/kbps, громкость, столбцы визуализатора и чип
 ├── overlays.rs       # help-карточка управления и легенда «Station density»
 ├── globe_view.rs     # ввод камеры, проекция и вид маркеров, heatmap стран, country callout,
-│                     # звёздное небо, pulse обода
+│                     # звёздное небо, статичный Fresnel-обод
 ├── toast.rs          # одно сообщение на 3 секунды
 └── icons.rs          # векторные иконки: star, heart, dice, gear, moon, speaker, mouse, skip
 ```
@@ -197,8 +205,8 @@ HUD — 58 px сверху, панель — 312 px справа, transport — 
 `Compact` — HUD-строка, мини-глобус и капсула избранного (до 8 строк `station_row`),
 `Minimal` — одна строка now-playing (`src/ui/capsule.rs`). В капсулах звёздное небо и
 country-режим выключены, `pulse` считается в `draw_layers` один раз за кадр и
-передаётся и глобусу, и Listening. Focus-геометрия не меняется — это закреплено
-тестами `DeskLayout`.
+передаётся только Listening; глобус от эфира не пульсирует. Focus-геометрия не
+меняется — это закреплено тестами `DeskLayout`.
 
 | Зона | Содержимое |
 |------|------------|
@@ -255,13 +263,14 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
    с движком.
 2. `drain_notices` — `Session::take_notices()` → `Toast::info`/`Toast::error`.
 3. `poll_favicons` — `FaviconCache::begin_frame`/`poll`, `take_fetches` → `reqwest`-задачи
-   в `session.runtime`, repaint через 120 мс, пока кэш занят.
+   в `session.runtime` с проверками схемы, MIME и размера (ADR-0025), декод в
+   `catch_unwind`, repaint через 120 мс, пока кэш занят.
 4. Размер окна: `inner_rect` из ввода → `Session::set_window_size([w, h])`.
 5. `Session::take_intent()` → `ViewportCommand::Focus` (`UiIntent::Show`, окно уже
    открыто — остаётся вернуть фокус) или `ViewportCommand::Close` (`UiIntent::Close`).
 6. `Escape`, когда карточка открыта, → `session.show_help = false` + `mark_help_seen`.
 7. Repaint-политика: `SPECTRUM_REPAINT` (≈33 мс) при включённом FFT и
-   `Playing`/`Buffering`; импульсы камеры, обода и маркеров запрашивает repaint сам
+   `Playing`/`Buffering`; импульсы камеры и маркеров запрашивает repaint сам
    `globe_view`.
 
 `ui()` вызывает `draw()`: `Frame::capture` → `egui::CentralPanel` с прозрачной заливкой →
@@ -284,6 +293,8 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
    ЛКМ → `primary_clicked`. Ввод под плавающими зонами отсекается
    `DeskLayout::blocks_point`.
 2. `GlobeCamera::update(stable_dt, &input)` обновляет ориентацию, инерцию и зум.
+   `OrbitRing::paint` рисует кольцо до `paint_globe`, поэтому сфера перекрывает
+   его внутреннюю часть (ADR-0029).
 3. Hover страны (только в режиме «Страна»): `screen_to_sphere(hover_pos)` →
    `country_at_sphere_point` (при ПКМ-drag hover отключается). `globe_view` рисует
    контур наведённой страны; выбранная страна получает акцентный контур 2 px и
@@ -305,10 +316,9 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
 7. Маркеры проецируются через `project_on_sphere`; наведение показывает двухстрочную
    подпись по ТЗ §2.4 — имя (для группы `· +N`) и `место · kbps · кодек` — и
    курсор-указатель, станция в эфире получает `colors.active`, кольцо и пульс.
-   `paint_globe` добавляет paint callback с `spectrum_overlay.pulse()`, затем
+   `paint_globe` добавляет paint callback без аудио-сигнала, затем
    `paint_country_highlights` и `paint_markers` рисуют egui-оверлей; repaint
-   запрашивается, пока камера `is_animating`, пульсирует обод или на сфере виден
-   играющий маркер.
+   запрашивается, пока камера `is_animating` или на сфере виден играющий маркер.
 8. Country callout (ТЗ §1): активная карточка — выбранная страна (`alpha → 1.0`),
    иначе наведённая (`alpha → 0.85`), в режиме «Жанр» — `None`. `update_callout`
    ведёт две карточки в `CalloutState` (уходящая догорает до `CALLOUT_EPSILON`),
@@ -327,7 +337,7 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
 `globe_ready = false` вместо глобуса рисуется заглушка `3D globe unavailable`, ввод
 игнорируется.
 
-## 7. Аудиовизуализатор и пульс глобуса
+## 7. Аудиовизуализатор и кольцо Listening
 
 - В правой части transport — cava-столбцы `viz_bars` (огибающая из шести агрегатов,
   не бинный FFT — ADR-0010, ADR-0022) и чип `Visualizer`. Спектр-фильтр включён
@@ -337,7 +347,7 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
   прерывает воспроизведение. Состояние чипа не сохраняется в настройках.
 - `Session::tick()` каждый кадр синхронизирует `spectrum_enabled` с движком, а
   `Frame::capture` преобразует `AudioEngine::spectrum()` в `SpectrumTarget`: он питает и
-  `SpectrumOverlay::update` (обод и геометрия глобуса), и `VisualizerModel::advance`.
+  `SpectrumOverlay::update` (кольцо Listening), и `VisualizerModel::advance`.
   Модель (`visualizer`) живёт в `OrbitApp` как ресурс прогона, отрисовку делает
   `ui::widgets::viz_bars`: поле 156×46 px, зазор 2 px, скругление 1 px, градиент по
   абсолютной высоте, шапки пиков 2 px.
@@ -349,11 +359,16 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
   умолчанию 24) и меняется действием `UiAction::SetVizBars` — `Session::set_viz_bars`
   сохраняет настройку, а UI пересоздаёт модель.
 - `SpectrumOverlay::pulse()` (`0.75·level + 0.25·flux`, 0 при выключенном
-  фильтре) передаётся в `paint_globe`: атмосфера пульсирует, а вершинный шейдер
-  масштабирует радиус на `1 + 0.005·pulse` (ADR-0023). Hit-test остаётся на
-  сфере радиуса 1.
+  фильтре) передаётся только в кольцо Listening. Аудио-пульс глобуса снят
+  2026-10-24: Fresnel-обод статичен, вершинный шейдер радиус не масштабирует.
+  Новое движение вернётся по ADR-0028 (Этап 9).
+- `OrbitRing` (ADR-0029) обновляется в `draw_layers` из `SpectrumTarget`, пока
+  открыт Focus, включён визуализатор и эфир жив
+  (`Playing`/`Buffering`/`Reconnecting`); иначе цели нет и кольцо плавно гаснет.
+  Модуль не знает про аудио: корона, аврора, комета и искры — функции шести
+  агрегатов, `dt` и времени. В Overlay/Listening кольцо не рисуется.
 - Пока визуализатор активен, `logic()` просит кадр каждые ~33 мс. В `globe_view`
-  repaint запрашивается на ~33 мс при живом пульсе, играющем маркере или
+  repaint запрашивается на ~33 мс при играющем маркере, анимирующемся кольце или
   авто-вращении; при ручном вращении и довороте — без задержки; до начала
   авто-вращения окно будится к концу 4-секундной паузы.
 - Камера получает `stable_dt` для физики и `unstable_dt` для отсчёта простоя:

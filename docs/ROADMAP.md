@@ -30,6 +30,9 @@
 - [x] ADR-0021 (режимы окна `WindowMode` и IPC-глагол `mode`)
 - [x] ADR-0022 (визуализатор в стиле cava)
 - [x] ADR-0023 (пульс глобуса и авто-вращение после простоя)
+- [x] ADR-0024 (выделенное окно Windows для SMTC)
+- [x] ADR-0025 (безопасная загрузка и декодирование favicon)
+- [x] ADR-0029 (орбитальное аудиокольцо за глобусом)
 - [x] UX-спецификация `docs/ui/design-vision.md` и план реализации
 - [x] VERSIONMAP
 - [x] CHANGELOG (инициализация)
@@ -81,9 +84,17 @@
 ## Текущий этап: Этап 6 — Полировка и кроссплатформа
 
 - [x] Windows: named pipe IPC (`src/ipc/pipe.rs`) и CI-проверка на `windows-latest`
-- [ ] Windows (SMTC) — осталось: привязка playwire к HWND
+- [x] Windows (SMTC) — ADR-0024 принят: скрытое top-level окно на выделенном потоке
+  отдаёт HWND для playwire, контролы переживают скрытие окна; осталось
+  рантайм-проверить play/pause/stop, громкость, hide/show и отсутствие окна в Alt-Tab
 - [x] macOS: CI-сборка, clippy и тесты на `macos-latest` с libmpv из Homebrew
-- [ ] macOS (Now Playing) — осталось: рантайм-проверка Now Playing
+- [ ] macOS (Now Playing) — метаданные playwire публикуются; осталось
+  рантайм-проверить, а доставку remote-команд при скрытом окне закрывает
+  ADR-0026 (предложено)
+- [ ] macOS (трей) — ADR-0026 (предложено): статус-элемент в строке меню
+  (`tray-icon`) и скрытое окно eframe вместо `park`; нужна live-проверка на Mac
+- [x] Безопасная обработка favicon (ADR-0025): allowlist PNG/JPEG/WebP, лимиты
+  размера и разрешения, MIME/`http(s)`-проверки, перехват паники декодера
 - [x] FFT-визуализатор (экспериментальный)
 - [x] Упаковка Linux: AppImage (`packaging/linux/build-appimage.sh`), desktop entry,
   AppStream-метаданные и иконка
@@ -130,6 +141,28 @@
   Listening: now-playing с пульсом), `mode` в IPC, focus-ring и клавиатурная
   навигация по списку; проверено на Wayland/niri (ADR-0021)
 - [x] Синхронизировать `docs/interfaces/` и модули в фазах изменения контрактов
+
+## Этап 9: Аудио-реактивная планета — предложен
+
+Концепция, контракты и фазы — [`docs/ui/audio-reactive-globe.md`](ui/audio-reactive-globe.md);
+решения — [ADR-0027](adr/0027-трёхполосный-анализ-эфира.md) (полосы эфира)
+и [ADR-0028](adr/0028-аудио-реактивная-деформация-глобуса.md) (деформация).
+Оба ADR приняты; код деформации не начат. Старый Fresnel-пульс снят с глобуса
+до начала работ, чтобы не мешал пересмотру визуала.
+
+- [x] Вне фаз: орбитальное аудиокольцо за глобусом (ADR-0029) — haze, корона
+  из 120 столбцов, аврора, комета, искры на onset; Focus-only, без новых
+  зависимостей и без влияния на hit-testing
+- [ ] Фаза 0: полосы эфира — `@level` + `@spectrum` (`acrossover`/`amerge`/`pan`),
+  Bass/Mid/High без PCM-tap, mono/stereo и fallback (ADR-0027)
+- [ ] Фаза 1: ядро движения — `MotionMixer`, spring-squash, idle-дыхание,
+  `GlobeDeform` для маркеров/стран/hit-test, настройки Motion и Reduce motion
+- [ ] Фаза 2: onset, бит и шесть стилей — детектор удара, Auto с гистерезисом,
+  uniform `motion2`, секция HUD
+- [ ] Фаза 3: камера и режимы — музыкальный sway/roll, перевороты с кулдауном,
+  Overlay ≤ Low, Listening Off
+- [ ] Фаза 4: полировка и приёмка — CPU/GPU, Wayland/niri, Windows/macOS,
+  документация; сверка ADR-0027/0028 с реализацией
 
 ---
 

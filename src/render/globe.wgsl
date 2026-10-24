@@ -2,7 +2,6 @@ struct Camera {
     view_proj: mat4x4<f32>,
     light_direction: vec4<f32>,
     camera_position: vec4<f32>,
-    pulse: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -22,15 +21,10 @@ struct VertexOutput {
     @location(2) world_position: vec3<f32>,
 };
 
-/// Дыхание планеты в такт эфиру: доли процента радиуса, чтобы не ломать
-/// геометрию и не спорить с попаданием луча в сферу радиусом 1.
-const PULSE_SCALE: f32 = 0.005;
-
 @vertex
 fn vs_main(input: VertexInput) -> VertexOutput {
     var output: VertexOutput;
-    let pulse = clamp(camera.pulse.x, 0.0, 1.0);
-    let world_position = input.position * (1.0 + PULSE_SCALE * pulse);
+    let world_position = input.position;
     output.clip_position = camera.view_proj * vec4(world_position, 1.0);
     output.normal = input.normal;
     output.uv = input.uv;
@@ -62,18 +56,13 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let luma = dot(shaded, vec3<f32>(0.2126, 0.7152, 0.0722));
     shaded = mix(vec3<f32>(luma), shaded, 1.12);
 
-    // Сигнал эфира расширяет и усиливает Fresnel-обод атмосферы.
-    let pulse = clamp(camera.pulse.x, 0.0, 1.0);
+    // Статичный Fresnel-обод атмосферы: аудио-пульс убран до Этапа 9.
     let view = normalize(camera.camera_position.xyz - input.world_position);
     let facing = clamp(dot(normal, view), 0.0, 1.0);
     let rim = 1.0 - facing;
-    let fresnel = pow(rim, mix(3.2, 1.8, pulse));
-    let rim_strength = fresnel * (0.12 + 0.4 * pulse);
-    let rim_color = mix(
-        vec3<f32>(0.35, 0.60, 1.0),
-        vec3<f32>(0.35, 0.95, 0.85),
-        pulse,
-    );
+    let fresnel = pow(rim, 3.2);
+    let rim_strength = fresnel * 0.12;
+    let rim_color = vec3<f32>(0.35, 0.60, 1.0);
     // Узкая кромка: обод виден и там, где текстура уходит за горизонт сферы.
     let edge = pow(rim, 9.0) * 0.2;
     return vec4(encode_srgb(shaded + rim_color * (rim_strength + edge)), 1.0);

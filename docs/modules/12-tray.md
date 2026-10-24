@@ -27,6 +27,11 @@
 односторонняя: `Session` вызывает `tray::spawn` и работает с `TrayHandle`, а
 `src/tray/` про `Session` ничего не импортирует.
 
+На macOS SNI не существует, поэтому текущая сборка обходится без трея. Трей в
+строке меню macOS (tray-icon + `muda`) и связанное с ним скрытие окна без
+остановки run loop — предмет ADR-0026 (предложено), а не реализованное
+поведение.
+
 ## 2. Состав пакета
 
 | Файл | Ответственность | Наружу (`pub(crate)`) |
@@ -75,15 +80,17 @@
 | `IconPixmap` | `icon::ICONS` — 22/32/48, ARGB32 network byte order |
 | `IconThemePath` | первый существующий `.../icons/hicolor` (XDG_DATA_HOME, затем `/usr/share`), иначе пусто |
 | `Menu` | `/MenuBar`, собирается из снимка на каждое обновление |
+| Первый пункт меню | неактивная витрина: `Now playing: <station>`, `Paused: <station>` или `Nothing playing` — из `station` и `playing` |
 | `ItemIsMenu` | `false` (константа `MENU_ON_ACTIVATE` по умолчанию) — только тогда хост вызывает `Activate` |
 
 Иконка рисуется процедурно (диск планеты, наклонённое кольцо, точка эфира —
 пропорции `ui::widgets::logo_mark`) с 4× суперсэмплингом и src-over
 композицией слоёв. Новый бинарный ассет в репозиторий не добавлялся.
 
-Подписи меню — английский (конвенция UI-строк): Show/Hide window · Play/Pause ·
-Stop · Previous · Next · Radio Roulette · Volume Up/Down · System/Dark/Light ·
-Quit. `theme_label` в `sni.rs` — своя функция, а не `ui::palette::theme_label`:
+Подписи меню — английский (конвенция UI-строк): Now playing / Paused / Nothing
+playing (неактивная первая строка) · Show/Hide window · Play/Pause · Stop ·
+Previous · Next · Radio Roulette · Volume Up/Down · System/Dark/Light · Quit.
+`theme_label` в `sni.rs` — своя функция, а не `ui::palette::theme_label`:
 presentation-слой модулю трея недоступен.
 
 ## 5. Ошибки и деградация

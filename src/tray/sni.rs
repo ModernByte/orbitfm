@@ -179,6 +179,12 @@ impl Tray for OrbitTray {
             "Show window"
         };
         vec![
+            MenuItem::Standard(StandardItem {
+                label: now_playing_label(&self.snapshot),
+                enabled: false,
+                ..Default::default()
+            }),
+            MenuItem::Separator,
             standard(toggle_label, |tray| tray.send(TrayCommand::Toggle)),
             MenuItem::Separator,
             MenuItem::Checkmark(CheckmarkItem {
@@ -235,6 +241,15 @@ fn standard(
         activate: Box::new(activate),
         ..Default::default()
     })
+}
+
+/// Первая строка меню — витрина, а не команда: `enabled: false` у StandardItem.
+fn now_playing_label(snapshot: &TraySnapshot) -> String {
+    match (&snapshot.station, snapshot.playing) {
+        (Some(station), true) => format!("Now playing: {station}"),
+        (Some(station), false) => format!("Paused: {station}"),
+        (None, _) => "Nothing playing".to_owned(),
+    }
 }
 
 /// Подписи темы для меню трея. `ui::palette::theme_label` — presentation-слой,
@@ -341,7 +356,8 @@ mod tests {
     fn menu_offers_window_playback_volume_theme_and_quit() {
         let menu = tray(TraySnapshot::default()).menu();
         let items = labels(&menu);
-        assert_eq!(items.first(), Some(&"Show window".to_owned()));
+        assert_eq!(items.first(), Some(&"Nothing playing".to_owned()));
+        assert!(items.contains(&"Show window".to_owned()));
         assert!(items.contains(&"Play/Pause".to_owned()));
         assert!(items.contains(&"Radio Roulette".to_owned()));
         assert!(items.contains(&"Volume Up".to_owned()));
@@ -353,7 +369,32 @@ mod tests {
             ..Default::default()
         })
         .menu();
-        assert_eq!(labels(&visible).first(), Some(&"Hide window".to_owned()));
+        assert!(labels(&visible).contains(&"Hide window".to_owned()));
+    }
+
+    #[test]
+    fn menu_header_shows_the_current_stream_without_being_a_command() {
+        let playing = tray(TraySnapshot {
+            playing: true,
+            station: Some("WFMU".to_owned()),
+            ..Default::default()
+        })
+        .menu();
+        let MenuItem::Standard(header) = &playing[0] else {
+            panic!("первым идёт заголовок");
+        };
+        assert_eq!(header.label, "Now playing: WFMU");
+        assert!(!header.enabled, "заголовок — витрина, а не команда");
+
+        let paused = tray(TraySnapshot {
+            station: Some("WFMU".to_owned()),
+            ..Default::default()
+        })
+        .menu();
+        let MenuItem::Standard(header) = &paused[0] else {
+            panic!("первым идёт заголовок");
+        };
+        assert_eq!(header.label, "Paused: WFMU");
     }
 
     #[test]

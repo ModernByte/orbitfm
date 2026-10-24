@@ -15,6 +15,12 @@ pub(crate) const FAVICON_SIZE: u32 = 64;
 const MAX_CACHED: usize = 256;
 /// Одновременно летящих запросов (ADR-0016, п. 4).
 const MAX_IN_FLIGHT: usize = 8;
+/// Максимальный принятый размер favicon, байт (ADR-0025).
+pub(crate) const MAX_FAVICON_BYTES: usize = 512 * 1024;
+/// Максимальная сторона исходного изображения, px (ADR-0025).
+pub(crate) const MAX_FAVICON_DIMENSION: u32 = 512;
+/// Потолок аллокаций декодера, байт (ADR-0025).
+const MAX_DECODE_ALLOC: u64 = 8 * 1024 * 1024;
 
 /// Результат фоновой загрузки: `None` — ошибка сети/декода.
 pub(crate) type FaviconResult = (String, Option<egui::ColorImage>);
@@ -154,9 +160,30 @@ impl FaviconCache {
     }
 }
 
-/// Декодирует байты favicon в квадратную RGBA-текстуру (ADR-0016, п. 6).
+/// Декодирует байты favicon в квадратную RGBA-текстуру (ADR-0016, ADR-0025).
 pub(crate) fn decode_favicon(bytes: &[u8]) -> Option<egui::ColorImage> {
-    let decoded = image::load_from_memory(bytes).ok()?;
+    if bytes.is_empty() || bytes.len() > MAX_FAVICON_BYTES {
+        return None;
+    }
+
+    let mut probe = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?;
+    if !is_allowed_format(probe.format()?) {
+        return None;
+    }
+    probe.limits(decode_limits());
+    let (width, height) = probe.into_dimensions().ok()?;
+    if width == 0 || height == 0 || width > MAX_FAVICON_DIMENSION || height > MAX_FAVICON_DIMENSION
+    {
+        return None;
+    }
+
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?;
+    reader.limits(decode_limits());
+    let decoded = reader.decode().ok()?;
     let rgba = decoded.to_rgba8();
     let resized = image::imageops::resize(
         &rgba,
@@ -168,6 +195,21 @@ pub(crate) fn decode_favicon(bytes: &[u8]) -> Option<egui::ColorImage> {
         [FAVICON_SIZE as usize, FAVICON_SIZE as usize],
         resized.as_raw(),
     ))
+}
+
+fn is_allowed_format(format: image::ImageFormat) -> bool {
+    matches!(
+        format,
+        image::ImageFormat::Png | image::ImageFormat::Jpeg | image::ImageFormat::WebP
+    )
+}
+
+fn decode_limits() -> image::Limits {
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_FAVICON_DIMENSION);
+    limits.max_image_height = Some(MAX_FAVICON_DIMENSION);
+    limits.max_alloc = Some(MAX_DECODE_ALLOC);
+    limits
 }
 
 #[cfg(test)]
@@ -261,5 +303,49 @@ mod tests {
             .expect("png должен кодироваться");
         let decoded = decode_favicon(&bytes).expect("png должен декодироваться");
         assert_eq!(decoded.size, [FAVICON_SIZE as usize, FAVICON_SIZE as usize]);
+    }
+
+    #[test]
+    fn decode_rejects_oversized_payload() {
+        let bytes = vec![0u8; MAX_FAVICON_BYTES + 1];
+        assert!(decode_favicon(&bytes).is_none());
+    }
+
+    #[test]
+    fn decode_rejects_oversized_dimensions() {
+        let source =
+            image::RgbImage::from_pixel(MAX_FAVICON_DIMENSION + 1, 1, image::Rgb([10, 20, 30]));
+        let mut bytes = Vec::new();
+        image::DynamicImage::ImageRgb8(source)
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .expect("png должен кодироваться");
+        assert!(decode_favicon(&bytes).is_none());
+    }
+
+    #[test]
+    fn decode_rejects_svg_and_gif() {
+        let svg = br#"<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>"#;
+        assert!(decode_favicon(svg).is_none());
+
+        let gif = b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff\
+                    !\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\
+                    \x00\x02\x02D\x01\x00;";
+        assert!(decode_favicon(gif).is_none());
+    }
+
+    #[test]
+    fn decode_accepts_webp() {
+        let source = image::RgbImage::from_pixel(8, 8, image::Rgb([10, 20, 30]));
+        let mut bytes = Vec::new();
+        image::DynamicImage::ImageRgb8(source)
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::WebP,
+            )
+            .expect("webp должен кодироваться");
+        assert!(decode_favicon(&bytes).is_some());
     }
 }

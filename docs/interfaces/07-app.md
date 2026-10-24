@@ -175,7 +175,7 @@ presentation-слоем позже — в `logic()` следующего кад�
    `ViewportCommand::Close` (`UiIntent::Close`).
 6. `Escape` закрывает карточку управления (`session.show_help = false` + `mark_help_seen`).
 7. Repaint-политика: при включённом FFT и `Playing`/`Buffering` — repaint через 33 мс
-   (`SPECTRUM_REPAINT`); пульс обода и маркеров запрашивает repaint сам `globe_view`.
+   (`SPECTRUM_REPAINT`); пульс маркеров запрашивает repaint сам `globe_view`.
 
 `ui()` вызывает `draw()`: `Frame::capture` снимает читаемое состояние в снапшот,
 `egui::CentralPanel` с прозрачной рамкой рисует `draw_layers` (глобус → HUD → панель →
@@ -205,7 +205,7 @@ transport снизу (84 px: контролы + громкость + 40 px ви�
 `station_row`); `Minimal` — единственную строку now-playing с аватаром, пульсирующим
 кольцом при Playing, heart/expand/close и play/pause (`src/ui/capsule.rs`).
 Звёздное небо и country-режим рисуются только в `Full`; сглаженный `pulse`
-считается один раз за кадр и уходит и в `paint_globe`, и в капсулу. Возврат в Focus
+считается один раз за кадр и уходит только в капсулу Listening. Возврат в Focus
 из капсулы — кнопка expand (`UiAction::SetWindowMode(WindowMode::Focus)`), выбор
 режима также доступен в разделе «Window» попапа шестерёнки HUD.
 
@@ -304,13 +304,18 @@ focusable, ↑/↓ переводят фокус на соседа по види
 - состояние поиска (`Searching…`), ошибки каталога и `No stations found`
   отображаются в панели; `On map: N stations` показывает число пригодных станций;
 - при отсутствии `wgpu_render_state` вместо глобуса показывается `3D globe unavailable`;
-- чип `Visualizer` включает метрику спектра mpv: без неё столбцы и обод глобуса
-  переходят в idle-«дыхание», ошибка фильтра показывается тостом и не прерывает
+- чип `Visualizer` включает метрику спектра mpv: без неё столбцы переходят в
+  idle-«дыхание», ошибка фильтра показывается тостом и не прерывает
   воспроизведение; число столбцов (16/24/32) выбирается в попапе шестерёнки
   (`UiAction::SetVizBars` → `Settings::viz_bars`, модель перестраивается на месте);
-- сглаженный сигнал эфира (`0.75·level + 0.25·flux`) передаётся в `paint_globe`:
-  Fresnel-обод атмосферы ярче и шире при Playing, затухает при Stop и выключенном
-  визуализаторе;
+- сглаженный сигнал эфира (`0.75·level + 0.25·flux`) передаётся в кольцо
+  Listening: оно пульсирует при Playing и затухает при Stop и выключенном
+  визуализаторе; глобус от эфира не зависит, Fresnel-обод статичен;
+- в Focus за планетой рисуется орбитальное аудиокольцо (ADR-0029): те же шесть
+  агрегатов питают корону из 120 столбцов, аврору, комету и искры на onset;
+  кольцо появляется при живом эфире и включённом визуализаторе, гаснет при
+  Stop/Pause и уходе из Focus, в Overlay/Listening не рисуется, hit-testing
+  не меняет; дефолтная дистанция камеры 3.2 оставляет для него место;
 - при отсутствии `wgpu_render_state` ввод глобуса игнорируется, вместо сферы
   рисуется заглушка;
 - при выборе или наведении страны над глобусом рисуется country callout (ТЗ §1):
@@ -321,9 +326,9 @@ focusable, ↑/↓ переводят фокус на соседа по види
 ## Зависимости
 
 `OrbitApp<'a>` владеет только кадрами и per-run ресурсами: `session: &'a mut Session`,
-`globe_ready`, `spectrum_overlay: SpectrumOverlay`, `callout: CalloutState`,
-`visualizer: VisualizerModel`, `favicons: FaviconCache`, `http: reqwest::Client`,
-`toast: Toast`. Подсистемами (`AudioEngine`, `GeoService`, `RadioBrowserClient`,
+`globe_ready`, `spectrum_overlay: SpectrumOverlay`, `orbit_ring: OrbitRing`,
+`callout: CalloutState`, `visualizer: VisualizerModel`, `favicons: FaviconCache`,
+`http: reqwest::Client`, `toast: Toast`. Подсистемами (`AudioEngine`, `GeoService`, `RadioBrowserClient`,
 `MediaControls`, `StationLibrary`, `SettingsStore`, `GlobeCamera`, `tokio::runtime::Handle`)
 владеет `Session`; к ним presentation-слой обращается через поля ядра
 (`session.audio`, `session.geo`, `session.library`, `session.settings`, `session.runtime`)
@@ -335,7 +340,8 @@ focusable, ↑/↓ переводят фокус на соседа по види
 `panel_open`/`show_help`.
 
 Из `src/ui/` используются `UiAction`, `DeskLayout`, `LayoutDensity`,
-`Palette`/`configure_style`, `GlobeState`/`GlobeResponse`, `TransportState`,
+`Palette`/`configure_style`, `GlobeState`/`GlobeResponse`, `OrbitRing`,
+`TransportState`,
 `PanelState`, `HudState`, `FaviconCache` и `decode_favicon`, `Toast`, капсулы
 `capsule::{overlay_top, overlay_favorites, listening}`, `widgets::glass_panel`,
 `overlays::help_card`/`density_legend`, `SearchMode` (ре-экспорт

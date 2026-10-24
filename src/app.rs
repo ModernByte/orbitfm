@@ -18,8 +18,9 @@ use crate::session::{Notice, Session, UiIntent};
 use crate::settings::Settings;
 use crate::ui::UiAction;
 use crate::ui::globe_view::{self, CalloutState, GlobeState};
-use crate::ui::images::{FaviconCache, decode_favicon};
+use crate::ui::images::{FaviconCache, MAX_FAVICON_BYTES, decode_favicon};
 use crate::ui::layout::{DeskLayout, LayoutDensity};
+use crate::ui::orbit_ring::OrbitRing;
 use crate::ui::palette::{self, Palette};
 use crate::ui::toast::Toast;
 use crate::ui::transport::{self, TransportState};
@@ -31,6 +32,15 @@ const SPECTRUM_REPAINT: Duration = Duration::from_millis(33);
 const FAVICON_REPAINT: Duration = Duration::from_millis(120);
 /// Таймаут HTTP-запроса иконки станции.
 const FAVICON_FETCH_TIMEOUT: Duration = Duration::from_secs(6);
+/// Сколько редиректов разрешено при загрузке favicon (ADR-0025).
+const MAX_FAVICON_REDIRECTS: usize = 3;
+/// MIME-типы, допустимые для favicon (ADR-0025).
+const ALLOWED_FAVICON_MIME: &[&str] = &[
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "application/octet-stream",
+];
 /// Скругление крупных зон (HUD, панель станции).
 const GLASS_RADIUS_MAJOR: f32 = 16.0;
 /// Скругление маленьких зон (легенда, карточка управления).
@@ -42,6 +52,8 @@ pub(crate) struct OrbitApp<'a> {
     session: &'a mut Session,
     globe_ready: bool,
     spectrum_overlay: SpectrumOverlay,
+    /// Орбитальное аудиокольцо за планетой в Focus (ADR-0029).
+    orbit_ring: OrbitRing,
     /// Callout выбранной/наведённой страны с fade-переходами.
     callout: CalloutState,
     visualizer: VisualizerModel,
@@ -80,14 +92,16 @@ impl<'a> OrbitApp<'a> {
             session,
             globe_ready,
             spectrum_overlay: SpectrumOverlay::default(),
+            orbit_ring: OrbitRing::default(),
             callout: CalloutState::default(),
             visualizer,
             favicons: FaviconCache::new(),
             http: reqwest::Client::builder()
                 .user_agent(USER_AGENT)
                 .timeout(FAVICON_FETCH_TIMEOUT)
+                .redirect(reqwest::redirect::Policy::limited(MAX_FAVICON_REDIRECTS))
                 .build()
-                .unwrap_or_default(),
+                .expect("конфигурация HTTP-клиента favicon корректна"),
             toast: Toast::default(),
         }
     }
@@ -112,14 +126,28 @@ impl<'a> OrbitApp<'a> {
             let http = self.http.clone();
             let sender = sender.clone();
             runtime.spawn(async move {
-                let image = match http.get(&url).send().await {
-                    Ok(response) if response.status().is_success() => {
-                        match response.bytes().await {
-                            Ok(bytes) => decode_favicon(&bytes),
-                            Err(_) => None,
+                let image = if favicon_url_allowed(&url) {
+                    match http.get(&url).send().await {
+                        Ok(response)
+                            if response.status().is_success()
+                                && favicon_content_type_allowed(&response) =>
+                        {
+                            match read_favicon_bytes(response).await {
+                                Some(bytes) => {
+                                    // Паника декодера не должна навсегда занимать слот in_flight.
+                                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                        decode_favicon(&bytes)
+                                    }))
+                                    .ok()
+                                    .flatten()
+                                }
+                                None => None,
+                            }
                         }
+                        _ => None,
                     }
-                    _ => None,
+                } else {
+                    None
                 };
                 let _ = sender.send((url, image));
             });
@@ -160,16 +188,34 @@ impl<'a> OrbitApp<'a> {
         let session = &mut *self.session;
         let favicons = &mut self.favicons;
         let spectrum_overlay = &mut self.spectrum_overlay;
+        let orbit_ring = &mut self.orbit_ring;
         let callout = &mut self.callout;
         let visualizer = &self.visualizer;
         let palette = &frame.palette;
         let layout = frame.layout;
         let density = layout.density;
 
-        // Пульс считается один раз на кадр: глобус Focus и кольцо Listening
-        // должны видеть одно и то же сглаженное значение.
+        // Пульс считается один раз на кадр для кольца Listening; глобус
+        // от аудио больше не пульсирует (снято до Этапа 9).
         spectrum_overlay.update(frame.spectrum_target, ui.input(|input| input.stable_dt));
         let pulse = spectrum_overlay.pulse();
+
+        // Кольцо — часть Focus-сцены: в капсулах оно не рисуется и гаснет.
+        let ring_live = density == LayoutDensity::Full
+            && session.spectrum_enabled
+            && matches!(
+                &frame.playback,
+                PlaybackState::Playing | PlaybackState::Buffering | PlaybackState::Reconnecting
+            );
+        orbit_ring.update(
+            if ring_live {
+                frame.spectrum_target
+            } else {
+                None
+            },
+            ring_live,
+            ui.input(|input| input.unstable_dt),
+        );
 
         let mut actions = Vec::new();
 
@@ -191,8 +237,8 @@ impl<'a> OrbitApp<'a> {
                             geo: &session.geo,
                             selected_country: session.search.context.country.as_ref(),
                             country_enabled,
-                            pulse,
                             backdrop: density == LayoutDensity::Full,
+                            ring: &*orbit_ring,
                             layout,
                             callout,
                         },
@@ -660,5 +706,74 @@ impl eframe::App for OrbitApp<'_> {
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         [0.0, 0.0, 0.0, 0.0]
+    }
+}
+
+fn favicon_url_allowed(url: &str) -> bool {
+    url::Url::parse(url)
+        .ok()
+        .is_some_and(|url| matches!(url.scheme(), "http" | "https"))
+}
+
+fn favicon_mime_allowed(value: &str) -> bool {
+    let mime = value
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    ALLOWED_FAVICON_MIME.contains(&mime.as_str())
+}
+
+fn favicon_content_type_allowed(response: &reqwest::Response) -> bool {
+    match response.headers().get(reqwest::header::CONTENT_TYPE) {
+        None => true,
+        Some(value) => value.to_str().ok().is_some_and(favicon_mime_allowed),
+    }
+}
+
+async fn read_favicon_bytes(mut response: reqwest::Response) -> Option<Vec<u8>> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_FAVICON_BYTES as u64)
+    {
+        return None;
+    }
+
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.ok()? {
+        if bytes.len().saturating_add(chunk.len()) > MAX_FAVICON_BYTES {
+            return None;
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Some(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn favicon_urls_accept_only_http_and_https() {
+        assert!(favicon_url_allowed("https://example.com/icon.png"));
+        assert!(favicon_url_allowed("http://example.com/icon.png"));
+        assert!(!favicon_url_allowed("file:///etc/passwd"));
+        assert!(!favicon_url_allowed("data:image/png;base64,AAAA"));
+        assert!(!favicon_url_allowed("javascript:alert(1)"));
+        assert!(!favicon_url_allowed("not a url"));
+    }
+
+    #[test]
+    fn favicon_mime_allowlist_rejects_active_content() {
+        assert!(favicon_mime_allowed("image/png"));
+        assert!(favicon_mime_allowed("IMAGE/JPEG; charset=binary"));
+        assert!(favicon_mime_allowed("image/webp"));
+        assert!(favicon_mime_allowed("application/octet-stream"));
+        assert!(!favicon_mime_allowed("image/svg+xml"));
+        assert!(!favicon_mime_allowed("image/gif"));
+        assert!(!favicon_mime_allowed("image/x-icon"));
+        assert!(!favicon_mime_allowed("text/html"));
+        assert!(!favicon_mime_allowed(""));
     }
 }

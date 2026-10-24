@@ -1,5 +1,8 @@
 //! Системные медиа-контролы на базе playwire (MPRIS v2 на Linux).
 
+#[cfg(windows)]
+mod host_window;
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -55,6 +58,10 @@ pub enum MediaError {
 /// Обёртка над системными медиа-контролами.
 pub struct MediaControls {
     controls: PlatformControls,
+    // Поле объявлено после `controls`, чтобы SMTC отвязывался от окна раньше,
+    // чем уничтожается сам HWND (ADR-0024).
+    #[cfg(windows)]
+    _smtc_window: host_window::HostWindow,
     events: mpsc::UnboundedReceiver<MediaCommand>,
     last_published: Option<PlaybackInfo>,
 }
@@ -63,9 +70,13 @@ impl MediaControls {
     /// Регистрирует MPRIS-имя и начинает принимать команды системы.
     pub fn new(wake: WakeFn) -> Result<Self, MediaError> {
         let (event_tx, events) = mpsc::unbounded_channel();
+        #[cfg(windows)]
+        let smtc_window = host_window::HostWindow::new().map_err(MediaError::Init)?;
         let config = PlayerConfig::new(PLAYER_IDENTITY)
             .desktop_entry(DESKTOP_ENTRY)
             .track_id_prefix(TRACK_ID_PREFIX);
+        #[cfg(windows)]
+        let config = config.hwnd(smtc_window.hwnd());
 
         let controls = PlatformControls::new(config, move |event| {
             if let Some(command) = map_event(event) {
@@ -79,6 +90,8 @@ impl MediaControls {
 
         Ok(Self {
             controls,
+            #[cfg(windows)]
+            _smtc_window: smtc_window,
             events,
             last_published: None,
         })

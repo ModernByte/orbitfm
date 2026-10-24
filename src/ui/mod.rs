@@ -10,6 +10,7 @@ pub(crate) mod icons;
 pub(crate) mod images;
 pub(crate) mod layout;
 pub(crate) mod mode_switch;
+pub(crate) mod orbit_ring;
 pub(crate) mod overlays;
 pub(crate) mod palette;
 pub(crate) mod station_filter;

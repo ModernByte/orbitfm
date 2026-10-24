@@ -25,7 +25,8 @@ epaint = { version = "0.37", features = ["color_fonts"] }
 geo = { version = "0.33", default-features = false }
 geojson = "1.0"
 glam = "0.34"
-image = { version = "0.25", default-features = false, features = ["jpeg", "png", "ico"] }
+# Только растровые форматы из allowlist ADR-0025: SVG/GIF/ICO не декодируются.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 libc = "0.2"
 libmpv2 = { version = "6.0", default-features = false }
 playwire = "2.0"
@@ -54,6 +55,16 @@ wgpu = "30"
 [target.'cfg(target_os = "linux")'.dependencies]
 # Системный трей по SNI (ADR-0020). Только Linux: на других ОС модуль — no-op.
 ksni = { version = "0.3.7", features = ["blocking"], optional = true }
+
+[target.'cfg(windows)'.dependencies]
+# Скрытое top-level окно под HWND для SMTC (ADR-0024). Win32_Graphics_Gdi нужна
+# для компиляции WNDCLASSW в windows-rs.
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [dev-dependencies]
 tempfile = "3"
