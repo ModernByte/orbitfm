@@ -9,8 +9,9 @@
 
 Второй публичный пре-релиз: Application Core, честное скрытие окна, системный
 трей, режимы окна Overlay/Listening и доступность (Этап 8, фаза 7). Пакеты:
-AppImage и Flatpak для Linux x86_64, MSI для Windows x64, DMG для macOS — все без
-подписи и нотаризации.
+AppImage для Linux x86_64, MSI для Windows x64 и DMG для macOS — все без подписи
+и нотаризации. Flatpak в этот пре-релиз не включён: манифест и vendored-источники
+проверены CI, но для сборки нужны `flatpak-builder` и runtime 25.08.
 
 ### Добавлено
 - ADR-0018 (принято, редакция 2) — честное «close = hide» на целевом Wayland/niri:
