@@ -146,6 +146,48 @@ pub enum MotionStyle {
     BeatMarch,
 }
 
+impl MotionStyle {
+    pub const ALL: [Self; 7] = [
+        Self::Auto,
+        Self::SoftPulse,
+        Self::GrooveSway,
+        Self::BassDrop,
+        Self::AmbientDrift,
+        Self::SparkleTwitch,
+        Self::BeatMarch,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "Auto",
+            Self::SoftPulse => "Soft Pulse",
+            Self::GrooveSway => "Groove Sway",
+            Self::BassDrop => "Bass Drop",
+            Self::AmbientDrift => "Ambient Drift",
+            Self::SparkleTwitch => "Sparkle Twitch",
+            Self::BeatMarch => "Beat March",
+        }
+    }
+
+    /// Номер стиля для `CameraUniform.motion2.y`; Auto — 0.
+    pub fn id(self) -> f32 {
+        match self {
+            Self::Auto => 0.0,
+            Self::SoftPulse => 1.0,
+            Self::GrooveSway => 2.0,
+            Self::BassDrop => 3.0,
+            Self::AmbientDrift => 4.0,
+            Self::SparkleTwitch => 5.0,
+            Self::BeatMarch => 6.0,
+        }
+    }
+
+    /// Стилю нужны полосы Bass/Mid/High; без них он деградирует.
+    pub fn requires_bands(self) -> bool {
+        matches!(self, Self::BassDrop | Self::SparkleTwitch | Self::BeatMarch)
+    }
+}
+
 /// Настройки оформления.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -296,6 +338,14 @@ impl SettingsStore {
         self.save()
     }
 
+    pub fn set_motion_style(&mut self, style: MotionStyle) -> Result<(), SettingsError> {
+        if self.settings.motion_style == style {
+            return Ok(());
+        }
+        self.settings.motion_style = style;
+        self.save()
+    }
+
     fn save(&self) -> Result<(), SettingsError> {
         let Some(path) = &self.path else {
             return Ok(());
@@ -419,13 +469,28 @@ mod tests {
             let mut store = SettingsStore::load(path.clone()).unwrap();
             store.set_motion(MotionReactivity::High).unwrap();
             store.set_reduce_motion(true).unwrap();
+            store.set_motion_style(MotionStyle::GrooveSway).unwrap();
         }
 
         let store = SettingsStore::load(path).unwrap();
         assert_eq!(store.settings().motion, MotionReactivity::High);
-        assert_eq!(store.settings().motion_style, MotionStyle::Auto);
+        assert_eq!(store.settings().motion_style, MotionStyle::GrooveSway);
         assert!(!store.settings().allow_flips);
         assert!(store.settings().reduce_motion);
+    }
+
+    #[test]
+    fn motion_styles_have_ids_labels_and_band_requirements() {
+        assert_eq!(MotionStyle::ALL.len(), 7);
+        assert_eq!(MotionStyle::Auto.id(), 0.0);
+        assert_eq!(MotionStyle::SoftPulse.id(), 1.0);
+        assert_eq!(MotionStyle::BeatMarch.id(), 6.0);
+        assert_eq!(MotionStyle::BassDrop.label(), "Bass Drop");
+        assert!(MotionStyle::BassDrop.requires_bands());
+        assert!(MotionStyle::SparkleTwitch.requires_bands());
+        assert!(MotionStyle::BeatMarch.requires_bands());
+        assert!(!MotionStyle::SoftPulse.requires_bands());
+        assert!(!MotionStyle::Auto.requires_bands());
     }
 
     #[test]

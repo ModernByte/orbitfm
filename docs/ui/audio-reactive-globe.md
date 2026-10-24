@@ -2,8 +2,9 @@
 
 **Организация:** ModernByte  
 **Дата:** 2026-10-24  
-**Статус:** Принято. Phase 0 (полосы эфира) и Phase 1 (ядро движения, squash,
-idle-дыхание, деформация всех слоёв) реализованы. Фазы 2–4 — план. Документ
+**Статус:** Принято. Phase 0 (полосы эфира), Phase 1 (ядро движения, squash,
+idle-дыхание, деформация всех слоёв) и Phase 2 (onset/beat, шесть стилей, Auto
+с гистерезисом, uniform `motion2`, flash) реализованы. Фазы 3–4 — план. Документ
 фиксирует концепцию, контракты и поэтапный план.  
 **Связанные решения:** [ADR-0027](../adr/0027-трёхполосный-анализ-эфира.md) (полосы),
 [ADR-0028](../adr/0028-аудио-реактивная-деформация-глобуса.md) (движение),
@@ -48,14 +49,14 @@ idle-дыхание, деформация всех слоёв) реализов�
 | Есть | Ограничение |
 |------|-------------|
 | `SpectrumFrame` с centroid, spread, rolloff, flatness, flux, RMS | Bass/Mid/High приходят в `bands` |
-| `SpectrumTarget.bands` (Phase 0) | Полосы читает `MotionMixer` (Phase 1) |
-| `MotionMixer`, `GlobeDeform`, `GlobeMotion` (Phase 1) | Нет onset/beat и стилей до Phase 2 |
+| `SpectrumTarget.bands` (Phase 0) | Bass/High ведут squash и рябь, Bass/flux — onset, доли полос — Auto (Phase 1–2) |
+| `MotionMixer`, `GlobeDeform`, `GlobeMotion` (Phase 1–2) | Onset, beat и шесть стилей реализованы; sway/roll камеры и перевороты — Phase 3 |
 | `SpectrumOverlay`: сглаженные level/flux, `pulse()` | Питает кольцо Listening; на глобус не идёт |
-| Fresnel-обод в `globe.wgsl` | Статичен; `flash` появится в Phase 2 |
-| Авто-вращение после 4 с простоя (ADR-0023) | Нет музыкальной качки и переворотов |
-| `GlobeCamera` с orbit/inertia/fly_to/idle | Нет roll и музыкальных offset'ов |
+| Fresnel-обод в `globe.wgsl` | `flash` от onset усиливает кромку; фонового аудио-пульса нет |
+| Авто-вращение после 4 с простоя (ADR-0023) | Музыкальная качка и перевороты — Phase 3 |
+| `GlobeCamera` с orbit/inertia/fly_to/idle | Нет roll и музыкальных offset'ов (Phase 3) |
 | Маркеры, страны и hit-test используют общий `GlobeDeform` | Деформация согласована (Phase 1) |
-| `Settings`: тема, акцент, `viz_bars`, `help_seen`, `motion`, `motion_style`, `allow_flips`, `reduce_motion` | Стили и flips ждут фаз 2–3 |
+| `Settings`: тема, акцент, `viz_bars`, `help_seen`, `motion`, `motion_style`, `allow_flips`, `reduce_motion` | Стиль выбирается в HUD; flips ждут Phase 3 |
 | `OrbitRing`: круговой слой за глобусом (ADR-0029) | Не деформирует планету; питается шестью агрегатами, а не полосами |
 | cava-визуализатор синтетический (ADR-0022) | Полосы не дают per-bin спектр; это не меняется |
 
@@ -126,35 +127,52 @@ scale_xz = 1 / sqrt(scale_y)
 
 ### 4.3. Onset и фаза бита
 
-- кольцевой буфер 2,1 с (43 кадра по 50 мс);
-- базовая линия — медиана последней секунды без последних 200 мс;
-- порог `baseline + max(0,04; 0,35 · σ)`, плюс вклад flux;
+- кольцевой буфер 2,1 с (43 сэмпла по 50 мс); детектор шагает фиксированно
+  по 50 мс независимо от fps;
+- базовая линия — медиана и σ последних ≤20 сэмплов (1 с) без последних
+  4 (200 мс), минимум 10 сэмплов;
+- порог Bass — `median + max(0,04; 0,35 σ)`, flux — `median + max(0,02;
+  0,45 σ)`; сила удара нормируется диапазоном 0,25;
 - рефрактерный интервал 150 мс;
-- `onset_confidence` растёт на сильных ударах и затухает;
-- период бита — медиана последних 4 интервалов, 60–180 BPM;
-- `beat_phase` сбрасывается на onset и накапливается по `dt`.
+- `onset_confidence` растёт на `0,30 · strength` и затухает с τ 1,5 с;
+  импульс бита — с τ 0,18 с;
+- период — медиана последних 4 интервалов, каждый ограничен 1/3…1 с
+  (60–180 BPM);
+- `beat_phase` сбрасывается в 0 на onset и иначе накапливается по
+  `50 мс / period`;
+- бит применяется через гейт `((confidence − 0,20) / 0,30).clamp(0, 1)`.
 
 Если onset'ов нет, `beat_phase` не применяется: стили остаются на дыхании,
-а не «маршируют по таймеру».
+а не «маршируют по таймеру». Stop, `None` и `Off` сбрасывают детектор.
 
 ### 4.4. Стили
 
 | Стиль | Когда Auto выбирает | Характер |
 |-------|---------------------|----------|
-| Soft Pulse | низкий уровень и flux | дыхание + лёгкий bass squash |
+| Soft Pulse | низкий уровень и flux; fallback без полос | дыхание + лёгкий bass squash |
 | Groove Sway | устойчивые onset, сильная середина | yaw-качка ±0,015 рад в фазе бита |
 | Bass Drop | бас доминирует, сильный onset | глубокий squash, короткая рябь, лёгкий flash |
 | Ambient Drift | низкий flux, высокий flatness | очень медленный дрейф и рябь |
-| Sparkle Twitch | высокий centroid, много flux | мелкая высокочастотная рябь, без качки |
+| Sparkle Twitch | высокий centroid, много высоких/flux | мелкая высокочастотная рябь, без качки |
 | Beat March | регулярные интервалы, высокая уверенность | шаг на бит, умеренный squash |
+
+Параметры стиля (`StyleParams`): множитель squash, амплитуда sway, множитель
+ряби, максимум flash, вклад импульса бита, вес дрейфа и добавка к скорости
+ряби. Soft Pulse — `1,0 / 0 / 0,45`; Groove Sway — `0,65 / 0,015 / 0,55` и
+бит 0,15; Bass Drop — `1,25 / 0 / 0,50`, flash 0,10 и бит 0,35; Ambient
+Drift — `0,45 / 0,006 / 0,70` с дрейфом 1,0; Sparkle Twitch — `0,50 / 0 /
+1,0` со скоростью 1,8; Beat March — `0,80 / 0,008 / 0,45` с битом 0,80.
 
 Auto:
 
-- средние за 2–3 с, а не один кадр;
+- признаки (уровень, flux, доли полос, centroid 200–4000 Гц, flatness)
+  сглаживаются EMA с τ 2,5 с, а не одним кадром;
 - минимальное удержание стиля 3 с;
-- кроссфейд параметров 0,8–1,5 с;
+- кроссфейд параметров 1 с по smoothstep;
 - при недоступности полос Auto ограничивается Soft Pulse / Groove Sway /
-  Ambient Drift.
+  Ambient Drift; ручной стиль, требующий полос, деградирует до Soft Pulse;
+- пропажа полос сразу уводит текущий band-стиль в Soft Pulse, не дожидаясь
+  удержания.
 
 Ручной стиль не отключает защиту от переворота и приоритет камеры.
 
@@ -193,11 +211,13 @@ motion2: x = flash,       y = style_id,
          z = beat_phase,   w = time
 ```
 
-В Phase 1 реализован только `motion`; `motion2` появится в Phase 2.
-Поле `pulse` и старый аудио-пульс удалены из `CameraUniform` и шейдера
-2026-10-24. Fresnel-обод статичен, пока его не усиливает `flash`.
-`CameraUniform` должен сохранять 16-байтовое выравнивание и проходить
-`bytemuck::Pod`.
+Оба `vec4` реализованы (`CameraUniform` занимает 128 байт). `motion2.y` —
+числовой `MotionStyle::id`: Auto 0, Soft Pulse 1, Groove Sway 2, Bass Drop 3,
+Ambient Drift 4, Sparkle Twitch 5, Beat March 6; рендерер id не
+интерпретирует. Поле `pulse` и старый аудио-пульс удалены из `CameraUniform`
+и шейдера 2026-10-24. Fresnel-обод усиливается `flash` на onset и не имеет
+фоновой аудио-модуляции. `CameraUniform` должен сохранять 16-байтовое
+выравнивание и проходить `bytemuck::Pod`.
 
 ### 5.2. Вершинный шейдер
 
@@ -207,7 +227,8 @@ motion2: x = flash,       y = style_id,
 - нормаль для освещения — `normalize(normal / scale)` (обратная
   транспонированная диагональ масштаба); нормаль ряби не считается
   (амплитуда мала);
-- `flash` усиливает Fresnel-кромку, но не заменяет её; в Phase 1 равен нулю.
+- `flash` усиливает Fresnel-кромку: `rim = fresnel · (0,12 + motion2.x)`,
+  но не заменяет её; предел 0,15.
 
 ### 5.3. Согласованность overlay'ев
 
@@ -250,7 +271,7 @@ pub enum MotionStyle {
 | Поле | Default | Примечание |
 |------|---------|------------|
 | `motion` | `Normal` | Focus; Overlay не выше Low; Listening — Off |
-| `motion_style` | `Auto` | ручной стиль доступен в Focus |
+| `motion_style` | `Auto` | ручной стиль доступен в Focus; Auto выбирает по сигналу |
 | `allow_flips` | `false` | недоступен при Off/Reduce motion |
 | `reduce_motion` | `false` | выключает squash/ripple/sway/flips |
 
@@ -277,7 +298,7 @@ analysis_needed = visualizer_enabled
 | `src/audio/mod.rs` | `BandLevels`, `SpectrumFrame.bands: Option<BandLevels>` |
 | `src/audio/worker.rs` | `@level` + `@spectrum`, выбор stereo/mono-графа, fallback, чтение 12 ключей |
 | `src/render/spectrum.rs` | `SpectrumTarget.bands`, нормирование полос |
-| `src/render/motion.rs` | **новый**: `GlobeMotion`, `MotionMixer`, `GlobeDeform`, onset/beat |
+| `src/render/motion.rs` | **новый**: `GlobeMotion`, `MotionMixer`, `GlobeDeform`, onset/beat, шесть стилей и Auto |
 | `src/render/camera.rs` | `roll`, музыкальные offset'ы, `view_proj` с roll |
 | `src/render/globe.rs` | `CameraUniform.motion/motion2`, `GlobeCallback` с `GlobeMotion` |
 | `src/render/globe.wgsl` | squash, ripple, flash |
@@ -356,7 +377,7 @@ stereo/mono-прогоны через локальный HTTP-поток; PCM п
 Off/Low/High вручную — эти режимы покрыты unit-тестами; живая проверка на
 niri остаётся в Phase 4.
 
-### Phase 2 — Onset, бит и стили
+### Phase 2 — Onset, бит и стили — реализовано
 
 **Задачи:**
 
@@ -373,6 +394,15 @@ niri остаётся в Phase 4.
 - тишина и речь не вызывают «марша» или переворота;
 - без полос Auto не выбирает стили, требующие Bass/High;
 - настройки сохраняются и читаются после перезапуска.
+
+Проверено 2026-10-24 на Linux: `cargo fmt`, `cargo clippy --all-targets --
+-D warnings` и `cargo test` (270 тестов) чисты. Onset, период/регулярность,
+рефрактерность, гейт уверенности, выбор стиля по характеру сигнала,
+удержание/кроссфейд Auto и деградация без полос покрыты синтетическими
+последовательностями; сохранение `motion_style` проверено roundtrip-тестом
+`SettingsStore`. Живая проверка на трёх реальных станциях и на niri
+отложена до Phase 4: текущая среда не даёт открыть HUD и управлять эфиром
+без вмешательства в запущенный экземпляр.
 
 ### Phase 3 — Камера, перевороты и режимы
 
@@ -421,9 +451,16 @@ niri остаётся в Phase 4.
 - выбор stereo/mono/other graph и fallback;
 - spring: ограничение амплитуды, сохранение объёма, устойчивость;
 - stop-fade: 300–500 мс до <1 %;
-- onset: удар, тишина, шум, рефрактерность;
-- beat phase в 0..1, период 60–180 BPM;
-- Auto: гистерезис и минимальное удержание;
+- onset: регулярная последовательность даёт период ≈0,5 с, регулярность
+  >0,85 и уверенность >0,5; рефрактерность отсекает повторные удары; Stop
+  сбрасывает фазу и уверенность;
+- beat phase в 0..1, период 60–180 BPM, гейт уверенности управляет фазой
+  и flash;
+- Auto: выбор по характеру сигнала (Ambient Drift, Sparkle Twitch,
+  Bass Drop, Beat March), удержание 3 с, кроссфейд и запрет band-стилей
+  без полос;
+- ручной стиль без полос уходит в Soft Pulse; стилевые добавки соблюдают
+  лимиты реактивности;
 - приоритет камеры: drag/zoom/fly гасят sway и flips;
 - режимы: Overlay ≤ Low, Listening Off;
 - `GlobeDeform`: прямой/обратный ray roundtrip, идентичность;

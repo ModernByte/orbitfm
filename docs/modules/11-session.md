@@ -105,7 +105,7 @@ Listening — `Off`. `motion_reactivity()`, `analysis_needed()` и `sync_analysi
 |------|-----------------|--------------------------------------|
 | `mod.rs` | Ядро: владение подсистемами, пробуждение, `status`, ре-экспорт контрактов пакета | `Session`, `AppServices`, `Notice`, `ParkOutcome`, `WakeHandle`, `LibraryTab`; наружу из `window.rs` — `UiIntent`, `WindowMode`, `WindowState`, `WINDOW_TITLE` |
 | `window.rs` | Состояние окна: режим (`WindowMode`), геометрия и заголовки по режиму, намерения UI, признак перезапуска (ADR-0018, ADR-0021) | `WindowMode` (+ `ALL`/`label`/`default_size`/`min_size`/`title`/`as_str`), `UiIntent`, `WindowState`, `WINDOW_SIZE`, `WINDOW_MIN_SIZE`, `WINDOW_TITLE`, `OVERLAY_SIZE`, `OVERLAY_MIN_SIZE`, `OVERLAY_TITLE`, `LISTENING_SIZE`, `LISTENING_MIN_SIZE`, `LISTENING_TITLE` |
-| `commands.rs` | Разбор `IpcCommand` (общий для окна и парковки), `impl From<WindowModeArg> for WindowMode` и настроек оформления и движения | `Session::{execute, process_commands, set_theme, set_accent, set_viz_bars, set_visualizer_enabled, set_motion, set_reduce_motion, mark_help_seen}` |
+| `commands.rs` | Разбор `IpcCommand` (общий для окна и парковки), `impl From<WindowModeArg> for WindowMode` и настроек оформления и движения | `Session::{execute, process_commands, set_theme, set_accent, set_viz_bars, set_visualizer_enabled, set_motion, set_motion_style, set_reduce_motion, mark_help_seen}` |
 | `playback.rs` | Аудио-события, запуск/остановка, избранное, история, очередь `prev`/`next`, витрина MPRIS | `Session::{process_audio_events, apply_audio_event, resolve_station, start_station, spawn_click, toggle_favorite, clear_history, focus_country, set_volume, set_audio_paused, resume_playback, toggle_playback, stop_playback, process_media_commands, execute_media_command, visible_queue, play_relative, sync_media}` |
 | `search.rs` | Поиск по имени/стране/жанру с поколениями ответов и рулетка | `SearchMode`, `SearchContext`, `SearchState`, `SearchResponse`, `STATION_LOOKUP_TIMEOUT`, `Session::{start_search, start_country_search, start_genre_search, switch_mode, poll_search, start_roulette, poll_roulette, apply_roulette}` |
 | `markers.rs` | Агрегация станций с координатами в маркеры глобуса | `GlobeMarker`, `build_markers` (+ `#[cfg(test)] sample_station`, `geo_station`) |
@@ -335,7 +335,8 @@ process_audio_events → process_commands → process_media_commands
 for WindowMode`: `src/ipc/` не знает доменного режима, превращение делает Core
 (ADR-0021 п. 5). Настройки оформления и движения идут через
 `SettingsStore` и возвращают `Result<(), String>`: `set_theme`, `set_accent`,
-`set_viz_bars`, `set_motion`, `set_reduce_motion`; `set_visualizer_enabled`
+`set_viz_bars`, `set_motion`, `set_motion_style`, `set_reduce_motion`;
+`set_visualizer_enabled`
 вызывает `sync_analysis()` и меняет пользовательский переключатель, а не
 состояние анализа напрямую; `mark_help_seen` ошибку только
 логирует. Перекрашиванием `egui` занимается presentation: после `set_theme`/

@@ -5,7 +5,7 @@
 //! [`UiIntent`](super::UiIntent).
 
 use crate::ipc::{IpcCommand, WindowModeArg};
-use crate::settings::{AccentColor, MotionReactivity, ThemeMode};
+use crate::settings::{AccentColor, MotionReactivity, MotionStyle, ThemeMode};
 
 use super::WindowMode;
 
@@ -110,6 +110,12 @@ impl super::Session {
             .set_reduce_motion(reduce)
             .map_err(|err| err.to_string())?;
         self.sync_analysis()
+    }
+
+    pub(crate) fn set_motion_style(&mut self, style: MotionStyle) -> Result<(), String> {
+        self.settings
+            .set_motion_style(style)
+            .map_err(|err| err.to_string())
     }
 
     /// Анализ включён, если он нужен визуализатору или движению глобуса.

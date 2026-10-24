@@ -195,7 +195,7 @@ src/ui/
 - `src/app.rs` — единственная точка побочных эффектов: `apply_actions`/`apply_action`
   выполняют `Play`, `ToggleFavorite`, `SelectCountry`, `SwitchMode`, `SelectGenre`,
   `RunSearch`, `Roulette`, `ClearHistory`, `SetTheme`, `SetAccent`, `ToggleSpectrum`,
-  `SetVizBars`, `SetMotion`, `SetReduceMotion`, `SetVolume`, `TogglePlayback`, `Stop`,
+  `SetVizBars`, `SetMotion`, `SetMotionStyle`, `SetReduceMotion`, `SetVolume`, `TogglePlayback`, `Stop`,
   `PlayRelative`, `Hide`, `Quit`,
   `TogglePanel`, `ToggleHelp`, `SetWindowMode`, превращая каждое в вызов метода
   `Session`, и после каждого действия просят repaint.

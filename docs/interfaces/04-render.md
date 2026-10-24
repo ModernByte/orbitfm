@@ -86,8 +86,8 @@ impl GlobeRenderer {
     pub fn paint(&self, render_pass: &mut wgpu::RenderPass<'_>);
 }
 
-/// Добавляет paint callback глобуса в painter. `motion` задаёт squash и
-/// рябь текущего кадра; Fresnel-обод остаётся статичным.
+/// Добавляет paint callback глобуса в painter. `motion` задаёт squash,
+/// рябь и flash текущего кадра.
 pub fn paint_globe(
     painter: &egui::Painter,
     rect: egui::Rect,
@@ -171,31 +171,41 @@ impl GlobeDeform {
 }
 
 /// Снимок движения на кадр; чистые числа без ссылок на GPU/UI.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GlobeMotion {
     pub deform: GlobeDeform,
     /// Амплитуда радиальной ряби, `0.0..=0.004`.
     pub ripple: f32,
     pub ripple_phase: f32,
-    /// Музыкальная добавка к yaw; в Phase 1 равна нулю.
+    /// Музыкальная добавка к yaw, рад; камера решает, применять ли её (Phase 3).
     pub yaw_sway: f32,
-    /// Переворот камеры; в Phase 1 равен нулю.
+    /// Переворот камеры; включается в Phase 3.
     pub roll: f32,
-    /// Усиление Fresnel-кромки; в Phase 1 равно нулю.
+    /// Усиление Fresnel-кромки onset'ом, `0.0..=0.15`.
     pub flash: f32,
+    /// Фаза бита `0.0..1.0`; 0 — момент onset.
+    pub beat_phase: f32,
+    /// Время микшера, с.
+    pub time: f32,
+    /// Эффективный характер движения: Auto разрешается в один из шести стилей.
     pub style: MotionStyle,
     /// Аудио-интенсивность 0..1 для выбора частоты кадров.
     pub intensity: f32,
 }
 
+impl Default for GlobeMotion { /* identity, нули, MotionStyle::Auto */ }
+
 impl GlobeMotion {
     pub fn disabled(style: MotionStyle) -> Self;
     /// Значения `CameraUniform.motion`: `[scale_y−1, scale_xz−1, ripple, phase]`.
     pub fn uniform_values(&self) -> [f32; 4];
+    /// Значения `CameraUniform.motion2`: `[flash, style_id, beat_phase, time]`.
+    pub fn uniform2_values(&self) -> [f32; 4];
 }
 
-/// Spring-squash, огибающие и idle-дыхание; живёт в presentation-слое.
-#[derive(Debug, Default)]
+/// Spring-squash, огибающие, onset/beat, стили и idle-дыхание;
+/// живёт в presentation-слое.
+#[derive(Debug)]
 pub struct MotionMixer { /* ... */ }
 
 impl MotionMixer {
@@ -255,9 +265,12 @@ impl SpectrumOverlay {
 }
 ```
 
-`CameraUniform` — внутренний тип (`pub(crate)`), содержащий `view_proj`,
-`light_direction`, позицию камеры `camera_position` и `motion` (`scale_y−1`,
-`scale_xz−1`, амплитуда ряби, фаза). `GlobeCallback`
+`CameraUniform` — внутренний тип (`pub(crate)`) размером 128 байт, содержащий
+`view_proj`, `light_direction`, позицию камеры `camera_position`, `motion`
+(`scale_y−1`, `scale_xz−1`, амплитуда ряби, фаза) и `motion2` (`flash`,
+`style_id`, `beat_phase`, `time`). `motion2.y` — числовой id стиля из
+`MotionStyle::id`; рендерер его не интерпретирует, но поле живёт в uniform для
+будущих шейдерных эффектов и отладки. `GlobeCallback`
 реализует `egui_wgpu::CallbackTrait` и не входит в публичный экспорт: снаружи
 используется `paint_globe`.
 
@@ -287,11 +300,36 @@ impl SpectrumOverlay {
   переводятся тем же `to_world`/`to_unit`, что и вершины меша. Рябь в hit-test
   не входит: при амплитуде ≤0,4 % расхождение меньше пикселя.
 - `MotionMixer::update` — чистая модель без egui/wgpu: асимметричные огибающие
-  Bass/High (атака 30 мс, спад 220 мс), spring-squash (`target = 1 − amount·bass`,
-  `scale_xz = 1/√scale_y`), idle-дыхание 0,12 Гц и возврат после Stop с
-  `RELEASE_TAU = 0,10 с`. При `Off` возвращает `GlobeMotion::disabled` и
-  сбрасывает историю; `dt` ограничен 0,1 с, интегратор идёт шагом ≤1/240 с.
-  Без полос (`bands = None`) Bass — нормированный RMS, High — flux.
+  Bass/High (атака 30 мс, спад 220 мс), onset/beat, выбор стиля, spring-squash,
+  idle-дыхание и возврат после Stop с `RELEASE_TAU = 0,10 с`. Пружина стремится к
+  `1 − amount·(params.squash·bass_env + 0,6·params.beat·pulse·gate) + idle + drift`
+  и ограничена `[1 − amount, 1 + amount]`; `scale_xz = 1/√scale_y`. `dt` ограничен
+  0,1 с, интегратор идёт шагом ≤1/240 с. При `Off` возвращает
+  `GlobeMotion::disabled` и сбрасывает историю; без полос (`bands = None`) Bass —
+  нормированный RMS, High — flux.
+- Onset-детектор внутри микшера шагает фиксированно по 50 мс (20 Гц) и хранит
+  43 сэмпла (2,1 с). Базовая линия — медиана и σ последних ≤20 сэмплов без
+  последних 4 (200 мс); порог Bass — `median + max(0,04; 0,35σ)`, flux —
+  `median + max(0,02; 0,45σ)`. После удара — рефрактерность 150 мс; сила
+  нормируется диапазоном 0,25. `onset_confidence` растёт на `0,30·strength` и
+  затухает с τ 1,5 с, импульс бита — с τ 0,18 с. Интервалы ограничены
+  `[1/3; 1]` с (60–180 BPM), период — медиана последних четырёх; фаза
+  сбрасывается в 0 на onset, иначе идёт `dt / period`. Бит применяется только
+  через гейт `((confidence − 0,20) / 0,30).clamp(0, 1)`: тишина и речь не
+  «маршируют по таймеру». `None` и `Off` сбрасывают детектор.
+- Стили — набор `StyleParams` (множитель squash, sway, ripple, flash, вклад
+  бита, дрейф, скорость ряби): Soft Pulse, Groove Sway, Bass Drop, Ambient
+  Drift, Sparkle Twitch, Beat March. В Auto признаки сигнала (уровень, flux,
+  доли Bass/Mid/High, логарифмический centroid 200–4000 Гц, flatness)
+  сглаживаются с τ 2,5 с; стиль с лучшей оценкой удерживается не менее 3 с,
+  параметры переходят кроссфейдом 1 с по smoothstep. Без полос Auto
+  ограничен Soft Pulse / Groove Sway / Ambient Drift; ручной стиль, требующий
+  полос, деградирует до Soft Pulse, а пропажа полос сразу уводит текущий
+  band-стиль в Soft Pulse.
+- Стилевые добавки: `yaw_sway = params.sway·(sin(2π·beat_phase)·gate +
+  params.drift·sin(drift_phase))`; `flash = params.flash·pulse·gate·release`
+  (≤0,15); рябь — `ripple_limit·release·(params.ripple·high_env + 0,3·drift·
+  (0,5 + 0,5·sin(drift_phase)))`; `roll` остаётся нулём до Phase 3.
 - `projected_radius(viewport)` — экранный радиус силуэта единичной сферы:
   `focal = 0.5·height / tan(FOV/2)`, `radius = focal / sqrt(distance² − 1)`.
   Нулевой или нечисловой viewport даёт 0. Центр силуэта совпадает с центром
@@ -305,10 +343,12 @@ impl SpectrumOverlay {
   поэтому не «плывут» при squash. Всё, что painter рисует до вызова
   `paint_globe`, оказывается за сферой; этим пользуется орбитальное аудиокольцо
   (ADR-0029).
-- Атмосфера — статичный Fresnel-обод в фрагментном шейдере:
-  `pow(1 - dot(normal, view), 3.2) · 0.12`; поверх лежит узкая кромка
-  `pow(1 - facing, 9) · 0.2`. Аудио-пульс удалён 2026-10-24 (ADR-0023,
-  ADR-0028); позиция камеры берётся из `camera_position`.
+- Атмосфера — Fresnel-обод в фрагментном шейдере:
+  `pow(1 - dot(normal, view), 3.2) · (0.12 + motion2.x)`; поверх лежит узкая
+  кромка `pow(1 - facing, 9) · 0.2`. `motion2.x` — `flash` от onset'а (≤0,15),
+  поэтому обод вспыхивает на удар, а не стробоскопирует. Фоновый аудио-пульс
+  удалён 2026-10-24 (ADR-0023, ADR-0028); позиция камеры берётся из
+  `camera_position`.
 - Координатное соглашение сферы: `x = cos φ · sin λ`, `y = sin φ`, `z = cos φ · cos λ`;
   `+Z` — Гринвич, `+Y` — север.
 - `SpectrumOverlay::update` на первом кадре принимает значения без сглаживания, затем
@@ -320,7 +360,9 @@ impl SpectrumOverlay {
 - `SpectrumTarget.bands` заполняется App Core из `SpectrumFrame.bands` через
   `BandTargets::from_db` (пол −90 дБ, диапазон 80 дБ); при `None` потребители
   обязаны деградировать к полному RMS+flux, а не исчезать (ADR-0027, ADR-0028).
-  С Phase 1 полосы читает `MotionMixer`: Bass ведёт squash, High — рябь.
+  С Phase 1 полосы читает `MotionMixer`: Bass ведёт squash, High — рябь; с
+  Phase 2 Bass и flux питают onset-детектор, доли полос, centroid и flatness —
+  выбор стиля Auto.
 - `SpectrumOverlay::pulse` — смесь сглаженного уровня и flux (`0.75/0.25`),
   ограниченная `[0, 1]`; при невидимом оверлее возвращает 0. App Core передаёт
   значение в кольцо Listening; при выключенном визуализаторе и тишине кольцо

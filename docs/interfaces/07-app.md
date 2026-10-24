@@ -311,9 +311,13 @@ focusable, ↑/↓ переводят фокус на соседа по види
   idle-«дыхание», ошибка фильтра показывается тостом и не прерывает
   воспроизведение; число столбцов (16/24/32) выбирается в попапе шестерёнки
   (`UiAction::SetVizBars` → `Settings::viz_bars`, модель перестраивается на месте);
+- секция `Motion` в попапе шестерёнки: реактивность Off/Low/Normal/High,
+  `Reduce motion` и `Motion style` (`UiAction::SetMotionStyle` →
+  `Session::set_motion_style`); ошибка сохранения показывается тостом;
 - сглаженный сигнал эфира (`0.75·level + 0.25·flux`) передаётся в кольцо
   Listening: оно пульсирует при Playing и затухает при Stop и выключенном
-  визуализаторе; глобус от эфира не зависит, Fresnel-обод статичен;
+  визуализаторе; глобус живёт по ADR-0028 (squash, рябь, стиль и `flash` от
+  onset), фонового аудио-пульса Fresnel нет;
 - в Focus за планетой рисуется орбитальное аудиокольцо (ADR-0029): те же шесть
   агрегатов питают корону из 120 столбцов, аврору, комету и искры на onset;
   кольцо появляется при живом эфире и включённом визуализаторе, гаснет при
@@ -339,7 +343,7 @@ focusable, ↑/↓ переводят фокус на соседа по види
 и через методы ядра — `Session::start_station`, `focus_country`, `start_country_search`,
 `start_genre_search`, `start_search`, `switch_mode`, `start_roulette`, `toggle_favorite`,
 `clear_history`, `set_theme`, `set_accent`, `set_visualizer_enabled`, `set_viz_bars`,
-`set_motion`, `set_reduce_motion`,
+`set_motion`, `set_motion_style`, `set_reduce_motion`,
 `set_volume`, `play_relative`, `toggle_playback`, `stop_playback`, `hide`, `quit`,
 `window_mode`/`set_window_mode`, `motion_reactivity`, `tick`, `take_intent`, `take_notices`,
 `panel_open`/`show_help`.

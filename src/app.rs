@@ -559,6 +559,11 @@ impl<'a> OrbitApp<'a> {
                     self.toast.error(ctx, format!("Motion not saved: {err}"));
                 }
             }
+            UiAction::SetMotionStyle(style) => {
+                if let Err(err) = self.session.set_motion_style(style) {
+                    self.toast.error(ctx, format!("Motion not saved: {err}"));
+                }
+            }
             UiAction::SetReduceMotion(reduce) => {
                 if let Err(err) = self.session.set_reduce_motion(reduce) {
                     self.toast.error(ctx, format!("Motion not saved: {err}"));

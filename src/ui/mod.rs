@@ -24,7 +24,7 @@ use crate::audio::PlaybackState;
 use crate::geo::Country;
 use crate::services::Station;
 use crate::session::WindowMode;
-use crate::settings::{AccentColor, MotionReactivity, ThemeMode};
+use crate::settings::{AccentColor, MotionReactivity, MotionStyle, ThemeMode};
 
 /// Режим поиска выбирает ядро, UI только показывает переключатель.
 pub(crate) use crate::session::search::SearchMode;
@@ -47,6 +47,8 @@ pub(crate) enum UiAction {
     SetVizBars(u8),
     /// Реактивность аудио-движения глобуса (ADR-0028).
     SetMotion(MotionReactivity),
+    /// Характер движения: Auto или один из шести стилей.
+    SetMotionStyle(MotionStyle),
     /// Reduce motion: выключить геометрическое движение, оставив эфир.
     SetReduceMotion(bool),
     SetVolume(f64),

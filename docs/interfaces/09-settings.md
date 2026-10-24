@@ -69,6 +69,15 @@ pub enum MotionStyle {
     BeatMarch,
 }
 
+impl MotionStyle {
+    pub const ALL: [Self; 7];
+    pub fn label(self) -> &'static str;
+    /// Числовой id для `CameraUniform.motion2.y`: Auto 0 … Beat March 6.
+    pub fn id(self) -> f32;
+    /// Стиль осмыслен только при доступных Bass/High.
+    pub fn requires_bands(self) -> bool;
+}
+
 /// Доступные варианты числа столбцов визуализатора.
 pub const VIZ_BAR_CHOICES: [u8; 3] = [16, 24, 32];
 pub const DEFAULT_VIZ_BARS: u8 = 24;
@@ -113,6 +122,7 @@ impl SettingsStore {
     pub fn set_viz_bars(&mut self, bars: u8) -> Result<(), SettingsError>;
     pub fn set_help_seen(&mut self) -> Result<(), SettingsError>;
     pub fn set_motion(&mut self, motion: MotionReactivity) -> Result<(), SettingsError>;
+    pub fn set_motion_style(&mut self, style: MotionStyle) -> Result<(), SettingsError>;
     pub fn set_reduce_motion(&mut self, reduce: bool) -> Result<(), SettingsError>;
 }
 
@@ -138,6 +148,7 @@ egui, GUI и доменных модулей: Application Core переводи�
 | `set_viz_bars` | Приводит число к ближайшему из `VIZ_BAR_CHOICES` и сохраняет |
 | `set_help_seen` | Одноразово фиксирует показ карточки управления |
 | `set_motion` / `set_reduce_motion` | Меняет реактивность движения и Reduce motion; сохраняет только при изменении |
+| `set_motion_style` | Меняет характер движения (`Auto` или один из шести стилей); сохраняет только при изменении |
 
 ## 3. Расположение и формат
 
@@ -192,8 +203,9 @@ Application Core затемняет акцент для текста (ссылк
 - `roundtrip_persists_theme_and_accent`
 - `missing_fields_use_defaults` (включая `motion`, `motion_style`, `allow_flips`,
   `reduce_motion`)
-- `roundtrip_persists_motion_preferences`
+- `roundtrip_persists_motion_preferences` (включая `motion_style`)
 - `motion_reactivity_caps_and_limits`
+- `motion_styles_have_ids_labels_and_band_requirements`
 - `roundtrip_persists_visualizer_and_help`
 - `out_of_range_bar_count_snaps_to_nearest_choice`
 - `corrupt_file_returns_parse_error`

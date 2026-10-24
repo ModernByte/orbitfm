@@ -6,7 +6,9 @@ use crate::audio::PlaybackState;
 use crate::geo::GeoService;
 use crate::services::Station;
 use crate::session::WindowMode;
-use crate::settings::{AccentColor, MotionReactivity, Settings, ThemeMode, VIZ_BAR_CHOICES};
+use crate::settings::{
+    AccentColor, MotionReactivity, MotionStyle, Settings, ThemeMode, VIZ_BAR_CHOICES,
+};
 
 use super::icons::{close_button, gear_button, help_button, moon_button, panel_button};
 use super::images::FaviconCache;
@@ -271,6 +273,21 @@ fn right_side(
                     {
                         menu_action = Some(UiAction::SetReduceMotion(reduce_motion));
                     }
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new("Motion style")
+                            .strong()
+                            .color(palette.text),
+                    );
+                    ui.horizontal_wrapped(|ui| {
+                        for style in MotionStyle::ALL {
+                            let selected = state.settings.motion_style == style;
+                            if ui.selectable_label(selected, style.label()).clicked() && !selected {
+                                menu_action = Some(UiAction::SetMotionStyle(style));
+                                ui.close();
+                            }
+                        }
+                    });
                     ui.add_space(4.0);
                     ui.label(egui::RichText::new("Window").strong().color(palette.text));
                     ui.horizontal_wrapped(|ui| {

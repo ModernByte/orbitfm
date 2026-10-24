@@ -54,6 +54,8 @@ pub(crate) struct CameraUniform {
     pub camera_position: [f32; 4],
     /// x = scale_y − 1, y = scale_xz − 1, z = ripple, w = ripple_phase.
     pub motion: [f32; 4],
+    /// x = flash, y = style_id, z = beat_phase, w = time.
+    pub motion2: [f32; 4],
 }
 
 /// Орбитальная камера вокруг глобуса радиусом 1.
@@ -315,6 +317,7 @@ impl GlobeCamera {
             light_direction: [light.x, light.y, light.z, 0.0],
             camera_position: [eye.x, eye.y, eye.z, 0.0],
             motion: motion.uniform_values(),
+            motion2: motion.uniform2_values(),
         }
     }
 }
@@ -673,10 +676,12 @@ mod tests {
                 .all(|value| value.is_finite())
         );
         assert_eq!(uniform.motion, [0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(uniform.motion2, [0.0, 0.0, 0.0, 0.0]);
     }
 
     #[test]
     fn uniform_keeps_motion_in_pod_layout() {
+        assert_eq!(std::mem::size_of::<CameraUniform>(), 128);
         assert_eq!(std::mem::size_of::<CameraUniform>() % 16, 0);
         assert_eq!(std::mem::align_of::<CameraUniform>(), 4);
 
@@ -685,6 +690,9 @@ mod tests {
             deform: GlobeDeform::new(0.98),
             ripple: 0.002,
             ripple_phase: 0.75,
+            flash: 0.08,
+            beat_phase: 0.3,
+            time: 9.5,
             ..GlobeMotion::default()
         };
         let uniform = camera.uniform_with_motion(1.0, &motion);
@@ -692,6 +700,7 @@ mod tests {
         assert!((uniform.motion[0] + 0.02).abs() < 1e-6);
         assert_eq!(uniform.motion[2], 0.002);
         assert_eq!(uniform.motion[3], 0.75);
+        assert_eq!(uniform.motion2, [0.08, 0.0, 0.3, 9.5]);
     }
 
     #[test]

@@ -73,6 +73,7 @@ Application Core — слой, который переживает закрыт�
 | `set_viz_bars` | `pub(crate) fn set_viz_bars(&mut self, bars: u8) -> Result<(), String>` | Число столбцов визуализатора (ADR-0019) |
 | `set_visualizer_enabled` | `pub(crate) fn set_visualizer_enabled(&mut self, enabled: bool) -> Result<(), String>` | Пользовательский переключатель визуализатора и кольца; включает или выключает аудио-анализ по `analysis_needed`, при ошибке поле откатывается к значению движка (ADR-0028) |
 | `set_motion` | `pub(crate) fn set_motion(&mut self, motion: MotionReactivity) -> Result<(), String>` | Сохраняет реактивность движения и пересчитывает необходимость анализа |
+| `set_motion_style` | `pub(crate) fn set_motion_style(&mut self, style: MotionStyle) -> Result<(), String>` | Сохраняет характер движения (`Auto` или один из шести стилей) |
 | `set_reduce_motion` | `pub(crate) fn set_reduce_motion(&mut self, reduce: bool) -> Result<(), String>` | Сохраняет Reduce motion и пересчитывает необходимость анализа |
 | `motion_reactivity` | `pub(crate) fn motion_reactivity(&self) -> MotionReactivity` | Эффективная реактивность: Reduce motion → `Off`; Focus — настройка, Overlay — не выше `Low`, Listening — `Off` |
 | `analysis_needed` | `pub(crate) fn analysis_needed(&self) -> bool` | `visualizer_enabled \|\| (motion.is_enabled() && !reduce_motion)` — анализ нужен хотя бы одному потребителю |
