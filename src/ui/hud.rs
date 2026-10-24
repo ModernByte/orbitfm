@@ -5,6 +5,7 @@ use eframe::egui;
 use crate::audio::PlaybackState;
 use crate::geo::GeoService;
 use crate::services::Station;
+use crate::session::WindowMode;
 use crate::settings::{AccentColor, Settings, ThemeMode, VIZ_BAR_CHOICES};
 
 use super::icons::{close_button, gear_button, help_button, moon_button, panel_button};
@@ -33,6 +34,7 @@ pub(crate) struct HudState<'a> {
     pub settings: Settings,
     pub panel_open: bool,
     pub help_open: bool,
+    pub window_mode: WindowMode,
 }
 
 pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, mut state: HudState<'_>) -> Vec<UiAction> {
@@ -245,6 +247,17 @@ fn right_side(
                                 && !selected
                             {
                                 menu_action = Some(UiAction::SetVizBars(bars));
+                                ui.close();
+                            }
+                        }
+                    });
+                    ui.add_space(4.0);
+                    ui.label(egui::RichText::new("Window").strong().color(palette.text));
+                    ui.horizontal_wrapped(|ui| {
+                        for mode in WindowMode::ALL {
+                            let selected = state.window_mode == mode;
+                            if ui.selectable_label(selected, mode.label()).clicked() && !selected {
+                                menu_action = Some(UiAction::SetWindowMode(mode));
                                 ui.close();
                             }
                         }

@@ -1,5 +1,6 @@
-//! Синтетический аудиовизуализатор (ADR-0019): вертикальные столбцы — оценка
-//! огибающей спектра из шести агрегатов mpv, а не бинный FFT.
+//! Синтетический аудиовизуализатор в стиле cava (ADR-0022): столбцы падают
+//! с линейной гравитацией, пики держатся отдельно. Реальных FFT-бинов нет —
+//! только шесть агрегатов `aspectralstats` (ADR-0010, ADR-0019).
 
 use eframe::egui::Color32;
 
@@ -9,17 +10,20 @@ use super::spectrum::{MIN_RMS_DB, RMS_RANGE_DB, SpectrumTarget};
 const MIN_FREQ_HZ: f32 = 30.0;
 const MAX_FREQ_HZ: f32 = 20_000.0;
 /// Постоянная времени нарастания столбца, с.
-const ATTACK_SECONDS: f32 = 0.03;
-/// Постоянная времени спада, с (80–150 мс по ТЗ).
-const DECAY_SECONDS: f32 = 0.12;
-/// Скорость падения удержанного пика, единиц уровня в секунду.
-const PEAK_FALL_PER_SECOND: f32 = 1.2;
+const ATTACK_SECONDS: f32 = 0.028;
+/// Линейное падение столбца, единиц амплитуды в секунду (как gravity у cava).
+const GRAVITY_PER_SECOND: f32 = 1.8;
+/// Скорость падения удержанного пика: заметно медленнее столбцов.
+const PEAK_FALL_PER_SECOND: f32 = 0.42;
 /// «Дыхание» без эфира: уровень, размах и частота волны.
 const IDLE_LEVEL: f32 = 0.06;
 const IDLE_SWING: f32 = 0.035;
 const IDLE_HZ: f32 = 0.45;
 /// Наклон огибающей к высоким частотам: низ у эфира всегда плотнее верха.
-const TILT: f32 = 0.28;
+const TILT: f32 = 0.30;
+/// Амплитуда процедурной фактуры столбцов: от flux зависит «живость».
+const TEXTURE_BASE: f32 = 0.10;
+const TEXTURE_FLUX: f32 = 0.24;
 
 /// Разумные пределы числа столбцов; настройка выдаётся в этот диапазон.
 pub const MIN_BARS: usize = 8;
@@ -32,6 +36,8 @@ pub struct VisualizerModel {
     levels: Box<[f32]>,
     peaks: Box<[f32]>,
     targets: Box<[f32]>,
+    /// Индивидуальная фаза столбца: соседние полосы не ходят синхронно.
+    phases: Box<[f32]>,
 }
 
 impl Default for VisualizerModel {
@@ -43,6 +49,15 @@ impl Default for VisualizerModel {
 /// Число столбцов по умолчанию (24 по ТЗ).
 pub const DEFAULT_BARS: usize = 24;
 
+/// Детерминированная фаза по номеру столбца: свой ритм у каждой полосы.
+fn phase_for(index: usize) -> f32 {
+    let mut hash = (index as u32).wrapping_mul(0x9E37_79B9);
+    hash ^= hash >> 16;
+    hash = hash.wrapping_mul(0x85EB_CA6B);
+    hash ^= hash >> 13;
+    (hash as f32 / u32::MAX as f32) * std::f32::consts::TAU
+}
+
 impl VisualizerModel {
     pub fn new(bars: usize) -> Self {
         let bars = bars.clamp(MIN_BARS, MAX_BARS);
@@ -50,6 +65,7 @@ impl VisualizerModel {
             levels: vec![0.0; bars].into_boxed_slice(),
             peaks: vec![0.0; bars].into_boxed_slice(),
             targets: vec![0.0; bars].into_boxed_slice(),
+            phases: (0..bars).map(phase_for).collect(),
         }
     }
 
@@ -61,35 +77,40 @@ impl VisualizerModel {
         &self.peaks
     }
 
-    /// Один кадр: цели полос → attack/decay → peak-hold. `None` — idle-дыхание.
+    /// Один кадр: цели полос → attack/gravity → peak-hold. `None` — idle-дыхание.
     pub fn advance(&mut self, target: Option<&SpectrumTarget>, dt: f32, time: f64) {
         let dt = dt.clamp(0.0, 0.1);
         let time = time as f32;
         match target {
-            Some(target) if target.is_finite() => band_targets(target, time, &mut self.targets),
-            _ => idle_targets(time, &mut self.targets),
+            Some(target) if target.is_finite() => {
+                band_targets(target, time, &self.phases, &mut self.targets)
+            }
+            _ => idle_targets(time, &self.phases, &mut self.targets),
         }
 
         for index in 0..self.levels.len() {
             let goal = self.targets[index];
             let level = self.levels[index];
-            let tau = if goal > level {
-                ATTACK_SECONDS
+            // Нарастание — сглаженное, спад — линейная гравитация: столбец
+            // не «залипает» у нуля и падает с одинаковой скоростью на любой высоте.
+            let next = if goal > level {
+                level + (goal - level) * (1.0 - (-dt / ATTACK_SECONDS).exp())
             } else {
-                DECAY_SECONDS
+                (level - GRAVITY_PER_SECOND * dt).max(goal)
             };
-            let blended = level + (goal - level) * (1.0 - (-dt / tau).exp());
-            self.levels[index] = blended;
+            self.levels[index] = next;
             self.peaks[index] = (self.peaks[index] - PEAK_FALL_PER_SECOND * dt)
-                .max(blended)
+                .max(next)
                 .clamp(0.0, 1.0);
         }
     }
 }
 
 /// Оценка огибающей: гауссиана в лог-шкале вокруг центроида, ширина от spread,
-/// высота от RMS, «живость» от flux и flatness.
-fn band_targets(target: &SpectrumTarget, time: f32, out: &mut [f32]) {
+/// высота от RMS, «живость» от flux и flatness. Мелкая фактура — процедурная:
+/// реальных бинов в аудиотракте нет (ADR-0010), поэтому каждая полоса получает
+/// свою фазу, модулированную flux.
+fn band_targets(target: &SpectrumTarget, time: f32, phases: &[f32], out: &mut [f32]) {
     let bars = out.len() as f32;
     let min_log = MIN_FREQ_HZ.log10();
     let span = (MAX_FREQ_HZ.log10() - min_log).max(1e-3);
@@ -103,6 +124,7 @@ fn band_targets(target: &SpectrumTarget, time: f32, out: &mut [f32]) {
     let level = ((target.rms_db - MIN_RMS_DB) / RMS_RANGE_DB).clamp(0.0, 1.0);
     // Плоский (шумовой) спектр шире тонального, но не уже четвёртой части диапазона.
     let width = (sigma * (0.6 + 1.2 * flatness)).clamp(0.16, 0.7);
+    let texture_amount = TEXTURE_BASE + TEXTURE_FLUX * flux;
 
     for (index, slot) in out.iter_mut().enumerate() {
         let t = (index as f32 + 0.5) / bars;
@@ -110,19 +132,23 @@ fn band_targets(target: &SpectrumTarget, time: f32, out: &mut [f32]) {
         let envelope = (-0.5 * z * z).exp();
         // Широкополосная подложка: у живого эфира есть энергия во всех полосах,
         // иначе половина столбцов стоит на idle-уровне.
-        let floor = (0.08 + 0.32 * flatness) * (1.0 - 0.55 * t);
-        let ripple = 1.0 + 0.22 * (t * 11.0 + time * 3.1).sin() * flux;
-        *slot = (level * (envelope * (1.0 - TILT * t) + floor) * ripple * (0.7 + 0.3 * flatness))
+        let floor = (0.10 + 0.34 * flatness) * (1.0 - 0.50 * t);
+        let phase = phases.get(index).copied().unwrap_or(0.0);
+        let texture = (time * 4.1 + phase).sin() * 0.65 + (time * 7.7 + phase * 1.9).sin() * 0.35;
+        let ripple = 1.0 + 0.18 * (t * 11.0 + time * 3.1).sin() * flux;
+        let body = envelope * (1.0 - TILT * t) + floor;
+        *slot = (level * body * ripple * (0.7 + 0.3 * flatness) * (1.0 + texture_amount * texture))
             .clamp(0.0, 1.0);
     }
 }
 
 /// «Дыхание» в простое: низкий уровень с медленной бегущей волной.
-fn idle_targets(time: f32, out: &mut [f32]) {
+fn idle_targets(time: f32, phases: &[f32], out: &mut [f32]) {
     let phase = time * std::f32::consts::TAU * IDLE_HZ;
     for (index, slot) in out.iter_mut().enumerate() {
         let wave = (phase + index as f32 * 0.7).sin();
-        *slot = (IDLE_LEVEL + IDLE_SWING * wave).max(0.0);
+        let texture = (phase * 0.6 + phases.get(index).copied().unwrap_or(0.0) * 1.7).sin();
+        *slot = (IDLE_LEVEL + IDLE_SWING * (0.75 * wave + 0.25 * texture)).max(0.0);
     }
 }
 
@@ -176,8 +202,9 @@ mod tests {
     }
 
     fn targets(target: SpectrumTarget) -> Vec<f32> {
+        let phases: Vec<f32> = (0..24).map(phase_for).collect();
         let mut out = vec![0.0; 24];
-        band_targets(&target, 0.0, &mut out);
+        band_targets(&target, 0.0, &phases, &mut out);
         out
     }
 
@@ -254,6 +281,45 @@ mod tests {
 
         assert!(before > 0.0, "столбец должен был подняться");
         assert!(rise > 0.0 && rise > fall, "rise {rise}, fall {fall}");
+    }
+
+    #[test]
+    fn fall_keeps_constant_gravity() {
+        let loud = frame(-3.0, 1_700.0);
+        let silent = frame(-58.0, 1_700.0);
+        let mut model = VisualizerModel::new(24);
+        for step in 0..60 {
+            model.advance(Some(&loud), 1.0 / 60.0, f64::from(step) / 60.0);
+        }
+
+        let before = model.levels()[12];
+        model.advance(Some(&silent), 0.05, 1.0);
+        let first = before - model.levels()[12];
+        let middle = model.levels()[12];
+        model.advance(Some(&silent), 0.05, 1.1);
+        let second = middle - model.levels()[12];
+
+        assert!(first > 0.0 && second > 0.0);
+        assert!(
+            (first - second).abs() < 0.01,
+            "падение должно быть линейным: {first} vs {second}"
+        );
+    }
+
+    #[test]
+    fn neighbouring_bands_move_independently() {
+        let values = targets(SpectrumTarget {
+            flux: 0.004,
+            ..frame(-8.0, 1_700.0)
+        });
+        let differences: Vec<f32> = values
+            .windows(2)
+            .map(|pair| (pair[0] - pair[1]).abs())
+            .collect();
+        assert!(
+            differences.iter().any(|difference| *difference > 0.01),
+            "у полос должна быть своя фактура, а не одна гладкая огибающая"
+        );
     }
 
     #[test]

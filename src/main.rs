@@ -12,23 +12,22 @@ mod library;
 mod media;
 mod render;
 mod services;
+mod session;
 mod settings;
+mod tray;
 mod ui;
 
-use app::{AppServices, OrbitApp, WakeHandle};
+use app::OrbitApp;
 use audio::AudioEngine;
 use geo::GeoService;
 use ipc::{IpcCommand, IpcError, IpcServer};
 use library::StationLibrary;
 use media::MediaControls;
 use services::RadioBrowserClient;
+use session::{AppServices, ParkOutcome, Session, WINDOW_TITLE, WakeHandle, WindowMode};
 use settings::SettingsStore;
 
 const APP_ID: &str = "org.modernbyte.OrbitFM";
-/// Размер окна по умолчанию: восстанавливается после скрытия (ADR-0018).
-pub(crate) const WINDOW_SIZE: [f32; 2] = [920.0, 660.0];
-/// Нижний лимит размера окна в обычном (не скрытом) состоянии.
-pub(crate) const WINDOW_MIN_SIZE: [f32; 2] = [720.0, 480.0];
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 const RETRY_ATTEMPTS: usize = 5;
 const RETRY_DELAY: Duration = Duration::from_millis(50);
@@ -39,21 +38,24 @@ OrbitFM — 3D Interactive Global Radio Player
   orbitfm [КОМАНДА]
 
 Команды:
-  toggle            Показать/скрыть окно (по умолчанию)
-  show              Показать окно
-  hide              Скрыть окно
-  status            Состояние приложения
-  play <uuid>       Воспроизвести станцию по UUID (Radio Browser)
-  stop              Остановить воспроизведение
-  volume <0.0-1.0>  Установить громкость
-  quit              Завершить процесс
+  toggle               Показать/скрыть окно (по умолчанию)
+  show                 Показать окно
+  hide                 Скрыть окно
+  status               Состояние приложения
+  mode [режим]         Текущий режим окна или focus/overlay/listening
+  play <uuid>          Воспроизвести станцию по UUID (Radio Browser)
+  stop                 Остановить воспроизведение
+  volume <0.0-1.0>     Установить громкость
+  quit                 Завершить процесс
 
 Опции:
   -h, --help        Показать эту справку
   -V, --version     Показать версию
 
 Без аргументов команда toggle применяется к запущенному экземпляру;
-если он отсутствует, OrbitFM запускается с видимым окном.";
+если он отсутствует, OrbitFM запускается с видимым окном.
+Команда mode без аргумента спрашивает режим; mode <режим> при отсутствии
+запущенного экземпляра запускает OrbitFM сразу в этом режиме.";
 
 enum Invocation {
     Help,
@@ -131,7 +133,10 @@ fn route_command(
         Err(err) => return Err(err).context("не удалось связаться с запущенным OrbitFM"),
     }
 
-    if !matches!(&command, IpcCommand::Toggle | IpcCommand::Show) {
+    if !matches!(
+        &command,
+        IpcCommand::Toggle | IpcCommand::Show | IpcCommand::SetMode { .. }
+    ) {
         bail!("OrbitFM не запущен");
     }
 
@@ -163,6 +168,10 @@ fn launch(runtime: &tokio::runtime::Runtime, command: &IpcCommand, explicit: boo
         }
     };
     drop(_media_runtime);
+    // Отдельный `std::thread` внутри: блокирующий ksni входит в свой общий
+    // process-global current-thread runtime, поэтому вызов с воркера `runtime`
+    // упал бы паникой (ADR-0020, п. 4). Без SNI-хоста возвращает `None`.
+    let tray = tray::spawn(APP_ID, WINDOW_TITLE, wake.waker());
     let radio = RadioBrowserClient::new();
     let library = match StationLibrary::load_default() {
         Ok(library) => {
@@ -220,11 +229,17 @@ fn launch(runtime: &tokio::runtime::Runtime, command: &IpcCommand, explicit: boo
         geo,
         radio,
         media,
+        tray,
         library,
         settings,
         runtime: runtime.handle().clone(),
     };
-    let gui_result = run_gui(commands, wake, services);
+    // При незапущенном экземпляре `mode <режим>` задаёт режим первого окна (ADR-0021 п. 5).
+    let first_mode = match command {
+        IpcCommand::SetMode { mode } => WindowMode::from(*mode),
+        _ => WindowMode::default(),
+    };
+    let gui_result = run_session(commands, wake, services, first_mode);
 
     let _ = shutdown_tx.send(());
     let server_exit = runtime
@@ -272,26 +287,56 @@ fn resend_to_starting_instance(
     }
 }
 
-fn run_gui(
+/// Цикл окна (ADR-0018): показ → скрытие реальным закрытием root-вьюпорта →
+/// простой без окна, в котором живут IPC, MPRIS и аудио. Новый показ — это новый
+/// прогон `eframe::run_native` из главного потока, поэтому `Session` владеет всем
+/// долгоживущим состоянием, а `OrbitApp` создаётся заново каждый раз.
+fn run_session(
     commands: tokio::sync::mpsc::Receiver<ipc::IpcRequest>,
     wake: WakeHandle,
     services: AppServices,
+    mode: WindowMode,
 ) -> Result<()> {
+    let mut session = Session::new(commands, wake, services);
+    session.set_window_mode(mode);
+
+    loop {
+        let size = session.restore_size();
+        session.begin_window(size);
+        run_window(&mut session, size)?;
+        session.end_window();
+
+        if session.is_quitting() {
+            return Ok(());
+        }
+        if session.take_reopen() {
+            // Смена режима при открытом окне: то же закрытие вьюпорта, но без
+            // парковки — следующий прогон уже с геометрией нового режима (ADR-0021 п. 3).
+            continue;
+        }
+        if matches!(session.park(), ParkOutcome::Quit) {
+            return Ok(());
+        }
+    }
+}
+
+fn run_window(session: &mut Session, size: [f32; 2]) -> Result<()> {
+    let title = session.window_mode().title();
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_title("OrbitFM")
+            .with_title(title)
             .with_app_id(APP_ID)
-            .with_inner_size(WINDOW_SIZE)
-            .with_min_inner_size(WINDOW_MIN_SIZE)
+            .with_inner_size(size)
+            .with_min_inner_size(session.window_min_size())
             .with_transparent(true),
         renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     };
 
     eframe::run_native(
-        "OrbitFM",
+        title,
         options,
-        Box::new(move |cc| Ok(Box::new(OrbitApp::new(cc, commands, &wake, services)))),
+        Box::new(|cc| Ok(Box::new(OrbitApp::new(cc, session)))),
     )
     .map_err(|err| anyhow!("не удалось запустить GUI: {err}"))
 }

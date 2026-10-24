@@ -16,5 +16,5 @@ use pipe as transport;
 #[cfg(unix)]
 use socket as transport;
 
-pub use protocol::{IpcCommand, IpcError};
+pub use protocol::{IpcCommand, IpcError, WindowModeArg};
 pub use server::{IpcRequest, IpcServer, WakeFn};

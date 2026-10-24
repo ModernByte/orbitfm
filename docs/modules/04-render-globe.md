@@ -17,15 +17,18 @@
 pub use camera::GlobeCamera;
 pub use countries::{CountryStyle, paint_country};
 pub use globe::{GlobeRenderer, paint_globe};
-pub use markers::{MarkerColors, MarkerVisual, paint_markers, sphere_point};
+pub use markers::{MarkerLabel, MarkerVisual, paint_markers, sphere_point};
 pub use spectrum::{SpectrumOverlay, SpectrumTarget};
+pub use visualizer::VisualizerModel;
 
-pub struct GlobeCamera { /* yaw, pitch, distance, velocities, fly */ }
+pub struct GlobeCamera { /* yaw, pitch, distance, velocities, fly, idle */ }
 
 impl GlobeCamera {
-    pub fn update(&mut self, dt: f32, input: &GlobeInput);
+    pub fn advance(&mut self, dt: f32, elapsed: f32, input: &GlobeInput);
     pub fn fly_to(&mut self, lat: f64, lon: f64, duration: std::time::Duration);
     pub fn is_animating(&self) -> bool;
+    pub fn is_idle_spinning(&self) -> bool;
+    pub fn idle_countdown(&self) -> Option<f32>;
     pub fn eye(&self) -> glam::Vec3;
     pub fn view_proj(&self, aspect: f32) -> glam::Mat4;
     pub fn screen_to_sphere(&self, screen_pos: egui::Pos2, viewport: egui::Rect) -> Option<glam::Vec3>;
@@ -61,22 +64,17 @@ pub fn paint_country(
     style: CountryStyle,
 );
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct MarkerLabel {
+    pub title: String,
+    pub details: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MarkerVisual {
     pub pos: egui::Pos2,
     pub playing: bool,
-    pub count: usize,
-    pub popularity: f32,
-    pub bitrate: u32,
 }
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct MarkerColors {
-    pub marker: egui::Color32,
-    pub active: egui::Color32,
-}
-
-impl Default for MarkerColors { /* синий маркер, тёплый активный */ }
 
 pub fn sphere_point(lat_deg: f32, lon_deg: f32) -> glam::Vec3;
 
@@ -85,8 +83,8 @@ pub fn paint_markers(
     bounds: egui::Rect,
     markers: &[MarkerVisual],
     hovered: Option<usize>,
-    hovered_label: Option<&str>,
-    colors: MarkerColors,
+    hovered_label: Option<&MarkerLabel>,
+    color: egui::Color32,
     time: f64,
 );
 
@@ -149,10 +147,17 @@ impl SpectrumOverlay {
 - `project_on_sphere`: точка единичной сферы → view-projection → экранные координаты;
   `None` для задней полусферы (`point · eye <= 1`), нечисловых значений и выхода
   за viewport.
+- `advance(dt, elapsed, input)` ограничивает физический `dt` 0,001–0,05 с и
+  фактический `elapsed` 0–60 с; `yaw` нормализуется в `[0, 2π)`, `pitch` — ±85°.
 - `fly_to(lat, lon, duration)` — плавный доворот к точке: `yaw` идёт по кратчайшей
   дуге, `pitch` ограничен ±85°, прогресс сглаживается smoothstep, минимальная
   длительность — 50 мс. Перетаскивание отменяет анимацию; `is_animating` возвращает
-  `true` и во время доворота.
+  `true` и во время доворота, и во время инерции, и при авто-вращении.
+- Авто-вращение: после 4 с без перетаскивания, прокрутки и клика камера за 2 с
+  разгоняется до 0,006 рад/с и уменьшает `yaw` — континенты уходят на восток.
+  Любое взаимодействие и `fly_to` сбрасывают отсчёт; наведение не считается.
+  `idle_countdown` даёт остаток паузы для ленивой перерисовки,
+  `is_idle_spinning` — факт вращения.
 - Начальная ориентация: yaw=0, pitch=0 — перед камерой Гринвич/Африка, север сверху.
 
 ## 5. Визуал (MVP)
@@ -175,6 +180,9 @@ impl SpectrumOverlay {
   ростом `pulse`. Сверху лежит узкая кромка `pow(1 - facing, 9) · 0.35` — обод
   читается и там, где текстура уходит за горизонт сферы. Позиция камеры приходит
   в uniform (`camera_position`).
+- Геометрический пульс: в вершинном шейдере радиус умножается на
+  `1 + 0.005·pulse` (ADR-0023). Hit-test и маркеры остаются на сфере радиуса 1;
+  на пике расхождение — доли пикселя.
 - Подписи стран — вне текущего объёма; контуры и маркеры рисует egui-оверлей.
 
 ## 6. Контуры стран
@@ -202,42 +210,41 @@ impl SpectrumOverlay {
 
 - `render/markers.rs` не создаёт GPU-ресурсов и не зависит от доменных типов.
   Application Core валидирует координаты, группирует станции и передаёт
-  `MarkerVisual` с экранной позицией.
+  `MarkerVisual` с экранной позицией и признаком эфира.
 - `sphere_point(lat, lon)` переводит градусы в точку единичной сферы по общему
   соглашению (`x = cos φ · sin λ`, `y = sin φ`, `z = cos φ · cos λ`).
 - `paint_markers` рисует поверх wgpu-callback глобуса через `egui::Painter`:
-  свечение, точку, белую обводку, бейдж количества при `count > 1`,
-  кольцо наведения и подпись с фоном, прижатую к границам области.
-- Радиус точки — `3.5 + 9.5·score` px, где `score = smoothstep(log1p(votes) /
-  log1p(5000))`; играющая станция не меньше 11 px и получает внешнее кольцо с
-  пульсом `1.0 ↔ 1.15` (период 1.4 с, фаза от `InputState::time`). Свечение
-  выходит за точку на `3 + 2·score` px. `NaN` и неположительная популярность
-  дают минимальный радиус, бесконечность — насыщение. Application Core передаёт
-  сигнал популярности (`votes`) и битрейт; для группы станций в одной точке
-  берутся максимумы, а играющим маркер считается, если UUID текущей станции
-  входит в группу.
-- Цвет кодирует качество потока (ТЗ §2.3): `< 64` → `#6B7280`, `64–127` →
-  `#3B82F6 → #22D3EE`, `128–255` → `#34D399 → #A3E635`, `≥ 256` →
-  `#FBBF24 → #F97316` (насыщение к 320), неизвестный битрейт → `colors.marker`.
-  Битрейт на радиус не влияет, популярность — на цвет.
-- `MarkerColors` передаёт цвета обычного (`marker`, он же accent при неизвестном
-  битрейте) и играющего (`active`) маркера; свечение выводится из фактического
-  цвета маркера с прозрачностью, наведение осветляет его на 30 %.
-  `MarkerColors::default()` — синий маркер и тёплый янтарный активный;
-  Application Core подставляет акцент темы для `marker` и `live` для `active`.
-  Отсечение задней полусферы и viewport выполняет `project_on_sphere`.
+  свечение, точку радиусом `MARKER_RADIUS = 3 px`, белую обводку 1 px, кольцо
+  наведения (отступ 3,5 px, белое) и подпись с фоном, прижатую к границам области.
+- Все маркеры одного цвета (`palette.marker`) и размера: качество и рейтинг
+  станции больше не кодируются цветом или радиусом (обновление ADR-0012,
+  Этап 9). Наведение осветляет цвет на 28 %.
+- Играющая станция получает пульсирующее кольцо того же цвета: радиус растёт
+  на 3,5 px, прозрачность падает до нуля, период 1,4 с; фаза берётся из
+  `InputState::time`. Бейджа количества и подписи на самом маркере нет.
+- Подпись — `MarkerLabel { title, details }`: имя белым (для группы
+  `· +N`), вторая строка `#C7D2E4` — место, битрейт, кодек и голоса через `·`.
+  Пустые части опускаются; фон — тёмный скруглённый прямоугольник с рамкой
+  акцента. Текст собирает Application Core, рендер только раскладывает его.
+- Отсечение задней полусферы и viewport выполняет `project_on_sphere`.
 - Поведение взаимодействия (радиус 10 px, приоритет над страной) определяет
   Application Core; см. ADR-0012.
 
-## 8. Спектральное состояние
+## 8. Спектральное состояние и визуализатор
 
 - `SpectrumTarget` — срез метрик (`centroid_hz`, `spread_hz`, `flux`, `flatness`,
   `rms_db`) без зависимости от аудио-модуля.
 - `SpectrumOverlay` сглаживает значения экспоненциально; первый кадр принимается
   как есть, `None` запускает затухание. Состояние живёт в `OrbitApp`.
-- Отрисовки в модуле нет: старый FFT-strip удалён, столбцы визуализатора рисует
-  `ui::widgets::viz_bars` по данным `render::VisualizerModel` (ADR-0019).
-- Оверлей не создаёт GPU-ресурсов и не участвует в wgpu-пайплайне глобуса.
+- `render/visualizer.rs` (`VisualizerModel`) — модель cava-столбцов (ADR-0022):
+  атака 28 мс, линейная гравитация 1,8 ед/с, удержанные пики с падением
+  0,42 ед/с, процедурная фактура на детерминированных фазах. Модель не рисует.
+- Столбцы рисует `ui::widgets::viz_bars` по данным модели: поле 156×46 px,
+  24 столбца по умолчанию, зазор 2 px, скругление 1 px, градиент по абсолютной
+  высоте, шапки пиков 2 px и опорная линия. Включён по умолчанию; чип
+  «Visualizer» только выключает его до конца сессии.
+- Отрисовки в модуле нет: старый FFT-strip удалён (ADR-0019), оверлей не создаёт
+  GPU-ресурсов и не участвует в wgpu-пайплайне глобуса.
 - `pulse()` даёт сигнал эфира для атмосферы: `0.75·level + 0.25·flux`,
   ограничен `[0, 1]`; при невидимом оверлее — 0. App Core передаёт его в
   `paint_globe`, поэтому при выключенном визуализаторе и тишине обод затухает.
@@ -256,8 +263,8 @@ impl SpectrumOverlay {
 - `project_on_sphere` проецирует видимую точку в центр, учитывает широту/долготу и
   отсекает заднюю полусферу, пустой viewport и нечисловые координаты;
 - `sphere_point` следует соглашению сферы и возвращает нормализованные векторы;
-- радиус маркера растёт с весом, активная станция получает прибавку, а
-  нечисловой/выходящий за пределы вес ограничивается;
+- все маркеры имеют одинаковый радиус, играющая станция получает кольцо-пульс,
+  а наведение — светлое кольцо и подпись `MarkerLabel`;
 - `fly_to` центрирует заданную точку и идёт кратчайшим путём через антимеридиан;
 - контур страны триангулируется для выпуклого и вогнутого колец, заливается только
   при полной видимости, обрезается по горизонту и замыкается в видимой части;

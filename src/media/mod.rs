@@ -25,6 +25,8 @@ pub struct PlaybackInfo {
     pub url: String,
     pub playing: bool,
     pub volume: f64,
+    pub can_go_next: bool,
+    pub can_go_previous: bool,
 }
 
 /// Команды, приходящие от системы.
@@ -113,11 +115,7 @@ impl MediaControls {
             volume: info.volume,
             repeat: Repeat::Off,
             shuffle: false,
-            capabilities: Capabilities {
-                can_go_next: false,
-                can_go_previous: false,
-                can_seek: false,
-            },
+            capabilities: capabilities(info),
         };
 
         self.controls.set_state(&state).map_err(|err| match err {
@@ -138,6 +136,14 @@ fn init_error(err: playwire::Error) -> MediaError {
     match err {
         playwire::Error::Unsupported => MediaError::UnsupportedPlatform,
         other => MediaError::Init(other.to_string()),
+    }
+}
+
+fn capabilities(info: &PlaybackInfo) -> Capabilities {
+    Capabilities {
+        can_go_next: info.can_go_next,
+        can_go_previous: info.can_go_previous,
+        can_seek: false,
     }
 }
 
@@ -178,6 +184,30 @@ mod tests {
             Some(MediaCommand::SetVolume(1.0))
         );
         assert_eq!(map_event(PlatformEvent::SetVolume(f64::NAN)), None);
+    }
+
+    #[test]
+    fn advertises_skip_actions_from_playback_info() {
+        let mut info = PlaybackInfo {
+            title: "Station".to_owned(),
+            artist: None,
+            art_url: None,
+            url: "https://example.com/stream".to_owned(),
+            playing: true,
+            volume: 0.8,
+            can_go_next: false,
+            can_go_previous: false,
+        };
+        let caps = capabilities(&info);
+        assert!(!caps.can_go_next);
+        assert!(!caps.can_go_previous);
+        assert!(!caps.can_seek, "перемотка живого радио не поддерживается");
+
+        info.can_go_next = true;
+        info.can_go_previous = true;
+        let caps = capabilities(&info);
+        assert!(caps.can_go_next);
+        assert!(caps.can_go_previous);
     }
 
     #[test]

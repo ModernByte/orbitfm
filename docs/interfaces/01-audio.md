@@ -97,7 +97,8 @@ impl AudioEngine {
     /// Подписка на события.
     pub fn subscribe(&self) -> broadcast::Receiver<AudioEvent>;
 
-    /// Включает или выключает FFT-визуализатор.
+    /// Включает или выключает FFT-визуализатор. По умолчанию включён;
+    /// при старте воркер сам ставит `af`-фильтр.
     pub async fn set_spectrum_enabled(&mut self, enabled: bool) -> Result<(), AudioError>;
 
     /// Включён ли FFT-визуализатор.
@@ -117,6 +118,10 @@ impl AudioEngine {
 | `set_paused(true/false)` | `Paused` / `Playing`; при возобновлении публикуется `Started` | `Playback`, если нет активного URL или состояние `Stopped`/`Reconnecting`/`Error` |
 | `set_volume(v)` | значение применяется к mpv и к `volume()` | `Playback`, если `v` не конечное число или вне `0.0..=1.0` |
 | `set_spectrum_enabled(true/false)` | цепочка `aspectralstats` + `astats` подключается к `af` или снимается; при выключении кадр очищается; состояние воспроизведения не меняется | `Spectrum`, если mpv отклонил фильтр |
+
+При старте `spectrum_enabled()` возвращает `true`, а воркер сразу применяет фильтр:
+визуализатор работает без дополнительного вызова. Значение не сохраняется между
+запусками и действует до конца сессии.
 
 ## 2. Реконнект
 

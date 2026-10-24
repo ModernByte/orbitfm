@@ -200,7 +200,12 @@ OrbitFM проектируется по архитектуре **«Единый 
 * **Данные:** `Station` дополняется `votes`, `country`, `state` с `serde(default)`;
   формат `library.json` не меняется.
 * **UI-код:** выносится в `src/ui/` (`hud`, `station_panel`, `transport`,
-  `globe_view`, `palette`); `app.rs` остаётся оркестратором.
+  `globe_view`, `palette`); оркестрация и состояние — в Application Core
+  `src/session/` (`Session`), `src/app.rs` остаётся presentation-слоем и живёт ровно
+  один прогон окна (ADR-0018).
+* **Системный трей:** `src/tray/` — иконка SNI (`ksni`) с меню и колесом громкости;
+  третий источник команд наравне с IPC и MPRIS, работает и при закрытом окне
+  (ADR-0020).
 * **Вне MVP:** WindowMode Overlay/Listening, favicon-карточки, глобальный aggregate
   heatmap. Целевой UX — `docs/ui/design-vision.md`, фазы и контракты —
   `docs/ui/implementation-plan.md`, решение — ADR-0015.
@@ -331,7 +336,8 @@ orbitfm/
 │   └── orbitfm-hyprland.conf        <-- Правила окон Hyprland
 ├── src/
 │   ├── main.rs                      <-- CLI, Single-Instance & IPC Server (Unix Socket)
-│   ├── app.rs                       <-- eframe/egui UI Loop & Layout
+│   ├── app.rs                       <-- Presentation: eframe/egui UI Loop & Layout (один прогон окна)
+│   ├── session/                     <-- Application Core: состояние, маршрутизатор команд, простой без окна
 │   ├── audio/                       <-- libmpv Core Engine (выделенный поток, реконнект)
 │   ├── media/                       <-- Системные медиа-контролы (MPRIS / playwire)
 │   ├── geo/                         <-- GeoJSON R-Tree Index & Spatial Raycaster
@@ -339,6 +345,8 @@ orbitfm/
 │   ├── services/                    <-- Radio Browser Client & DNS Server Discovery
 │   ├── library/                     <-- Избранное и история станций
 │   ├── settings/                    <-- Тема и акцент оформления
+│   ├── tray/                        <-- Иконка в системном трее (SNI через ksni)
+│   ├── ui/                          <-- Presentation-виджеты: глобус, панель станций, транспорт
 │   └── ipc/                         <-- Single-instance, Unix socket, протокол команд
 ├── Cargo.toml
 └── README.md

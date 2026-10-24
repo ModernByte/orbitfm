@@ -22,13 +22,19 @@ struct VertexOutput {
     @location(2) world_position: vec3<f32>,
 };
 
+/// Дыхание планеты в такт эфиру: доли процента радиуса, чтобы не ломать
+/// геометрию и не спорить с попаданием луча в сферу радиусом 1.
+const PULSE_SCALE: f32 = 0.005;
+
 @vertex
 fn vs_main(input: VertexInput) -> VertexOutput {
     var output: VertexOutput;
-    output.clip_position = camera.view_proj * vec4(input.position, 1.0);
+    let pulse = clamp(camera.pulse.x, 0.0, 1.0);
+    let world_position = input.position * (1.0 + PULSE_SCALE * pulse);
+    output.clip_position = camera.view_proj * vec4(world_position, 1.0);
     output.normal = input.normal;
     output.uv = input.uv;
-    output.world_position = input.position;
+    output.world_position = world_position;
     return output;
 }
 

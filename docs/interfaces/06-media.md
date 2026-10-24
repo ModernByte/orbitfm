@@ -18,6 +18,8 @@ pub struct PlaybackInfo {
     pub url: String,
     pub playing: bool,
     pub volume: f64,
+    pub can_go_next: bool,
+    pub can_go_previous: bool,
 }
 
 /// Команды, приходящие от системы.
@@ -67,15 +69,22 @@ impl MediaControls {
 | `url` | идентификатор трека и `xesam:url`; `url_resolved` текущей станции, иначе URL потока |
 | `playing` | `true` → `PlaybackStatus = Playing`, `false` → `Paused` при наличии трека и `Stopped` без него |
 | `volume` | `0.0..=1.0`, передаётся в MPRIS `Volume` |
+| `can_go_next`, `can_go_previous` | рекламируются в MPRIS `CanGoNext`/`CanGoPrevious`; Application Core выставляет их по непустой видимой очереди |
 | `Play` | возобновление или повторный запуск текущего URL |
 | `Pause` | пауза активного потока |
 | `PlayPause` | переключение в зависимости от состояния |
 | `Stop` | остановка воспроизведения |
 | `SetVolume` | конечное значение приводится к `0.0..=1.0` |
-| `Next` / `Previous` | принимаются, но не действуют (нет списка станций) |
+| `Next` / `Previous` | принимаются и исполняются: шаг по текущему видимому списку станций (`play_relative(±1)`, `src/session/playback.rs`) с циклом (wrap); при пустом списке — no-op |
 
 `set_playback` возвращает `Publish`, если playwire не смог обновить состояние. Application
 Core логирует ошибку и продолжает работу: отсутствие MPRIS не фатально.
 
-Capabilities: `CanPlay`, `CanPause`, `CanControl`; `Next`, `Previous` и seek
-выключены, так как переключение станций и перемотка живого радио не поддерживаются.
+Capabilities: `CanPlay`, `CanPause`, `CanControl`, а также `CanGoNext`/`CanGoPrevious`,
+когда видимая очередь непуста. Перемотка (`seek`) выключена по существу:
+`can_seek = false`, а `SeekBy` отбрасывается в обработчике — перемотка живого радио
+не поддерживается.
+
+`Next`/`Previous` принимаются и действуют по видимому списку, поэтому способности
+совпадают с фактическим поведением: при пустой очереди команды — no-op и
+`CanGoNext`/`CanGoPrevious` выключены.

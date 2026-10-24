@@ -19,7 +19,7 @@
 
 | Файл | Назначение |
 |------|------------|
-| `mod.rs` | Публичный фасад (`IpcServer`, `IpcCommand`, `IpcError`, `IpcRequest`, `WakeFn`) |
+| `mod.rs` | Публичный фасад (`IpcServer`, `IpcCommand`, `WindowModeArg`, `IpcError`, `IpcRequest`, `WakeFn`) |
 | `protocol.rs` | Разбор/сериализация команд, лимиты, ошибки |
 | `client.rs` | Одноразовый клиент: подключение, отправка, чтение ответа |
 | `socket.rs` | Unix-транспорт: путь сокета, bind, проверка «зомби», права `0600`, удаление при Drop |
@@ -55,6 +55,17 @@ impl IpcServer {
     pub async fn run(self, wake: WakeFn, shutdown: tokio::sync::oneshot::Receiver<()>);
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowModeArg {           // wire-тип глагола `mode` (ADR-0021)
+    Focus,
+    Overlay,
+    Listening,
+}
+
+impl WindowModeArg {
+    pub fn as_str(self) -> &'static str;
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum IpcCommand {
     Toggle,
@@ -63,11 +74,18 @@ pub enum IpcCommand {
     Play { station_uuid: String },
     Stop,
     Status,
+    ModeQuery,                      // `mode` — спросить текущий режим
+    SetMode { mode: WindowModeArg }, // `mode <режим>` — переключить
     Quit,
     Volume { level: f64 },
     Raw(String),                     // для расширяемости протокола
 }
 ```
+
+`WindowModeArg` — часть wire-контракта: `src/ipc/` не импортирует доменный
+`WindowMode` из `src/session/window.rs`. Преобразование живёт в Application Core
+(`impl From<WindowModeArg> for WindowMode` в `src/session/commands.rs`), чтобы
+направление зависимостей осталось Core → инфраструктура.
 
 `IpcServer` — конкретная структура, а не трейт: в тестах используется внутренний
 `try_bind_at(path)`, позволяющий занять временный сокет или pipe.
@@ -105,14 +123,19 @@ hide
 play <stationuuid>
 stop
 status
+mode [focus|overlay|listening]
 quit
 volume <0.0..=1.0>
 ```
 
-- Ответ: `ok`, `error <сообщение>` или многострочный `status`
+- Ответ: `ok`, `error <сообщение>`, многострочный `status` или одна строка `mode <режим>`
 - `status` возвращает `status <state>`, при наличии станции — `stationuuid <uuid>` и
-  `name <name>`, затем `volume <0.00>` и `window visible|hidden`;
+  `name <name>`, затем `volume <0.00>`, `window visible|hidden` и `mode
+  focus|overlay|listening`;
   состояние — `stopped|playing|paused|buffering|reconnecting|error`
+- `mode` без аргумента только спрашивает режим; `mode <режим>` переключает его и
+  показывает окно (ADR-0021 п. 5). Неизвестное имя режима и лишние аргументы
+  отклоняются на этапе разбора
 - `play <uuid>` ищет станцию в результатах последнего поиска, затем в каталоге Radio
   Browser (таймаут 8 с), запускает `url_resolved` и отправляет click; ошибки каталога
   возвращаются как `error <сообщение>`
@@ -146,11 +169,14 @@ volume <0.0..=1.0>
 
 1. `main` пытается отправить команду существующему экземпляру.
 2. Если сокета нет:
-   - `toggle`/`show` → запуск GUI;
+   - `toggle`/`show` → запуск GUI в `Focus`;
+   - `mode <режим>` → запуск GUI сразу в этом режиме (режим первого окна берётся
+     из команды, ADR-0021 п. 5);
    - остальные команды → ошибка `OrbitFM не запущен`.
 3. При запуске вызывается `IpcServer::try_bind()`.
 4. Если пришёл `AlreadyRunning` (гонка) — команда повторно отправляется живому процессу.
-5. `commands()` передаёт очередь в `OrbitApp`, `run(wake)` поднимает accept-loop.
+5. `commands()` передаёт очередь в `Session` (`run_session`, ADR-0018), `run(wake)`
+   поднимает accept-loop.
 6. `wake()` вызывает `egui::Context::request_repaint()`, чтобы скрытое окно обработало
    команду даже без пользовательского ввода.
 7. `quit` → App отвечает `ok`, затем `ViewportCommand::Close`; main посылает shutdown,
@@ -163,7 +189,8 @@ volume <0.0..=1.0>
 
 Покрыто в `src/ipc/`:
 
-- разбор всех команд, `play`, `volume`, отказ невалидных значений и лишних аргументов;
+- разбор всех команд, `play`, `volume`, `mode` (запрос и установка), отказ невалидных
+  значений, неизвестного режима и лишних аргументов;
 - сохранение неизвестных команд как `Raw` и round-trip через wire-формат;
 - запрос → очередь → `try_respond` → ответ клиенту + вызов `wake`;
 - `AlreadyRunning` для живого сокета;

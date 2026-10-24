@@ -3,6 +3,7 @@
 //! Модули получают только нужные срезы состояния и возвращают [`UiAction`];
 //! побочные эффекты выполняет `OrbitApp`.
 
+pub(crate) mod capsule;
 pub(crate) mod globe_view;
 pub(crate) mod hud;
 pub(crate) mod icons;
@@ -21,17 +22,11 @@ pub(crate) mod widgets;
 use crate::audio::PlaybackState;
 use crate::geo::Country;
 use crate::services::Station;
+use crate::session::WindowMode;
 use crate::settings::{AccentColor, ThemeMode};
 
-/// Активный режим поиска станций.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) enum SearchMode {
-    /// Страна на глобусе → станции `countrycode`.
-    #[default]
-    Country,
-    /// Глобальный жанр → станции `tag` по всему миру.
-    GlobalGenre,
-}
+/// Режим поиска выбирает ядро, UI только показывает переключатель.
+pub(crate) use crate::session::search::SearchMode;
 
 /// Действие, которое UI просит выполнить у Application Core.
 #[derive(Debug, Clone)]
@@ -58,6 +53,8 @@ pub(crate) enum UiAction {
     Quit,
     TogglePanel,
     ToggleHelp,
+    /// Смена режима окна Focus/Overlay/Listening (ADR-0021).
+    SetWindowMode(WindowMode),
 }
 
 pub(crate) fn playback_label(state: &PlaybackState) -> String {

@@ -54,6 +54,12 @@ impl AudioWorker {
     }
 
     pub(super) fn run(mut self) {
+        if self.shared.spectrum_enabled()
+            && let Err(err) = self.apply_spectrum(true)
+        {
+            tracing::warn!(error = %err, "не удалось включить спектр-фильтр при старте");
+        }
+
         loop {
             loop {
                 match self.commands.try_recv() {

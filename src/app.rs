@@ -1,213 +1,64 @@
-use std::sync::{Arc, Mutex};
+//! Presentation-слой: egui-цикл поверх Application Core.
+//!
+//! `OrbitApp` живёт ровно столько, сколько открыто окно (ADR-0018): скрытие —
+//! это реальное закрытие root-вьюпорта, а всё долгоживущее состояние принадлежит
+//! `Session`. Здесь остаются кадры, стеклянные зоны, текстуры иконок станций и
+//! превращение [`UiAction`] в команды ядра.
+
 use std::time::Duration;
 
 use eframe::egui;
-use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, warn};
 
-use crate::audio::{AudioEngine, AudioEvent, PlaybackState};
-use crate::geo::{Country, GeoService};
-use crate::ipc::{IpcCommand, IpcRequest, WakeFn};
-use crate::library::StationLibrary;
-use crate::media::{MediaCommand, MediaControls, PlaybackInfo};
-use crate::render::{GlobeCamera, GlobeRenderer, SpectrumOverlay, SpectrumTarget, VisualizerModel};
-use crate::services::{RadioBrowserClient, RadioError, SearchParams, Station, USER_AGENT};
-use crate::settings::{AccentColor, SettingsStore, ThemeMode};
-use crate::ui::globe_view::{self, CalloutState, GlobeMarker, GlobeState};
+use crate::audio::PlaybackState;
+use crate::render::{GlobeRenderer, SpectrumOverlay, SpectrumTarget, VisualizerModel};
+use crate::services::USER_AGENT;
+use crate::session::search::SearchMode;
+use crate::session::{Notice, Session, UiIntent};
+use crate::settings::Settings;
+use crate::ui::UiAction;
+use crate::ui::globe_view::{self, CalloutState, GlobeState};
 use crate::ui::images::{FaviconCache, decode_favicon};
-use crate::ui::layout::DeskLayout;
+use crate::ui::layout::{DeskLayout, LayoutDensity};
 use crate::ui::palette::{self, Palette};
-use crate::ui::station_filter::{self, CountryFilterState};
-use crate::ui::station_panel::{self, LibraryTab};
 use crate::ui::toast::Toast;
 use crate::ui::transport::{self, TransportState};
-use crate::ui::widgets;
-use crate::ui::{self, SearchMode, UiAction, hud, overlays};
+use crate::ui::{capsule, hud, overlays, station_panel, widgets};
 
-const WINDOW_TITLE: &str = "OrbitFM";
-const SEARCH_RESULT_LIMIT: u32 = 100;
-const COUNTRY_RESULT_LIMIT: u32 = 100;
-const GENRE_RESULT_LIMIT: u32 = 200;
-const ROULETTE_FLY_MS: u64 = 900;
-const STATION_LOOKUP_TIMEOUT: Duration = Duration::from_secs(8);
-/// Скрытие окна на Wayland = сжатие поверхности до 1×1 px (ADR-0018).
-const HIDDEN_SIZE: f32 = 1.0;
+/// Частота перерисовки при включённом FFT: ~30 кадров в секунду.
+const SPECTRUM_REPAINT: Duration = Duration::from_millis(33);
+/// Опрос фоновых favicon-загрузок.
+const FAVICON_REPAINT: Duration = Duration::from_millis(120);
+/// Таймаут HTTP-запроса иконки станции.
+const FAVICON_FETCH_TIMEOUT: Duration = Duration::from_secs(6);
+/// Скругление крупных зон (HUD, панель станции).
+const GLASS_RADIUS_MAJOR: f32 = 16.0;
+/// Скругление маленьких зон (легенда, карточка управления).
+const GLASS_RADIUS_MINOR: f32 = 14.0;
+/// Толщина обводки стеклянной панели.
+const GLASS_BORDER: f32 = 1.0;
 
-struct SearchOutcome {
-    stations: Vec<Station>,
-    geo_stations: Vec<Station>,
-}
-
-/// Результат фонового поиска с номером поколения.
-struct SearchResponse {
-    generation: u64,
-    result: Result<SearchOutcome, RadioError>,
-}
-
-impl SearchResponse {
-    fn is_current(&self, generation: u64) -> bool {
-        self.generation == generation
-    }
-}
-
-/// Активный контекст поиска: страна или глобальный жанр.
-#[derive(Debug, Default)]
-struct SearchContext {
-    mode: SearchMode,
-    country: Option<Country>,
-    genre: Option<String>,
-}
-
-impl SearchContext {
-    /// Переключает режим и сбрасывает выбранную страну/жанр.
-    fn switch_mode(&mut self, mode: SearchMode) -> bool {
-        if self.mode == mode {
-            return false;
-        }
-        self.mode = mode;
-        self.clear();
-        true
-    }
-
-    fn clear(&mut self) {
-        self.country = None;
-        self.genre = None;
-    }
-
-    fn is_active(&self) -> bool {
-        self.country.is_some() || self.genre.is_some()
-    }
-
-    fn activate_country(&mut self, country: Country) {
-        self.mode = SearchMode::Country;
-        self.genre = None;
-        self.country = Some(country);
-    }
-
-    fn activate_genre(&mut self, genre: String) {
-        self.mode = SearchMode::GlobalGenre;
-        self.country = None;
-        self.genre = Some(genre);
-    }
-}
-
-/// Разделяемый с IPC-сервером слот для пробуждения GUI-цикла.
-#[derive(Clone, Default)]
-pub struct WakeHandle {
-    context: Arc<Mutex<Option<egui::Context>>>,
-}
-
-impl WakeHandle {
-    pub fn install(&self, ctx: egui::Context) {
-        if let Ok(mut slot) = self.context.lock() {
-            *slot = Some(ctx);
-        }
-    }
-
-    pub fn waker(&self) -> WakeFn {
-        let context = Arc::clone(&self.context);
-        Arc::new(move || {
-            if let Ok(slot) = context.lock()
-                && let Some(ctx) = slot.as_ref()
-            {
-                ctx.request_repaint();
-            }
-        })
-    }
-}
-
-/// Состояние Application Core.
-#[derive(Debug)]
-pub struct AppState {
-    pub window_visible: bool,
-    /// Размер окна до скрытия; нужен для восстановления после «hide» (ADR-0018).
-    pub restore_size: Option<egui::Vec2>,
-}
-
-impl Default for AppState {
-    fn default() -> Self {
-        Self {
-            window_visible: true,
-            restore_size: None,
-        }
-    }
-}
-
-/// Подсистемы, которые создаются в `main` и передаются в GUI.
-pub struct AppServices {
-    pub audio: AudioEngine,
-    pub geo: GeoService,
-    pub radio: RadioBrowserClient,
-    pub media: Option<MediaControls>,
-    pub library: StationLibrary,
-    pub settings: SettingsStore,
-    pub runtime: tokio::runtime::Handle,
-}
-
-pub struct OrbitApp {
-    state: AppState,
-    commands: mpsc::Receiver<IpcRequest>,
-    wake: WakeHandle,
-    audio: AudioEngine,
-    audio_events: broadcast::Receiver<AudioEvent>,
-    geo: GeoService,
-    radio: RadioBrowserClient,
-    media: Option<MediaControls>,
-    library: StationLibrary,
-    settings: SettingsStore,
-    globe_camera: GlobeCamera,
+pub(crate) struct OrbitApp<'a> {
+    session: &'a mut Session,
     globe_ready: bool,
     spectrum_overlay: SpectrumOverlay,
     /// Callout выбранной/наведённой страны с fade-переходами.
     callout: CalloutState,
-    spectrum_enabled: bool,
     visualizer: VisualizerModel,
-    current_url: Option<String>,
-    current_station: Option<Station>,
-    search_query: String,
-    country_query: String,
-    genre_query: String,
-    search_context: SearchContext,
-    search_results: Vec<Station>,
-    markers: Vec<GlobeMarker>,
-    library_tab: LibraryTab,
-    country_filter: CountryFilterState,
-    search_generation: u64,
-    search_pending: bool,
-    search_empty: bool,
-    search_rx: Option<mpsc::UnboundedReceiver<SearchResponse>>,
-    search_error: Option<String>,
-    roulette_pending: bool,
-    roulette_rx: Option<mpsc::UnboundedReceiver<Result<Station, RadioError>>>,
-    panel_open: bool,
-    show_help: bool,
     favicons: FaviconCache,
     http: reqwest::Client,
     toast: Toast,
-    runtime: tokio::runtime::Handle,
-    quitting: bool,
 }
 
-impl OrbitApp {
-    pub fn new(
-        cc: &eframe::CreationContext<'_>,
-        commands: mpsc::Receiver<IpcRequest>,
-        wake: &WakeHandle,
-        services: AppServices,
-    ) -> Self {
-        let AppServices {
-            audio,
-            geo,
-            radio,
-            media,
-            library,
-            settings,
-            runtime,
-        } = services;
-        palette::configure_style(&cc.egui_ctx, settings.settings());
-        install_emoji_font(&cc.egui_ctx);
-        wake.install(cc.egui_ctx.clone());
-        let audio_events = audio.subscribe();
+impl<'a> OrbitApp<'a> {
+    pub(crate) fn new(cc: &eframe::CreationContext<'_>, session: &'a mut Session) -> Self {
+        let egui_ctx = cc.egui_ctx.clone();
+        palette::configure_style(&egui_ctx, session.settings.settings());
+        install_emoji_font(&egui_ctx);
+        session.wake.install({
+            let ctx = egui_ctx.clone();
+            move || ctx.request_repaint()
+        });
         let globe_ready = if let Some(render_state) = &cc.wgpu_render_state {
             let renderer = GlobeRenderer::new(
                 &render_state.device,
@@ -224,53 +75,30 @@ impl OrbitApp {
             warn!("wgpu render state недоступен: 3D-глобус отключён");
             false
         };
-        let initial_help = !settings.settings().help_seen;
-        let visualizer = VisualizerModel::new(usize::from(settings.settings().viz_bars));
+        let visualizer = VisualizerModel::new(usize::from(session.settings.settings().viz_bars));
         Self {
-            state: AppState::default(),
-            commands,
-            wake: wake.clone(),
-            audio,
-            audio_events,
-            geo,
-            radio,
-            media,
-            library,
-            settings,
-            globe_camera: GlobeCamera::default(),
+            session,
             globe_ready,
             spectrum_overlay: SpectrumOverlay::default(),
             callout: CalloutState::default(),
-            spectrum_enabled: false,
             visualizer,
-            current_url: None,
-            current_station: None,
-            search_query: String::new(),
-            country_query: String::new(),
-            genre_query: String::new(),
-            search_context: SearchContext::default(),
-            search_results: Vec::new(),
-            markers: Vec::new(),
-            library_tab: LibraryTab::default(),
-            country_filter: CountryFilterState::default(),
-            search_generation: 0,
-            search_pending: false,
-            search_empty: false,
-            search_rx: None,
-            search_error: None,
-            roulette_pending: false,
-            roulette_rx: None,
-            panel_open: true,
-            show_help: initial_help,
             favicons: FaviconCache::new(),
             http: reqwest::Client::builder()
                 .user_agent(USER_AGENT)
-                .timeout(Duration::from_secs(6))
+                .timeout(FAVICON_FETCH_TIMEOUT)
                 .build()
                 .unwrap_or_default(),
             toast: Toast::default(),
-            runtime,
-            quitting: false,
+        }
+    }
+
+    /// Сообщения ядра: UI решает, как их показать, и делает это тостом.
+    fn drain_notices(&mut self, ctx: &egui::Context) {
+        for notice in self.session.take_notices() {
+            match notice {
+                Notice::Info(text) => self.toast.info(ctx, text),
+                Notice::Error(text) => self.toast.error(ctx, text),
+            }
         }
     }
 
@@ -279,10 +107,11 @@ impl OrbitApp {
         self.favicons.begin_frame();
         self.favicons.poll(ctx);
         let sender = self.favicons.sender();
+        let runtime = self.session.runtime.clone();
         for url in self.favicons.take_fetches() {
             let http = self.http.clone();
             let sender = sender.clone();
-            self.runtime.spawn(async move {
+            runtime.spawn(async move {
                 let image = match http.get(&url).send().await {
                     Ok(response) if response.status().is_success() => {
                         match response.bytes().await {
@@ -296,698 +125,15 @@ impl OrbitApp {
             });
         }
         if self.favicons.is_busy() {
-            ctx.request_repaint_after(Duration::from_millis(120));
+            ctx.request_repaint_after(FAVICON_REPAINT);
         }
     }
 
-    fn process_commands(&mut self, ctx: &egui::Context) {
-        while let Ok(request) = self.commands.try_recv() {
-            let response = self.execute(ctx, request.command());
-            request.try_respond(response);
-        }
-    }
-
-    fn execute(&mut self, ctx: &egui::Context, command: &IpcCommand) -> String {
-        match command {
-            IpcCommand::Toggle => {
-                let minimized = ctx.input(|input| input.viewport().minimized.unwrap_or(false));
-                let visible = minimized || !self.state.window_visible;
-                self.set_window_visible(ctx, visible);
-                "ok".to_owned()
-            }
-            IpcCommand::Show => {
-                self.set_window_visible(ctx, true);
-                "ok".to_owned()
-            }
-            IpcCommand::Hide => {
-                self.set_window_visible(ctx, false);
-                "ok".to_owned()
-            }
-            IpcCommand::Status => self.status_text(),
-            IpcCommand::Quit => {
-                self.request_quit(ctx);
-                "ok".to_owned()
-            }
-            IpcCommand::Play { station_uuid } => match self.resolve_station(station_uuid) {
-                Ok(station) => match self.start_station(ctx, station) {
-                    Ok(()) => "ok".to_owned(),
-                    Err(err) => format!("error {err}"),
-                },
-                Err(err) => format!("error {err}"),
-            },
-            IpcCommand::Stop => match self.stop_playback() {
-                Ok(()) => "ok".to_owned(),
-                Err(err) => format!("error {err}"),
-            },
-            IpcCommand::Volume { level } => {
-                match self.runtime.block_on(self.audio.set_volume(*level)) {
-                    Ok(()) => "ok".to_owned(),
-                    Err(err) => format!("error {err}"),
-                }
-            }
-            IpcCommand::Raw(raw) => format!("error неизвестная команда: {raw}"),
-        }
-    }
-
-    fn status_text(&self) -> String {
-        let state = self.audio.state();
-        let station = match state {
-            PlaybackState::Stopped | PlaybackState::Error(_) => None,
-            _ => self.current_station.as_ref(),
-        };
-        format_status(
-            &state,
-            self.audio.volume(),
-            self.state.window_visible,
-            station,
-        )
-    }
-
-    fn resolve_station(&self, station_uuid: &str) -> Result<Station, RadioError> {
-        if let Some(station) = self
-            .search_results
-            .iter()
-            .find(|station| station.stationuuid == station_uuid)
-        {
-            return Ok(station.clone());
-        }
-
-        let result = self.runtime.block_on(async {
-            tokio::time::timeout(STATION_LOOKUP_TIMEOUT, self.radio.get_station(station_uuid)).await
-        });
-
-        match result {
-            Ok(result) => result,
-            Err(_) => Err(RadioError::Network("stations catalog timeout".to_owned())),
-        }
-    }
-
-    fn start_station(&mut self, ctx: &egui::Context, station: Station) -> Result<(), String> {
-        let url = station.url_resolved.trim().to_owned();
-        if url.is_empty() {
-            return Err("station has no url_resolved".to_owned());
-        }
-
-        self.runtime
-            .block_on(self.audio.play(&url))
-            .map_err(|err| err.to_string())?;
-
-        self.current_url = Some(url);
-        self.current_station = Some(station.clone());
-        if let Err(err) = self.library.record_played(&station) {
-            warn!(error = %err, "не удалось сохранить историю станций");
-            self.toast.error(ctx, format!("History not saved: {err}"));
-        }
-        self.spawn_click(station.stationuuid);
-        self.sync_media();
-        Ok(())
-    }
-
-    fn toggle_favorite(&mut self, ctx: &egui::Context, station: &Station) {
-        match self.library.toggle_favorite(station) {
-            Ok(favorite) => debug!(favorite, "избранное обновлено"),
-            Err(err) => {
-                warn!(error = %err, "не удалось сохранить избранное");
-                self.toast.error(ctx, format!("Favorites not saved: {err}"));
-            }
-        }
-    }
-
-    fn clear_history(&mut self, ctx: &egui::Context) {
-        match self.library.clear_history() {
-            Ok(()) => self.toast.info(ctx, "History cleared"),
-            Err(err) => {
-                warn!(error = %err, "не удалось очистить историю");
-                self.toast
-                    .error(ctx, format!("Failed to clear history: {err}"));
-            }
-        }
-    }
-
-    fn set_theme(&mut self, ctx: &egui::Context, theme: ThemeMode) {
-        match self.settings.set_theme(theme) {
-            Ok(()) => {}
-            Err(err) => {
-                warn!(error = %err, "не удалось сохранить тему");
-                self.toast.error(ctx, format!("Theme not saved: {err}"));
-            }
-        }
-        palette::configure_style(ctx, self.settings.settings());
-    }
-
-    fn set_accent(&mut self, ctx: &egui::Context, accent: AccentColor) {
-        match self.settings.set_accent(accent) {
-            Ok(()) => {}
-            Err(err) => {
-                warn!(error = %err, "не удалось сохранить акцент");
-                self.toast.error(ctx, format!("Accent not saved: {err}"));
-            }
-        }
-        palette::configure_style(ctx, self.settings.settings());
-    }
-
-    fn spawn_click(&self, station_uuid: String) {
-        let radio = self.radio.clone();
-        self.runtime.spawn(async move {
-            if let Err(err) = radio.send_click(&station_uuid).await {
-                warn!(error = %err, "не удалось отправить click в Radio Browser");
-            }
-        });
-    }
-
-    fn start_search(&mut self) {
-        let query = self.search_query.trim().to_owned();
-        if query.is_empty() {
-            return;
-        }
-
-        if self.search_context.is_active() {
-            self.country_filter.text = query;
-            return;
-        }
-        if self.search_pending {
-            return;
-        }
-
-        self.search_context.clear();
-        self.begin_search(
-            SearchParams {
-                name: Some(query),
-                limit: SEARCH_RESULT_LIMIT,
-                hide_broken: true,
-                ..SearchParams::default()
-            },
-            SEARCH_RESULT_LIMIT,
-        );
-    }
-
-    fn start_country_search(&mut self, country: Country) {
-        let iso_a2 = country.iso_a2.clone();
-        self.search_context.activate_country(country);
-        self.country_filter.reset();
-        let limit = COUNTRY_RESULT_LIMIT;
-        self.begin_search(country_search_params(&iso_a2), limit);
-        self.country_query.clear();
-    }
-
-    fn start_genre_search(&mut self, tag: String) {
-        let tag = tag.trim().to_lowercase();
-        if tag.is_empty() {
-            return;
-        }
-
-        self.search_context.activate_genre(tag.clone());
-        self.country_filter.reset();
-        self.begin_search(
-            SearchParams {
-                tag: Some(tag),
-                limit: GENRE_RESULT_LIMIT,
-                hide_broken: true,
-                ..SearchParams::default()
-            },
-            GENRE_RESULT_LIMIT,
-        );
-        self.genre_query.clear();
-    }
-
-    fn switch_mode(&mut self, mode: SearchMode) {
-        if !self.search_context.switch_mode(mode) {
-            return;
-        }
-
-        self.invalidate_search();
-        self.search_results.clear();
-        self.markers.clear();
-        self.country_filter.reset();
-        self.library_tab = LibraryTab::Results;
-    }
-
-    /// Отбрасывает незавершённый поиск: его ответ больше не применится.
-    fn invalidate_search(&mut self) {
-        self.search_generation = self.search_generation.wrapping_add(1);
-        self.search_rx = None;
-        self.search_pending = false;
-        self.search_empty = false;
-        self.search_error = None;
-    }
-
-    fn focus_country(&mut self, country: &Country) {
-        if let Some((lat, lon)) = self
-            .geo
-            .country_shape(&country.iso_a2)
-            .and_then(|shape| shape.focus_point())
-        {
-            self.globe_camera
-                .fly_to(lat, lon, Duration::from_millis(650));
-        }
-    }
-
-    fn begin_search(&mut self, params: SearchParams, geo_limit: u32) {
-        self.search_generation = self.search_generation.wrapping_add(1);
-        let generation = self.search_generation;
-        let (sender, receiver) = mpsc::unbounded_channel();
-        self.search_rx = Some(receiver);
-        self.search_pending = true;
-        self.search_empty = false;
-        self.search_error = None;
-        self.search_results.clear();
-        self.markers.clear();
-        self.library_tab = LibraryTab::Results;
-
-        let mut geo_params = params.clone();
-        geo_params.has_geo_info = true;
-        geo_params.limit = geo_limit;
-
-        let radio = self.radio.clone();
-        let waker = self.wake.waker();
-        self.runtime.spawn(async move {
-            let (stations, geo_stations) =
-                tokio::join!(radio.search(params), radio.search(geo_params));
-            let result = match stations {
-                Ok(stations) => {
-                    let geo_stations = match geo_stations {
-                        Ok(stations) => stations,
-                        Err(err) => {
-                            warn!(error = %err, "гео-поиск станций не удался");
-                            Vec::new()
-                        }
-                    };
-                    Ok(SearchOutcome {
-                        stations,
-                        geo_stations,
-                    })
-                }
-                Err(err) => Err(err),
-            };
-            let _ = sender.send(SearchResponse { generation, result });
-            waker();
-        });
-    }
-
-    fn poll_search(&mut self) {
-        let result = match self.search_rx.as_mut() {
-            Some(receiver) => receiver.try_recv(),
-            None => return,
-        };
-
-        match result {
-            Ok(response) if !response.is_current(self.search_generation) => {
-                debug!(
-                    generation = response.generation,
-                    current = self.search_generation,
-                    "устаревший ответ поиска отброшен"
-                );
-            }
-            Ok(response) => match response.result {
-                Ok(outcome) => {
-                    self.search_empty = outcome.stations.is_empty();
-                    self.search_results = outcome.stations;
-                    self.markers = globe_view::build_markers(outcome.geo_stations);
-                    self.search_pending = false;
-                    self.search_rx = None;
-                }
-                Err(err) => {
-                    self.search_error = Some(err.to_string());
-                    self.markers.clear();
-                    self.search_pending = false;
-                    self.search_rx = None;
-                }
-            },
-            Err(mpsc::error::TryRecvError::Empty) => {}
-            Err(mpsc::error::TryRecvError::Disconnected) => {
-                self.search_error = Some("search task ended unexpectedly".to_owned());
-                self.search_pending = false;
-                self.search_rx = None;
-            }
-        }
-    }
-
-    fn start_roulette(&mut self) {
-        if self.roulette_pending {
-            return;
-        }
-        self.roulette_pending = true;
-        let (sender, receiver) = mpsc::unbounded_channel();
-        self.roulette_rx = Some(receiver);
-        let radio = self.radio.clone();
-        let waker = self.wake.waker();
-        self.runtime.spawn(async move {
-            let result = radio.random_station().await;
-            let _ = sender.send(result);
-            waker();
-        });
-    }
-
-    fn poll_roulette(&mut self, ctx: &egui::Context) {
-        let result = match self.roulette_rx.as_mut() {
-            Some(receiver) => receiver.try_recv(),
-            None => return,
-        };
-
-        match result {
-            Ok(Ok(station)) => {
-                self.roulette_pending = false;
-                self.roulette_rx = None;
-                let label = roulette_label(&station);
-                let target = station.geo_lat.zip(station.geo_long);
-                match self.start_station(ctx, station) {
-                    Ok(()) => {
-                        if let Some((lat, lon)) = target {
-                            self.globe_camera.fly_to(
-                                lat,
-                                lon,
-                                Duration::from_millis(ROULETTE_FLY_MS),
-                            );
-                        }
-                        self.toast.info(ctx, format!("Roulette: {label}"));
-                    }
-                    Err(err) => self
-                        .toast
-                        .error(ctx, format!("Roulette did not start: {err}")),
-                }
-            }
-            Ok(Err(err)) => {
-                self.roulette_pending = false;
-                self.roulette_rx = None;
-                self.toast.error(ctx, format!("Roulette: {err}"));
-            }
-            Err(mpsc::error::TryRecvError::Empty) => {}
-            Err(mpsc::error::TryRecvError::Disconnected) => {
-                self.roulette_pending = false;
-                self.roulette_rx = None;
-                self.toast.error(ctx, "Roulette: task ended unexpectedly");
-            }
-        }
-    }
-
-    fn process_audio_events(&mut self) {
-        loop {
-            match self.audio_events.try_recv() {
-                Ok(AudioEvent::Started { url }) => self.current_url = Some(url),
-                Ok(
-                    AudioEvent::Stopped
-                    | AudioEvent::Buffering
-                    | AudioEvent::Reconnecting { .. }
-                    | AudioEvent::Error { .. }
-                    | AudioEvent::EndOfFile,
-                ) => {}
-                Err(
-                    broadcast::error::TryRecvError::Empty | broadcast::error::TryRecvError::Closed,
-                ) => break,
-                Err(broadcast::error::TryRecvError::Lagged(skipped)) => {
-                    warn!(skipped, "часть аудио-событий пропущена");
-                }
-            }
-        }
-    }
-
-    fn process_media_commands(&mut self, ctx: &egui::Context) {
-        while let Some(command) = self
-            .media
-            .as_mut()
-            .and_then(|media| media.events().try_recv().ok())
-        {
-            self.execute_media_command(ctx, command);
-        }
-    }
-
-    fn execute_media_command(&mut self, ctx: &egui::Context, command: MediaCommand) {
-        match command {
-            MediaCommand::Stop => {
-                if let Err(err) = self.stop_playback() {
-                    warn!(error = %err, "не удалось остановить воспроизведение из MPRIS");
-                }
-            }
-            MediaCommand::SetVolume(volume) => {
-                if let Err(err) = self.runtime.block_on(self.audio.set_volume(volume)) {
-                    warn!(error = %err, "не удалось изменить громкость из MPRIS");
-                }
-            }
-            MediaCommand::Play => {
-                if let Err(err) = self.resume_playback() {
-                    warn!(error = %err, "не удалось возобновить воспроизведение из MPRIS");
-                }
-            }
-            MediaCommand::Pause => {
-                if let Err(err) = self.set_audio_paused(true) {
-                    warn!(error = %err, "не удалось поставить на паузу из MPRIS");
-                }
-            }
-            MediaCommand::PlayPause => match self.audio.state() {
-                PlaybackState::Paused => {
-                    if let Err(err) = self.set_audio_paused(false) {
-                        warn!(error = %err, "не удалось снять паузу из MPRIS");
-                    }
-                }
-                PlaybackState::Playing | PlaybackState::Buffering => {
-                    if let Err(err) = self.set_audio_paused(true) {
-                        warn!(error = %err, "не удалось поставить на паузу из MPRIS");
-                    }
-                }
-                PlaybackState::Stopped | PlaybackState::Error(_) => {
-                    if let Err(err) = self.resume_playback() {
-                        warn!(error = %err, "не удалось запустить воспроизведение из MPRIS");
-                    }
-                }
-                PlaybackState::Reconnecting => {}
-            },
-            MediaCommand::Next => self.play_relative(ctx, 1),
-            MediaCommand::Previous => self.play_relative(ctx, -1),
-        }
-    }
-
-    /// Снимок видимого списка станций — очередь навигации prev/next.
-    fn visible_queue(&self) -> Vec<Station> {
-        match self.library_tab {
-            LibraryTab::Favorites => self.library.favorites().to_vec(),
-            LibraryTab::History => self.library.history().to_vec(),
-            LibraryTab::Results => {
-                let context_mode =
-                    self.search_context.country.is_some() || self.search_context.genre.is_some();
-                if context_mode {
-                    station_filter::filtered_results(&self.search_results, &self.country_filter)
-                        .into_iter()
-                        .cloned()
-                        .collect()
-                } else {
-                    self.search_results.clone()
-                }
-            }
-        }
-    }
-
-    /// Шаг по видимому списку с wrap; при пустой очереди — no-op.
-    fn play_relative(&mut self, ctx: &egui::Context, step: i8) {
-        let queue = self.visible_queue();
-        if queue.is_empty() {
-            return;
-        }
-        let current = self.current_station.as_ref().and_then(|station| {
-            queue
-                .iter()
-                .position(|item| item.stationuuid == station.stationuuid)
-        });
-        let next = match current {
-            Some(index) => {
-                (index as isize + step as isize).rem_euclid(queue.len() as isize) as usize
-            }
-            None if step >= 0 => 0,
-            None => queue.len() - 1,
-        };
-        if let Err(err) = self.start_station(ctx, queue[next].clone()) {
-            self.toast.error(ctx, err);
-        }
-    }
-
-    fn set_audio_paused(&mut self, paused: bool) -> Result<(), String> {
-        self.runtime
-            .block_on(self.audio.set_paused(paused))
-            .map_err(|err| err.to_string())
-    }
-
-    fn resume_playback(&mut self) -> Result<(), String> {
-        match self.audio.state() {
-            PlaybackState::Paused => self.set_audio_paused(false),
-            PlaybackState::Playing | PlaybackState::Buffering | PlaybackState::Reconnecting => {
-                Ok(())
-            }
-            PlaybackState::Stopped | PlaybackState::Error(_) => match self.current_url.clone() {
-                Some(url) => self
-                    .runtime
-                    .block_on(self.audio.play(&url))
-                    .map_err(|err| err.to_string()),
-                None => Ok(()),
-            },
-        }
-    }
-
-    fn toggle_playback(&mut self) -> Result<(), String> {
-        match self.audio.state() {
-            PlaybackState::Paused => self.set_audio_paused(false),
-            PlaybackState::Playing | PlaybackState::Buffering => self.set_audio_paused(true),
-            PlaybackState::Reconnecting => Ok(()),
-            PlaybackState::Stopped | PlaybackState::Error(_) => self.resume_playback(),
-        }
-    }
-
-    fn stop_playback(&mut self) -> Result<(), String> {
-        self.runtime
-            .block_on(self.audio.stop())
-            .map_err(|err| err.to_string())
-    }
-
-    fn sync_media(&mut self) {
-        let state = self.audio.state();
-        let has_track = !matches!(state, PlaybackState::Stopped | PlaybackState::Error(_));
-        let playing = matches!(
-            state,
-            PlaybackState::Playing | PlaybackState::Buffering | PlaybackState::Reconnecting
-        );
-        let fallback_url = self.current_url.clone().unwrap_or_default();
-        let (base_title, artist, art_url, url) = match &self.current_station {
-            Some(station) => (
-                ui::single_line(&station.name),
-                mpris_artist(station),
-                station.favicon.clone(),
-                if station.url_resolved.trim().is_empty() {
-                    fallback_url
-                } else {
-                    station.url_resolved.clone()
-                },
-            ),
-            None => (fallback_url.clone(), None, None, fallback_url),
-        };
-        let title = if has_track {
-            if base_title.is_empty() {
-                WINDOW_TITLE.to_owned()
-            } else {
-                base_title
-            }
-        } else {
-            String::new()
-        };
-
-        let info = PlaybackInfo {
-            title,
-            artist,
-            art_url,
-            url,
-            playing,
-            volume: self.audio.volume(),
-        };
-
-        if let Some(media) = self.media.as_mut()
-            && let Err(err) = media.set_playback(&info)
-        {
-            warn!(error = %err, "не удалось обновить MPRIS");
-        }
-    }
-
-    fn set_viz_bars(&mut self, ctx: &egui::Context, bars: u8) {
-        match self.settings.set_viz_bars(bars) {
-            Ok(()) => {}
-            Err(err) => {
-                warn!(error = %err, "не удалось сохранить число столбцов");
-                self.toast.error(ctx, format!("Setting not saved: {err}"));
-            }
-        }
-        self.visualizer = VisualizerModel::new(usize::from(self.settings.settings().viz_bars));
-    }
-
-    /// Карточка управления показана один раз; дальше её зовут вручную по `?`.
-    fn mark_help_seen(&mut self) {
-        if self.settings.settings().help_seen {
-            return;
-        }
-        if let Err(err) = self.settings.set_help_seen() {
-            warn!(error = %err, "не удалось сохранить признак просмотренной карточки");
-        }
-    }
-
-    fn set_spectrum_enabled(&mut self, ctx: &egui::Context, enabled: bool) {
-        match self
-            .runtime
-            .block_on(self.audio.set_spectrum_enabled(enabled))
-        {
-            Ok(()) => {
-                self.spectrum_enabled = enabled;
-            }
-            Err(err) => {
-                self.spectrum_enabled = self.audio.spectrum_enabled();
-                self.toast.error(ctx, format!("FFT unavailable: {err}"));
-            }
-        }
-    }
-
-    /// Показ/скрытие окна. На Wayland `Visible` — no-op (winit), поэтому скрытие
-    /// заодно сжимает поверхность до 1×1 (ADR-0018): окно не занимает место в
-    /// раскладке композитора, процесс и воспроизведение остаются живыми.
-    fn set_window_visible(&mut self, ctx: &egui::Context, visible: bool) {
-        self.state.window_visible = visible;
-        if visible {
-            let size = self
-                .state
-                .restore_size
-                .take()
-                .unwrap_or_else(|| egui::vec2(crate::WINDOW_SIZE[0], crate::WINDOW_SIZE[1]));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-            ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(egui::vec2(
-                crate::WINDOW_MIN_SIZE[0],
-                crate::WINDOW_MIN_SIZE[1],
-            )));
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-        } else {
-            let current = ctx.input(|input| input.viewport().inner_rect);
-            self.state.restore_size = current.map(|rect| rect.size());
-            let hidden = egui::vec2(HIDDEN_SIZE, HIDDEN_SIZE);
-            ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(hidden));
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(hidden));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
-        }
-        ctx.request_repaint();
-    }
-
-    fn request_quit(&mut self, ctx: &egui::Context) {
-        self.quitting = true;
-        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-    }
-
+    /// Кадр раскладки: снимаем состояние, рисуем слои, исполняем действия.
     fn draw(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
-        let settings = self.settings.settings();
-        let palette = Palette::for_ui(ctx.theme(), settings.accent);
-        let playback = self.audio.state();
-        let volume = self.audio.volume();
-        let markers_total: usize = self.markers.iter().map(|marker| marker.count).sum();
-        let current_favorite = self
-            .current_station
-            .as_ref()
-            .is_some_and(|station| self.library.is_favorite(&station.stationuuid));
-        let can_resume = self.current_url.is_some();
-        let spectrum_target = self.audio.spectrum().map(|frame| SpectrumTarget {
-            centroid_hz: frame.centroid_hz,
-            spread_hz: frame.spread_hz,
-            flux: frame.flux,
-            flatness: frame.flatness,
-            rms_db: frame.rms_db,
-        });
-        // Визуализатор живёт кадрами: без данных или в паузе — idle-дыхание.
-        let viz_active = self.spectrum_enabled
-            && matches!(
-                playback,
-                PlaybackState::Playing | PlaybackState::Buffering | PlaybackState::Reconnecting
-            );
-        self.visualizer.advance(
-            if viz_active {
-                spectrum_target.as_ref()
-            } else {
-                None
-            },
-            ctx.input(|input| input.stable_dt),
-            ctx.input(|input| input.time),
-        );
+        let viewport = ui.available_rect_before_wrap();
+        let frame = Frame::capture(&ctx, self.session, &mut self.visualizer, viewport);
         let mut actions = Vec::new();
 
         egui::CentralPanel::default()
@@ -997,166 +143,290 @@ impl OrbitApp {
                     .inner_margin(egui::Margin::same(0)),
             )
             .show(ui, |ui| {
-                let viewport = ui.available_rect_before_wrap();
-                let layout = DeskLayout::compute(viewport, self.panel_open, self.show_help);
-
-                // Глобус — нижний слой: full-bleed на всё окно.
-                let globe_response = ui
-                    .scope_builder(egui::UiBuilder::new().max_rect(layout.globe), |ui| {
-                        globe_view::show(
-                            ui,
-                            &palette,
-                            GlobeState {
-                                camera: &mut self.globe_camera,
-                                ready: self.globe_ready,
-                                markers: &self.markers,
-                                current_uuid: self
-                                    .current_station
-                                    .as_ref()
-                                    .map(|station| station.stationuuid.as_str()),
-                                geo: &self.geo,
-                                selected_country: self.search_context.country.as_ref(),
-                                country_enabled: self.search_context.mode == SearchMode::Country,
-                                spectrum_overlay: &mut self.spectrum_overlay,
-                                spectrum_target,
-                                layout,
-                                callout: &mut self.callout,
-                            },
-                        )
-                    })
-                    .inner;
-                actions.extend(globe_response.actions);
-                if self.search_context.mode == SearchMode::Country
-                    && let Some((x, y, z)) = globe_response.clicked_point
-                    && let Some(country) = self.geo.country_at_sphere_point(x, y, z)
-                {
-                    actions.push(UiAction::SelectCountry(country.clone()));
-                }
-
-                // Плавающие стеклянные зоны рисуются поверх глобуса в этом же
-                // слоёном проходе; их геометрию задаёт DeskLayout. Фон — градиент
-                // с бликом — рисуется до содержимого: `egui::Frame` умеет только
-                // сплошную заливку, поэтому он прозрачный.
-                let floating = |rect: egui::Rect| {
-                    egui::UiBuilder::new()
-                        .max_rect(rect)
-                        .layout(egui::Layout::left_to_right(egui::Align::Center))
-                };
-                widgets::glass_panel(ui.painter(), layout.hud, &palette, 16.0, 1.0);
-                ui.scope_builder(floating(layout.hud), |ui| {
-                    actions.extend(hud::show(
-                        ui,
-                        &palette,
-                        hud::HudState {
-                            query: &mut self.search_query,
-                            country_query: &mut self.country_query,
-                            genre_query: &mut self.genre_query,
-                            mode: self.search_context.mode,
-                            selected_genre: self.search_context.genre.as_deref(),
-                            context_active: self.search_context.is_active(),
-                            geo: &self.geo,
-                            now_playing: self.current_station.as_ref(),
-                            favicons: &mut self.favicons,
-                            playback: &playback,
-                            settings,
-                            panel_open: self.panel_open,
-                            help_open: self.show_help,
-                        },
-                    ));
-                });
-
-                if let Some(panel_rect) = layout.panel {
-                    widgets::glass_panel(ui.painter(), panel_rect, &palette, 16.0, 1.0);
-                    ui.scope_builder(
-                        egui::UiBuilder::new()
-                            .max_rect(panel_rect)
-                            .layout(egui::Layout::top_down(egui::Align::Min)),
-                        |ui| {
-                            actions.extend(self.draw_station_panel(ui, &palette, markers_total));
-                        },
-                    );
-                }
-
-                widgets::glass_panel(ui.painter(), layout.transport, &palette, 16.0, 1.0);
-                ui.scope_builder(
-                    egui::UiBuilder::new()
-                        .max_rect(layout.transport)
-                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
-                    |ui| {
-                        actions.extend(transport::show(
-                            ui,
-                            &palette,
-                            TransportState {
-                                playback: &playback,
-                                current: self.current_station.as_ref(),
-                                favorite: current_favorite,
-                                can_resume,
-                                spectrum_enabled: self.spectrum_enabled,
-                                roulette_pending: self.roulette_pending,
-                                volume,
-                                visualizer: &self.visualizer,
-                                favicons: &mut self.favicons,
-                            },
-                        ));
-                    },
-                );
-
-                if let Some(help_rect) = layout.help {
-                    widgets::glass_panel(ui.painter(), help_rect, &palette, 14.0, 1.0);
-                    ui.scope_builder(
-                        egui::UiBuilder::new()
-                            .max_rect(help_rect)
-                            .layout(egui::Layout::top_down(egui::Align::Min)),
-                        |ui| {
-                            overlays::help_card(ui, &palette);
-                        },
-                    );
-                }
-                widgets::glass_panel(ui.painter(), layout.legend, &palette, 14.0, 1.0);
-                ui.scope_builder(
-                    egui::UiBuilder::new()
-                        .max_rect(layout.legend)
-                        .layout(egui::Layout::top_down(egui::Align::Min)),
-                    |ui| {
-                        overlays::density_legend(ui, &palette);
-                    },
-                );
-
-                self.toast.draw(&ctx, &palette);
+                actions = self.draw_layers(ui, &frame);
+                self.toast.draw(&ctx, &frame.palette);
                 ui.allocate_rect(viewport, egui::Sense::hover());
             });
 
         self.apply_actions(&ctx, actions);
     }
 
-    fn draw_station_panel(
-        &mut self,
-        ui: &mut egui::Ui,
-        palette: &Palette,
-        markers_total: usize,
-    ) -> Vec<UiAction> {
-        station_panel::show(
-            ui,
-            palette,
-            station_panel::PanelState {
-                tab: &mut self.library_tab,
-                country: self.search_context.country.as_ref(),
-                genre: self.search_context.genre.as_deref(),
-                markers_total,
-                results: &self.search_results,
-                favorites: self.library.favorites(),
-                history: self.library.history(),
-                pending: self.search_pending,
-                empty: self.search_empty,
-                error: self.search_error.as_deref(),
-                filter: &mut self.country_filter,
-                favicons: &mut self.favicons,
-                playing_uuid: self
-                    .current_station
-                    .as_ref()
-                    .map(|station| station.stationuuid.as_str()),
-            },
-        )
+    /// Глобус — нижний слой, поверх него стеклянные зоны `DeskLayout`. Плотность
+    /// зон выводится из `WindowMode` (ADR-0021): Focus рисует весь стол, Overlay —
+    /// капсулу «станция / мини-глобус / избранное», Listening — одну строку.
+    /// Фон зон — градиент с бликом — рисуется до содержимого, потому что
+    /// `egui::Frame` умеет только сплошную заливку и остаётся прозрачным.
+    fn draw_layers(&mut self, ui: &mut egui::Ui, frame: &Frame) -> Vec<UiAction> {
+        let session = &mut *self.session;
+        let favicons = &mut self.favicons;
+        let spectrum_overlay = &mut self.spectrum_overlay;
+        let callout = &mut self.callout;
+        let visualizer = &self.visualizer;
+        let palette = &frame.palette;
+        let layout = frame.layout;
+        let density = layout.density;
+
+        // Пульс считается один раз на кадр: глобус Focus и кольцо Listening
+        // должны видеть одно и то же сглаженное значение.
+        spectrum_overlay.update(frame.spectrum_target, ui.input(|input| input.stable_dt));
+        let pulse = spectrum_overlay.pulse();
+
+        let mut actions = Vec::new();
+
+        if let Some(globe_rect) = layout.globe {
+            let country_enabled = frame.country_mode && density == LayoutDensity::Full;
+            let globe = ui
+                .scope_builder(egui::UiBuilder::new().max_rect(globe_rect), |ui| {
+                    globe_view::show(
+                        ui,
+                        palette,
+                        GlobeState {
+                            camera: &mut session.globe_camera,
+                            ready: self.globe_ready,
+                            markers: &session.markers,
+                            current_uuid: session
+                                .current_station
+                                .as_ref()
+                                .map(|station| station.stationuuid.as_str()),
+                            geo: &session.geo,
+                            selected_country: session.search.context.country.as_ref(),
+                            country_enabled,
+                            pulse,
+                            backdrop: density == LayoutDensity::Full,
+                            layout,
+                            callout,
+                        },
+                    )
+                })
+                .inner;
+            actions.extend(globe.actions);
+            if country_enabled
+                && let Some((x, y, z)) = globe.clicked_point
+                && let Some(country) = session.geo.country_at_sphere_point(x, y, z)
+            {
+                actions.push(UiAction::SelectCountry(country.clone()));
+            }
+        }
+
+        match density {
+            LayoutDensity::Full => {
+                let window_mode = session.window_mode();
+                if let Some(hud_rect) = layout.hud {
+                    widgets::glass_panel(
+                        ui.painter(),
+                        hud_rect,
+                        palette,
+                        GLASS_RADIUS_MAJOR,
+                        GLASS_BORDER,
+                    );
+                    actions.extend(
+                        ui.scope_builder(horizontal(hud_rect), |ui| {
+                            hud::show(
+                                ui,
+                                palette,
+                                hud::HudState {
+                                    query: &mut session.search.query,
+                                    country_query: &mut session.search.country_query,
+                                    genre_query: &mut session.search.genre_query,
+                                    mode: session.search.context.mode,
+                                    selected_genre: session.search.context.genre.as_deref(),
+                                    context_active: session.search.context.is_active(),
+                                    geo: &session.geo,
+                                    now_playing: session.current_station.as_ref(),
+                                    favicons,
+                                    playback: &frame.playback,
+                                    settings: frame.settings,
+                                    panel_open: session.panel_open,
+                                    help_open: session.show_help,
+                                    window_mode,
+                                },
+                            )
+                        })
+                        .inner,
+                    );
+                }
+
+                if let Some(panel_rect) = layout.panel {
+                    widgets::glass_panel(
+                        ui.painter(),
+                        panel_rect,
+                        palette,
+                        GLASS_RADIUS_MAJOR,
+                        GLASS_BORDER,
+                    );
+                    actions.extend(
+                        ui.scope_builder(
+                            egui::UiBuilder::new()
+                                .max_rect(panel_rect)
+                                .layout(egui::Layout::top_down(egui::Align::Min)),
+                            |ui| {
+                                station_panel::show(
+                                    ui,
+                                    palette,
+                                    station_panel::PanelState {
+                                        tab: &mut session.library_tab,
+                                        country: session.search.context.country.as_ref(),
+                                        genre: session.search.context.genre.as_deref(),
+                                        markers_total: frame.markers_total,
+                                        results: &session.search.results,
+                                        favorites: session.library.favorites(),
+                                        history: session.library.history(),
+                                        pending: session.search.pending,
+                                        empty: session.search.empty,
+                                        error: session.search.error.as_deref(),
+                                        filter: &mut session.country_filter,
+                                        favicons,
+                                        playing_uuid: session
+                                            .current_station
+                                            .as_ref()
+                                            .map(|station| station.stationuuid.as_str()),
+                                    },
+                                )
+                            },
+                        )
+                        .inner,
+                    );
+                }
+
+                if let Some(transport_rect) = layout.transport {
+                    widgets::glass_panel(
+                        ui.painter(),
+                        transport_rect,
+                        palette,
+                        GLASS_RADIUS_MAJOR,
+                        GLASS_BORDER,
+                    );
+                    actions.extend(
+                        ui.scope_builder(horizontal(transport_rect), |ui| {
+                            transport::show(
+                                ui,
+                                palette,
+                                TransportState {
+                                    playback: &frame.playback,
+                                    current: session.current_station.as_ref(),
+                                    favorite: frame.current_favorite,
+                                    can_resume: frame.can_resume,
+                                    spectrum_enabled: session.spectrum_enabled,
+                                    roulette_pending: session.search.roulette_pending,
+                                    volume: frame.volume,
+                                    visualizer,
+                                    favicons,
+                                },
+                            )
+                        })
+                        .inner,
+                    );
+                }
+
+                if let Some(help_rect) = layout.help {
+                    widgets::glass_panel(
+                        ui.painter(),
+                        help_rect,
+                        palette,
+                        GLASS_RADIUS_MINOR,
+                        GLASS_BORDER,
+                    );
+                    ui.scope_builder(vertical(help_rect), |ui| {
+                        overlays::help_card(ui, palette);
+                    });
+                }
+                if let Some(legend_rect) = layout.legend {
+                    widgets::glass_panel(
+                        ui.painter(),
+                        legend_rect,
+                        palette,
+                        GLASS_RADIUS_MINOR,
+                        GLASS_BORDER,
+                    );
+                    ui.scope_builder(vertical(legend_rect), |ui| {
+                        overlays::density_legend(ui, palette);
+                    });
+                }
+            }
+            LayoutDensity::Compact => {
+                if let Some(hud_rect) = layout.hud {
+                    widgets::glass_panel(
+                        ui.painter(),
+                        hud_rect,
+                        palette,
+                        GLASS_RADIUS_MAJOR,
+                        GLASS_BORDER,
+                    );
+                    actions.extend(
+                        ui.scope_builder(horizontal(hud_rect), |ui| {
+                            capsule::overlay_top(
+                                ui,
+                                palette,
+                                capsule::OverlayTop {
+                                    playback: &frame.playback,
+                                    current: session.current_station.as_ref(),
+                                    can_resume: frame.can_resume,
+                                    volume: frame.volume,
+                                    favicons,
+                                },
+                            )
+                        })
+                        .inner,
+                    );
+                }
+                if let Some(capsule_rect) = layout.capsule {
+                    widgets::glass_panel(
+                        ui.painter(),
+                        capsule_rect,
+                        palette,
+                        GLASS_RADIUS_MAJOR,
+                        GLASS_BORDER,
+                    );
+                    actions.extend(
+                        ui.scope_builder(vertical(capsule_rect), |ui| {
+                            capsule::overlay_favorites(
+                                ui,
+                                palette,
+                                capsule::OverlayFavorites {
+                                    favorites: session.library.favorites(),
+                                    playing_uuid: session
+                                        .current_station
+                                        .as_ref()
+                                        .map(|station| station.stationuuid.as_str()),
+                                    favicons,
+                                },
+                            )
+                        })
+                        .inner,
+                    );
+                }
+            }
+            LayoutDensity::Minimal => {
+                if let Some(row_rect) = layout.hud {
+                    widgets::glass_panel(
+                        ui.painter(),
+                        row_rect,
+                        palette,
+                        GLASS_RADIUS_MAJOR,
+                        GLASS_BORDER,
+                    );
+                    actions.extend(
+                        ui.scope_builder(horizontal(row_rect), |ui| {
+                            capsule::listening(
+                                ui,
+                                palette,
+                                capsule::Listening {
+                                    playback: &frame.playback,
+                                    current: session.current_station.as_ref(),
+                                    favorite: frame.current_favorite,
+                                    can_resume: frame.can_resume,
+                                    pulse,
+                                    favicons,
+                                },
+                            )
+                        })
+                        .inner,
+                    );
+                }
+            }
+        }
+
+        actions
     }
 
     fn apply_actions(&mut self, ctx: &egui::Context, actions: Vec<UiAction>) {
@@ -1165,55 +435,160 @@ impl OrbitApp {
         }
     }
 
+    /// Действие UI превращается в команду ядра; побочные эффекты — только здесь.
     fn apply_action(&mut self, ctx: &egui::Context, action: UiAction) {
         match action {
             UiAction::Play(station) => {
-                self.mark_help_seen();
-                if let Err(err) = self.start_station(ctx, station) {
+                self.session.mark_help_seen();
+                if let Err(err) = self.session.start_station(station) {
                     self.toast.error(ctx, err);
                 }
             }
-            UiAction::ToggleFavorite(station) => self.toggle_favorite(ctx, &station),
+            UiAction::ToggleFavorite(station) => self.session.toggle_favorite(&station),
             UiAction::SelectCountry(country) => {
-                self.mark_help_seen();
-                self.focus_country(&country);
-                self.start_country_search(country);
+                self.session.mark_help_seen();
+                self.session.focus_country(&country);
+                self.session.start_country_search(country);
             }
-            UiAction::SwitchMode(mode) => self.switch_mode(mode),
-            UiAction::SelectGenre(tag) => self.start_genre_search(tag),
-            UiAction::RunSearch => self.start_search(),
-            UiAction::Roulette => self.start_roulette(),
-            UiAction::ClearHistory => self.clear_history(ctx),
-            UiAction::SetTheme(theme) => self.set_theme(ctx, theme),
-            UiAction::SetAccent(accent) => self.set_accent(ctx, accent),
-            UiAction::ToggleSpectrum(enabled) => self.set_spectrum_enabled(ctx, enabled),
-            UiAction::SetVizBars(bars) => self.set_viz_bars(ctx, bars),
+            UiAction::SwitchMode(mode) => self.session.switch_mode(mode),
+            UiAction::SelectGenre(tag) => self.session.start_genre_search(tag),
+            UiAction::RunSearch => self.session.start_search(),
+            UiAction::Roulette => self.session.start_roulette(),
+            UiAction::ClearHistory => self.session.clear_history(),
+            UiAction::SetTheme(theme) => {
+                if let Err(err) = self.session.set_theme(theme) {
+                    self.toast.error(ctx, format!("Theme not saved: {err}"));
+                }
+                palette::configure_style(ctx, self.session.settings.settings());
+            }
+            UiAction::SetAccent(accent) => {
+                if let Err(err) = self.session.set_accent(accent) {
+                    self.toast.error(ctx, format!("Accent not saved: {err}"));
+                }
+                palette::configure_style(ctx, self.session.settings.settings());
+            }
+            UiAction::ToggleSpectrum(enabled) => {
+                if let Err(err) = self.session.set_spectrum_enabled(enabled) {
+                    self.toast.error(ctx, format!("FFT unavailable: {err}"));
+                }
+            }
+            UiAction::SetVizBars(bars) => {
+                if let Err(err) = self.session.set_viz_bars(bars) {
+                    self.toast.error(ctx, format!("Setting not saved: {err}"));
+                }
+                let bars = self.session.settings.settings().viz_bars;
+                self.visualizer = VisualizerModel::new(usize::from(bars));
+            }
             UiAction::SetVolume(volume) => {
-                if let Err(err) = self.runtime.block_on(self.audio.set_volume(volume)) {
+                if let Err(err) = self.session.set_volume(volume) {
                     self.toast.error(ctx, format!("Volume not changed: {err}"));
                 }
             }
-            UiAction::PlayRelative(step) => self.play_relative(ctx, step),
+            UiAction::PlayRelative(step) => self.session.play_relative(step),
             UiAction::TogglePlayback => {
-                if let Err(err) = self.toggle_playback() {
+                if let Err(err) = self.session.toggle_playback() {
                     self.toast.error(ctx, err);
                 }
             }
             UiAction::Stop => {
-                if let Err(err) = self.stop_playback() {
+                if let Err(err) = self.session.stop_playback() {
                     self.toast.error(ctx, err);
                 }
             }
-            UiAction::Hide => self.set_window_visible(ctx, false),
-            UiAction::Quit => self.request_quit(ctx),
-            UiAction::TogglePanel => self.panel_open = !self.panel_open,
+            UiAction::Hide => self.session.hide(),
+            UiAction::Quit => self.session.quit(),
+            UiAction::TogglePanel => self.session.panel_open = !self.session.panel_open,
             UiAction::ToggleHelp => {
-                self.show_help = !self.show_help;
-                self.mark_help_seen();
+                self.session.show_help = !self.session.show_help;
+                self.session.mark_help_seen();
             }
+            UiAction::SetWindowMode(mode) => self.session.set_window_mode(mode),
         }
         ctx.request_repaint();
     }
+}
+
+/// Снимок читаемого состояния на один кадр: зоны берут данные из него, а не из ядра.
+struct Frame {
+    palette: Palette,
+    settings: Settings,
+    playback: PlaybackState,
+    volume: f64,
+    markers_total: usize,
+    current_favorite: bool,
+    can_resume: bool,
+    spectrum_target: Option<SpectrumTarget>,
+    /// Клик по сфере выбирает страну только в режиме страны (ТЗ §5.2).
+    country_mode: bool,
+    layout: DeskLayout,
+}
+
+impl Frame {
+    fn capture(
+        ctx: &egui::Context,
+        session: &mut Session,
+        visualizer: &mut VisualizerModel,
+        viewport: egui::Rect,
+    ) -> Self {
+        let settings = session.settings.settings();
+        let playback = session.audio.state();
+        let spectrum_target = session.audio.spectrum().map(|frame| SpectrumTarget {
+            centroid_hz: frame.centroid_hz,
+            spread_hz: frame.spread_hz,
+            flux: frame.flux,
+            flatness: frame.flatness,
+            rms_db: frame.rms_db,
+        });
+        // Визуализатор живёт кадрами: без данных или в паузе — idle-дыхание.
+        let viz_active = session.spectrum_enabled
+            && matches!(
+                playback,
+                PlaybackState::Playing | PlaybackState::Buffering | PlaybackState::Reconnecting
+            );
+        visualizer.advance(
+            if viz_active {
+                spectrum_target.as_ref()
+            } else {
+                None
+            },
+            ctx.input(|input| input.stable_dt),
+            ctx.input(|input| input.time),
+        );
+        Self {
+            palette: Palette::for_ui(ctx.theme(), settings.accent),
+            settings,
+            volume: session.audio.volume(),
+            markers_total: session.markers.iter().map(|marker| marker.count).sum(),
+            current_favorite: session
+                .current_station
+                .as_ref()
+                .is_some_and(|station| session.library.is_favorite(&station.stationuuid)),
+            can_resume: session.current_url.is_some(),
+            country_mode: session.search.context.mode == SearchMode::Country,
+            layout: DeskLayout::compute(
+                viewport,
+                session.panel_open,
+                session.show_help,
+                session.window_mode(),
+            ),
+            playback,
+            spectrum_target,
+        }
+    }
+}
+
+/// Макет зоны: содержимое слева направо по центру.
+fn horizontal(rect: egui::Rect) -> egui::UiBuilder {
+    egui::UiBuilder::new()
+        .max_rect(rect)
+        .layout(egui::Layout::left_to_right(egui::Align::Center))
+}
+
+/// Макет зоны: содержимое сверху вниз по левому краю.
+fn vertical(rect: egui::Rect) -> egui::UiBuilder {
+    egui::UiBuilder::new()
+        .max_rect(rect)
+        .layout(egui::Layout::top_down(egui::Align::Min))
 }
 
 /// Ставит системный цветной emoji-шрифт в запас Proportional, чтобы флаги стран
@@ -1247,260 +622,43 @@ fn install_emoji_font(ctx: &egui::Context) {
     debug!("цветной emoji-шрифт подключён: флаги стран будут рисоваться");
 }
 
-impl eframe::App for OrbitApp {
+impl eframe::App for OrbitApp<'_> {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.process_audio_events();
-        self.process_commands(ctx);
-        self.process_media_commands(ctx);
-        self.poll_search();
-        self.poll_roulette(ctx);
+        self.session.tick();
+        self.drain_notices(ctx);
         self.poll_favicons(ctx);
-        self.sync_media();
-        self.spectrum_enabled = self.audio.spectrum_enabled();
 
-        if self.spectrum_enabled
+        if let Some(rect) = ctx.input(|input| input.viewport().inner_rect) {
+            self.session.set_window_size([rect.width(), rect.height()]);
+        }
+
+        match self.session.take_intent() {
+            // Окно уже открыто: остаётся вернуть ему фокус.
+            Some(UiIntent::Show) => ctx.send_viewport_cmd(egui::ViewportCommand::Focus),
+            Some(UiIntent::Close) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            None => {}
+        }
+
+        if self.session.show_help && ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+            self.session.show_help = false;
+            self.session.mark_help_seen();
+        }
+
+        if self.session.spectrum_enabled
             && matches!(
-                self.audio.state(),
+                self.session.audio.state(),
                 PlaybackState::Playing | PlaybackState::Buffering
             )
         {
-            ctx.request_repaint_after(Duration::from_millis(33));
-        }
-
-        if self.show_help && ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
-            self.show_help = false;
-            self.mark_help_seen();
-        }
-
-        if ctx.input(|input| input.viewport().close_requested()) {
-            if self.quitting {
-                return;
-            }
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.set_window_visible(ctx, false);
+            ctx.request_repaint_after(SPECTRUM_REPAINT);
         }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        if self.state.window_visible {
-            self.draw(ui);
-        }
+        self.draw(ui);
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         [0.0, 0.0, 0.0, 0.0]
-    }
-}
-
-fn roulette_label(station: &Station) -> String {
-    let name = ui::single_line(&station.name);
-    let country = ui::single_line(&station.country);
-    match (name.is_empty(), country.is_empty()) {
-        (false, false) => format!("{name} — {country}"),
-        (false, true) => name,
-        (true, false) => country,
-        (true, true) => "unnamed station".to_owned(),
-    }
-}
-
-fn mpris_artist(station: &Station) -> Option<String> {
-    let state = ui::single_line(&station.state);
-    let country = ui::single_line(&station.country);
-    let location = match (state.is_empty(), country.is_empty()) {
-        (false, false) => Some(format!("{state}, {country}")),
-        (false, true) => Some(state),
-        (true, false) => Some(country),
-        (true, true) => None,
-    };
-
-    location.or_else(|| {
-        let tags = ui::single_line(&station.tags);
-        (!tags.is_empty()).then_some(tags)
-    })
-}
-
-fn format_status(
-    state: &PlaybackState,
-    volume: f64,
-    window_visible: bool,
-    station: Option<&Station>,
-) -> String {
-    let window = if window_visible { "visible" } else { "hidden" };
-    let mut status = format!("status {}", state.as_str());
-    if let Some(station) = station {
-        status.push_str("\nstationuuid ");
-        status.push_str(&ui::single_line(&station.stationuuid));
-        status.push_str("\nname ");
-        status.push_str(&ui::single_line(&station.name));
-    }
-    status.push_str(&format!("\nvolume {volume:.2}\nwindow {window}"));
-    status
-}
-
-/// Запрос «только станции выбранной страны» (ТЗ §5.3): фильтр по ISO без примеси
-/// других стран и мёртвых потоков.
-fn country_search_params(iso_a2: &str) -> SearchParams {
-    SearchParams {
-        country_code: Some(iso_a2.to_owned()),
-        limit: COUNTRY_RESULT_LIMIT,
-        hide_broken: true,
-        ..SearchParams::default()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn sample_station() -> Station {
-        Station {
-            stationuuid: "c685c086-b716-4edd-b313-d4a7baf1084c".to_owned(),
-            name: "Test Radio".to_owned(),
-            url: "http://example.com/live".to_owned(),
-            url_resolved: "https://example.com/live".to_owned(),
-            homepage: None,
-            favicon: None,
-            tags: "jazz".to_owned(),
-            countrycode: "US".to_owned(),
-            language: "english".to_owned(),
-            votes: 120,
-            country: "United States".to_owned(),
-            state: "New York".to_owned(),
-            bitrate: 128,
-            codec: "MP3".to_owned(),
-            geo_lat: None,
-            geo_long: None,
-        }
-    }
-
-    fn germany() -> Country {
-        Country {
-            name: "Germany".to_owned(),
-            iso_a2: "DE".to_owned(),
-            iso_a3: Some("DEU".to_owned()),
-        }
-    }
-
-    #[test]
-    fn switching_mode_resets_country_and_genre() {
-        let mut context = SearchContext::default();
-        assert_eq!(context.mode, SearchMode::Country);
-        context.activate_country(germany());
-        assert!(context.is_active());
-
-        assert!(context.switch_mode(SearchMode::GlobalGenre));
-        assert_eq!(context.mode, SearchMode::GlobalGenre);
-        assert!(!context.is_active(), "страна должна сбрасываться");
-        assert!(context.country.is_none());
-        assert!(!context.switch_mode(SearchMode::GlobalGenre));
-    }
-
-    #[test]
-    fn activating_genre_clears_country_and_vice_versa() {
-        let mut context = SearchContext::default();
-        context.activate_country(germany());
-        context.activate_genre("jazz".to_owned());
-
-        assert_eq!(context.mode, SearchMode::GlobalGenre);
-        assert_eq!(context.genre.as_deref(), Some("jazz"));
-        assert!(context.country.is_none(), "жанр сбрасывает страну");
-
-        context.activate_country(germany());
-        assert_eq!(context.mode, SearchMode::Country);
-        assert!(context.genre.is_none(), "страна сбрасывает жанр");
-    }
-
-    #[test]
-    fn stale_search_response_is_dropped() {
-        let response = SearchResponse {
-            generation: 7,
-            result: Err(RadioError::NotFound),
-        };
-        assert!(response.is_current(7));
-        assert!(
-            !response.is_current(8),
-            "ответ прошлого поколения не должен применяться"
-        );
-    }
-
-    #[test]
-    fn roulette_label_includes_country() {
-        let mut station = sample_station();
-        assert_eq!(roulette_label(&station), "Test Radio — United States");
-
-        station.country.clear();
-        assert_eq!(roulette_label(&station), "Test Radio");
-
-        station.name.clear();
-        assert_eq!(roulette_label(&station), "unnamed station");
-    }
-
-    #[test]
-    fn mpris_artist_prefers_location_over_tags() {
-        let mut station = sample_station();
-        assert_eq!(
-            mpris_artist(&station).as_deref(),
-            Some("New York, United States")
-        );
-
-        station.state.clear();
-        assert_eq!(mpris_artist(&station).as_deref(), Some("United States"));
-
-        station.country.clear();
-        assert_eq!(mpris_artist(&station).as_deref(), Some("jazz"));
-
-        station.tags.clear();
-        assert_eq!(mpris_artist(&station), None);
-    }
-
-    #[test]
-    fn status_reports_playback_volume_and_window() {
-        assert_eq!(
-            format_status(&PlaybackState::Reconnecting, 0.8, true, None),
-            "status reconnecting\nvolume 0.80\nwindow visible"
-        );
-    }
-
-    #[test]
-    fn status_includes_station_metadata() {
-        let station = sample_station();
-        assert_eq!(
-            format_status(&PlaybackState::Playing, 0.5, false, Some(&station)),
-            "status playing\nstationuuid c685c086-b716-4edd-b313-d4a7baf1084c\n\
-             name Test Radio\nvolume 0.50\nwindow hidden"
-        );
-    }
-
-    #[test]
-    fn status_sanitizes_multiline_station_name() {
-        let mut station = sample_station();
-        station.name = "Radio\n  Nova\tLive".to_owned();
-        let status = format_status(&PlaybackState::Playing, 1.0, true, Some(&station));
-        assert!(status.contains("\nname Radio Nova Live\n"));
-    }
-
-    #[test]
-    fn error_state_is_reported_as_error() {
-        assert_eq!(
-            format_status(
-                &PlaybackState::Error("нет сети".to_owned()),
-                0.5,
-                false,
-                None
-            ),
-            "status error\nvolume 0.50\nwindow hidden"
-        );
-    }
-
-    #[test]
-    fn country_request_lists_only_that_country() {
-        let params = country_search_params("de");
-        assert_eq!(params.country_code.as_deref(), Some("de"));
-        assert!(
-            params.name.is_none() && params.tag.is_none() && params.language.is_none(),
-            "выбор страны не должен подмешивать другие фильтры"
-        );
-        assert!(params.hide_broken, "мёртвые потоки страны не показываем");
-        assert_eq!(params.limit, COUNTRY_RESULT_LIMIT);
     }
 }

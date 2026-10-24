@@ -80,6 +80,9 @@ pub enum AudioEvent {
 - `play`, `stop`, `set_paused`, `set_volume`, `set_spectrum_enabled` ждут ответ с таймаутом 3 с.
 - Состояние, громкость и последний FFT-кадр хранятся в `Shared` под `Mutex` (устойчиво к отравлению).
 - События публикуются в `broadcast`-канал ёмкостью 64.
+- `spectrum_enabled` по умолчанию `true`; воркер при старте сразу ставит `af`-фильтр,
+  поэтому визуализатор работает без ручного включения. Чип «Visualizer» может
+  выключить его до конца сессии.
 - Поток опрашивает `mpv_wait_event` каждые 50 мс и между опросами разбирает команды;
   при включённом визуализаторе с той же частотой читает `af-metadata`.
 
@@ -121,10 +124,12 @@ pub enum AudioEvent {
 - Пока ожидается повтор, новые обрывы не создают дополнительных попыток.
 - `FileLoaded`, `play`, `stop` сбрасывают счётчик.
 
-## 7. FFT-визуализатор
+## 7. Метрики визуализатора
 
-- PCM не перехватывается: к работающей сессии mpv по команде подключается фильтр
+- PCM не перехватывается: к работающей сессии mpv подключается фильтр
   `@spectrum:lavfi=[aspectralstats=measure=centroid+spread+flatness+flux+rolloff:win_size=2048,astats=metadata=1:reset=1]`.
+  Фильтр ставится при старте воркера (`spectrum_enabled = true`) и снимается
+  только командой `set_spectrum_enabled(false)`.
 - `aspectralstats` даёт FFT-метрики кадра, `astats` — RMS-уровень; оба прозрачны для звука.
 - Поток `orbitfm-audio` читает строковые свойства `af-metadata/spectrum/...` раз в
   50 мс, пока состояние — `Playing` или `Buffering`, и складывает `SpectrumFrame`.
@@ -145,7 +150,8 @@ pub enum AudioEvent {
 ## 9. Тестирование
 
 - Unit-тесты: валидация URL (только http/https с хостом), диапазон громкости, backoff,
-  исчерпание попыток, сброс трекера, разбор и ограничение FFT-метрик.
+  исчерпание попыток, сброс трекера, включённость спектра по умолчанию, разбор и
+  ограничение FFT-метрик.
 - Живой тест `plays_and_stops_live_stream` (`#[ignore]`, требует сеть и аудиоустройство):
   `ORBITFM_TEST_STREAM_URL=... cargo test --all-targets plays_and_stops_live_stream -- --ignored`
   проверяет play → pause → resume → stop.
@@ -163,3 +169,4 @@ pub enum AudioEvent {
 
 - ADR-0003: Выбор аудио-движка
 - ADR-0010: Экспериментальный FFT-визуализатор
+- ADR-0022: Визуализатор в стиле cava

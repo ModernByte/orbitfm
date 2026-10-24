@@ -1,10 +1,11 @@
 # OrbitFM — План реализации UX «Orbital Desk»
 
 **Организация:** ModernByte  
-**Версия:** 1.0.0  
-**Дата:** 2026-10-23  
-**Статус:** Принят вместе с ADR-0015; реализация — поэтапно  
-**Связанные документы:** [design-vision.md](design-vision.md), [ADR-0015](../adr/0015-ux-редизайн-orbital-desk.md)
+**Версия:** 1.2.0  
+**Дата:** 2026-10-24  
+**Статус:** Принят вместе с ADR-0015; фазы 1–7 выполнены (фаза 7 — в составе 0.8.0)  
+**Связанные документы:** [design-vision.md](design-vision.md), [ADR-0015](../adr/0015-ux-редизайн-orbital-desk.md)  
+**Нумерация фаз:** 1–7 — синхронна с §12 `design-vision.md` и Этапом 8 `ROADMAP.md` (Фаза 6 = полировка UI по эскизу, Фаза 7 = WindowMode Overlay/Listening и доступность)
 
 ---
 
@@ -57,12 +58,13 @@ src/
 │   ├── station_panel.rs   # drawer: вкладки, фильтры, сортировка, карточки
 │   ├── transport.rs       # play/stop, favorite, Roulette, codec/bitrate
 │   ├── globe_view.rs      # allocate, GlobeInput, маркеры, контур, spectrum
+│   ├── capsule.rs         # Overlay top/мини-глобус/избранное и Listening (фаза 7)
 │   └── toast.rs           # краткие сообщения, таймер
 ├── geo/                   # + поиск страны и кольца контура
 ├── render/
 │   ├── countries.rs       # экранные контуры/заливка без доменных типов
 │   ├── camera.rs          # + fly_to
-│   ├── markers.rs         # + weight
+│   ├── markers.rs         # + paint_markers / MarkerLabel
 │   └── globe.rs/wgsl      # + позиция камеры и pulse
 └── services/radio_browser.rs  # + votes/country/state, random_station
 ```
@@ -220,9 +222,10 @@ egui input → ui/* → UiAction
 поколение поиска — единый счётчик `search_generation` с `SearchResponse` в
 `mpsc`-канале; лимиты свободного поиска подняты до 100/100 (страна — 100/100,
 жанр — 200/200); в активном контексте (страна или жанр) поле HUD работает как
-локальный фильтр, кнопка подписана «Фильтр». Формула веса: голоса — sqrt к 5000,
-битрейт — линейно к 320, смесь 70/30; радиус `3.5 + 3.5·weight` (+2 px активной).
-Проверено вживую на Wayland/niri при ширине окна 952 и 820 px.
+локальный фильтр, кнопка подписана «Фильтр». На Этапе 9 (ADR-0012, обновление)
+динамический размер по голосам и цвет по битрейту отменены: все маркеры одного
+размера (3 px) и цвета, качество и рейтинг — в подписи при наведении. Проверено
+вживую на Wayland/niri при ширине окна 952 и 820 px.
 
 **Задачи**
 
@@ -233,8 +236,10 @@ egui input → ui/* → UiAction
    - список: `tag`, `limit=200`, `hide_broken=true`;
    - маркеры: `tag`, `has_geo_info=true`, `limit=200`.
    Ошибка гео-запроса не ломает список; старые маркеры очищаются сразу.
-4. `MarkerVisual.weight: f32`; App вычисляет вес из `votes` и `bitrate`;
-   `paint_markers` масштабирует радиус/свечение в заданных пределах.
+4. ~~`MarkerVisual.weight: f32`; App вычисляет вес из `votes` и `bitrate`;
+   `paint_markers` масштабирует радиус/свечение в заданных пределах.~~
+   Отменено на Этапе 9: `MarkerVisual` несёт только `pos` и `playing`,
+   `paint_markers` рисует единые маркеры и подпись `MarkerLabel` (ADR-0012).
 5. Клик по маркеру запускает станцию; клик по стране в этом режиме — no-op.
 6. Список «Результаты» показывает выборку жанра; Stations без координат остаются
    в списке и отсутствуют на карте (это ожидаемо).
@@ -244,7 +249,7 @@ egui input → ui/* → UiAction
 
 - выбор жанра → маркеры по миру → клик стартует эфир;
 - во время загрузки нет маркеров прошлого жанра;
-- вес маркера детерминирован и покрыт unit-тестом;
+- подпись маркера `MarkerLabel` собирается детерминированно и покрыта unit-тестами;
 - 200 маркеров не вызывают заметных подвисаний на Linux.
 
 ### Фаза 4. Roulette и MPRIS
@@ -308,20 +313,99 @@ Fresnel-обод считается в WGSL. Heatmap — только выбра
 - FFT не блокирует GUI и не обязателен для базового глобуса;
 - выбранная страна имеет читаемую заливку в тёмной и светлой теме.
 
-### Фаза 6. WindowMode, favicon и полировка
+### Фаза 6. Полировка UI по эскизу
+
+**Статус:** выполнена (2026-10-23, в составе 0.7.0-rc.1). Отклонения и уточнения:
+плавающая раскладка — full-bleed глобус со звёздным небом, поверх плавающие
+стеклянные зоны; геометрию зон считает `DeskLayout::compute`, а клик/колесо
+глобуса внутри зон отсекает `blocks_point` (`src/ui/layout.rs`). Кастомные
+векторные контролы (`src/ui/widgets.rs`): pill-переключатель, жанровые чипы,
+pill-поле поиска с лупой и popup-подсказками, вкладки с accent-подчёркиванием,
+LIVE-бейдж, мини-эквалайзер, volume-слайдер, круглая play/pause, круглый
+favicon-аватар, знак OrbitFM и флаг-эмодзи. Favicon — асинхронный кэш
+`FaviconCache` со состояниями Queued/Loading/Ready/Failed, до 8 запросов
+одновременно (`MAX_IN_FLIGHT`) и LRU-эвикцией до 256 (`MAX_CACHED`), декод
+`image` (features `jpeg`/`png`/`ico`) к 64×64, спавнит `OrbitApp` — отдельного
+`egui_extras` не понадобилось (ADR-0016, `src/ui/images.rs`). Строка списка
+(`src/ui/station_row.rs`) и переключатель плотности `Compact`
+(`compact_rows`/`filtered_results` в `src/ui/station_filter.rs`, чип в
+`src/ui/station_panel.rs`). prev/next идут по текущему видимому списку с циклом
+через `play_relative` (`src/session/playback.rs`) — кнопки transport и MPRIS
+`Next`/`Previous`. Тултип страны с цветным emoji-флагом по ADR-0017. Все надписи
+интерфейса переведены на английский. WindowMode и доступность перенесены в
+Фазу 7. Проверено вживую на Wayland/niri.
 
 **Задачи**
 
-1. WindowMode (`Focus`/`Overlay`/`Listening`) и `LayoutDensity`; отдельное решение
-   по IPC-команде и обновление `docs/interfaces/05-ipc.md`.
-2. Overlay-капсула: now-playing, play/stop, volume, мини-глобус/регион, 5–8
-   избранных; без «Оформления» и длинных подсказок.
-3. Listening: минимальный now-playing + pulse при низкой активности.
-4. Favicon-карточки: асинхронная загрузка/кэш; оценить `egui_extras`/`image` и
-   оформить ADR при добавлении зависимости.
-5. Доступность: фокус, клавиатурная навигация по списку, контраст в обеих темах.
+1. Плавающая раскладка по эскизу: full-bleed глобус, поверх — HUD, панель
+   станций, transport, help-карточка и легенда плотности; геометрия зон и
+   отсечение ввода глобуса внутри них.
+2. Кастомные векторные контролы вместо стандартных egui-виджетов.
+3. Асинхронная загрузка и кэш favicon для карточек и transport; ADR по зависимости.
+4. Строка списка: аватар, `state, country`, теги-чипы, битрейт/кодек, звезда;
+   переключатель плотности `Compact`.
+5. prev/next по текущему видимому списку с циклом (кнопки transport и MPRIS).
+6. Тултип страны с флагом-эмодзи; перевод всех надписей интерфейса на английский.
 
-WindowMode и favicon не блокируют MVP фаз 1–5.
+**Файлы:** `src/ui/layout.rs`, `src/ui/widgets.rs`, `src/ui/images.rs`,
+`src/ui/station_row.rs`, `src/ui/station_filter.rs`, `src/ui/station_panel.rs`,
+`src/app.rs`.
+
+**Приёмка**
+
+- глобус full-bleed, зоны плавают поверх, клик/колесо внутри зон не вращает глобус;
+- favicon грузятся асинхронно без блокировки GUI, при сбое — круг с инициалом;
+- prev/next и MPRIS `Next`/`Previous` листают видимый список по кругу;
+- плотность `Compact` меняет высоту строк; интерфейс — на английском, читается в
+  обеих темах.
+
+### Фаза 7. WindowMode Overlay/Listening и доступность
+
+**Статус:** выполнена (2026-10-24, в составе 0.8.0). Отклонения и уточнения:
+`LayoutDensity::{Full, Compact, Minimal}` выводится из `WindowMode` в
+`src/ui/layout.rs`, `DeskLayout::compute` принимает режим; Focus сохраняет прежние
+прямоугольники и full-bleed глобус. Раскладки капсул живут в `src/ui/capsule.rs`:
+Overlay — HUD-строка (станция, play/stop, громкость, expand/close), мини-глобус без
+звёздного фона и нижняя панель избранного (до 8 строк `station_row`, пустое
+состояние); Listening — одна строка now-playing с пульсирующим кольцом аватара при
+Playing. Сглаженный сигнал эфира считается один раз в `app.rs`
+(`SpectrumOverlay::pulse`) и передаётся и глобусу, и капсуле. Возврат в Focus —
+кнопка expand в капсулах и раздел «Window» в попапе шестерёнки; смена режима идёт
+через IPC `mode` и перезапуск UI-цикла ADR-0018/ADR-0021. Доступность — штатный
+фокус egui 0.37: focus-ring у кастомных контролов, `WidgetInfo` с ролями и
+подписями (Button/RadioButton/CheckBox/Tab/ListItem/slider), клавиатурный шаг
+громкости (стрелки/Home/End), навигация ↑/↓ по строкам списка с `scroll_to_me`,
+Space/Enter запускают станцию. Проверено живьём на Wayland/niri: Focus 920×660 не
+изменился, Overlay 420×620 и Listening 420×152 (niri по умолчанию тайлит окно;
+размеры проверены плавающим окном, без изменения конфигурации WM) в тёмной и
+светлой теме, пульс при Playing. Клавиатурная навигация покрыта headless-тестами
+egui (стрелки и Space); физический ввод на живой сессии не автоматизировался.
+
+**Задачи**
+
+1. WindowMode (`Focus`/`Overlay`/`Listening`) и `LayoutDensity` как параметры
+   одного набора виджетов (design-vision §2); поведение существующего Focus не
+   ломать. Отдельное решение по IPC-команде смены режима и обновление
+   `docs/interfaces/05-ipc.md`.
+2. Overlay-капсула (design-vision §6): top — станция + play/stop + volume,
+   center — мини-глобус или выбранный регион, bottom — 5–8 избранных; без блока
+   «Оформление» и длинных подсказок; компактность и управляемость с панели
+   Noctalia (критерий приёмки design-vision §10 п. 6).
+3. Listening: минимальный now-playing + пульс при низкой активности UI.
+4. Скрытие/показ окна под Overlay/Listening опирается на принятый и реализованный
+   механизм ADR-0018 (закрытие root-вьюпорта + `Session::park`); новых оконных
+   механизмов не вводить.
+5. Доступность: фокус и клавиатурная навигация по списку станций, контраст в
+   обеих темах, читаемые подписи контролов.
+
+**Приёмка**
+
+- Focus остаётся прежним; Overlay — компактная капсула, вызывается из Noctalia/`toggle`;
+- Listening показывает минимальный now-playing с пульсом при неактивном UI;
+- смена режима работает через принятый ADR-0018 механизм hide/show и IPC-команду
+  (либо явное решение её не добавлять);
+- список полностью управляется с клавиатуры, контраст проходит обе темы;
+- `cargo fmt --check`, `clippy -D warnings`, `cargo test` зелёные.
 
 ---
 
@@ -417,8 +501,13 @@ impl GlobeCamera {
 }
 
 pub struct MarkerVisual {
-    // ...
-    pub weight: f32, // 0..1, из votes/bitrate
+    pub pos: Pos2,
+    pub playing: bool,
+}
+
+pub struct MarkerLabel {
+    pub title: String,
+    pub details: Option<String>,
 }
 
 pub fn paint_globe(
@@ -479,7 +568,8 @@ pub fn paint_globe(
 | 3 | radio/render interfaces и modules; CHANGELOG |
 | 4 | `docs/interfaces/04-render.md`, `06-media.md`; modules 04/06/07 |
 | 5 | `docs/interfaces/04-render.md`, `docs/modules/04-render-globe.md`; CHANGELOG |
-| 6 | ADR по WindowMode/зависимости favicon, `docs/interfaces/05-ipc.md`, modules 05/07 |
+| 6 | ADR-0016 (favicon-зависимость) и ADR-0017 (emoji-флаги), `docs/interfaces/06-media.md`, `docs/interfaces/07-app.md`, modules 06/07; CHANGELOG |
+| 7 | ADR по WindowMode, `docs/interfaces/05-ipc.md`, modules 05/07 |
 
 Правило: контракт меняется в том же PR, что и код; `docs/ui/design-vision.md`
 обновляется только при изменении целевого UX, а не при каждой реализации.
@@ -502,9 +592,8 @@ pub fn paint_globe(
 
 ## 11. Отложенные решения
 
-- WindowMode и IPC-команда смены режима (фаза 6);
+- WindowMode и IPC-команда смены режима (фаза 7);
 - источник глобального heatmap по всем странам (aggregate/кэш);
-- favicon-загрузчик и зависимость для изображений;
 - LOD/кластеризация при N ≫ 500;
 - системные уведомления вне MPRIS;
 - SMTC (Windows) и Now Playing (macOS) — по существующему ROADMAP.

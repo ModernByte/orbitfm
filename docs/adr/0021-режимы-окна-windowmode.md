@@ -1,0 +1,333 @@
+# ADR-0021: Режимы окна — `WindowMode` (Focus / Overlay / Listening) и `LayoutDensity`
+
+**Статус:** Принято (2026-10-24)  
+**Дата:** 2026-10-24  
+**Участники решения:** ModernByte Architecture, Юрий Анатольевич  
+
+## Контекст
+
+Целевой UX задаёт три режима отображения окна и требует одного набора виджетов с
+параметром плотности (`docs/ui/design-vision.md` § 2, § 6; критерий приёмки § 10 п. 6
+«Overlay остаётся компактным и управляемым с панели Noctalia»). ADR-0015 прямо вынес
+`WindowMode` за MVP и потребовал отдельного решения по IPC
+(`docs/adr/0015-ux-редизайн-orbital-desk.md`, стр. 104–106, 118). Фаза 7 плана требует:
+поведение существующего Focus не ломать, новых оконных механизмов не вводить,
+опираться на реализованный ADR-0018 (`docs/ui/implementation-plan.md` стр. 359–387).
+
+Фактическое состояние кода, которое ограничивает решение (проверено в этой ветке):
+
+1. **Геометрия окна задаётся только до его создания.** `run_window` собирает
+   `ViewportBuilder` из `restore_size()` и `WINDOW_MIN_SIZE`
+   (`src/main.rs:305-323`, `src/session/mod.rs:301-303`). ADR-0018 п. 5 фиксирует:
+   «запрос размера уже созданного окна композитор вправе отбросить». Единственные
+   используемые `ViewportCommand` — `Focus` и `Close` (`src/app.rs:524-529`);
+   `InnerSize`, `MinInnerSize`, `SetResizable` в `src/` не встречаются.
+2. **Глобальный минимум противоречит капсуле.** `WINDOW_MIN_SIZE = [720.0, 480.0]`
+   (`src/session/mod.rs:41`) применяется к каждому прогону, то есть окно 420 px шириной
+   быть не может — для компактного режима нужен минимум на режим.
+3. **Композитор перебивает запрос размера правилами.** `wm-configs/orbitfm-niri.kdl:6-7`
+   задаёт `default-column-width { fixed 920; }` и `default-window-height { fixed 660; }`
+   по `app-id`, `wm-configs/orbitfm-hyprland.conf` — `size 920 660`. Значит режимная
+   геометрия достижима только если WM-правило различает режимы. Проверено локально на
+   целевом niri 26.04: `niri validate` принимает окно-правило с двумя критериями
+   `match app-id="org.modernbyte.OrbitFM"` и `match title=r"^OrbitFM · Overlay$"` и
+   разбирает `title` как регулярное выражение (невалидный regex отвергается с
+   «regex parse error»), то есть заголовок окна — штатный ключ для правил разного
+   размера.
+4. **Всё долгоживущее уже в Core.** `Session` владеет подсистемами и состоянием окна
+   (`WindowState { visible, size, intent, quitting }`, `src/session/mod.rs:74-116`) и
+   переживает закрытие вьюпорта; `OrbitApp` пересоздаётся каждый показ
+   (`src/main.rs:320`). Любой режим окна, который должен применяться из IPC/трея при
+   закрытом окне, обязан жить в `Session`, а не в `OrbitApp`.
+5. **Плотность уже существует, но как признак фильтра.** `CountryFilterState::compact_rows`
+   (`src/ui/station_filter.rs:74`) и ветки высоты в `src/ui/station_row.rs:50-135`;
+   адаптивные пороги HUD/транспорта считаются от ширины кадра
+   (`src/ui/hud.rs:41-42`, `src/ui/transport.rs:77`). Единого параметра плотности
+   раскладки нет; `DeskLayout::compute(viewport, panel_open, help_open)`
+   (`src/ui/layout.rs:29`) вызывается ровно один раз — из `Frame::capture`
+   (`src/app.rs:462`), а легенда блокирует ввод безусловно (`src/ui/layout.rs:90`).
+6. **IPC-протокол не знает про режим.** `IpcCommand` = `Toggle/Show/Hide/Play/Stop/
+   Status/Quit/Volume/Raw` (`src/ipc/protocol.rs:8-23`); при незапущенном экземпляре
+   CLI принимает только `Toggle | Show` (`src/main.rs:133`); `status` печатает
+   `status … / stationuuid … / name … / volume … / window …`
+   (`src/session/mod.rs:336-352`, контракт — `docs/interfaces/05-ipc.md:41-49, 72-83`).
+7. **Настройки = оформление.** `Settings` содержит `theme`, `accent`, `viz_bars`,
+   `help_seen` (`src/settings/mod.rs:65-90`, ADR-0014).
+
+Клавиатурной навигации нет вообще: `request_focus`, `focusable`, `consume_key` в `src/`
+не встречаются, кастомные контролы `widgets.rs` аллоцируют только `Sense::click()` /
+`click_and_drag()` (например `src/ui/widgets.rs:122, 156, 363-364, 420-425`), список
+станций реагирует лишь на сырой клик (`src/ui/station_row.rs:63-72`). Доступность
+требуется фазой 7, но отдельного архитектурного решения не просит: это работа внутри
+presentation-слоя на штатном egui-фокусе, без новых зависимостей и без смены границ
+модулей — добавятся только варианты `UiAction` и их разбор в `docs/interfaces/07-app.md`.
+
+## Решение
+
+1. **`WindowMode` — состояние Application Core, не настройка.**
+
+   ```rust
+   /// Режим отображения окна (ADR-0021). Focus — полный Orbital Desk.
+   #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+   pub(crate) enum WindowMode {
+       #[default]
+       Focus,
+       Overlay,
+       Listening,
+   }
+   ```
+
+   Живёт в `src/session/window.rs` — там же, где `WindowState`: состояние окна
+   вынесено из `src/session/mod.rs`, чтобы файл не превысил мягкий лимит объёма
+   (`docs/AGENTS.md`). Поле — `window.mode`; наружу —
+   `Session::window_mode()` и `Session::set_window_mode(mode)`. В `SettingsStore`
+   поле не добавляется: ADR-0014 определяет настройки как оформление, а режим —
+   состояние текущего сеанса; после `quit`/рестарта ожидаем `Focus` (окно открывается
+   обычным). Интерфейс `docs/interfaces/09-settings.md` не меняется.
+
+2. **`LayoutDensity` — параметр presentation-слоя, производный от режима.**
+
+   ```rust
+   /// Плотность набора виджетов: один и тот же UI-код, три уровня.
+   #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+   pub(crate) enum LayoutDensity { Full, Compact, Minimal }
+   ```
+
+   Определяется в `src/ui/layout.rs` и выводится из `WindowMode` (`Focus → Full`,
+   `Overlay → Compact`, `Listening → Minimal`); шириновые пороги HUD/транспорта
+   (`COMPACT_HUD_WIDTH`, `TIGHT_HUD_WIDTH`, `COMPACT_ROW_WIDTH`) остаются как есть и
+   работают внутри `Full`. В Core тип не попадает: Core не знает egui (ADR-0018 п. 3),
+   `WindowMode` передаётся в кадр через `Frame::capture` и далее в
+   `DeskLayout::compute(viewport, panel_open, help_open, mode)`. Существующая
+   `compact_rows` списка — отдельный пользовательский переключатель, он не
+   переопределяется режимом и не переезжает.
+
+3. **Смена режима при видимом окне = перезапуск UI-цикла по механизму ADR-0018, без
+   живых resize-запросов.** `Session::set_window_mode` при `window.visible == true`
+   ставит `intent = Close` и признак `reopen`; `run_session` (`src/main.rs:283-303`)
+   после `end_window()` проверяет `take_reopen()`: если установлен — сразу
+   `begin_window/ run_window` с геометрией нового режима, минуя `park()`. Причина:
+   размер и минимум задаются до создания окна (п. 1 контекста; ADR-0018 п. 5), а
+   запрос `InnerSize` созданному окну композитор вправе отбросить — единственный
+   предсказуемый путь уже реализован и замерен. При скрытом окне режим меняется
+   мгновенно и без видимых эффектов: `park()` просто продолжит ждать, а следующий
+   `show` откроет окно нужной капсулой.
+
+4. **Геометрия и заголовок — на режим.**
+
+   | Режим | Размер по умолчанию | Минимум | Заголовок |
+   |-------|---------------------|---------|-----------|
+   | `Focus` | `WINDOW_SIZE = [920.0, 660.0]` | `WINDOW_MIN_SIZE = [720.0, 480.0]` | `OrbitFM` |
+   | `Overlay` | `OVERLAY_SIZE = [420.0, 620.0]` | `OVERLAY_MIN_SIZE = [360.0, 480.0]` | `OrbitFM · Overlay` |
+   | `Listening` | `LISTENING_SIZE = [420.0, 152.0]` | `LISTENING_MIN_SIZE = [360.0, 120.0]` | `OrbitFM · Listening` |
+
+   Константы — в `src/session/window.rs` рядом с `WindowState` (ре-экспорт —
+   `src/session/mod.rs`); `WindowMode::default_size()` и
+   `WindowMode::min_size()` дают пару для `ViewportBuilder`, `WindowMode::title()` —
+   заголовок прогона. Размеры выбраны из существующей геометрии: сверху
+   `MARGIN 14 + HUD_HEIGHT 58 + GAP 12`, снизу `TRANSPORT_HEIGHT 84`,
+   `PANEL_WIDTH 312` — то есть 420 ширины хватает капсуле, а 152 высоты ровно
+   достаточно now-playing-строки с полями. Заголовок — ключ различения для WM-правил
+   (п. 3 контекста), а не косметика: `wm-configs/orbitfm-niri.kdl` и
+   `wm-configs/orbitfm-hyprland.conf` дополняются правилами на `title`, иначе
+   `fixed 920`/`size 920 660` превратит капсулу в полное окно. Сохранённый вручную
+   размер относится только к `Focus`: `set_window_size` пишет `window.size` лишь пока
+   режим `Focus`, а `restore_size(mode)` для `Overlay`/`Listening` всегда возвращает
+   пресет режима — произвольный размер капсулы не задуман и ломает её раскладку.
+   `resizable`, `decorations`, `with_transparent(true)` не меняются (прозрачность уже
+   включена, `src/main.rs:312`).
+
+5. **IPC-глагол `mode`.**
+
+   ```rust
+   pub enum IpcCommand {
+       // …
+       /// Запрос текущего режима: `mode`.
+       ModeQuery,
+       /// Смена режима: `mode focus|overlay|listening`.
+       SetMode { mode: WindowModeArg },
+   }
+   ```
+
+   Протокол остаётся текстовым «одна строка = одна команда» (ADR-0005): `mode` без
+   аргумента отвечает `mode focus` (одна строка, как `status`), `mode <режим>` —
+   `ok`; неизвестное имя режима отклоняется на разборе как
+   `InvalidArgument` в том же стиле, что `volume` (`src/ipc/protocol.rs:73-87`), лишние
+   аргументы отсекает `reject_extra_args`. `to_wire()` даёт `mode` и `mode overlay`;
+   round-trip покрывается существующим тестом `round_trips_through_wire_format`.
+   Строковый аргумент протокола — отдельный `pub enum` в `src/ipc/`
+   (`WindowModeArg { Focus, Overlay, Listening }`): `src/ipc/` по-прежнему не знает ни
+   про Core, ни про egui (ADR-0005, AGENTS § 4.2 — зависимость направлена от Core к
+   инфраструктуре), а `impl From<WindowModeArg> for WindowMode` живёт в
+   `src/session/commands.rs`. Смена режима показывает окно (режим без видимого окна не
+   имеет смысла), поэтому `mode <режим>` = «пойти показать в этом режиме» и принимается
+   при незапущенном экземпляре наравне с `toggle`/`show` (`src/main.rs:133`); `HELP`
+   (`src/main.rs:34-55`) дополняется строкой `mode`.
+   `status` получает строку `mode <focus|overlay|listening>` после `window <…>` —
+   аддитивно, существующие строки не трогаются.
+
+6. **Трей и MPRIS не расширяются.** Меню трея зафиксировано ADR-0020 (п. 5,
+   `docs/interfaces/11-tray.md`), `TraySnapshot`
+   остаётся `{ window_visible, playing, station, theme }`: режим в нём не участвует, потому
+   что «Show window» обязан открыть окно в текущем режиме, а не выбирать его. `MediaCommand`
+   оконных глаголов не имеет. Отдельное решение по пунктам режима в трее — вне этого ADR.
+
+7. **Раскладка: один набор виджетов, три плотности.** `DeskLayout` получает режим и
+   перестраивает зоны; `blocks_point` следует за реально нарисованными зонами (легенда
+   больше не блокирует ввод, когда её не рисуют).
+
+   | Зона | `Full` (Focus) | `Compact` (Overlay) | `Minimal` (Listening) |
+   |------|----------------|---------------------|------------------------|
+   | HUD (поиск страны/жанра, `Theme`, `Accent`, `Bars`, help-кнопка) | полный, сверху | станция + play/stop + volume, сверху | нет |
+   | Глобус | full-bleed, 70–80 % кадра | мини-глобус между top и bottom | нет |
+   | Панель станций | drawer справа, `PANEL_WIDTH` | низ капсулы: 5–8 избранных, без фильтров и сортировки | нет |
+   | Транспорт | снизу, с визуализатором | объединён с top-строкой | единственная строка: now-playing + пульс |
+   | Help-карточка, легенда, блок «Оформление» | по требованию/всегда | нет | нет |
+   | Поиск по имени/стране/жанре, Roulette | да | нет | нет |
+
+   Focus-набор не меняет ни зон, ни строк — это проверяется тестами геометрии
+   (`DeskLayout::compute(..., WindowMode::Focus)` даёт те же прямоугольники, что
+   сегодня) и является приёмочным критерием фазы 7.
+
+8. **Доступность — задача presentation-слоя, без смены границ.** Список станций
+   получает клавиатурную навигацию штатными средствами egui 0.37: строка становится
+   focusable-контролем (`Sense::click` дополняется `focusable`-аллокацией и
+   `request_focus`), стрелки ↑/↓ перемещают выделение, `Enter` запускает станцию,
+   `Tab` уходит по зонному порядку (HUD → список → транспорт), `Esc` сворачивает
+   help-карточку (уже работает, `src/app.rs:531-534`). Кастомные контролы
+   (`pill`, `chip`, `circle_button`, `volume_slider`, `tab_bar`) получают
+   `focusable` + обработку `Enter`/`Space` и клавиатурный шаг громкости; новых
+   зависимостей нет — `accesskit` уже включён фичей eframe (`Cargo.toml:13-19`).
+   Границы модулей и доменные типы не меняются: добавляются варианты `UiAction`
+   (`FocusRow`, `MoveSelection`, …) и их разбор в `apply_actions`, то есть обновляется
+   только контракт `docs/interfaces/07-app.md`.
+
+9. **Что фиксируется в контрактах.** `docs/interfaces/05-ipc.md` (глагол `mode`,
+   строка `mode` в `status`, запуск при отсутствии экземпляра), `docs/interfaces/07-app.md`
+   (заголовок и геометрия прогона, `Frame`/`DeskLayout` с режимом),
+   `docs/interfaces/10-session.md` и `docs/modules/11-session.md` (`WindowMode`,
+   `window_mode`, `set_window_mode`, `take_reopen`, `restore_size(mode)`, новый порядок
+   `run_session`), `docs/modules/05-ipc.md`, `docs/ui/design-vision.md` § 2 и
+   `docs/ui/implementation-plan.md` (Фаза 7 закрыта/начата), `wm-configs/`,
+   `docs/ROADMAP.md`, `docs/CHANGELOG.md`, `docs/VERSIONMAP.md` (0.8.0).
+
+## Последствия
+
+**Положительные:**
+
+- Три режима живут в одном наборе виджетов и в одном процессе: не появляется второе
+  окно, не дублируется аудио-состояние, single-instance (ADR-0005) не нарушается.
+- Режим переключается из панели и CLI одной командой и работает при скрытом окне,
+  потому что состояние в Core, а `park()` его исполняет.
+- Нет новых оконных механизмов: используется уже проверенный путь ADR-0018, а
+  ненадёжный (resize созданного окна) сознательно не применяется.
+- `Focus` по умолчанию сохраняет поведение и размер: существующая приёмка фаз 1–6 не
+  деградирует.
+- WM-правила различают режимы по `title`, поэтому капсула действительно компактна на
+  niri и Hyprland, а не превращается в 920×660.
+
+**Отрицательные / Риски:**
+
+- Смена режима при открытом окне — это закрытие вьюпорта и перезапуск цикла: ≈1 с
+  мигания (замер ADR-0018), `FaviconCache` очищается (иконки грузятся заново),
+  анимация камеры продолжается, состояние списка — в Core и не теряется.
+- Заголовок окна становится частью поведения: пользовательские WM-правила, подобранные
+  по `title "OrbitFM"`, могут перестать подходить (префикс совпадает, `r"^OrbitFM$"` —
+  нет). Для niri/Hyprland правила обновляет репозиторий, для остальных — это
+  документированное следствие.
+- Геометрия `Overlay`/`Listening` фиксирована: пользователь не может растянуть
+  капсулу под себя, и на композиторах без правил размер диктует клиент.
+- `status` получает новую строку — скрипты, которые сверяли точный набор полей,
+  должны читать префиксы (формат и так позиционируется как построчный).
+- Режим не сохраняется между запусками: после `quit` окно снова `Focus`. Это
+  сознательно, но может расходиться с ожиданиями «панель всегда в оверлее».
+
+## Альтернативы
+
+| Вариант | Причина отклонения |
+|---------|--------------------|
+| Живой `ViewportCommand::InnerSize`/`MinInnerSize` при смене режима | ADR-0018 п. 5: композитор вправе отбросить запрос размера созданного окна; на целевом niri правило `fixed 920` перебивает запрос в любом случае, а результат, отличный от «окно пересоздано», детерминированно проверить нельзя |
+| `WindowMode` в `SettingsStore` (переживает рестарт) | конфликт с ADR-0014 (настройки = оформление) и неожиданное поведение: обычный запуск открыл бы капсулу вместо привычного окна |
+| Режим как поле `OrbitApp` | теряется при каждом скрытии окна (ADR-0018), IPC/трей не могут сменить режим в `park()` |
+| Отдельное окно для оверлея | ломает single-instance модель и один root-вьюпорт, требует дублирования состояния и нового оконного механизма (запрещено фазой 7) |
+| Luau-виджет Noctalia рисует оверлей сам | интеграционный слой обязан оставаться тонким (ADR-0007, принцип «Thin integrations») |
+| Отдельный IPC-глагол на каждый режим (`overlay`, `listen`) | раздувает протокол без необходимости: `mode <имя>` + `mode`-запрос покрывают и установку, и чтение |
+| Расширить меню трея пунктами режима | меню и снимок зафиксированы ADR-0020; менять их «заодно» запрещено, а пользы панели нет: там уже есть `toggle` |
+
+## Проверка реализации
+
+Юнит-проверки (`cargo test` на 2026-10-24 — 222 passed, 0 failed, 3 ignored):
+`window.rs` держит обе ветки смены режима, единичность `reopen`, геометрию и
+заголовки режимов, изоляцию пользовательского размера в `Focus` и порядок
+`WindowMode::ALL`;
+`ipc/protocol.rs` — `parses_mode_as_query_or_switch` и round-trip `mode`/`mode listening`;
+`session/commands.rs` — `mode_argument_maps_to_domain_mode`; `format_status` —
+строка `mode` во всех четырёх статусах; `ui/layout.rs` — плотность из режима и
+Option-зоны капсул (Focus-прямоугольники не изменились); `ui/station_row.rs` —
+headless-кадры egui: ↑/↓ переводят фокус на соседнюю строку, Space запускает
+станцию.
+
+Живая проверка на целевом окружении (Wayland, niri 26.04, 2026-10-24, сборка этой
+ветки, `target/debug/orbitfm`):
+
+- `orbitfm mode` отвечает `mode focus` и ничего не меняет; `status` отдаёт
+  `…\nwindow visible\nmode focus` — строка режима стоит после `window`.
+- `orbitfm mode fullscreen` → `error некорректный аргумент команды: mode: ожидаются
+  focus, overlay или listening, получено fullscreen`, код возврата 1 (отсев на этапе
+  разбора, до Application Core).
+- `orbitfm mode overlay` при открытом окне → `ok`; окно исчезло из раскладки и
+  появилось заново с заголовком «OrbitFM · Overlay» (замер: команда вернулась за
+  0.19 с, окно пропало к 0.50 с, новое окно зафиксировано через 1.45 с). Это цена
+  перезапуска UI-цикла (ADR-0018: ≈1.02 с на показ) плюс IPC-раундтрип — совпадает
+  с прогнозным риском п. «Последствия».
+- `orbitfm hide` → `window hidden` при `mode overlay`; `orbitfm mode listening` из
+  скрытого состояния показывает окно сразу в `Listening` (заголовок «OrbitFM ·
+  Listening»), лишнего перезапуска ради перезапуска нет — следующий прогон и есть
+  прогон нового режима.
+- Холодный старт `orbitfm mode listening` при отсутствии экземпляра: первое же окно
+  создаётся в `Listening` (`status` → `window visible`, `mode listening`), то есть
+  режим первого окна действительно берётся из команды до создания вьюпорта.
+- `orbitfm mode focus` возвращает обычный Orbital Desk: заголовок «OrbitFM»,
+  `status` → `mode focus`; поведение `Focus` не изменилось.
+- Фаза 7 (та же сборка): Overlay показывает верхнюю HUD-строку (станция,
+  play/stop, громкость, expand/close), мини-глобус без звёздного фона и капсулу
+  избранного до 8 строк; Listening — одну строку now-playing с heart/expand/close
+  и play/pause. При Playing станция выделена accent-строкой, кольцо аватара
+  Listening пульсирует, глобус получает тот же сглаженный `pulse`; в светлой теме
+  (изолированный `XDG_CONFIG_HOME`) текст и контролы читаемы на стекле.
+- `orbitfm quit` → `ok`, процесс завершился с кодом 0, сокет удалён.
+
+**Что осталось непроверенным живьём.** Капсулы проверены в плавающем окне niri:
+runtime-действия `move-window-to-floating` + `set-window-width/height` задали
+420×620 и 420×152 и подтвердили раскладку (рабочая конфигурация niri по-прежнему
+тайлит окно, `~/.config/niri/config.kdl` не изменялся). Фрагмент
+`wm-configs/orbitfm-niri.kdl` с правилами по `title` принят `niri validate` на
+niri 26.04 — синтаксис и regex подтверждены, но в чужой конфиг не устанавливался;
+`wm-configs/orbitfm-hyprland.conf` обновлён по той же схеме, Hyprland на целевой
+машине отсутствует и не проверялся. Физическая клавиатурная навигация в живой
+сессии не автоматизировалась (нет инструмента инъекции ввода): ↑/↓ и Space
+покрыты headless-тестами egui, а активация Enter/Space опирается на штатный
+`FAKE_PRIMARY_CLICKED` для focusable-контролов с `Sense::click`.
+
+## Ссылки
+
+- `docs/adr/0018-скрытие-окна-закрытием-вьюпорта.md` — механизм hide/show, п. 5 (геометрия
+  до создания окна), п. 9 (ограничения Wayland), замер ≈1.02 с
+- `docs/adr/0015-ux-редизайн-orbital-desk.md` — вынос `WindowMode` за MVP и требование
+  отдельного IPC-решения
+- `docs/adr/0005-single-instance-и-ipc.md`, `docs/adr/0014-темы-и-кастомизация.md`,
+  `docs/adr/0020-иконка-в-системном-трее-sni.md`
+- `docs/ui/design-vision.md` § 2 (режимы), § 6 (Overlay-капсула), § 10 п. 6
+- `docs/ui/implementation-plan.md` § Фаза 7 (задачи и приёмка)
+- Код: `src/main.rs` (`run_session`, `run_window`, `HELP`, `route_command`),
+  `src/session/window.rs` (режим, геометрия, `WindowState`),
+  `src/session/commands.rs` (`From<WindowModeArg>`, ветки `execute`),
+  `src/app.rs` (`draw_layers`, `apply_action`), `src/ui/layout.rs` (`LayoutDensity`,
+  `DeskLayout`), `src/ui/capsule.rs` (Overlay/Listening), `src/ui/station_row.rs`
+  (фокус и навигация), `src/ipc/protocol.rs`,
+  `src/settings/mod.rs:65-90`, `wm-configs/orbitfm-niri.kdl`,
+  `wm-configs/orbitfm-hyprland.conf`
+- niri: документация window rules и локальная проверка `niri validate` на niri 26.04
+  (`match title=r"…"` — regex) — https://niri-wm.github.io/niri/
+- eframe 0.37 / egui 0.37: `ViewportBuilder::with_inner_size`,
+  `with_min_inner_size`, `with_title` — https://docs.rs/eframe/0.37/

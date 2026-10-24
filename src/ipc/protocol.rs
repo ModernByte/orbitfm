@@ -3,6 +3,40 @@ use thiserror::Error;
 /// Верхняя граница длины одной команды.
 pub const MAX_COMMAND_BYTES: usize = 4096;
 
+/// Аргумент глагола `mode` — целевой режим окна (ADR-0021 п. 5).
+///
+/// Wire-тип живёт в инфраструктуре; в доменное `WindowMode` его превращает
+/// Application Core (`src/session/commands.rs`), потому что направление
+/// зависимостей — Core → инфраструктура, а не наоборот.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowModeArg {
+    Focus,
+    Overlay,
+    Listening,
+}
+
+impl WindowModeArg {
+    /// Имя режима в протоколе.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Focus => "focus",
+            Self::Overlay => "overlay",
+            Self::Listening => "listening",
+        }
+    }
+
+    fn parse(raw: &str) -> Result<Self, IpcError> {
+        match raw {
+            "focus" => Ok(Self::Focus),
+            "overlay" => Ok(Self::Overlay),
+            "listening" => Ok(Self::Listening),
+            other => Err(IpcError::InvalidArgument(format!(
+                "mode: ожидаются focus, overlay или listening, получено {other}"
+            ))),
+        }
+    }
+}
+
 /// Команды IPC-протокола (docs/interfaces/05-ipc.md).
 #[derive(Debug, Clone, PartialEq)]
 pub enum IpcCommand {
@@ -17,6 +51,12 @@ pub enum IpcCommand {
     Quit,
     Volume {
         level: f64,
+    },
+    /// `mode` без аргумента: спросить текущий режим.
+    ModeQuery,
+    /// `mode <режим>`: переключить режим окна (ADR-0021).
+    SetMode {
+        mode: WindowModeArg,
     },
     /// Неизвестная команда сохраняется для расширения протокола.
     Raw(String),
@@ -61,6 +101,14 @@ impl IpcCommand {
                 reject_extra_args(parts.next())?;
                 Ok(Self::Quit)
             }
+            "mode" => match parts.next() {
+                None => Ok(Self::ModeQuery),
+                Some(raw) => {
+                    let mode = WindowModeArg::parse(raw)?;
+                    reject_extra_args(parts.next())?;
+                    Ok(Self::SetMode { mode })
+                }
+            },
             "play" => {
                 let station_uuid = parts.next().ok_or_else(|| {
                     IpcError::InvalidArgument("play: ожидается stationuuid".into())
@@ -100,6 +148,8 @@ impl IpcCommand {
             Self::Status => "status".to_owned(),
             Self::Quit => "quit".to_owned(),
             Self::Volume { level } => format!("volume {level}"),
+            Self::ModeQuery => "mode".to_owned(),
+            Self::SetMode { mode } => format!("mode {}", mode.as_str()),
             Self::Raw(raw) => raw.clone(),
         }
     }
@@ -180,6 +230,19 @@ mod tests {
     }
 
     #[test]
+    fn parses_mode_as_query_or_switch() {
+        assert_eq!(IpcCommand::parse("mode").unwrap(), IpcCommand::ModeQuery);
+        assert_eq!(
+            IpcCommand::parse("mode overlay").unwrap(),
+            IpcCommand::SetMode {
+                mode: WindowModeArg::Overlay
+            }
+        );
+        assert!(IpcCommand::parse("mode fullscreen").is_err());
+        assert!(IpcCommand::parse("mode focus extra").is_err());
+    }
+
+    #[test]
     fn keeps_unknown_commands_as_raw() {
         assert_eq!(
             IpcCommand::parse("future-command payload").unwrap(),
@@ -195,6 +258,10 @@ mod tests {
                 station_uuid: "uuid".to_owned(),
             },
             IpcCommand::Volume { level: 0.5 },
+            IpcCommand::ModeQuery,
+            IpcCommand::SetMode {
+                mode: WindowModeArg::Listening,
+            },
             IpcCommand::Raw("custom arg".to_owned()),
         ];
         for command in commands {

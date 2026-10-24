@@ -23,6 +23,15 @@ const INERTIA_STOP: f32 = 0.01;
 const MAX_PITCH: f32 = 85.0 * std::f32::consts::PI / 180.0;
 const MIN_FLY_DURATION: f32 = 0.05;
 
+/// Простой до старта авто-вращения, с.
+const IDLE_SPIN_DELAY: f32 = 4.0;
+/// Выход на полную скорость авто-вращения, с.
+const IDLE_SPIN_RAMP: f32 = 2.0;
+/// Скорость авто-вращения, рад/с: полный оборот примерно за 17 минут.
+/// Земля в действительности делает оборот за сутки, но такое движение
+/// глазом не различить; здесь темп замедлен, но заметен.
+const IDLE_SPIN_RATE: f32 = 0.006;
+
 /// Плавный доворот камеры к стране; отменяется перетаскиванием.
 #[derive(Debug, Clone, Copy)]
 struct FlyAnimation {
@@ -54,6 +63,8 @@ pub struct GlobeCamera {
     yaw_velocity: f32,
     pitch_velocity: f32,
     fly: Option<FlyAnimation>,
+    /// Сколько секунд прошло без взаимодействия с глобусом.
+    idle: f32,
 }
 
 impl Default for GlobeCamera {
@@ -65,6 +76,7 @@ impl Default for GlobeCamera {
             yaw_velocity: 0.0,
             pitch_velocity: 0.0,
             fly: None,
+            idle: 0.0,
         }
     }
 }
@@ -88,11 +100,30 @@ impl GlobeCamera {
         });
         self.yaw_velocity = 0.0;
         self.pitch_velocity = 0.0;
+        self.idle = 0.0;
     }
 
-    /// Обновляет камеру по вводу за кадр.
+    /// Обновляет камеру по вводу за кадр (в тестах фактический интервал
+    /// совпадает со сглаженным).
+    #[cfg(test)]
     pub fn update(&mut self, dt: f32, input: &GlobeInput) {
+        self.advance(dt, dt, input);
+    }
+
+    /// То же, но с реальным временем кадра: после сна приложения `stable_dt`
+    /// остаётся маленьким, а простой нужно считать по фактическому интервалу.
+    pub fn advance(&mut self, dt: f32, elapsed: f32, input: &GlobeInput) {
         let dt = dt.clamp(0.001, 0.05);
+        let elapsed = elapsed.clamp(0.0, 60.0);
+        let interacting = input.drag_delta != Vec2::ZERO
+            || input.scroll_delta != 0.0
+            || input.primary_clicked.is_some();
+
+        if interacting || self.fly.is_some() {
+            self.idle = 0.0;
+        } else {
+            self.idle += elapsed;
+        }
 
         if input.drag_delta != Vec2::ZERO {
             self.fly = None;
@@ -145,11 +176,37 @@ impl GlobeCamera {
             let scale = (-input.scroll_delta * ZOOM_SENSITIVITY).exp();
             self.distance = (self.distance * scale).clamp(MIN_DISTANCE, MAX_DISTANCE);
         }
+
+        if self.fly.is_none() && !interacting && self.idle >= IDLE_SPIN_DELAY {
+            let ramp = ((self.idle - IDLE_SPIN_DELAY) / IDLE_SPIN_RAMP).clamp(0.0, 1.0);
+            // Земля вращается с запада на восток: камера смещается на запад,
+            // континенты уходят вправо — как при реальном вращении.
+            self.yaw = (self.yaw - IDLE_SPIN_RATE * ramp * dt).rem_euclid(std::f32::consts::TAU);
+        }
     }
 
-    /// Идёт ли инерционное движение или доворот, требующие перерисовки.
+    /// Идёт ли движение, требующее перерисовки: доворот, инерция или
+    /// авто-вращение в простое.
     pub fn is_animating(&self) -> bool {
-        self.fly.is_some() || self.yaw_velocity != 0.0 || self.pitch_velocity != 0.0
+        self.fly.is_some()
+            || self.yaw_velocity != 0.0
+            || self.pitch_velocity != 0.0
+            || self.is_idle_spinning()
+    }
+
+    /// Сколько секунд осталось до авто-вращения. `None`, если доворот уже
+    /// идёт или вращение началось.
+    pub fn idle_countdown(&self) -> Option<f32> {
+        if self.fly.is_some() || self.is_idle_spinning() {
+            None
+        } else {
+            Some((IDLE_SPIN_DELAY - self.idle).max(0.0))
+        }
+    }
+
+    /// Идёт ли медленное авто-вращение в простое.
+    pub fn is_idle_spinning(&self) -> bool {
+        self.fly.is_none() && self.idle >= IDLE_SPIN_DELAY
     }
 
     /// Позиция камеры в мировых координатах.
@@ -467,6 +524,87 @@ mod tests {
         }
 
         assert!((camera.pitch - MAX_PITCH).abs() < 1e-5);
+    }
+
+    #[test]
+    fn idle_spin_starts_after_the_delay() {
+        let mut camera = GlobeCamera::default();
+        for _ in 0..79 {
+            camera.update(0.05, &GlobeInput::default());
+        }
+        assert_eq!(camera.yaw, 0.0, "до истечения паузы глобус неподвижен");
+        assert!(camera.idle_countdown().is_some());
+
+        for _ in 0..3 {
+            camera.update(0.05, &GlobeInput::default());
+        }
+        let delta = shortest_delta(0.0, camera.yaw);
+        assert!(
+            delta < 0.0 && delta > -0.01,
+            "после паузы камера медленно смещается на запад: {delta}"
+        );
+        assert!(camera.is_animating());
+        assert_eq!(camera.idle_countdown(), None);
+    }
+
+    #[test]
+    fn idle_spin_stays_very_slow() {
+        let mut camera = GlobeCamera::default();
+        for _ in 0..100 {
+            camera.update(0.05, &GlobeInput::default());
+        }
+        let start = camera.yaw;
+        for _ in 0..200 {
+            camera.update(0.05, &GlobeInput::default());
+        }
+        let delta = shortest_delta(start, camera.yaw).abs();
+        assert!(camera.yaw.is_finite());
+        assert!(
+            (0.02..0.09).contains(&delta),
+            "за 10 секунд примерно 0.06 рад, получено {delta}"
+        );
+    }
+
+    #[test]
+    fn interaction_resets_the_idle_timer() {
+        let mut camera = GlobeCamera::default();
+        for _ in 0..100 {
+            camera.update(0.05, &GlobeInput::default());
+        }
+        assert!(camera.is_idle_spinning());
+
+        camera.update(
+            0.05,
+            &GlobeInput {
+                drag_delta: Vec2::new(6.0, 0.0),
+                ..GlobeInput::default()
+            },
+        );
+        assert_eq!(camera.idle, 0.0);
+        assert!(!camera.is_idle_spinning());
+        assert!(camera.idle_countdown().is_some_and(|left| left > 3.9));
+    }
+
+    #[test]
+    fn idle_uses_real_elapsed_time() {
+        let mut camera = GlobeCamera::default();
+        // `stable_dt` после сна маленький, фактический интервал — большой.
+        camera.advance(0.016, 4.0, &GlobeInput::default());
+
+        assert!(camera.is_idle_spinning());
+        assert!(camera.is_animating());
+    }
+
+    #[test]
+    fn fly_resets_the_idle_timer() {
+        let mut camera = GlobeCamera::default();
+        camera.fly_to(0.0, 10.0, Duration::from_millis(200));
+        for _ in 0..10 {
+            camera.update(0.05, &GlobeInput::default());
+        }
+
+        assert!(!camera.is_idle_spinning());
+        assert!(camera.idle_countdown().is_some_and(|left| left > 3.5));
     }
 
     #[test]

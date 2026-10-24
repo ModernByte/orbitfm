@@ -43,11 +43,16 @@
 
 | Паттерн | Применение |
 |---------|------------|
-| **Facade** | `App` / `AppState` — единая точка оркестрации audio, radio, geo, media, ipc |
-| **Mediator (лёгкий)** | Маршрутизация `IpcCommand` / `MediaCommand` в нужные сервисы без прямых связей UI↔domain |
-| **State** | `window_visible`, `PlaybackState`, текущая станция — явное состояние, а не размазанные флаги |
+| **Facade** | `Session` (`src/session/`) — единая точка оркестрации audio, radio, geo, media, ipc, library, settings, tray |
+| **Mediator (лёгкий)** | `Session::execute` / `execute_media_command` / `execute_tray_command` — маршрутизация `IpcCommand`, `MediaCommand` и `TrayCommand` в нужные сервисы без прямых связей UI↔domain |
+| **State** | `WindowState` (видимо/скрыто, размер, `quitting`), `PlaybackState`, текущая станция — явное состояние в ядре, а не размазанные флаги UI |
+| **Command queue** | Команды приходят в `Session` по каналам (IPC, MPRIS, трей) и исполняются в `logic()` окна или в `park()` без него (ADR-0018) |
+| **Snapshot-граница** | Core не рисует: наружу только `Notice` и `UiIntent`, читаемое состояние кадр снимает в `Frame` (ADR-0018) |
+| **Latest-wins очередь** | `TraySnapshot` публикуется только при изменении, а поток-владелец сворачивает очередь до последнего снимка перед блокирующим `Handle::update` (ADR-0020) |
 
-См. [modules/07-app-core.md](../modules/07-app-core.md), [interfaces/07-app.md](../interfaces/07-app.md).
+См. [modules/11-session.md](../modules/11-session.md), [interfaces/10-session.md](../interfaces/10-session.md),
+[modules/12-tray.md](../modules/12-tray.md), [interfaces/11-tray.md](../interfaces/11-tray.md),
+[modules/07-app-core.md](../modules/07-app-core.md), [interfaces/07-app.md](../interfaces/07-app.md).
 
 ### 3.2. Audio Engine
 

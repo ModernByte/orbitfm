@@ -3,7 +3,11 @@
 //! Все виджеты рисуются painter'ом и не хранят состояние — только запросы
 //! (`Response`/`bool`).
 
-use eframe::egui::{self, Color32, Pos2, Shape, Stroke, TextureHandle, Vec2, pos2};
+use eframe::egui::{
+    self, Color32, Pos2, Shape, Stroke, TextureHandle, Vec2,
+    epaint::{PathStroke, RoundedRect, tessellator},
+    pos2,
+};
 
 use crate::render::bar_color;
 
@@ -12,12 +16,12 @@ use super::palette::{Palette, mix_colors};
 
 const PILL_RADIUS: f32 = 999.0;
 const LIVE_REPAINT: std::time::Duration = std::time::Duration::from_millis(120);
-/// Полос вертикального градиента в стекле (ТЗ §3.1).
-const GLASS_BANDS: usize = 8;
 /// Толщина верхнего блика стекла.
 const GLASS_RIM: f32 = 1.5;
 /// Горизонтальные пояса градиента заливки громкости (ТЗ §3.4).
 const VOLUME_FILL_BANDS: usize = 6;
+/// Шаг громкости стрелками клавиатуры.
+const VOLUME_KEY_STEP: f64 = 0.05;
 
 /// Прозрачность цвета без обесцвечивания: масштабируется только альфа.
 pub(crate) fn faded(color: Color32, alpha: f32) -> Color32 {
@@ -30,26 +34,87 @@ pub(crate) fn faded(color: Color32, alpha: f32) -> Color32 {
     )
 }
 
-/// Насколько скругление угла «съедает» полосу градиента по горизонтали:
-/// `0` на прямом участке, `radius` у самой кромки.
-fn corner_inset(rect: egui::Rect, radius: f32, top: f32, bottom: f32) -> f32 {
-    let radius = radius
-        .min(rect.width() / 2.0)
-        .min(rect.height() / 2.0)
-        .max(0.0);
-    if radius <= 0.0 {
-        return 0.0;
+/// Кольцо клавиатурного фокуса вокруг прямоугольного контрола.
+pub(crate) fn focus_ring(ui: &egui::Ui, response: &egui::Response, rect: egui::Rect, radius: f32) {
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            rect.expand(1.5),
+            radius,
+            Stroke::new(1.8, ui.visuals().selection.bg_fill),
+            egui::StrokeKind::Outside,
+        );
     }
-    let depth = (top - rect.top())
-        .min(rect.bottom() - bottom)
-        .clamp(0.0, radius);
-    let inside = radius - depth;
-    radius - (radius * radius - inside * inside).max(0.0).sqrt()
+}
+
+/// Кольцо фокуса для круглых кнопок.
+pub(crate) fn circle_focus_ring(
+    ui: &egui::Ui,
+    response: &egui::Response,
+    center: Pos2,
+    radius: f32,
+) {
+    if response.has_focus() {
+        ui.painter().circle_stroke(
+            center,
+            radius,
+            Stroke::new(1.8, ui.visuals().selection.bg_fill),
+        );
+    }
+}
+
+/// Контур скруглённого прямоугольника — те же точки, что у обводки egui:
+/// берём их у тесселятора, чтобы заливка и рамка совпадали пиксель в пиксель.
+fn rounded_contour(rounded: RoundedRect) -> Vec<Pos2> {
+    let mut points = Vec::new();
+    tessellator::path::rounded_rectangle(&mut points, rounded);
+    points
+}
+
+/// Заливка стекла одним мешем: цвет вершины зависит только от `y`, а
+/// растеризатор интерполирует линейную функцию без искажений. В отличие от
+/// полос, швов между «слоями» градиента нет, а скругления задаются точным
+/// контуром, а не прямоугольным шагом.
+fn gradient_fill(rounded: RoundedRect, top: Color32, bottom: Color32) -> egui::Mesh {
+    let rect = rounded.rect();
+    gradient_fill_with(rounded, |y| {
+        mix_colors(top, bottom, (y - rect.top()) / rect.height().max(1.0))
+    })
+}
+
+/// Тот же веер, но цвет каждой вершины задаёт вызывающий: так столбцы
+/// визуализатора получают градиент по абсолютной высоте поля.
+fn gradient_fill_with(rounded: RoundedRect, color_at: impl Fn(f32) -> Color32) -> egui::Mesh {
+    let rect = rounded.rect();
+    let contour = rounded_contour(rounded);
+    let mut mesh = egui::Mesh::default();
+    mesh.reserve_vertices(contour.len() + 1);
+    mesh.reserve_triangles(contour.len().saturating_sub(1));
+    mesh.colored_vertex(rect.center(), color_at(rect.center().y));
+    for point in &contour {
+        mesh.colored_vertex(*point, color_at(point.y));
+    }
+    let count = contour.len() as u32;
+    for index in 0..count {
+        mesh.add_triangle(0, 1 + index, 1 + (index + 1) % count);
+    }
+    mesh
+}
+
+/// Верхний блик: открытая линия по верхней кромке вместе с закруглениями.
+/// Прямоугольная полоса блика торчала бы из углов панели.
+fn top_rim(rounded: RoundedRect) -> Vec<Pos2> {
+    let rect = rounded.rect();
+    let radius = rounded.corner_radius().nw.max(0.0);
+    rounded_contour(rounded)
+        .into_iter()
+        .filter(|point| point.y <= rect.top() + radius + 0.25)
+        .collect()
 }
 
 /// Стеклянная панель: вертикальный градиент `glass_top → glass_bottom`,
 /// верхний блик 1–2 px и мягкая рамка. `egui::Frame` умеет только сплошную
-/// заливку, поэтому фон рисуется отдельными полосами до содержимого зоны.
+/// заливку, а `Shape::gradient_rect` не скругляет углы, поэтому фон — один
+/// меш по контуру скруглённого прямоугольника.
 pub(crate) fn glass_panel(
     painter: &egui::Painter,
     rect: egui::Rect,
@@ -60,39 +125,16 @@ pub(crate) fn glass_panel(
     if !rect.is_finite() || rect.width() < 2.0 || rect.height() < 2.0 {
         return;
     }
-    let band_height = rect.height() / GLASS_BANDS as f32;
-    for band in 0..GLASS_BANDS {
-        let top = rect.top() + band_height * band as f32;
-        let bottom = if band + 1 == GLASS_BANDS {
-            rect.bottom()
-        } else {
-            top + band_height
-        };
-        let inset = corner_inset(rect, radius, top, bottom);
-        let color = mix_colors(
-            palette.glass_top,
-            palette.glass_bottom,
-            (band as f32 + 0.5) / GLASS_BANDS as f32,
-        );
-        painter.rect_filled(
-            egui::Rect::from_min_max(
-                pos2(rect.left() + inset, top),
-                pos2(rect.right() - inset, bottom),
-            ),
-            0.0,
-            faded(color, alpha),
-        );
-    }
-    let rim_bottom = (rect.top() + GLASS_RIM).min(rect.bottom());
-    let inset = corner_inset(rect, radius, rect.top(), rim_bottom);
-    painter.rect_filled(
-        egui::Rect::from_min_max(
-            pos2(rect.left() + inset, rect.top()),
-            pos2(rect.right() - inset, rim_bottom),
-        ),
-        0.0,
-        faded(palette.rim_light, alpha),
-    );
+    let rounded = RoundedRect::new(rect, radius);
+    painter.add(Shape::mesh(gradient_fill(
+        rounded,
+        faded(palette.glass_top, alpha),
+        faded(palette.glass_bottom, alpha),
+    )));
+    painter.add(Shape::line(
+        top_rim(rounded),
+        PathStroke::new(GLASS_RIM, faded(palette.rim_light, alpha)),
+    ));
     painter.rect_stroke(
         rect,
         radius,
@@ -132,6 +174,9 @@ pub(crate) fn pill(
         ui.painter()
             .galley(rect.center() - galley.size() * 0.5, galley, text_color);
     }
+    focus_ring(ui, &response, rect, PILL_RADIUS);
+    response
+        .widget_info(|| egui::WidgetInfo::selected(egui::Role::RadioButton, true, selected, label));
     response
 }
 
@@ -165,6 +210,9 @@ pub(crate) fn chip(
         ui.painter()
             .galley(rect.center() - galley.size() * 0.5, galley, text_color);
     }
+    focus_ring(ui, &response, rect, PILL_RADIUS);
+    response
+        .widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, true, selected, label));
     response
 }
 
@@ -308,11 +356,16 @@ pub(crate) fn eq_bars_in(
     }
 }
 
-/// Число горизонтальных срезов на столбец: egui даёт градиент только штриху,
-/// поэтому столбец собирается из полосок с интерполяцией цвета.
-const VIZ_SLICES: usize = 7;
+/// Зазор между столбцами, px: тонкие полосы с воздухом, как у cava.
+const VIZ_BAR_GAP: f32 = 2.0;
+/// Скругление столбца и высота «шапки» пика, px.
+const VIZ_BAR_RADIUS: f32 = 1.0;
+const VIZ_PEAK_HEIGHT: f32 = 2.0;
+const VIZ_BAR_MIN_HEIGHT: f32 = 1.5;
 
-/// Столбцы синтетического визуализатора: низ зелёный, верх красный.
+/// Столбцы визуализатора: градиент привязан к высоте поля, поэтому короткий
+/// столбец остаётся зелёным, а жёлтый и красный появляются только на подъёме.
+/// Пики висят над столбцами отдельными шапками.
 pub(crate) fn viz_bars(
     ui: &egui::Ui,
     palette: &Palette,
@@ -325,43 +378,95 @@ pub(crate) fn viz_bars(
     }
     let painter = ui.painter();
     let step = rect.width() / levels.len() as f32;
-    let width = (step * 0.6).max(1.5).min(step);
+    let width = (step - VIZ_BAR_GAP).max(1.5).min(step);
+    let color_at = |y: f32| bar_color(1.0 - ((y - rect.top()) / rect.height()).clamp(0.0, 1.0));
+
     for (index, level) in levels.iter().enumerate() {
-        let x0 = rect.left() + step * index as f32 + (step - width) * 0.5;
-        let level = level.clamp(0.0, 1.0);
-        let bar_top = (rect.height() * level).max(1.5);
-        let floor = rect.bottom() - bar_top;
-        // Пояса градиента привязаны к высоте области, а не к столбцу (ТЗ §3.3):
-        // короткий столбец остаётся зелёным, жёлтый и красный — только на подъёме.
-        for slice in 0..VIZ_SLICES {
-            let from = slice as f32 / VIZ_SLICES as f32;
-            let to = ((slice + 1) as f32 / VIZ_SLICES as f32).min(level);
-            if to <= from {
-                break;
+        let x_center = rect.left() + step * (index as f32 + 0.5);
+        let level = if level.is_finite() {
+            level.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let height = (rect.height() * level).max(VIZ_BAR_MIN_HEIGHT);
+        let bar = egui::Rect::from_min_max(
+            pos2(x_center - width * 0.5, rect.bottom() - height),
+            pos2(x_center + width * 0.5, rect.bottom()),
+        );
+        let rounded = RoundedRect::new(bar, VIZ_BAR_RADIUS.min(width * 0.5));
+        painter.add(Shape::mesh(gradient_fill_with(rounded, color_at)));
+
+        if let Some(peak) = peaks.get(index).copied().filter(|peak| peak.is_finite()) {
+            let peak = peak.clamp(0.0, 1.0);
+            if peak > level + 0.01 {
+                let y = (rect.bottom() - rect.height() * peak).max(rect.top() + VIZ_PEAK_HEIGHT);
+                let cap = egui::Rect::from_min_max(
+                    pos2(bar.left(), y - VIZ_PEAK_HEIGHT),
+                    pos2(bar.right(), y),
+                );
+                painter.rect_filled(
+                    cap,
+                    VIZ_PEAK_HEIGHT * 0.5,
+                    mix_colors(color_at(y), Color32::WHITE, 0.45),
+                );
             }
-            let y0 = (rect.bottom() - rect.height() * from).max(floor);
-            let y1 = (rect.bottom() - rect.height() * to).max(floor);
-            painter.rect_filled(
-                egui::Rect::from_min_max(pos2(x0, y1), pos2(x0 + width, y0)),
-                0.0,
-                bar_color((from + to) * 0.5),
-            );
-        }
-        if let Some(peak) = peaks.get(index) {
-            let y = rect.bottom() - (rect.height() * peak.clamp(0.0, 1.0)).max(1.5);
-            painter.rect_filled(
-                egui::Rect::from_min_max(pos2(x0, y - 1.5), pos2(x0 + width, y)),
-                0.0,
-                palette.muted.linear_multiply(0.7),
-            );
         }
     }
+
+    // Тонкая опорная линия: столбцы не «висят» в воздухе.
+    painter.hline(
+        rect.x_range(),
+        rect.bottom() - 0.5,
+        Stroke::new(1.0, palette.chip_stroke),
+    );
 }
 
 /// Громкость: динамик + тонкий accent-трек с круглой ручкой.
 pub(crate) fn volume_slider(ui: &mut egui::Ui, palette: &Palette, volume: &mut f64) -> bool {
+    volume_slider_width(ui, palette, volume, 126.0)
+}
+
+/// Та же громкость в заданной ширине: капсуле Overlay нужен короткий трек.
+/// Стрелки шагают на 5 %, Home/End — в крайние положения.
+pub(crate) fn volume_slider_width(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    volume: &mut f64,
+    width: f32,
+) -> bool {
     let (rect, response) =
-        ui.allocate_exact_size(Vec2::new(126.0, 18.0), egui::Sense::click_and_drag());
+        ui.allocate_exact_size(Vec2::new(width, 18.0), egui::Sense::click_and_drag());
+    focus_ring(ui, &response, rect, 9.0);
+
+    let mut changed = false;
+    if response.has_focus() {
+        let (down, up, home, end) = ui.input(|input| {
+            (
+                input.key_pressed(egui::Key::ArrowDown) || input.key_pressed(egui::Key::ArrowLeft),
+                input.key_pressed(egui::Key::ArrowUp) || input.key_pressed(egui::Key::ArrowRight),
+                input.key_pressed(egui::Key::Home),
+                input.key_pressed(egui::Key::End),
+            )
+        });
+        let next = if home {
+            Some(0.0)
+        } else if end {
+            Some(1.0)
+        } else if up {
+            Some((*volume + VOLUME_KEY_STEP).min(1.0))
+        } else if down {
+            Some((*volume - VOLUME_KEY_STEP).max(0.0))
+        } else {
+            None
+        };
+        if let Some(next) = next
+            && next != *volume
+        {
+            *volume = next;
+            changed = true;
+        }
+    }
+
     // Иконка динамика внутри выделенного прямоугольника — иначе она наползает на
     // соседний чип.
     icons::draw_speaker(
@@ -403,9 +508,10 @@ pub(crate) fn volume_slider(ui: &mut egui::Ui, palette: &Palette, volume: &mut f
         let fraction = ((pointer.x - track.left()) / track.width()).clamp(0.0, 1.0);
         let previous = *volume;
         *volume = f64::from(fraction);
-        return *volume != previous;
+        changed |= *volume != previous;
     }
-    false
+    response.widget_info(|| egui::WidgetInfo::slider(true, *volume, "Volume"));
+    changed
 }
 
 /// Большая круглая play/pause с accent-кольцом.
@@ -416,7 +522,18 @@ pub(crate) fn circle_button(
     enabled: bool,
     hint: &str,
 ) -> egui::Response {
-    let size = 40.0;
+    circle_button_sized(ui, palette, 40.0, playing, enabled, hint)
+}
+
+/// Та же кнопка заданного диаметра: капсулы используют меньший размер.
+pub(crate) fn circle_button_sized(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    size: f32,
+    playing: bool,
+    enabled: bool,
+    hint: &str,
+) -> egui::Response {
     let sense = if enabled {
         egui::Sense::click()
     } else {
@@ -467,7 +584,9 @@ pub(crate) fn circle_button(
                 Stroke::NONE,
             ));
         }
+        circle_focus_ring(ui, &response, center, radius + 2.0);
     }
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, hint));
     if enabled {
         response.on_hover_text(hint)
     } else {
@@ -540,7 +659,11 @@ impl egui::Widget for TabButton<'_> {
                     self.palette.accent,
                 );
             }
+            focus_ring(ui, &response, rect, 6.0);
         }
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(egui::Role::Tab, true, self.active, self.tab.label)
+        });
         response
     }
 }
@@ -591,10 +714,10 @@ pub(crate) fn avatar(
     texture: Option<TextureHandle>,
     name: &str,
     size: f32,
-) {
+) -> egui::Rect {
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::hover());
     if !ui.is_rect_visible(rect) {
-        return;
+        return rect;
     }
     let center = rect.center();
     let radius = size * 0.5;
@@ -639,6 +762,7 @@ pub(crate) fn avatar(
     }
     ui.painter()
         .circle_stroke(center, radius, Stroke::new(1.0, palette.card_stroke));
+    rect
 }
 
 /// Флаг-эмодзи по ISO alpha-2; пустая строка при невалидном коде.
@@ -741,18 +865,56 @@ mod tests {
     }
 
     #[test]
-    fn corner_inset_follows_the_rounded_edge() {
+    fn glass_fill_spans_the_rounded_contour() {
         let rect = egui::Rect::from_min_size(Pos2::ZERO, Vec2::new(200.0, 60.0));
-        assert!(
-            (corner_inset(rect, 16.0, 0.0, 2.0) - 16.0).abs() < 0.5,
-            "на самом краю полоса должна вжаться на весь радиус"
-        );
+        let rounded = RoundedRect::new(rect, 16.0);
+        let top = Color32::from_rgb(60, 70, 90);
+        let bottom = Color32::from_rgb(10, 15, 25);
+        let mesh = gradient_fill(rounded, top, bottom);
+
+        assert!(!mesh.is_empty(), "заливка панели не должна быть пустой");
         assert_eq!(
-            corner_inset(rect, 16.0, 30.0, 32.0),
-            0.0,
-            "в середине — без вжатия"
+            mesh.indices.len(),
+            3 * (mesh.vertices.len() - 1),
+            "заливка — веер треугольников из центра"
         );
-        // Радиус больше половины высоты не должен «съедать» панель целиком.
-        assert!(corner_inset(rect, 999.0, 30.0, 32.0) <= 30.0);
+        for vertex in &mesh.vertices {
+            assert!(
+                rect.expand(0.5).contains(vertex.pos),
+                "{:?} вышел за панель",
+                vertex.pos
+            );
+        }
+        let highest = mesh
+            .vertices
+            .iter()
+            .min_by(|a, b| a.pos.y.total_cmp(&b.pos.y))
+            .expect("вершины есть");
+        let lowest = mesh
+            .vertices
+            .iter()
+            .max_by(|a, b| a.pos.y.total_cmp(&b.pos.y))
+            .expect("вершины есть");
+        assert!((highest.pos.y - rect.top()).abs() < 0.5, "верх панели");
+        assert!((lowest.pos.y - rect.bottom()).abs() < 0.5, "низ панели");
+        assert_eq!(highest.color, top, "верхняя кромка — glass_top");
+        assert_eq!(lowest.color, bottom, "нижняя кромка — glass_bottom");
+    }
+
+    #[test]
+    fn top_rim_stays_on_the_upper_edge() {
+        let rect = egui::Rect::from_min_size(Pos2::ZERO, Vec2::new(200.0, 60.0));
+        let rim = top_rim(RoundedRect::new(rect, 16.0));
+
+        assert!(rim.len() > 4, "блик идёт по кромке, а не точкой");
+        for point in &rim {
+            assert!(
+                point.y <= rect.top() + 16.5,
+                "блик ушёл ниже закругления: {point:?}"
+            );
+            assert!(rect.expand(0.5).contains(*point));
+        }
+        assert!(rim.first().expect("есть точки").x <= rect.left() + 16.5);
+        assert!(rim.last().expect("есть точки").x >= rect.right() - 16.5);
     }
 }

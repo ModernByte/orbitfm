@@ -12,14 +12,15 @@ use super::images::FaviconCache;
 use super::palette::Palette;
 use super::station_row::row_place;
 use super::widgets::{
-    avatar, chip, circle_button, eq_bars_in, live_badge, viz_bars, volume_slider,
+    avatar, chip, circle_button, eq_bars_in, focus_ring, live_badge, viz_bars, volume_slider,
 };
 use super::{UiAction, playback_label, single_line, truncate};
 
-/// Ширина поля визуализатора, px (ТЗ: 40–56 px по высоте).
-const VIZ_SIZE: (f32, f32) = (96.0, 40.0);
+/// Ширина поля визуализатора, px (ТЗ: 40–56 px по высоте; cava-стилю нужна
+/// ширина, чтобы столбцы не слипались).
+const VIZ_SIZE: (f32, f32) = (156.0, 46.0);
 /// Правой группе (визуализатор + чип + громкость) нужно столько места.
-const RIGHT_GROUP_WIDTH: f32 = 340.0;
+const RIGHT_GROUP_WIDTH: f32 = 410.0;
 /// Окно уже — просим компактный чип рулетки (кубик без подписи).
 const COMPACT_ROW_WIDTH: f32 = 1100.0;
 /// Запас левой группы под контролы: LIVE, эквалайзер, пять кнопок и рулетка.
@@ -294,7 +295,11 @@ impl egui::Widget for RouletteButton<'_> {
                     },
                 );
             }
+            focus_ring(ui, &response, rect, 13.0);
         }
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::Role::Button, self.enabled, "Random station worldwide")
+        });
         if self.enabled {
             response.on_hover_text("Random station worldwide")
         } else {

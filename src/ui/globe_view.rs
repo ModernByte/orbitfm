@@ -1,16 +1,15 @@
 //! 3D-глобус: ввод камеры, маркеры, спектр и подсказки.
 
-use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
 use eframe::egui;
 
 use crate::geo::{Country, GeoService};
 use crate::render::{
-    CountryStyle, GlobeCamera, GlobeInput, MarkerColors, MarkerVisual, SpectrumOverlay,
-    SpectrumTarget, paint_country, paint_globe, paint_markers, sphere_point,
+    CountryStyle, GlobeCamera, GlobeInput, MarkerLabel, MarkerVisual, paint_country, paint_globe,
+    paint_markers, sphere_point,
 };
-use crate::services::Station;
+use crate::session::markers::GlobeMarker;
 
 use super::layout::DeskLayout;
 use super::palette::{Palette, heat_color};
@@ -19,7 +18,6 @@ use super::widgets::{faded, flag_emoji, glass_panel};
 use super::{UiAction, single_line, truncate};
 
 const MARKER_CLICK_RADIUS: f32 = 10.0;
-const MARKER_GROUP_SCALE: f64 = 100.0;
 const SPECTRUM_REPAINT: std::time::Duration = std::time::Duration::from_millis(33);
 const COUNTRY_HEAT_MIN_ALPHA: u8 = 26;
 const COUNTRY_HEAT_MAX_ALPHA: u8 = 96;
@@ -135,21 +133,6 @@ fn paint_starfield(painter: &egui::Painter, rect: egui::Rect) {
     }
 }
 
-/// Станция (или группа станций), отображаемая на глобусе.
-#[derive(Debug, Clone)]
-pub(crate) struct GlobeMarker {
-    pub station: Station,
-    pub lat: f32,
-    pub lon: f32,
-    pub count: usize,
-    /// Сигнал популярности (максимум голосов по группе): только размер маркера.
-    pub popularity: f32,
-    /// Лучший битрейт по группе: кодирует цвет маркера (ТЗ §2.3).
-    pub bitrate: u32,
-    /// UUID всех станций группы — играющей считается любая из них.
-    pub members: Vec<String>,
-}
-
 /// Callout переживает кадры: у карточки своя прозрачность и цель.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct CalloutCard {
@@ -176,8 +159,10 @@ pub(crate) struct GlobeState<'a> {
     pub selected_country: Option<&'a Country>,
     /// В режиме жанра страна не выбирается и не подсвечивается.
     pub country_enabled: bool,
-    pub spectrum_overlay: &'a mut SpectrumOverlay,
-    pub spectrum_target: Option<SpectrumTarget>,
+    /// Сглаженный сигнал эфира 0..1: App обновляет его и для капсул без глобуса.
+    pub pulse: f32,
+    /// Full-bleed космос Focus; у мини-глобуса капсулы фон прозрачный.
+    pub backdrop: bool,
     /// Плавающие зоны HUD: ввод под ними не доходит до глобуса.
     pub layout: DeskLayout,
     /// Callout страны: переживает кадр ради fade-in/out (ТЗ §1.2).
@@ -197,9 +182,11 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
     ui.set_min_size(ui.available_size());
     let (globe_rect, sense) =
         ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
-    paint_space(ui.painter(), globe_rect, palette);
-    paint_starfield(ui.painter(), globe_rect);
-    paint_vignette(ui.painter(), globe_rect);
+    if state.backdrop {
+        paint_space(ui.painter(), globe_rect, palette);
+        paint_starfield(ui.painter(), globe_rect);
+        paint_vignette(ui.painter(), globe_rect);
+    }
 
     if !state.ready {
         ui.painter().text(
@@ -232,8 +219,8 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
         input.primary_clicked = Some(position);
     }
 
-    let dt = ui.input(|input| input.stable_dt);
-    state.camera.update(dt, &input);
+    let (dt, elapsed) = ui.input(|input| (input.stable_dt, input.unstable_dt));
+    state.camera.advance(dt, elapsed, &input);
 
     let marker_screens = marker_screens(state.camera, state.markers, globe_rect);
 
@@ -248,10 +235,7 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
         }
     }
 
-    state
-        .spectrum_overlay
-        .update(state.spectrum_target, ui.input(|input| input.stable_dt));
-    let pulse = state.spectrum_overlay.pulse();
+    let pulse = state.pulse;
     paint_globe(ui.painter(), globe_rect, state.camera, pulse);
 
     let hovered = hover_pos.and_then(|position| nearest_marker(&marker_screens, position));
@@ -296,9 +280,6 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
                     playing: state
                         .current_uuid
                         .is_some_and(|uuid| marker.members.iter().any(|member| member == uuid)),
-                    count: marker.count,
-                    popularity: marker.popularity,
-                    bitrate: marker.bitrate,
                 }
             })
             .collect();
@@ -309,11 +290,8 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
             globe_rect,
             &visuals,
             hovered,
-            hovered_label.as_deref(),
-            MarkerColors {
-                marker: palette.marker,
-                active: palette.live,
-            },
+            hovered_label.as_ref(),
+            palette.marker,
             ui.input(|input| input.time),
         );
     }
@@ -354,8 +332,15 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
         ui.ctx().request_repaint_after(SPECTRUM_REPAINT);
     }
 
-    if state.camera.is_animating() {
+    if state.camera.is_idle_spinning() {
+        // Медленному авто-вращению хватает 30 fps и без эфира.
+        ui.ctx().request_repaint_after(SPECTRUM_REPAINT);
+    } else if state.camera.is_animating() {
         ui.ctx().request_repaint();
+    } else if let Some(remaining) = state.camera.idle_countdown() {
+        // Без эфира окно может спать: будим его к началу авто-вращения.
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_secs_f32(remaining.max(0.05)));
     }
 
     response
@@ -585,13 +570,18 @@ fn paint_country_callout(painter: &egui::Painter, scene: &CalloutScene<'_>, card
         title_galley.size().y + subtitle_galley.size().y + gap + padding.y * 2.0,
     );
 
-    // Свободная зона между HUD, transport и панелью станций.
-    let top = layout.hud.bottom() + 6.0;
-    let bottom = layout.transport.top() - 6.0;
-    let left = layout.globe.left() + 6.0;
+    // Свободная зона между HUD, transport и панелью станций. Callout живёт
+    // только в Focus: в капсулах этих зон нет.
+    let (Some(hud), Some(transport), Some(globe)) = (layout.hud, layout.transport, layout.globe)
+    else {
+        return;
+    };
+    let top = hud.bottom() + 6.0;
+    let bottom = transport.top() - 6.0;
+    let left = globe.left() + 6.0;
     let right = layout
         .panel
-        .map_or(layout.globe.right() - 6.0, |panel| panel.left() - 8.0);
+        .map_or(globe.right() - 6.0, |panel| panel.left() - 8.0);
 
     // По умолчанию карточка над якорем, при нехватке места — под ним.
     let slide = CALLOUT_SLIDE * (1.0 - alpha);
@@ -652,69 +642,6 @@ fn paint_country_callout(painter: &egui::Painter, scene: &CalloutScene<'_>, card
     );
 }
 
-/// Сигнал популярности станции: голоса Radio Browser. Битрейт на размер не влияет —
-/// он кодирует цвет (ТЗ §2.3), формулу размера знает render-модуль.
-fn station_popularity(station: &Station) -> f32 {
-    station.votes as f32
-}
-
-pub(crate) fn build_markers(stations: Vec<Station>) -> Vec<GlobeMarker> {
-    let mut markers: Vec<GlobeMarker> = Vec::new();
-    let mut groups: HashMap<(i64, i64), usize> = HashMap::new();
-    let mut seen = HashSet::new();
-
-    for station in stations {
-        if !seen.insert(station.stationuuid.clone()) {
-            continue;
-        }
-        let Some((lat, lon)) = station_geo(&station) else {
-            continue;
-        };
-        let popularity = station_popularity(&station);
-        let bitrate = station.bitrate;
-        let key = (
-            (lat * MARKER_GROUP_SCALE).round() as i64,
-            (lon * MARKER_GROUP_SCALE).round() as i64,
-        );
-        if let Some(&index) = groups.get(&key) {
-            let marker = &mut markers[index];
-            marker.count += 1;
-            marker.popularity = marker.popularity.max(popularity);
-            marker.bitrate = marker.bitrate.max(bitrate);
-            marker.members.push(station.stationuuid);
-        } else {
-            groups.insert(key, markers.len());
-            markers.push(GlobeMarker {
-                members: vec![station.stationuuid.clone()],
-                station,
-                lat: lat as f32,
-                lon: lon as f32,
-                count: 1,
-                popularity,
-                bitrate,
-            });
-        }
-    }
-
-    markers
-}
-
-fn station_geo(station: &Station) -> Option<(f64, f64)> {
-    let lat = station.geo_lat?;
-    let lon = station.geo_long?;
-    if !lat.is_finite()
-        || !lon.is_finite()
-        || !(-90.0..=90.0).contains(&lat)
-        || !(-180.0..=180.0).contains(&lon)
-    {
-        return None;
-    }
-    if lat == 0.0 && lon == 0.0 {
-        return None;
-    }
-    Some((lat, lon))
-}
-
 fn marker_screens(
     camera: &GlobeCamera,
     markers: &[GlobeMarker],
@@ -742,20 +669,27 @@ fn nearest_marker(screens: &[(usize, egui::Pos2)], position: egui::Pos2) -> Opti
         .map(|(_, index)| index)
 }
 
-/// Подпись маркера по ТЗ §2.4: имя и `место · kbps · кодек`, без флага страны.
-fn marker_label(marker: &GlobeMarker) -> String {
+/// Подпись маркера: имя, а при наведении — место, качество потока и рейтинг.
+/// Размер и цвет маркера от этих данных больше не зависят.
+fn marker_label(marker: &GlobeMarker) -> MarkerLabel {
     let name = single_line(&marker.station.name);
     let name = if name.is_empty() {
         "Untitled".to_owned()
     } else {
         truncate(&name, 40)
     };
-    let head = if marker.count > 1 {
+    let title = if marker.count > 1 {
         format!("{name} · +{}", marker.count - 1)
     } else {
         name
     };
 
+    let votes = marker.popularity.round().max(0.0) as u64;
+    let rating = match votes {
+        0 => String::new(),
+        1 => "1 vote".to_owned(),
+        votes => format!("{votes} votes"),
+    };
     let detail = [
         row_place(&marker.station),
         if marker.bitrate > 0 {
@@ -764,96 +698,23 @@ fn marker_label(marker: &GlobeMarker) -> String {
             String::new()
         },
         single_line(&marker.station.codec).to_uppercase(),
+        rating,
     ]
     .into_iter()
     .filter(|part| !part.trim().is_empty())
     .collect::<Vec<_>>()
     .join(" · ");
 
-    if detail.is_empty() {
-        head
-    } else {
-        format!("{head}\n{detail}")
+    MarkerLabel {
+        title,
+        details: (!detail.is_empty()).then_some(detail),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn sample_station() -> Station {
-        Station {
-            stationuuid: "c685c086-b716-4edd-b313-d4a7baf1084c".to_owned(),
-            name: "Test Radio".to_owned(),
-            url: "http://example.com/live".to_owned(),
-            url_resolved: "https://example.com/live".to_owned(),
-            homepage: None,
-            favicon: None,
-            tags: "jazz".to_owned(),
-            countrycode: "US".to_owned(),
-            language: "english".to_owned(),
-            votes: 120,
-            country: "United States".to_owned(),
-            state: "New York".to_owned(),
-            bitrate: 128,
-            codec: "MP3".to_owned(),
-            geo_lat: None,
-            geo_long: None,
-        }
-    }
-
-    fn geo_station(uuid: &str, lat: f64, lon: f64) -> Station {
-        let mut station = sample_station();
-        station.stationuuid = uuid.to_owned();
-        station.geo_lat = Some(lat);
-        station.geo_long = Some(lon);
-        station
-    }
-
-    #[test]
-    fn marker_groups_stations_with_shared_coordinates() {
-        let markers = build_markers(vec![
-            geo_station("a", 52.5200, 13.4050),
-            geo_station("b", 52.5201, 13.4051),
-            geo_station("c", 48.8566, 2.3522),
-        ]);
-
-        assert_eq!(markers.len(), 2);
-        assert_eq!(markers[0].count, 2);
-        assert_eq!(markers[1].count, 1);
-        assert_eq!(markers[0].station.stationuuid, "a");
-    }
-
-    #[test]
-    fn markers_skip_missing_invalid_and_zero_coordinates() {
-        let mut missing = sample_station();
-        missing.stationuuid = "missing".to_owned();
-
-        let mut zero = geo_station("zero", 0.0, 0.0);
-        zero.stationuuid = "zero".to_owned();
-
-        let markers = build_markers(vec![
-            missing,
-            zero,
-            geo_station("nan", f64::NAN, 13.0),
-            geo_station("range", 91.0, 13.0),
-            geo_station("valid", 52.52, 13.405),
-        ]);
-
-        assert_eq!(markers.len(), 1);
-        assert_eq!(markers[0].station.stationuuid, "valid");
-    }
-
-    #[test]
-    fn markers_deduplicate_by_uuid() {
-        let markers = build_markers(vec![
-            geo_station("same", 52.52, 13.405),
-            geo_station("same", 48.85, 2.35),
-        ]);
-
-        assert_eq!(markers.len(), 1);
-        assert_eq!(markers[0].station.stationuuid, "same");
-    }
+    use crate::session::markers::{build_markers, geo_station};
 
     #[test]
     fn nearest_marker_uses_click_radius() {
@@ -876,9 +737,11 @@ mod tests {
         };
         marker.station.name = "Groove\nSalad".to_owned();
 
+        let label = marker_label(&marker);
+        assert_eq!(label.title, "Groove Salad · +2");
         assert_eq!(
-            marker_label(&marker),
-            "Groove Salad · +2\nNew York, United States · 128 kbps · MP3"
+            label.details.as_deref(),
+            Some("New York, United States · 128 kbps · MP3 · 40 votes")
         );
     }
 
@@ -899,49 +762,29 @@ mod tests {
         marker.station.countrycode.clear();
         marker.station.codec.clear();
 
-        assert_eq!(marker_label(&marker), "Night Waves");
+        let label = marker_label(&marker);
+        assert_eq!(label.title, "Night Waves");
+        assert_eq!(label.details, None);
     }
 
     #[test]
-    fn popularity_signal_is_votes_only() {
-        let mut silent = sample_station();
-        silent.votes = 0;
-        silent.bitrate = 320;
-        assert_eq!(
-            station_popularity(&silent),
-            0.0,
-            "качество потока не делает маркер крупнее"
-        );
+    fn marker_label_reports_a_single_vote() {
+        let mut marker = GlobeMarker {
+            station: geo_station("a", 52.52, 13.405),
+            lat: 52.52,
+            lon: 13.405,
+            count: 1,
+            popularity: 1.0,
+            bitrate: 0,
+            members: vec!["a".to_owned()],
+        };
+        marker.station.state.clear();
+        marker.station.country.clear();
+        marker.station.countrycode.clear();
+        marker.station.codec.clear();
 
-        let mut loud = sample_station();
-        loud.votes = 4_000;
-        loud.bitrate = 32;
-        assert_eq!(station_popularity(&loud), 4_000.0);
-    }
-
-    #[test]
-    fn grouped_markers_keep_the_loudest_station() {
-        let mut light = geo_station("light", 52.5200, 13.4050);
-        light.votes = 10;
-        light.bitrate = 64;
-        let mut heavy = geo_station("heavy", 52.5201, 13.4051);
-        heavy.votes = 4_000;
-        heavy.bitrate = 256;
-
-        let markers = build_markers(vec![light, heavy]);
-
-        assert_eq!(markers.len(), 1);
-        assert_eq!(markers[0].count, 2);
-        assert_eq!(
-            markers[0].popularity, 4_000.0,
-            "голоса группы — по максимуму"
-        );
-        assert_eq!(markers[0].bitrate, 256, "цвет группы — по лучшему потоку");
-        assert_eq!(
-            markers[0].members,
-            ["light".to_owned(), "heavy".to_owned()],
-            "любая станция группы считается играющей"
-        );
+        let label = marker_label(&marker);
+        assert_eq!(label.details.as_deref(), Some("1 vote"));
     }
 
     #[test]

@@ -55,7 +55,7 @@ impl Shared {
             state: Mutex::new(PlaybackState::Stopped),
             volume: Mutex::new(DEFAULT_VOLUME),
             events,
-            spectrum_enabled: AtomicBool::new(false),
+            spectrum_enabled: AtomicBool::new(true),
             spectrum: Mutex::new(None),
         }
     }
@@ -332,6 +332,11 @@ mod tests {
         assert!(validate_volume(f64::NAN).is_err());
         assert!(validate_volume(-0.1).is_err());
         assert!(validate_volume(1.1).is_err());
+    }
+
+    #[test]
+    fn spectrum_is_enabled_by_default() {
+        assert!(Shared::new().spectrum_enabled());
     }
 
     #[tokio::test]

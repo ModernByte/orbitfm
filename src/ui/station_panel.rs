@@ -4,6 +4,7 @@ use eframe::egui;
 
 use crate::geo::Country;
 use crate::services::Station;
+use crate::session::LibraryTab;
 
 use super::images::FaviconCache;
 use super::mode_switch::genre_label;
@@ -12,15 +13,6 @@ use super::station_filter::{self, CountryFilterState, GenreTag, StationSort};
 use super::station_row::{RowContext, station_row, station_tag_chips};
 use super::widgets::{Tab, TabIcon, chip, search_field, tab_bar};
 use super::{UiAction, single_line, truncate};
-
-/// Активная вкладка списка станций.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) enum LibraryTab {
-    #[default]
-    Results,
-    Favorites,
-    History,
-}
 
 pub(crate) struct PanelState<'a> {
     pub tab: &'a mut LibraryTab,
@@ -202,12 +194,18 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: PanelState<'_>) 
                                 filter.reset();
                             }
                         } else if context_mode {
-                            for station in &filtered {
+                            for (index, station) in filtered.iter().enumerate() {
                                 let mut row = RowContext {
                                     playing: playing_uuid == Some(&station.stationuuid),
                                     compact,
                                     favorites,
                                     favicons: &mut *favicons,
+                                    previous: index
+                                        .checked_sub(1)
+                                        .map(|item| filtered[item].stationuuid.as_str()),
+                                    next: filtered
+                                        .get(index + 1)
+                                        .map(|item| item.stationuuid.as_str()),
                                 };
                                 station_row(ui, palette, station, &mut row, &mut actions);
                                 if !compact {
@@ -218,12 +216,18 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: PanelState<'_>) 
                                 }
                             }
                         } else {
-                            for station in &filtered {
+                            for (index, station) in filtered.iter().enumerate() {
                                 let mut row = RowContext {
                                     playing: playing_uuid == Some(&station.stationuuid),
                                     compact,
                                     favorites,
                                     favicons: &mut *favicons,
+                                    previous: index
+                                        .checked_sub(1)
+                                        .map(|item| filtered[item].stationuuid.as_str()),
+                                    next: filtered
+                                        .get(index + 1)
+                                        .map(|item| item.stationuuid.as_str()),
                                 };
                                 station_row(ui, palette, station, &mut row, &mut actions);
                             }
@@ -235,12 +239,18 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: PanelState<'_>) 
                                 egui::RichText::new("Favorites are empty").color(palette.muted),
                             );
                         } else {
-                            for station in favorites {
+                            for (index, station) in favorites.iter().enumerate() {
                                 let mut row = RowContext {
                                     playing: playing_uuid == Some(&station.stationuuid),
                                     compact,
                                     favorites,
                                     favicons: &mut *favicons,
+                                    previous: index
+                                        .checked_sub(1)
+                                        .map(|item| favorites[item].stationuuid.as_str()),
+                                    next: favorites
+                                        .get(index + 1)
+                                        .map(|item| item.stationuuid.as_str()),
                                 };
                                 station_row(ui, palette, station, &mut row, &mut actions);
                             }
@@ -250,12 +260,18 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: PanelState<'_>) 
                         if history.is_empty() {
                             ui.label(egui::RichText::new("History is empty").color(palette.muted));
                         } else {
-                            for station in history {
+                            for (index, station) in history.iter().enumerate() {
                                 let mut row = RowContext {
                                     playing: playing_uuid == Some(&station.stationuuid),
                                     compact,
                                     favorites,
                                     favicons: &mut *favicons,
+                                    previous: index
+                                        .checked_sub(1)
+                                        .map(|item| history[item].stationuuid.as_str()),
+                                    next: history
+                                        .get(index + 1)
+                                        .map(|item| item.stationuuid.as_str()),
                                 };
                                 station_row(ui, palette, station, &mut row, &mut actions);
                             }

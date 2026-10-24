@@ -1,7 +1,7 @@
 # Интерфейсы OrbitFM
 
 **Организация:** ModernByte  
-**Дата:** 2026-10-22
+**Дата:** 2026-10-24
 
 Этот каталог содержит формальные контракты между модулями и внешними системами.
 
@@ -15,9 +15,11 @@
 | `04-render.md` | Контракт рендерера глобуса и спектрального оверлея (`GlobeCamera`, `GlobeRenderer`, `SpectrumOverlay`) |
 | `05-ipc.md` | IPC-протокол и команды |
 | `06-media.md` | Контракт медиа-контролов (`MediaControls`) |
-| `07-app.md` | Контракты Application Core |
+| `07-app.md` | Контракт presentation-слоя (`OrbitApp`, раскладка «Orbital Desk», цикл запуска) |
 | `08-library.md` | Контракт библиотеки станций (`StationLibrary`, избранное и история) |
 | `09-settings.md` | Контракт настроек оформления (`SettingsStore`, тема и акцент) |
+| `10-session.md` | Контракт Application Core (`Session`, `Notice`, `UiIntent`, `ParkOutcome`, жизненный цикл окна по ADR-0018) |
+| `11-tray.md` | Контракт системного трея (`TrayHandle`, `TrayCommand`, `TraySnapshot`, SNI по ADR-0020) |
 
 ## Принципы
 

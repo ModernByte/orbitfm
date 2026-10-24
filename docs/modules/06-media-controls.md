@@ -40,6 +40,8 @@ pub struct PlaybackInfo {
     pub url: String,
     pub playing: bool,
     pub volume: f64,
+    pub can_go_next: bool,
+    pub can_go_previous: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -68,7 +70,7 @@ pub enum MediaCommand {
 | DesktopEntry | `org.modernbyte.OrbitFM` |
 | Track ID prefix | `/org/modernbyte/OrbitFM/track` |
 | Volume | из `PlaybackInfo`, `0.0..=1.0` |
-| Capabilities | `CanPlay`, `CanPause`, `CanControl`; `CanGoNext`/`CanGoPrevious`/`CanSeek` выключены |
+| Capabilities | `CanPlay`, `CanPause`, `CanControl`; `CanGoNext`/`CanGoPrevious` — по непустой видимой очереди; `CanSeek` выключен |
 
 ## 5. Потоки и пробуждение GUI
 
@@ -99,14 +101,15 @@ playwire вызывает колбэк в рабочем потоке D-Bus. К�
 
 ## 7. Ограничения
 
-- `Next` / `Previous` принимаются, но не действуют: нет плейлиста/очереди;
-  история прослушивания не является очередью (ADR-0013).
+- `Next` / `Previous` ходят по видимой очереди с циклом; при пустом списке это no-op,
+  и способности выключены. Отдельного плейлиста нет (ADR-0013).
 - Перемотка (seek) не поддерживается для живого радио.
 - Windows/macOS-бэкенды не проверялись.
 
 ## 8. Тестирование
 
-- Unit-тесты маппинга событий playwire, включая клампинг громкости и отказ `NaN`.
+- Unit-тесты маппинга событий playwire, включая клампинг громкости и отказ `NaN`, и
+  переноса `can_go_next`/`can_go_previous` в `Capabilities`.
 - Живая проверка на Linux: `playerctl -p OrbitFM status`, `volume`, `play-pause`,
   `stop`; IPC `status` должен отражать изменения в течение одного кадра.
 

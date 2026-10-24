@@ -1,9 +1,29 @@
-// OrbitFM: плавающее окно 920×660.
+// OrbitFM: плавающие окна режимов (ADR-0021 п. 4).
 // Плавающие окна Niri центрирует по умолчанию, отдельная позиция не нужна.
+// Размер фиксируется по заголовку: у каждого режима свой заголовок, поэтому
+// правила не пересекаются и порядок их применения не важен.
 window-rule {
-    match app-id="org.modernbyte.OrbitFM"
+    match app-id="org.modernbyte.OrbitFM" title=r"^OrbitFM$"
     open-floating true
     default-column-width { fixed 920; }
     default-window-height { fixed 660; }
+    draw-border-with-background false
+}
+
+// Капсула Overlay: узкое окно с mini-глобусом и избранным.
+window-rule {
+    match app-id="org.modernbyte.OrbitFM" title=r"^OrbitFM · Overlay$"
+    open-floating true
+    default-column-width { fixed 420; }
+    default-window-height { fixed 620; }
+    draw-border-with-background false
+}
+
+// Окно Listening: одна строка now-playing.
+window-rule {
+    match app-id="org.modernbyte.OrbitFM" title=r"^OrbitFM · Listening$"
+    open-floating true
+    default-column-width { fixed 420; }
+    default-window-height { fixed 152; }
     draw-border-with-background false
 }

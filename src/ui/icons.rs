@@ -2,6 +2,8 @@
 
 use eframe::egui::{self, Color32, Pos2, Response, Sense, Shape, Stroke, Vec2, pos2};
 
+use super::widgets::focus_ring;
+
 fn icon_button(
     ui: &mut egui::Ui,
     size: Vec2,
@@ -26,6 +28,8 @@ fn icon_button(
         ui.visuals().weak_text_color()
     };
     paint(ui.painter(), rect, color);
+    focus_ring(ui, &response, rect, 6.0);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, hint));
     if enabled {
         response.on_hover_text(hint)
     } else {
@@ -167,6 +171,20 @@ pub(crate) fn close_button(ui: &mut egui::Ui, hint: &str) -> Response {
             ],
             stroke,
         );
+    })
+}
+
+/// Возврат из капсулы в полный Focus: четыре угла, разведённые наружу.
+pub(crate) fn expand_button(ui: &mut egui::Ui, hint: &str) -> Response {
+    icon_button(ui, Vec2::splat(22.0), true, hint, |painter, rect, color| {
+        let center = rect.center();
+        let arm = 4.5;
+        let stroke = Stroke::new(1.4, color);
+        for (dx, dy) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+            let corner = center + Vec2::new(dx * arm, dy * arm);
+            painter.line_segment([corner, corner - Vec2::new(dx * 3.0, 0.0)], stroke);
+            painter.line_segment([corner, corner - Vec2::new(0.0, dy * 3.0)], stroke);
+        }
     })
 }
 
