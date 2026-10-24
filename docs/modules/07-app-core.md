@@ -25,7 +25,9 @@ Presentation-слой: всё, что знает про egui и wgpu. Не со�
 - Поднять подсистемы в корректном порядке и передать их в `Session` как `AppServices`
   (`launch` в `src/main.rs`); при выходе остановить IPC-сервер.
 - Вести цикл показа/скрытия окна (`run_session`): `restore_size` → `begin_window` →
-  `run_window` → `end_window` → `is_quitting` → `park`.
+  `settle_analysis` → `run_window` → `end_window` → `is_quitting` → `settle_analysis` →
+  `park`. Анализ эфира живёт только при открытом окне: `settle_analysis` включает его
+  на показ и снимает перед парковкой (ADR-0027).
 - На каждый прогон собрать per-run ресурсы в `OrbitApp::new`: тему и акцент
   (`palette::configure_style`), цветной emoji-шрифт, `GlobeRenderer` в `callback_resources`,
   `FaviconCache`, `reqwest::Client`, `VisualizerModel`, `Toast`, и установить `WakeHandle`
@@ -250,8 +252,13 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
 → MediaControls::new(wake) → RadioBrowserClient::new → StationLibrary::load_default
 → SettingsStore::load_default → фоновый refresh_servers → задача audio events
 → wake → IpcServer::run → AppServices → run_session → Session::new
-→ (restore_size → begin_window → run_window → OrbitApp::new → … → end_window → park)
+→ (restore_size → begin_window → settle_analysis → run_window → OrbitApp::new
+   → … → end_window → [take_reopen] → settle_analysis → park)
 ```
+
+`take_reopen` (смена режима при открытом окне) уходит на новый прогон без парковки и
+без снятия анализа; `settle_analysis` перед `park` снимает `@level`/`@spectrum`, чтобы
+скрытый эфир не платил за невидимую визуализацию.
 
 `try_bind` выполняется до создания аудио-ядра, чтобы второй экземпляр завершился, не
 занимая аудиоустройство. Ошибки `AudioEngine::new` и загрузки гео-датасета фатальны;
@@ -299,7 +306,9 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
 При закрытом окне UI-цикла нет вовсе: ни `logic()`, ни `ui()` не вызываются, кадры не
 аллоцируются. События в этом состоянии читает `Session::park` — `tokio::select!` по
 приёмникам IPC, MPRIS и аудио-событий; команды исполняются без UI, а `UiIntent::Show`
-заканчивает парковку и `run_session` перезапускает прогон.
+заканчивает парковку и `run_session` перезапускает прогон. Перед входом в `park`
+`settle_analysis` снимает аудио-фильтры анализа: в простое остаются декод и вывод звука
+(≈2 % CPU на живом эфире), без `@level`/`@spectrum`; новый показ ставит их обратно.
 
 ## 6. Глобус, маркеры и выбор страны
 

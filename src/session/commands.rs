@@ -124,6 +124,14 @@ impl super::Session {
             .map_err(|err| err.to_string())
     }
 
+    /// Переключает анализ под текущую видимость окна. Зовётся на границах
+    /// прогона UI: в простое без окна эфирные фильтры не тратят CPU.
+    pub(crate) fn settle_analysis(&mut self) {
+        if let Err(err) = self.sync_analysis() {
+            tracing::warn!(error = %err, "не удалось переключить аудио-анализ");
+        }
+    }
+
     /// Анализ включён, если он нужен визуализатору или движению глобуса.
     fn sync_analysis(&mut self) -> Result<(), String> {
         let needed = self.analysis_needed();

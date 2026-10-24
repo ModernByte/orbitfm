@@ -141,7 +141,10 @@ pub enum AudioEvent {
     `acrossover=split=150 2000:order=8th`, `amerge`, `astats` по каналам и `pan`,
     возвращающий основной сигнал.
 - Фильтры ставятся при старте воркера (`spectrum_enabled = true`) и снимаются
-  только командой `set_spectrum_enabled(false)`.
+  командой `set_spectrum_enabled(false)`. Application Core пользуется этим на
+  границах окна: `Session::settle_analysis` снимает анализ перед парковкой и
+  возвращает при показе, поэтому скрытый эфир не тратит CPU на невидимую
+  визуализацию (≈2 % против ≈19–23 %).
 - `aspectralstats` даёт FFT-метрики кадра, `astats` в `@level` — общий RMS;
   `astats` в `@spectrum` — RMS восьми каналов (основной сигнал и три полосы L/R).
   Все фильтры прозрачны для звука.

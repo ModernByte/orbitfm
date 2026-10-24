@@ -77,7 +77,8 @@ Application Core — слой, который переживает закрыт�
 | `set_allow_flips` | `pub(crate) fn set_allow_flips(&mut self, allow: bool) -> Result<(), String>` | Сохраняет разрешение переворотов камеры (ADR-0028) |
 | `set_reduce_motion` | `pub(crate) fn set_reduce_motion(&mut self, reduce: bool) -> Result<(), String>` | Сохраняет Reduce motion и пересчитывает необходимость анализа |
 | `motion_reactivity` | `pub(crate) fn motion_reactivity(&self) -> MotionReactivity` | Эффективная реактивность: Reduce motion → `Off`; Focus — настройка, Overlay — не выше `Low`, Listening — `Off` |
-| `analysis_needed` | `pub(crate) fn analysis_needed(&self) -> bool` | `visualizer_enabled \|\| (motion.is_enabled() && !reduce_motion)` — анализ нужен хотя бы одному потребителю |
+| `analysis_needed` | `pub(crate) fn analysis_needed(&self) -> bool` | `window.visible && (visualizer_enabled \|\| (motion.is_enabled() && !reduce_motion))` — анализ нужен хотя бы одному потребителю, но только при открытом окне |
+| `settle_analysis` | `pub(crate) fn settle_analysis(&mut self)` | Переключает анализ под текущую видимость окна; `run_session` зовёт после `begin_window` и перед `park`, ошибка — только `warn!` (ADR-0027) |
 | `mark_help_seen` | `pub(crate) fn mark_help_seen(&mut self)` | Запоминает, что карточка управления показывалась; ошибка только `warn!` |
 
 Поля `Session` — `pub(crate)`: presentation читает и редактирует их напрямую

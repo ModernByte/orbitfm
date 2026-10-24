@@ -62,7 +62,7 @@ Core не принимают `&egui::Context` — детали в `docs/interfac
 |------|-----|-----------|
 | `globe_camera` | `GlobeCamera` | Позиция камеры должна переживать закрытие окна (ADR-0018 п. 2); вращение и зум пишет presentation, Core вызывает `fly_to` |
 | `visualizer_enabled` | `bool` | Пользовательский переключатель визуализатора и кольца; инициализируется `audio.spectrum_enabled()` (по умолчанию `true`) |
-| `spectrum_enabled` | `bool` | Фактическое состояние аудио-анализа; включается по `analysis_needed` (визуализатор или движение глобуса), каждый `tick()` перечитывается из движка, при ошибке включения откатывается |
+| `spectrum_enabled` | `bool` | Фактическое состояние аудио-анализа; включается по `analysis_needed` (открытое окно и визуализатор или движение глобуса), каждый `tick()` перечитывается из движка, при ошибке включения откатывается |
 | `current_url` | `Option<String>` | Заполняется из `start_station` и из `AudioEvent::Started`; не очищается при `Stopped`/`Error` — нужен для повторного запуска из MPRIS |
 | `current_station` | `Option<Station>` | Метаданные эфира: `status`, MPRIS, подсветка строки списка |
 | `search` | `SearchState` | Всё о поиске: строки запросов, контекст, результаты, поколение, незавершённые задания |
@@ -76,6 +76,11 @@ Core не принимают `&egui::Context` — детали в `docs/interfac
 `reduce_motion` → `Off`; Focus — значение настройки, Overlay — не выше `Low`,
 Listening — `Off`. `motion_reactivity()`, `analysis_needed()` и `sync_analysis()`
 не хранят отдельного состояния: они вычисляются из настроек и режима окна.
+
+`analysis_needed()` дополнительно требует `window.visible`: в простое без окна
+потребителей анализа нет. `settle_analysis()` применяет это решение к движку;
+`run_session` зовёт его после `begin_window` (включить) и перед `park`
+(выключить), поэтому скрытый эфир не тратит CPU на `@level`/`@spectrum`.
 
 ### 2.3. Окно и очередь сообщений
 

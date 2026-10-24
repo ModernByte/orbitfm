@@ -20,8 +20,11 @@ root-вьюпорта: цикл завершается, управление в�
    передать их в `Session` как `AppServices` и при выходе остановить IPC-сервер.
 2. Реализовывать `eframe::App` (`logic` + `ui` + `clear_color` в eframe 0.37) — ровно один
    прогон на одно окно.
-3. Вести цикл показа и скрытия окна: `restore_size` → `begin_window` → `run_window` →
-   `end_window` → `is_quitting` → `park` (§«Порядок инициализации», шаги 11–12).
+3. Вести цикл показа и скрытия окна: `restore_size` → `begin_window` →
+   `settle_analysis` → `run_window` → `end_window` → `is_quitting` →
+   `settle_analysis` → `park` (§«Порядок инициализации», шаги 11–12).
+   `settle_analysis` включает аудио-анализ на время открытого окна и снимает его в
+   простое: скрытый эфир не тратит CPU на `@level`/`@spectrum` (ADR-0027).
    Маршрутизацией `IpcCommand` и `MediaCommand` занимается `Session`: очередь
    `mpsc::Receiver<IpcRequest>` и приёмник MPRIS принадлежат ядру и обслуживаются как из
    `Session::tick()` (окно открыто), так и из `Session::park()` (окно закрыто).
@@ -93,16 +96,20 @@ root-вьюпорта: цикл завершается, управление в�
 11. run_session(commands, wake, AppServices) — Session::new + цикл окна (ADR-0018):
     11.1. Session::restore_size()    — последний известный размер или WINDOW_SIZE (920×660)
     11.2. Session::begin_window(size) — признак «окно открыто», сброс неисполненного намерения
-    11.3. run_window(session, size)  — eframe::run_native ПОВТОРНО из главного потока
+    11.3. Session::settle_analysis() — включить `@level`/`@spectrum` под открытое окно
+    11.4. run_window(session, size)  — eframe::run_native ПОВТОРНО из главного потока
         (кэш событийного цикла — thread_local, другой поток недопустим);
         NativeOptions.viewport собирается из restore_size():
         with_title(WINDOW_TITLE), with_app_id(APP_ID), with_inner_size(size),
         with_min_inner_size(WINDOW_MIN_SIZE = 720×480), with_transparent(true);
         renderer: Renderer::Wgpu
-    11.4. OrbitApp::new(cc, &mut session) — заимствует Session на весь прогон
-    11.5. Session::end_window()      — root-вьюпорт закрыт: wake.clear() + sync_media()
-    11.6. Session::is_quitting()     — выход по флагу, иначе …
-    11.7. Session::park()            — простой без окна; ParkOutcome::Show → шаг 11.1,
+    11.5. OrbitApp::new(cc, &mut session) — заимствует Session на весь прогон
+    11.6. Session::end_window()      — root-вьюпорт закрыт: wake.clear() + sync_media()
+    11.7. Session::is_quitting()     — выход по флагу, иначе …
+    11.8. Session::take_reopen()     — смена режима: новый прогон без парковки,
+                                      анализ остаётся включённым
+    11.9. Session::settle_analysis() — снять анализ: окно уходит в `park`
+    11.10. Session::park()           — простой без окна; ParkOutcome::Show → шаг 11.1,
                                       ParkOutcome::Quit → выход
 12. OrbitApp::new                   — на каждый прогон: применяет тему и акцент к egui
                                       (`palette::configure_style`), ставит системный цветной
@@ -124,7 +131,7 @@ root-вьюпорта: цикл завершается, управление в�
 
 | Команда       | Действие |
 |---------------|----------|
-| Toggle/Show/Hide | Через `WindowState` ядра и `UiIntent` для UI (ADR-0018). Скрытие: `Session::hide` (или `toggle` в состоянии «открыто») → `UiIntent::Close` → `logic()` шлёт `ViewportCommand::Close` → `run_native` возвращается → `Session::end_window` (окно реально уходит из раскладки, `wake.clear()`, `sync_media()`) → `Session::park`. Показать: `Session::show`/`toggle` в скрытом состоянии → `UiIntent::Show` → `park` выходит с `ParkOutcome::Show` → новый `run_window` с восстановленным размером; на niri 26.04 окно с полностью отрисованным деском появляется за ≈1.02 с от приёма команды (≈73 мс из них — сам IPC-запрос). `ViewportCommand::Visible`, `CancelClose` и сжатие поверхности до 1×1 не используются: на Wayland `Visible` — no-op (редакция 1 ADR отклонена live-проверкой) |
+| Toggle/Show/Hide | Через `WindowState` ядра и `UiIntent` для UI (ADR-0018). Скрытие: `Session::hide` (или `toggle` в состоянии «открыто») → `UiIntent::Close` → `logic()` шлёт `ViewportCommand::Close` → `run_native` возвращается → `Session::end_window` (окно реально уходит из раскладки, `wake.clear()`, `sync_media()`) → `settle_analysis` (снимает `@level`/`@spectrum`) → `Session::park`. Показать: `Session::show`/`toggle` в скрытом состоянии → `UiIntent::Show` → `park` выходит с `ParkOutcome::Show` → новый `run_window` с восстановленным размером; на niri 26.04 окно с полностью отрисованным деском появляется за ≈1.02 с от приёма команды (≈73 мс из них — сам IPC-запрос). `ViewportCommand::Visible`, `CancelClose` и сжатие поверхности до 1×1 не используются: на Wayland `Visible` — no-op (редакция 1 ADR отклонена live-проверкой) |
 | Play          | `Session::resolve_station`: поиск в результатах последнего поиска, затем `radio.get_station` (таймаут 8 с); `audio.play(url_resolved)`, запись в историю, асинхронный `radio.send_click`, `sync_media` |
 | Stop          | `Session::stop_playback` → `audio.stop()`; последний URL и станция сохраняются в `Session` для повторного запуска из MPRIS |
 | Volume        | `Session::set_volume` → `audio.set_volume(level)`; витрина MPRIS обновляется `sync_media()` в том же кадре (`tick`) или сразу после команды в `park()` |

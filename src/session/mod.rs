@@ -265,10 +265,16 @@ impl Session {
         }
     }
 
-    /// Нужен ли аудио-анализ: визуализатору или движению глобуса.
+    /// Нужен ли аудио-анализ: окно открыто и его потребляет визуализатор
+    /// или движение глобуса. В простое без окна анализ не нужен никому.
     pub(crate) fn analysis_needed(&self) -> bool {
         let settings = self.settings.settings();
-        self.visualizer_enabled || (settings.motion.is_enabled() && !settings.reduce_motion)
+        analysis_required(
+            self.window.visible,
+            self.visualizer_enabled,
+            settings.motion,
+            settings.reduce_motion,
+        )
     }
 
     /// Меняет режим и гарантирует, что окно будет видно: в `Focus`-раскладке
@@ -319,6 +325,15 @@ impl Session {
     }
 }
 
+fn analysis_required(
+    window_visible: bool,
+    visualizer_enabled: bool,
+    motion: MotionReactivity,
+    reduce_motion: bool,
+) -> bool {
+    window_visible && (visualizer_enabled || (motion.is_enabled() && !reduce_motion))
+}
+
 fn format_status(
     state: &PlaybackState,
     volume: f64,
@@ -346,6 +361,51 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
+
+    #[test]
+    fn analysis_is_suspended_without_a_window() {
+        assert!(!analysis_required(
+            false,
+            true,
+            MotionReactivity::Normal,
+            false
+        ));
+        assert!(!analysis_required(
+            false,
+            false,
+            MotionReactivity::Normal,
+            false
+        ));
+    }
+
+    #[test]
+    fn analysis_follows_visualizer_and_motion_settings() {
+        assert!(analysis_required(true, true, MotionReactivity::Off, false));
+        assert!(analysis_required(
+            true,
+            false,
+            MotionReactivity::Normal,
+            false
+        ));
+        assert!(!analysis_required(
+            true,
+            false,
+            MotionReactivity::Off,
+            false
+        ));
+        assert!(!analysis_required(
+            true,
+            false,
+            MotionReactivity::Normal,
+            true
+        ));
+        assert!(analysis_required(
+            true,
+            true,
+            MotionReactivity::Normal,
+            true
+        ));
+    }
 
     #[test]
     fn wake_handle_is_quiet_without_a_window() {

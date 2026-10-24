@@ -303,6 +303,7 @@ fn run_session(
     loop {
         let size = session.restore_size();
         session.begin_window(size);
+        session.settle_analysis();
         run_window(&mut session, size)?;
         session.end_window();
 
@@ -314,6 +315,7 @@ fn run_session(
             // парковки — следующий прогон уже с геометрией нового режима (ADR-0021 п. 3).
             continue;
         }
+        session.settle_analysis();
         if matches!(session.park(), ParkOutcome::Quit) {
             return Ok(());
         }
