@@ -5,7 +5,13 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),  
 проект следует [Semantic Versioning](https://semver.org/lang/ru/).
 
-## [Unreleased]
+## [0.9.0-rc.3] - 2026-10-24
+
+Пре-релиз 0.9.0: то же, что 0.9.0-rc.2, плюс исправление запуска из виджета
+Noctalia и позиционирования окон режимов. Пакеты: AppImage для Linux x86_64,
+MSI для Windows x64 и DMG для macOS — все без подписи и нотаризации. Flatpak не
+включён: манифест и vendored-источники проверены CI, но для сборки нужны
+`flatpak-builder` и runtime 25.08.
 
 ### Исправлено
 - Плагин Noctalia запускает GUI отсоединённо (`runAsync` без колбэка): вариант

@@ -33,6 +33,14 @@
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.9.0-rc.3" date="2026-10-24">
+      <description>
+        <p>OrbitFM 0.9.0-rc.3 — исправление поверх 0.9.0-rc.2: виджет Noctalia
+        запускает плеер отсоединённо, поэтому окно больше не закрывается через
+        пять секунд после клика, а окна режимов появляются под панелью рядом с
+        виджетом вместо центра экрана.</p>
+      </description>
+    </release>
     <release version="0.9.0-rc.2" date="2026-10-24">
       <description>
         <p>OrbitFM 0.9.0-rc.2 — исправление поверх 0.9.0-rc.1: цвета логов
