@@ -33,6 +33,15 @@
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.9.0-rc.1" date="2026-10-24">
+      <description>
+        <p>OrbitFM 0.9.0-rc.1 — аудио-реактивная планета: полосы Bass/Mid/High
+        без PCM-tap, spring-squash и шесть стилей движения глобуса с
+        onset/beat-детектором, перевороты камеры и Reduce motion, орбитальное
+        аудиокольцо в Focus. При закрытом окне аудио-анализ снимается, а правила
+        окон Focus/Overlay/Listening проверены для плагина Noctalia.</p>
+      </description>
+    </release>
     <release version="0.8.0-rc.1" date="2026-10-24">
       <description>
         <p>OrbitFM 0.8.0-rc.1 — Application Core и честное скрытие окна: эфир,
