@@ -33,8 +33,11 @@ The widget opens the full Focus window. On tiling compositors the compact
 Overlay/Listening capsules need floating window rules, otherwise they are
 stretched to the full tile height. The repository ships ready rules for all
 three modes in `wm-configs/orbitfm-niri.kdl` and
-`wm-configs/orbitfm-hyprland.conf` (920×660, 420×620 and 420×152). For niri the
-file can be included without touching the rest of the config:
+`wm-configs/orbitfm-hyprland.conf` (920×660, 420×620 and 420×152). The niri
+rules also anchor the window to the top-right corner so it opens below the bar
+next to the widget instead of the centre of the screen; adjust `x` if your bar
+layout differs. The file can be included without touching the rest of the
+config:
 
 ```kdl
 include "./cfg/orbitfm.kdl"

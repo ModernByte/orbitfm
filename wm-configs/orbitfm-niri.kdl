@@ -1,5 +1,9 @@
 // OrbitFM: плавающие окна режимов (ADR-0021 п. 4).
-// Плавающие окна Niri центрирует по умолчанию, отдельная позиция не нужна.
+// Позиция якорится к правому верхнему углу — под правой секцией бара Noctalia,
+// где стоит виджет. На Wayland обычное окно не может встать точно под виджет:
+// композитор центрирует плавающие окна, а правило задаёт только смещение от
+// угла вывода. x подобран под правую секцию бара; если виджет сдвинут, измените
+// x (для 420-px капсул — так, чтобы их центр совпал с иконкой).
 // Размер фиксируется по заголовку: у каждого режима свой заголовок, поэтому
 // правила не пересекаются и порядок их применения не важен.
 window-rule {
@@ -7,6 +11,7 @@ window-rule {
     open-floating true
     default-column-width { fixed 920; }
     default-window-height { fixed 660; }
+    default-floating-position x=60 y=48 relative-to="top-right"
     draw-border-with-background false
 }
 
@@ -16,6 +21,7 @@ window-rule {
     open-floating true
     default-column-width { fixed 420; }
     default-window-height { fixed 620; }
+    default-floating-position x=310 y=48 relative-to="top-right"
     draw-border-with-background false
 }
 
@@ -25,5 +31,6 @@ window-rule {
     open-floating true
     default-column-width { fixed 420; }
     default-window-height { fixed 152; }
+    default-floating-position x=310 y=48 relative-to="top-right"
     draw-border-with-background false
 }

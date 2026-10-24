@@ -54,15 +54,19 @@ Noctalia требует `id` в формате `<author>/<plugin>`; `org.modernb
 выполняется:
 
 ```luau
-noctalia.runAsync("orbitfm toggle", function(result)
-    if result.exitCode ~= 0 then
-        noctalia.notify(noctalia.tr("widget.error_title"), result.stderr)
-    end
-end)
+local started = noctalia.runAsync("orbitfm toggle")
+
+if not started then
+    noctalia.notify(noctalia.tr("widget.error_title"), noctalia.tr("widget.error_body"))
+end
 ```
 
-`runAsync` запускает `orbitfm` через `/bin/sh -c`; бинарник должен быть в `PATH`.
-Если процесс не запустился, виджет показывает уведомление. Плагин **не** хранит
+`runAsync` без колбэка запускает `orbitfm` через `/bin/sh -c` полностью
+отсоединённым (double-fork + setsid); бинарник должен быть в `PATH`. Форма с
+колбэком здесь неприменима: Noctalia ограничивает такую команду таймаутом
+`kDefaultCommandTimeout = 5000 мс` и по истечении убивает всю группу процессов
+вместе с только что поднятым GUI. Поэтому виджет проверяет лишь факт запуска
+команды, а ошибки работы плеера остаются в логах OrbitFM. Плагин **не** хранит
 состояние плеера и не содержит бизнес-логики; `toggle` при отсутствии экземпляра
 запускает OrbitFM с видимым окном (семантика CLI).
 
@@ -110,6 +114,7 @@ window-rule {
     open-floating true
     default-column-width { fixed 920; }
     default-window-height { fixed 660; }
+    default-floating-position x=60 y=48 relative-to="top-right"
     draw-border-with-background false
 }
 
@@ -118,6 +123,7 @@ window-rule {
     open-floating true
     default-column-width { fixed 420; }
     default-window-height { fixed 620; }
+    default-floating-position x=310 y=48 relative-to="top-right"
     draw-border-with-background false
 }
 
@@ -126,12 +132,25 @@ window-rule {
     open-floating true
     default-column-width { fixed 420; }
     default-window-height { fixed 152; }
+    default-floating-position x=310 y=48 relative-to="top-right"
     draw-border-with-background false
 }
 ```
 
-Плавающие окна Niri центрирует по умолчанию. `default-floating-position`
-не используется: допустимые значения `relative-to` не включают `center`.
+Плавающие окна Niri центрирует по умолчанию, поэтому без
+`default-floating-position` окно появляется в центре экрана. Якорь
+`top-right` ставит окно под панелью Noctalia (её высота 36 px, отсюда `y=48`)
+и по центру виджета OrbitFM. Отступы рассчитаны для панели 1920 px, где центр
+виджета примерно в 520 px от правого края: Focus шириной 920 px требует
+`x=60`, капсулы шириной 420 px — `x=310`. При другой ширине экрана или
+расположении виджета отступы подбираются так же.
+
+Wayland не позволяет обычному top-level окну позиционировать себя самому, а
+Plugin API Noctalia не отдаёт прямоугольник виджета, поэтому точная привязка
+«под виджетом» недостижима: композитор ставит окно по статическому правилу.
+`relative-to="center"` в Niri не поддерживается, допустимые значения — края и
+углы экрана/выхода.
+
 Файл проверен командой `niri validate -c wm-configs/orbitfm-niri.kdl`.
 Локально его удобно положить отдельным include, не меняя основной конфиг:
 
@@ -143,7 +162,8 @@ include "./cfg/orbitfm.kdl"
 Без этих правил niri тайлит капсулы на всю высоту, и содержимое Overlay/
 Listening растягивается. Приёмочная проверка 2026-10-24: `orbitfm toggle`
 через изолированный runtime даёт Focus 920×660 floating, `mode overlay` —
-420×620 floating, `mode listening` — 420×152 floating.
+420×620 floating с позицией `[1188, 84]` (x = 1920 − 310 − ширина окна,
+y = 36 + 48), `mode listening` — 420×152 floating.
 
 ### Hyprland
 
