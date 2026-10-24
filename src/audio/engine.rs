@@ -394,6 +394,10 @@ mod tests {
         let url =
             std::env::var("ORBITFM_TEST_STREAM_URL").expect("задайте ORBITFM_TEST_STREAM_URL");
         let mut engine = AudioEngine::new().expect("не удалось создать аудио-ядро");
+        engine
+            .set_volume(0.0)
+            .await
+            .expect("не удалось выключить звук");
 
         engine.play(&url).await.expect("не удалось запустить поток");
         engine
@@ -415,11 +419,26 @@ mod tests {
         assert!(frame.centroid_hz > 0.0, "центроид: {frame:?}");
         assert!(frame.rms_db.is_finite(), "RMS: {frame:?}");
 
+        let bands = tokio::time::timeout(Duration::from_secs(20), async {
+            loop {
+                if let Some(bands) = engine.spectrum().and_then(|frame| frame.bands) {
+                    break bands;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .expect("полосы Bass/Mid/High не появились за 20 секунд");
+        for db in [bands.bass_db, bands.mid_db, bands.high_db] {
+            assert!(db.is_finite() && db >= -90.0, "полоса: {bands:?}");
+        }
+
         engine
             .set_spectrum_enabled(false)
             .await
             .expect("не удалось выключить визуализатор");
         assert!(!engine.spectrum_enabled());
+        assert!(engine.spectrum().is_none());
         engine.stop().await.expect("не удалось остановить поток");
     }
 }

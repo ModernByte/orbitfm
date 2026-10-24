@@ -11,7 +11,7 @@ use eframe::egui;
 use tracing::{debug, warn};
 
 use crate::audio::PlaybackState;
-use crate::render::{GlobeRenderer, SpectrumOverlay, SpectrumTarget, VisualizerModel};
+use crate::render::{BandTargets, GlobeRenderer, SpectrumOverlay, SpectrumTarget, VisualizerModel};
 use crate::services::USER_AGENT;
 use crate::session::search::SearchMode;
 use crate::session::{Notice, Session, UiIntent};
@@ -584,6 +584,9 @@ impl Frame {
             flux: frame.flux,
             flatness: frame.flatness,
             rms_db: frame.rms_db,
+            bands: frame
+                .bands
+                .map(|bands| BandTargets::from_db(bands.bass_db, bands.mid_db, bands.high_db)),
         });
         // Визуализатор живёт кадрами: без данных или в паузе — idle-дыхание.
         let viz_active = session.spectrum_enabled

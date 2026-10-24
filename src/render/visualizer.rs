@@ -198,6 +198,7 @@ mod tests {
             flux: 0.001,
             flatness: 0.4,
             rms_db,
+            bands: None,
         }
     }
 

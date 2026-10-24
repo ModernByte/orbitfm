@@ -140,7 +140,20 @@ pub fn paint_markers(
     time: f64,
 );
 
-/// Срез FFT-метрик для визуализации; не содержит доменных типов.
+/// Нормированные уровни полос `0.0..=1.0`; не зависит от аудио-модуля.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct BandTargets {
+    pub bass: f32,
+    pub mid: f32,
+    pub high: f32,
+}
+
+impl BandTargets {
+    /// Нормирует дБFS: пол −90 дБ, диапазон 80 дБ; нефинитное значение — 0.
+    pub fn from_db(bass_db: f32, mid_db: f32, high_db: f32) -> Self;
+}
+
+/// Срез FFT-метрик и полос для визуализации; не содержит доменных типов.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct SpectrumTarget {
     pub centroid_hz: f32,
@@ -148,6 +161,8 @@ pub struct SpectrumTarget {
     pub flux: f32,
     pub flatness: f32,
     pub rms_db: f32,
+    /// `None` — полосы недоступны; потребитель обязан работать в этом режиме.
+    pub bands: Option<BandTargets>,
 }
 
 /// Сглаженное состояние спектрального оверлея.
@@ -216,6 +231,11 @@ impl SpectrumOverlay {
 - `SpectrumOverlay` — только сглаженное состояние: отрисовки в модуле нет
   (старый FFT-strip удалён, ADR-0019). Модуль не знает о `AudioEngine` и
   `SpectrumFrame`: App Core передаёт срез `SpectrumTarget`.
+- `SpectrumTarget.bands` заполняется App Core из `SpectrumFrame.bands` через
+  `BandTargets::from_db` (пол −90 дБ, диапазон 80 дБ); при `None` потребители
+  обязаны деградировать к полному RMS+flux, а не исчезать (ADR-0027, ADR-0028).
+  В Phase 0 поле только передаётся: орбитальное кольцо и глобус его не читают,
+  пока не появятся потребители Phase 1.
 - `SpectrumOverlay::pulse` — смесь сглаженного уровня и flux (`0.75/0.25`),
   ограниченная `[0, 1]`; при невидимом оверлее возвращает 0. App Core передаёт
   значение в кольцо Listening; при выключенном визуализаторе и тишине кольцо
@@ -244,4 +264,4 @@ impl SpectrumOverlay {
 - Подписи стран — вне текущего объёма; маркеры станций и контуры стран
   реализованы egui-оверлеем (ADR-0012), без GPU-ресурсов.
 - Спектральный оверлей показывает агрегированные метрики, а не полосы по бинам
-  (ADR-0010); это художественная огибающая, а не точный анализатор спектра.
+  (ADR-0010); `BandTargets` — три огибающие, а не точный анализатор спектра.

@@ -41,6 +41,20 @@ pub enum AudioEvent {
     EndOfFile,
 }
 
+/// Уровни трёх полос эфира, дБFS (ADR-0027).
+///
+/// Полосы приходят из `@spectrum`; при недоступности графа весь набор
+/// отсутствует, а не заполняется нулями.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct BandLevels {
+    /// 20–150 Гц.
+    pub bass_db: f32,
+    /// 150–2000 Гц.
+    pub mid_db: f32,
+    /// 2000–20000 Гц.
+    pub high_db: f32,
+}
+
 /// Кадр экспериментального FFT-визуализатора.
 ///
 /// Значения приходят из `aspectralstats`/`astats` и описывают кадр целиком,
@@ -59,6 +73,8 @@ pub struct SpectrumFrame {
     pub flux: f32,
     /// Уровень RMS, дБ (обычно `-80.0..=0.0`).
     pub rms_db: f32,
+    /// Уровни Bass/Mid/High; `None` — граф полос недоступен.
+    pub bands: Option<BandLevels>,
 }
 
 /// Ошибки аудио-подсистемы.

@@ -94,12 +94,19 @@ pub struct GlobeInput {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct BandTargets {
+    pub bass: f32,
+    pub mid: f32,
+    pub high: f32,
+}
+
 pub struct SpectrumTarget {
     pub centroid_hz: f32,
     pub spread_hz: f32,
     pub flux: f32,
     pub flatness: f32,
     pub rms_db: f32,
+    pub bands: Option<BandTargets>,
 }
 
 pub struct SpectrumOverlay { /* сглаженные значения */ }
@@ -235,7 +242,9 @@ impl SpectrumOverlay {
 ## 8. Спектральное состояние и визуализатор
 
 - `SpectrumTarget` — срез метрик (`centroid_hz`, `spread_hz`, `flux`, `flatness`,
-  `rms_db`) без зависимости от аудио-модуля.
+  `rms_db`) и опциональных полос `bands` без зависимости от аудио-модуля.
+  `BandTargets::from_db` нормирует дБFS в `0.0..=1.0` (пол −90 дБ, диапазон 80 дБ).
+  В Phase 0 поле передаётся, но ещё не читается кольцом и глобусом.
 - `SpectrumOverlay` сглаживает значения экспоненциально; первый кадр принимается
   как есть, `None` запускает затухание. Состояние живёт в `OrbitApp`.
 - `render/visualizer.rs` (`VisualizerModel`) — модель cava-столбцов (ADR-0022):

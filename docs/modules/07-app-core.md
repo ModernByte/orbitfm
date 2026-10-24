@@ -112,7 +112,8 @@ struct Frame {
 `Frame::capture(&ctx, session, &mut visualizer, viewport)` вызывается до отрисовки зон:
 `Palette::for_ui(ctx.theme(), accent)`, `session.settings.settings()`,
 `session.audio.state()`, `session.audio.volume()`, `session.audio.spectrum()` →
-`SpectrumTarget`, сумма `marker.count` в `markers_total`, `library.is_favorite` для
+`SpectrumTarget` (шесть агрегатов и `bands` через `BandTargets::from_db`), сумма
+`marker.count` в `markers_total`, `library.is_favorite` для
 текущей станции, `current_url.is_some()` в `can_resume`,
 `search.context.mode == SearchMode::Country` в `country_mode` и
 `DeskLayout::compute(viewport, panel_open, show_help, session.window_mode())` в
@@ -346,8 +347,10 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
   `runtime.block_on(AudioEngine::set_spectrum_enabled)`; ошибка показывается тостом и не
   прерывает воспроизведение. Состояние чипа не сохраняется в настройках.
 - `Session::tick()` каждый кадр синхронизирует `spectrum_enabled` с движком, а
-  `Frame::capture` преобразует `AudioEngine::spectrum()` в `SpectrumTarget`: он питает и
-  `SpectrumOverlay::update` (кольцо Listening), и `VisualizerModel::advance`.
+  `Frame::capture` преобразует `AudioEngine::spectrum()` в `SpectrumTarget` (включая
+  `bands: Option<BandTargets>`): он питает и `SpectrumOverlay::update` (кольцо
+  Listening), и `VisualizerModel::advance`. В Phase 0 `bands` только передаются
+  в `SpectrumTarget`; будущие потребители — ADR-0028.
   Модель (`visualizer`) живёт в `OrbitApp` как ресурс прогона, отрисовку делает
   `ui::widgets::viz_bars`: поле 156×46 px, зазор 2 px, скругление 1 px, градиент по
   абсолютной высоте, шапки пиков 2 px.

@@ -13,8 +13,8 @@ pub use camera::GlobeCamera;
 pub use countries::{CountryStyle, paint_country};
 pub use globe::{GlobeRenderer, paint_globe};
 pub use markers::{MarkerLabel, MarkerVisual, paint_markers, sphere_point};
+pub use spectrum::{BandTargets, SpectrumOverlay, SpectrumTarget};
 pub(crate) use spectrum::{MIN_RMS_DB, RMS_RANGE_DB};
-pub use spectrum::{SpectrumOverlay, SpectrumTarget};
 pub use visualizer::{VisualizerModel, bar_color};
 
 /// Ввод пользователя для глобуса.

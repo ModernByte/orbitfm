@@ -6,19 +6,37 @@ use libmpv2::events::{Event as MpvEvent, PropertyData};
 use tokio::sync::{mpsc, oneshot};
 
 use super::engine::{AudioCommand, CommandResult, Shared};
-use super::{AudioError, AudioEvent, PlaybackState, SpectrumFrame};
+use super::{AudioError, AudioEvent, BandLevels, PlaybackState, SpectrumFrame};
 
 const EVENT_POLL_INTERVAL_SECS: f64 = 0.05;
 const SPECTRUM_POLL_INTERVAL: Duration = Duration::from_millis(50);
-const SPECTRUM_FILTER: &str = "@spectrum:lavfi=[\
+const LAYOUT_RETRY_INTERVAL: Duration = Duration::from_millis(250);
+const LAYOUT_RETRY_ATTEMPTS: u8 = 8;
+/// Нижняя граница полос: тише неё полоса считается подавленной (ADR-0027).
+const BAND_FLOOR_DB: f32 = -90.0;
+/// Шесть агрегатов живут в `@level` и не зависят от раскладки каналов.
+const LEVEL_FILTER: &str = "@level:lavfi=[\
 aspectralstats=measure=centroid+spread+flatness+flux+rolloff:win_size=2048,\
 astats=metadata=1:reset=1]";
-const SPECTRUM_CENTROID: &str = "af-metadata/spectrum/lavfi.aspectralstats.1.centroid";
-const SPECTRUM_SPREAD: &str = "af-metadata/spectrum/lavfi.aspectralstats.1.spread";
-const SPECTRUM_ROLLOFF: &str = "af-metadata/spectrum/lavfi.aspectralstats.1.rolloff";
-const SPECTRUM_FLATNESS: &str = "af-metadata/spectrum/lavfi.aspectralstats.1.flatness";
-const SPECTRUM_FLUX: &str = "af-metadata/spectrum/lavfi.aspectralstats.1.flux";
-const SPECTRUM_RMS: &str = "af-metadata/spectrum/lavfi.astats.Overall.RMS_level";
+/// Общая часть `@spectrum`: копия сигнала, три полосы и RMS по восьми каналам.
+const SPECTRUM_ANALYSIS: &str = "\
+asplit=2[main][analysis];\
+[analysis]highpass=f=20,acrossover=split=150 2000:order=8th[lo][mi][hi];\
+[lo][mi][hi]amerge=inputs=3[bands];\
+[main][bands]amerge=inputs=2,\
+astats=metadata=1:reset=1:measure_perchannel=RMS_level:measure_overall=none";
+const LEVEL_CENTROID: &str = "af-metadata/level/lavfi.aspectralstats.1.centroid";
+const LEVEL_SPREAD: &str = "af-metadata/level/lavfi.aspectralstats.1.spread";
+const LEVEL_ROLLOFF: &str = "af-metadata/level/lavfi.aspectralstats.1.rolloff";
+const LEVEL_FLATNESS: &str = "af-metadata/level/lavfi.aspectralstats.1.flatness";
+const LEVEL_FLUX: &str = "af-metadata/level/lavfi.aspectralstats.1.flux";
+const LEVEL_RMS: &str = "af-metadata/level/lavfi.astats.Overall.RMS_level";
+const BAND_BASS_LEFT: &str = "af-metadata/spectrum/lavfi.astats.3.RMS_level";
+const BAND_BASS_RIGHT: &str = "af-metadata/spectrum/lavfi.astats.4.RMS_level";
+const BAND_MID_LEFT: &str = "af-metadata/spectrum/lavfi.astats.5.RMS_level";
+const BAND_MID_RIGHT: &str = "af-metadata/spectrum/lavfi.astats.6.RMS_level";
+const BAND_HIGH_LEFT: &str = "af-metadata/spectrum/lavfi.astats.7.RMS_level";
+const BAND_HIGH_RIGHT: &str = "af-metadata/spectrum/lavfi.astats.8.RMS_level";
 const END_FILE_EOF: libmpv2::EndFileReason = libmpv2::mpv_end_file_reason::Eof;
 const END_FILE_ERROR: libmpv2::EndFileReason = libmpv2::mpv_end_file_reason::Error;
 const END_FILE_STOP: libmpv2::EndFileReason = libmpv2::mpv_end_file_reason::Stop;
@@ -28,6 +46,32 @@ const DEFAULT_RECONNECT_ATTEMPTS: u32 = 5;
 const INITIAL_RECONNECT_DELAY: Duration = Duration::from_secs(1);
 const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(16);
 
+/// Раскладка, для которой определён граф полос (ADR-0027).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChannelLayout {
+    Mono,
+    Stereo,
+    Unsupported,
+}
+
+impl ChannelLayout {
+    fn from_count(count: i64) -> Self {
+        match count {
+            1 => Self::Mono,
+            2 => Self::Stereo,
+            _ => Self::Unsupported,
+        }
+    }
+}
+
+/// Отложенная попытка узнать раскладку: mpv сообщает `channel-count`
+/// уже после `FileLoaded`, но до первого аудиокадра.
+#[derive(Debug, Clone, Copy)]
+struct LayoutRetry {
+    at: Instant,
+    attempt: u8,
+}
+
 pub(super) struct AudioWorker {
     mpv: Mpv,
     shared: Arc<Shared>,
@@ -35,6 +79,12 @@ pub(super) struct AudioWorker {
     active_url: Option<String>,
     tracker: ReconnectTracker,
     last_spectrum_poll: Option<Instant>,
+    layout_retry: Option<LayoutRetry>,
+    /// Граф полос ещё можно устанавливать; `false` после отказа фильтра.
+    bands_allowed: bool,
+    /// `@spectrum` реально стоит в текущей цепочке.
+    bands_active: bool,
+    applied_af: Option<String>,
 }
 
 impl AudioWorker {
@@ -50,6 +100,10 @@ impl AudioWorker {
             active_url: None,
             tracker: ReconnectTracker::default(),
             last_spectrum_poll: None,
+            layout_retry: None,
+            bands_allowed: true,
+            bands_active: false,
+            applied_af: None,
         }
     }
 
@@ -72,6 +126,10 @@ impl AudioWorker {
 
             if self.tracker.take_due(Instant::now()).is_some() {
                 self.retry();
+            }
+
+            if self.layout_retry_due(Instant::now()) {
+                self.retry_layout();
             }
 
             if let Some(event) = self.next_event() {
@@ -129,6 +187,15 @@ impl AudioWorker {
     fn play_url(&mut self, url: &str) -> Result<(), AudioError> {
         self.active_url = Some(url.to_owned());
         self.tracker.reset();
+        self.layout_retry = None;
+        self.bands_active = false;
+        // Новая станция может иметь другую раскладку: до FileLoaded держим
+        // только безопасный @level, полосы вернутся после определения каналов.
+        if self.shared.spectrum_enabled()
+            && let Err(err) = self.apply_af_chain(LEVEL_FILTER)
+        {
+            tracing::warn!(error = %err, "не удалось сбросить граф полос перед новым потоком");
+        }
         self.shared.set_spectrum(None);
         self.shared.set_state(PlaybackState::Buffering);
         self.shared.emit(AudioEvent::Buffering);
@@ -153,6 +220,8 @@ impl AudioWorker {
 
         self.active_url = None;
         self.tracker.reset();
+        self.layout_retry = None;
+        self.bands_active = false;
         self.shared.set_spectrum(None);
         self.shared.set_state(PlaybackState::Stopped);
         self.shared.emit(AudioEvent::Stopped);
@@ -195,15 +264,124 @@ impl AudioWorker {
     }
 
     fn apply_spectrum(&mut self, enabled: bool) -> Result<(), AudioError> {
-        let filters = if enabled { SPECTRUM_FILTER } else { "" };
-        self.mpv
-            .set_property("af", filters)
-            .map_err(|err| AudioError::Spectrum(err.to_string()))?;
-        self.shared.set_spectrum_enabled(enabled);
         if !enabled {
+            self.set_af("")?;
+            self.shared.set_spectrum_enabled(false);
             self.shared.set_spectrum(None);
+            self.bands_active = false;
+            self.layout_retry = None;
+            return Ok(());
+        }
+
+        self.shared.set_spectrum_enabled(true);
+        self.bands_allowed = true;
+        self.layout_retry = None;
+        if let Err(err) = self.install_analysis_filters() {
+            self.shared.set_spectrum_enabled(false);
+            return Err(err);
         }
         Ok(())
+    }
+
+    fn install_analysis_filters(&mut self) -> Result<(), AudioError> {
+        let layout = self.channel_layout();
+        if layout.is_none() && self.active_url.is_some() {
+            self.schedule_layout_retry();
+        }
+        let desired = analysis_chain(layout, self.bands_allowed);
+        self.apply_af_chain(&desired)
+    }
+
+    fn apply_af_chain(&mut self, desired: &str) -> Result<(), AudioError> {
+        if self.applied_af.as_deref() == Some(desired) {
+            self.bands_active = desired.contains("@spectrum");
+            return Ok(());
+        }
+
+        match self.set_af(desired) {
+            Ok(()) => {
+                self.bands_active = desired.contains("@spectrum");
+                self.shared.set_spectrum(None);
+                tracing::debug!(bands = self.bands_active, "граф аудио-анализа обновлён");
+                Ok(())
+            }
+            Err(err) if desired.contains("@spectrum") => {
+                tracing::warn!(
+                    error = %err,
+                    "граф полос отклонён mpv; остаётся только @level"
+                );
+                self.bands_allowed = false;
+                self.bands_active = false;
+                self.layout_retry = None;
+                self.set_af(LEVEL_FILTER)?;
+                self.shared.set_spectrum(None);
+                Ok(())
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    fn set_af(&mut self, chain: &str) -> Result<(), AudioError> {
+        self.mpv
+            .set_property("af", chain)
+            .map_err(|err| AudioError::Spectrum(err.to_string()))?;
+        self.applied_af = Some(chain.to_owned());
+        Ok(())
+    }
+
+    fn channel_layout(&self) -> Option<ChannelLayout> {
+        let count = self
+            .mpv
+            .get_property::<i64>("audio-params/channel-count")
+            .ok()?;
+        Some(ChannelLayout::from_count(count))
+    }
+
+    fn schedule_layout_retry(&mut self) {
+        if !self.bands_allowed
+            || !self.shared.spectrum_enabled()
+            || self.active_url.is_none()
+            || self.layout_retry.is_some()
+        {
+            return;
+        }
+        self.layout_retry = Some(LayoutRetry {
+            at: Instant::now() + LAYOUT_RETRY_INTERVAL,
+            attempt: 1,
+        });
+    }
+
+    fn layout_retry_due(&self, now: Instant) -> bool {
+        self.layout_retry.is_some_and(|retry| retry.at <= now)
+    }
+
+    fn retry_layout(&mut self) {
+        let Some(retry) = self.layout_retry.take() else {
+            return;
+        };
+        if !self.shared.spectrum_enabled() || self.active_url.is_none() {
+            return;
+        }
+
+        match self.channel_layout() {
+            Some(_) => {
+                if let Err(err) = self.install_analysis_filters() {
+                    tracing::warn!(
+                        error = %err,
+                        "не удалось обновить граф полос после загрузки"
+                    );
+                }
+            }
+            None if retry.attempt < LAYOUT_RETRY_ATTEMPTS => {
+                self.layout_retry = Some(LayoutRetry {
+                    at: Instant::now() + LAYOUT_RETRY_INTERVAL,
+                    attempt: retry.attempt + 1,
+                });
+            }
+            None => {
+                tracing::debug!("раскладка каналов не определилась; полосы недоступны");
+            }
+        }
     }
 
     fn spectrum_poll_due(&self) -> bool {
@@ -222,7 +400,7 @@ impl AudioWorker {
             return;
         }
 
-        if let Some(frame) = read_spectrum(&self.mpv) {
+        if let Some(frame) = read_spectrum(&self.mpv, self.bands_active) {
             self.shared.set_spectrum(Some(frame));
         }
     }
@@ -254,6 +432,15 @@ impl AudioWorker {
         };
 
         self.tracker.reset();
+        if self.shared.spectrum_enabled() {
+            self.layout_retry = None;
+            if let Err(err) = self.install_analysis_filters() {
+                tracing::warn!(
+                    error = %err,
+                    "не удалось применить граф анализа после загрузки"
+                );
+            }
+        }
         let state = if self.is_paused() {
             PlaybackState::Paused
         } else {
@@ -316,6 +503,8 @@ impl AudioWorker {
             return;
         }
         self.shared.set_spectrum(None);
+        self.layout_retry = None;
+        self.bands_active = false;
 
         match self.tracker.on_failure(Instant::now()) {
             RetryOutcome::Scheduled { attempt, delay } => {
@@ -342,15 +531,82 @@ impl AudioWorker {
     }
 }
 
-fn read_spectrum(mpv: &Mpv) -> Option<SpectrumFrame> {
+/// Собирает цепочку `af`: шесть агрегатов всегда, полосы — когда раскладка
+/// известна и mpv ещё не отверг граф полос (ADR-0027).
+fn analysis_chain(layout: Option<ChannelLayout>, with_bands: bool) -> String {
+    let spectrum = layout.filter(|_| with_bands).and_then(spectrum_filter);
+    match spectrum {
+        Some(filter) => format!("{LEVEL_FILTER},{filter}"),
+        None => LEVEL_FILTER.to_owned(),
+    }
+}
+
+/// Граф трёх полос: копия сигнала уходит в `acrossover`, оригинал возвращается
+/// в выход без изменений; `pan` нормализует моно к стерео и обратно.
+fn spectrum_filter(layout: ChannelLayout) -> Option<String> {
+    match layout {
+        ChannelLayout::Stereo => Some(format!(
+            "@spectrum:lavfi=[{SPECTRUM_ANALYSIS},pan=stereo|c0=c0|c1=c1]"
+        )),
+        ChannelLayout::Mono => Some(format!(
+            "@spectrum:lavfi=[pan=stereo|c0=c0|c1=c0,{SPECTRUM_ANALYSIS},\
+pan=mono|c0=0.5*c0+0.5*c1]"
+        )),
+        ChannelLayout::Unsupported => None,
+    }
+}
+
+fn read_spectrum(mpv: &Mpv, bands_active: bool) -> Option<SpectrumFrame> {
+    let bands = if bands_active {
+        read_band_levels(mpv)
+    } else {
+        None
+    };
     spectrum_from_values(
-        read_metric(mpv, SPECTRUM_CENTROID)?,
-        read_metric(mpv, SPECTRUM_SPREAD)?,
-        read_metric(mpv, SPECTRUM_ROLLOFF)?,
-        read_metric(mpv, SPECTRUM_FLATNESS)?,
-        read_metric(mpv, SPECTRUM_FLUX)?,
-        read_metric(mpv, SPECTRUM_RMS)?,
+        read_metric(mpv, LEVEL_CENTROID)?,
+        read_metric(mpv, LEVEL_SPREAD)?,
+        read_metric(mpv, LEVEL_ROLLOFF)?,
+        read_metric(mpv, LEVEL_FLATNESS)?,
+        read_metric(mpv, LEVEL_FLUX)?,
+        read_metric(mpv, LEVEL_RMS)?,
+        bands,
     )
+}
+
+fn read_band_levels(mpv: &Mpv) -> Option<BandLevels> {
+    let bass = band_db(
+        read_metric(mpv, BAND_BASS_LEFT)?,
+        read_metric(mpv, BAND_BASS_RIGHT)?,
+    )?;
+    let mid = band_db(
+        read_metric(mpv, BAND_MID_LEFT)?,
+        read_metric(mpv, BAND_MID_RIGHT)?,
+    )?;
+    let high = band_db(
+        read_metric(mpv, BAND_HIGH_LEFT)?,
+        read_metric(mpv, BAND_HIGH_RIGHT)?,
+    )?;
+    Some(BandLevels {
+        bass_db: bass,
+        mid_db: mid,
+        high_db: high,
+    })
+}
+
+/// Объединяет L/R по мощности; `-inf` опускается до пола, `NaN`/`+inf`
+/// инвалидируют всю тройку полос.
+fn band_db(left_db: f32, right_db: f32) -> Option<f32> {
+    let invalid = |value: f32| value.is_nan() || value == f32::INFINITY;
+    if invalid(left_db) || invalid(right_db) {
+        return None;
+    }
+    let power = 0.5 * (10f32.powf(left_db / 10.0) + 10f32.powf(right_db / 10.0));
+    let db = 10.0 * power.log10();
+    Some(if db.is_finite() {
+        db.max(BAND_FLOOR_DB)
+    } else {
+        BAND_FLOOR_DB
+    })
 }
 
 fn read_metric(mpv: &Mpv, property: &str) -> Option<f32> {
@@ -365,6 +621,7 @@ fn spectrum_from_values(
     flatness: f32,
     flux: f32,
     rms_db: f32,
+    bands: Option<BandLevels>,
 ) -> Option<SpectrumFrame> {
     if ![centroid_hz, spread_hz, rolloff_hz, flatness, flux, rms_db]
         .into_iter()
@@ -380,6 +637,7 @@ fn spectrum_from_values(
         flatness: flatness.clamp(0.0, 1.0),
         flux: flux.max(0.0),
         rms_db,
+        bands,
     })
 }
 
@@ -544,7 +802,7 @@ mod tests {
 
     #[test]
     fn accepts_valid_spectrum_values() {
-        let frame = spectrum_from_values(1741.0, 1679.0, 4008.0, 0.5, 0.001, -19.2)
+        let frame = spectrum_from_values(1741.0, 1679.0, 4008.0, 0.5, 0.001, -19.2, None)
             .expect("кадр должен быть валидным");
         assert_eq!(
             frame,
@@ -555,19 +813,32 @@ mod tests {
                 flatness: 0.5,
                 flux: 0.001,
                 rms_db: -19.2,
+                bands: None,
             }
         );
     }
 
     #[test]
+    fn keeps_band_levels_in_frame() {
+        let bands = BandLevels {
+            bass_db: -24.0,
+            mid_db: -21.0,
+            high_db: -30.0,
+        };
+        let frame = spectrum_from_values(1741.0, 1679.0, 4008.0, 0.5, 0.001, -19.2, Some(bands))
+            .expect("кадр должен быть валидным");
+        assert_eq!(frame.bands, Some(bands));
+    }
+
+    #[test]
     fn rejects_non_finite_spectrum_values() {
-        assert!(spectrum_from_values(f32::NAN, 1.0, 1.0, 0.5, 0.0, -20.0).is_none());
-        assert!(spectrum_from_values(1.0, 1.0, 1.0, 0.5, 0.0, f32::INFINITY).is_none());
+        assert!(spectrum_from_values(f32::NAN, 1.0, 1.0, 0.5, 0.0, -20.0, None).is_none());
+        assert!(spectrum_from_values(1.0, 1.0, 1.0, 0.5, 0.0, f32::INFINITY, None).is_none());
     }
 
     #[test]
     fn clamps_spectrum_ranges() {
-        let frame = spectrum_from_values(-10.0, -1.0, -2.0, 2.0, -0.5, -3.0)
+        let frame = spectrum_from_values(-10.0, -1.0, -2.0, 2.0, -0.5, -3.0, None)
             .expect("кадр должен быть валидным");
         assert_eq!(frame.centroid_hz, 0.0);
         assert_eq!(frame.spread_hz, 0.0);
@@ -575,6 +846,60 @@ mod tests {
         assert_eq!(frame.flatness, 1.0);
         assert_eq!(frame.flux, 0.0);
         assert_eq!(frame.rms_db, -3.0);
+    }
+
+    #[test]
+    fn combines_band_channels_by_power() {
+        assert_eq!(band_db(-20.0, -20.0), Some(-20.0));
+        let mixed = band_db(-10.0, -20.0).expect("полоса должна быть валидной");
+        assert!((mixed - (-12.596_374)).abs() < 1e-4, "mixed: {mixed}");
+    }
+
+    #[test]
+    fn floors_silent_band_and_rejects_garbage() {
+        let one_silent = band_db(f32::NEG_INFINITY, -30.0).expect("полоса должна быть валидной");
+        assert!(
+            (one_silent - (-33.010_3)).abs() < 1e-3,
+            "one silent: {one_silent}"
+        );
+        assert_eq!(
+            band_db(f32::NEG_INFINITY, f32::NEG_INFINITY),
+            Some(BAND_FLOOR_DB)
+        );
+        assert_eq!(band_db(f32::NAN, -30.0), None);
+        assert_eq!(band_db(-30.0, f32::INFINITY), None);
+    }
+
+    #[test]
+    fn maps_channel_counts_to_layouts() {
+        assert_eq!(ChannelLayout::from_count(1), ChannelLayout::Mono);
+        assert_eq!(ChannelLayout::from_count(2), ChannelLayout::Stereo);
+        assert_eq!(ChannelLayout::from_count(6), ChannelLayout::Unsupported);
+    }
+
+    #[test]
+    fn analysis_chain_requires_known_layout_and_permission() {
+        assert_eq!(analysis_chain(None, true), LEVEL_FILTER);
+        assert_eq!(
+            analysis_chain(Some(ChannelLayout::Unsupported), true),
+            LEVEL_FILTER
+        );
+        assert_eq!(
+            analysis_chain(Some(ChannelLayout::Stereo), false),
+            LEVEL_FILTER
+        );
+    }
+
+    #[test]
+    fn analysis_chain_keeps_level_and_spectrum_labels() {
+        let stereo = analysis_chain(Some(ChannelLayout::Stereo), true);
+        assert!(stereo.starts_with(LEVEL_FILTER));
+        assert!(stereo.contains("@spectrum:lavfi=[asplit=2[main][analysis];"));
+        assert!(stereo.ends_with("astats=metadata=1:reset=1:measure_perchannel=RMS_level:measure_overall=none,pan=stereo|c0=c0|c1=c1]"));
+
+        let mono = analysis_chain(Some(ChannelLayout::Mono), true);
+        assert!(mono.contains("pan=stereo|c0=c0|c1=c0,asplit=2[main][analysis];"));
+        assert!(mono.ends_with("pan=mono|c0=0.5*c0+0.5*c1]"));
     }
 
     #[test]

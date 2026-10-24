@@ -37,6 +37,17 @@ pub enum AudioEvent {
     EndOfFile,
 }
 
+/// Уровни трёх полос, дБFS. `None` в `SpectrumFrame` — полосы недоступны.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct BandLevels {
+    /// 20–150 Гц.
+    pub bass_db: f32,
+    /// 150–2000 Гц.
+    pub mid_db: f32,
+    /// 2000–20000 Гц.
+    pub high_db: f32,
+}
+
 /// Агрегированные FFT-метрики текущего аудиокадра.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct SpectrumFrame {
@@ -52,6 +63,8 @@ pub struct SpectrumFrame {
     pub flux: f32,
     /// RMS-уровень, дБFS.
     pub rms_db: f32,
+    /// Уровни Bass/Mid/High; `None`, если граф полос недоступен (ADR-0027).
+    pub bands: Option<BandLevels>,
 }
 
 /// Ошибки аудио-подсистемы.
@@ -97,14 +110,14 @@ impl AudioEngine {
     /// Подписка на события.
     pub fn subscribe(&self) -> broadcast::Receiver<AudioEvent>;
 
-    /// Включает или выключает FFT-визуализатор. По умолчанию включён;
-    /// при старте воркер сам ставит `af`-фильтр.
+    /// Включает или выключает аудио-анализ (шесть агрегатов и полосы).
+    /// По умолчанию включён; при старте воркер сам ставит `af`-фильтры.
     pub async fn set_spectrum_enabled(&mut self, enabled: bool) -> Result<(), AudioError>;
 
-    /// Включён ли FFT-визуализатор.
+    /// Включён ли аудио-анализ.
     pub fn spectrum_enabled(&self) -> bool;
 
-    /// Последний кадр FFT-метрик; `None`, если данных ещё нет.
+    /// Последний кадр метрик и полос; `None`, если данных ещё нет.
     pub fn spectrum(&self) -> Option<SpectrumFrame>;
 }
 ```
@@ -117,9 +130,9 @@ impl AudioEngine {
 | `stop()` | состояние `Stopped`, событие `Stopped` | `Playback`, `Internal` |
 | `set_paused(true/false)` | `Paused` / `Playing`; при возобновлении публикуется `Started` | `Playback`, если нет активного URL или состояние `Stopped`/`Reconnecting`/`Error` |
 | `set_volume(v)` | значение применяется к mpv и к `volume()` | `Playback`, если `v` не конечное число или вне `0.0..=1.0` |
-| `set_spectrum_enabled(true/false)` | цепочка `aspectralstats` + `astats` подключается к `af` или снимается; при выключении кадр очищается; состояние воспроизведения не меняется | `Spectrum`, если mpv отклонил фильтр |
+| `set_spectrum_enabled(true/false)` | цепочка `@level` + `@spectrum` подключается к `af` или снимается; при выключении кадр очищается; состояние воспроизведения не меняется | `Spectrum`, если mpv отклонил обе цепочки (даже `@level`); отказ только `@spectrum` даёт fallback без ошибки |
 
-При старте `spectrum_enabled()` возвращает `true`, а воркер сразу применяет фильтр:
+При старте `spectrum_enabled()` возвращает `true`, а воркер сразу применяет фильтры:
 визуализатор работает без дополнительного вызова. Значение не сохраняется между
 запусками и действует до конца сессии.
 
@@ -135,24 +148,63 @@ impl AudioEngine {
 Естественное завершение потока даёт `EndOfFile`, после чего запускается та же политика
 реконнекта (для живого радио это эквивалентно обрыву).
 
-## 3. FFT-визуализатор
+## 3. Аудио-анализ
 
-Визуализатор экспериментальный, выключен по умолчанию и работает без перехвата PCM
-(ADR-0010). При включении движок выставляет свойство mpv `af` в цепочку
-`@spectrum:lavfi=[aspectralstats=measure=centroid+spread+flatness+flux+rolloff:win_size=2048,astats=metadata=1:reset=1]`.
-Поток `orbitfm-audio` опрашивает `af-metadata/spectrum` примерно раз в 50 мс, пока
-состояние — `Playing` или `Buffering`, и публикует `SpectrumFrame`:
+Анализ экспериментальный, включён по умолчанию и работает без перехвата PCM
+(ADR-0010, ADR-0027). При включении движок выставляет свойство mpv `af` из двух
+независимых размеченных lavfi-фильтров:
+
+```text
+@level:lavfi=[
+  aspectralstats=measure=centroid+spread+flatness+flux+rolloff:win_size=2048,
+  astats=metadata=1:reset=1
+],
+@spectrum:lavfi=[
+  asplit=2[main][analysis];
+  [analysis]highpass=f=20,acrossover=split=150 2000:order=8th[lo][mi][hi];
+  [lo][mi][hi]amerge=inputs=3[bands];
+  [main][bands]amerge=inputs=2,
+  astats=metadata=1:reset=1:measure_perchannel=RMS_level:measure_overall=none,
+  pan=stereo|c0=c0|c1=c1
+]
+```
+
+- `@level` сохраняет шесть агрегатов и их ключи
+  `af-metadata/level/lavfi.aspectralstats.1.*`, `af-metadata/level/lavfi.astats.Overall.RMS_level`.
+- `@spectrum` считает полосы по копии сигнала и возвращает на выход исходную ветку:
+  звук остаётся бит-в-бит тем же. Карта каналов: 1–2 — основной сигнал,
+  3–4 — Bass (<150 Гц), 5–6 — Mid (150–2000 Гц), 7–8 — High (>2000 Гц).
+- Для моно-потока анализ дублирует канал в стерео перед `asplit` и возвращает
+  `pan=mono|c0=0.5*c0+0.5*c1`; карта каналов 3–8 не меняется. Для остальных
+  раскладок (5.1 и т.п.) остаётся только `@level`, `bands = None`.
+
+Раскладка читается из `audio-params/channel-count` при `FileLoaded` и при включении
+анализа. Эмпирически свойство может быть `nil` в момент `FileLoaded`, поэтому воркер
+повторяет чтение до 8 раз с интервалом 250 мс; если раскладка так и не определилась,
+остаётся `@level`. Перед новым `play()` и при `stop()` полосы снимаются до загрузки
+следующего файла.
+
+Поток `orbitfm-audio` опрашивает метаданные примерно раз в 50 мс, пока состояние —
+`Playing` или `Buffering`, и публикует `SpectrumFrame`:
 
 - `centroid_hz`, `spread_hz`, `rolloff_hz` — частотные характеристики, Гц;
 - `flatness` — плоскостность спектра, нормирована в `0.0..=1.0`;
 - `flux` — ненормированный спектральный поток;
-- `rms_db` — уровень RMS в дБFS (`0` — полная шкала).
+- `rms_db` — уровень RMS в дБFS (`0` — полная шкала);
+- `bands` — `Some(BandLevels)` с RMS Bass/Mid/High в дБFS либо `None`.
 
-Некорректные или нефинитные значения отбрасываются. Вне активного воспроизведения,
-при `play`, `stop` и после ошибки кадр очищается. Полосы спектра по бинам не
-предоставляются: доступны только агрегированные метрики. Если сборка mpv не содержит
-`aspectralstats`, включение возвращает `AudioError::Spectrum`, а воспроизведение
-продолжается.
+Уровень полосы объединяет L/R средним по мощности, а не средним в дБ. `-inf`
+(полностью подавленная полоса) ограничивается снизу `-90.0` дБ; `NaN` и `+inf`
+инвалидируют всю тройку и дают `bands = None`. Базовые шесть метрик сохраняют
+строгую проверку: любой нефинитный агрегат отбрасывает кадр целиком.
+
+Вне активного воспроизведения, при `play`, `stop` и после ошибки кадр очищается.
+Полосы спектра по бинам не предоставляются: доступны только агрегированные метрики
+и три огибающие. Если сборка mpv не содержит `aspectralstats` (или отклоняет
+`@level`), включение возвращает `AudioError::Spectrum`, а воспроизведение
+продолжается. Если отклонён только `@spectrum` (нет `acrossover`/`amerge`),
+движок остаётся на `@level`, пишет предупреждение, возвращает успех и отдаёт
+`bands = None` до повторного включения визуализатора.
 
 ## 4. Потоки и жизненный цикл
 

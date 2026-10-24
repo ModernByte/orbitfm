@@ -1,8 +1,30 @@
-//! Сглаженное состояние аудио-огибающей: питает Fresnel-обод глобуса и
-//! синтетический визуализатор (ADR-0019). Отрисовки здесь нет.
+//! Сглаженное состояние аудио-огибающей и срез метрик для визуализатора
+//! (ADR-0019, ADR-0029). Отрисовки здесь нет.
 
 pub(crate) const MIN_RMS_DB: f32 = -60.0;
 pub(crate) const RMS_RANGE_DB: f32 = 60.0;
+/// Нижняя граница полос: тише неё полоса считается подавленной (ADR-0027).
+pub(crate) const MIN_BAND_DB: f32 = -90.0;
+const BAND_RANGE_DB: f32 = 80.0;
+
+/// Нормированные уровни Bass/Mid/High, `0.0..=1.0`.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct BandTargets {
+    pub bass: f32,
+    pub mid: f32,
+    pub high: f32,
+}
+
+impl BandTargets {
+    /// Переводит сырые дБFS в нормированные уровни без знания аудио-модуля.
+    pub fn from_db(bass_db: f32, mid_db: f32, high_db: f32) -> Self {
+        Self {
+            bass: normalize_band(bass_db),
+            mid: normalize_band(mid_db),
+            high: normalize_band(high_db),
+        }
+    }
+}
 
 /// Целевые значения визуализатора, уже не зависящие от аудио-модуля.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -12,6 +34,15 @@ pub struct SpectrumTarget {
     pub flux: f32,
     pub flatness: f32,
     pub rms_db: f32,
+    /// Нормированные Bass/Mid/High; `None` — полосы недоступны.
+    pub bands: Option<BandTargets>,
+}
+
+fn normalize_band(db: f32) -> f32 {
+    if !db.is_finite() {
+        return 0.0;
+    }
+    ((db - MIN_BAND_DB) / BAND_RANGE_DB).clamp(0.0, 1.0)
 }
 
 /// Сглаженные метрики эфира.
@@ -76,6 +107,7 @@ mod tests {
             flux: 0.001,
             flatness: 0.4,
             rms_db,
+            bands: None,
         }
     }
 
@@ -130,5 +162,23 @@ mod tests {
 
         assert!(quiet.pulse() > 0.0 && quiet.pulse() < loud.pulse());
         assert!(loud.pulse() <= 1.0);
+    }
+
+    #[test]
+    fn normalizes_band_levels_to_unit_range() {
+        let bands = BandTargets::from_db(-90.0, -50.0, -10.0);
+        assert_eq!(bands.bass, 0.0);
+        assert!((bands.mid - 0.5).abs() < 1e-6);
+        assert_eq!(bands.high, 1.0);
+
+        let invalid = BandTargets::from_db(f32::NAN, f32::INFINITY, -200.0);
+        assert_eq!(
+            invalid,
+            BandTargets {
+                bass: 0.0,
+                mid: 0.0,
+                high: 0.0,
+            }
+        );
     }
 }
