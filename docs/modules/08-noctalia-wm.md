@@ -100,14 +100,32 @@ noctalia plugins lint orbitfm
 
 ### Niri
 
-`wm-configs/orbitfm-niri.kdl`:
+`wm-configs/orbitfm-niri.kdl` содержит по правилу на каждый режим; правило
+Focus — то, что открывает плагин через `orbitfm toggle`, капсулы — через
+`orbitfm mode overlay|listening`:
 
 ```kdl
 window-rule {
-    match app-id="org.modernbyte.OrbitFM"
+    match app-id="org.modernbyte.OrbitFM" title=r"^OrbitFM$"
     open-floating true
     default-column-width { fixed 920; }
     default-window-height { fixed 660; }
+    draw-border-with-background false
+}
+
+window-rule {
+    match app-id="org.modernbyte.OrbitFM" title=r"^OrbitFM · Overlay$"
+    open-floating true
+    default-column-width { fixed 420; }
+    default-window-height { fixed 620; }
+    draw-border-with-background false
+}
+
+window-rule {
+    match app-id="org.modernbyte.OrbitFM" title=r"^OrbitFM · Listening$"
+    open-floating true
+    default-column-width { fixed 420; }
+    default-window-height { fixed 152; }
     draw-border-with-background false
 }
 ```
@@ -115,6 +133,17 @@ window-rule {
 Плавающие окна Niri центрирует по умолчанию. `default-floating-position`
 не используется: допустимые значения `relative-to` не включают `center`.
 Файл проверен командой `niri validate -c wm-configs/orbitfm-niri.kdl`.
+Локально его удобно положить отдельным include, не меняя основной конфиг:
+
+```kdl
+// ~/.config/niri/config.kdl
+include "./cfg/orbitfm.kdl"
+```
+
+Без этих правил niri тайлит капсулы на всю высоту, и содержимое Overlay/
+Listening растягивается. Приёмочная проверка 2026-10-24: `orbitfm toggle`
+через изолированный runtime даёт Focus 920×660 floating, `mode overlay` —
+420×620 floating, `mode listening` — 420×152 floating.
 
 ### Hyprland
 
@@ -122,9 +151,11 @@ window-rule {
 
 ```ini
 windowrulev2 = float, class:^(org\.modernbyte\.OrbitFM)$
-windowrulev2 = size 920 660, class:^(org\.modernbyte\.OrbitFM)$
 windowrulev2 = center, class:^(org\.modernbyte\.OrbitFM)$
 windowrulev2 = stayfocused, class:^(org\.modernbyte\.OrbitFM)$
+windowrulev2 = size 920 660, title:^OrbitFM$
+windowrulev2 = size 420 620, title:^OrbitFM · Overlay$
+windowrulev2 = size 420 152, title:^OrbitFM · Listening$
 ```
 
 Синтаксис `windowrulev2` работает в Hyprland 0.52 и совместимом режиме 0.53+.

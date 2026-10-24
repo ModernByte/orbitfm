@@ -441,4 +441,156 @@ mod tests {
         assert!(engine.spectrum().is_none());
         engine.stop().await.expect("не удалось остановить поток");
     }
+
+    #[tokio::test]
+    #[ignore = "требует ffmpeg и аудиоустройство"]
+    async fn reconnects_after_live_stream_drop() {
+        let port = free_port();
+        let url = format!("http://127.0.0.1:{port}/live.mp3");
+        let mut server = StreamServer::start(port);
+
+        let mut engine = AudioEngine::new().expect("не удалось создать аудио-ядро");
+        engine
+            .set_volume(0.0)
+            .await
+            .expect("не удалось выключить звук");
+        let mut events = engine.subscribe();
+        engine.play(&url).await.expect("не удалось запустить поток");
+        wait_for_event(&mut events, "Started", Duration::from_secs(20), |event| {
+            matches!(event, AudioEvent::Started { .. })
+        })
+        .await;
+
+        server.stop();
+        wait_for_event(
+            &mut events,
+            "Reconnecting",
+            Duration::from_secs(20),
+            |event| matches!(event, AudioEvent::Reconnecting { .. }),
+        )
+        .await;
+
+        server.start_again(port);
+        wait_for_event(&mut events, "Started", Duration::from_secs(30), |event| {
+            matches!(event, AudioEvent::Started { .. })
+        })
+        .await;
+        assert!(
+            matches!(
+                engine.state(),
+                PlaybackState::Playing | PlaybackState::Buffering
+            ),
+            "неожиданное состояние: {:?}",
+            engine.state()
+        );
+
+        engine.stop().await.expect("не удалось остановить поток");
+    }
+
+    fn free_port() -> u16 {
+        let listener =
+            std::net::TcpListener::bind(("127.0.0.1", 0)).expect("не удалось занять тестовый порт");
+        listener
+            .local_addr()
+            .expect("у тестового сокета нет адреса")
+            .port()
+    }
+
+    /// Локальный HTTP-сервер с моно-потоком: `-listen 1` отдаёт mp3 и падает
+    /// при обрыве клиента, что и нужно для проверки реконнекта.
+    struct StreamServer {
+        child: Option<std::process::Child>,
+    }
+
+    impl StreamServer {
+        fn start(port: u16) -> Self {
+            Self {
+                child: Some(spawn_stream(port)),
+            }
+        }
+
+        fn start_again(&mut self, port: u16) {
+            self.stop();
+            self.child = Some(spawn_stream(port));
+        }
+
+        fn stop(&mut self) {
+            if let Some(mut child) = self.child.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+
+    impl Drop for StreamServer {
+        fn drop(&mut self) {
+            self.stop();
+        }
+    }
+
+    fn spawn_stream(port: u16) -> std::process::Child {
+        let url = format!("http://127.0.0.1:{port}/live.mp3");
+        for _ in 0..20 {
+            let mut child = std::process::Command::new("ffmpeg")
+                .args([
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-re",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "sine=frequency=440:duration=600",
+                    "-ac",
+                    "1",
+                    "-ar",
+                    "44100",
+                    "-c:a",
+                    "libmp3lame",
+                    "-b:a",
+                    "128k",
+                    "-f",
+                    "mp3",
+                    "-listen",
+                    "1",
+                ])
+                .arg(&url)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .expect("не удалось запустить ffmpeg");
+            std::thread::sleep(Duration::from_millis(200));
+            if child.try_wait().expect("ffmpeg не отвечает").is_none() {
+                return child;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        panic!("ffmpeg не смог занять порт {port}");
+    }
+
+    async fn wait_for_event(
+        events: &mut broadcast::Receiver<AudioEvent>,
+        label: &str,
+        timeout: Duration,
+        mut matches_event: impl FnMut(&AudioEvent) -> bool,
+    ) {
+        tokio::time::timeout(timeout, async {
+            loop {
+                match events.recv().await {
+                    Ok(event) if matches_event(&event) => return,
+                    Ok(AudioEvent::Error { message }) => {
+                        panic!("ошибка потока до события {label}: {message}")
+                    }
+                    Ok(_) => {}
+                    Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(broadcast::error::RecvError::Closed) => {
+                        panic!("канал событий закрыт до события {label}")
+                    }
+                }
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("событие {label} не пришло за {timeout:?}"));
+    }
 }

@@ -68,6 +68,14 @@
   реальными FLAC/MP3-станциями — hide/show, Overlay/Listening/Focus, стоп и
   выход; замеры CPU/GPU в скрытом и видимом состояниях; §11 закрыт, ADR-0027
   и ADR-0028 сверены с реализацией; Windows/macOS остаются на CI-сборках
+- Хвосты приёмки Этапа 9 закрыты live-тестами: моно-mp3 (1 канал) отдаёт
+  полосы Bass/Mid/High, а обрыв и перезапуск локального HTTP-потока дают
+  `Reconnecting` → `Started` (`produces_fft_metrics_for_live_stream`,
+  `reconnects_after_live_stream_drop`; ignored, нужны ffmpeg и аудиоустройство)
+- Правила окон для плагина Noctalia и всех режимов: Focus/Overlay/Listening
+  открываются floating с размерами 920×660, 420×620 и 420×152; проверено на
+  niri 26.04 через `orbitfm toggle` и `mode overlay|listening`, README плагина
+  и документация дополнены инструкцией локального include
 - `docs/ui/audio-reactive-globe.md` — зафиксированы концепция и план Фаз 0–4
   аудио-реактивной планеты; фазы 0–4 реализованы, Linux принят
 - SRS §3.6 актуализирован под фактически реализованный Этап 8 (0.8.0-rc.1);

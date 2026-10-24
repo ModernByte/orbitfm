@@ -107,7 +107,9 @@ CI собирает и тестирует проект на Linux и macOS, пр
 
 - `wm-configs/orbitfm-niri.kdl` и `wm-configs/orbitfm-hyprland.conf` — готовые
   правила плавающих окон по заголовкам режимов: Focus 920×660, Overlay 420×620,
-  Listening 420×152;
+  Listening 420×152. Они нужны в том числе для окон, которые открывает плагин
+  Noctalia; без них niri тайлит капсулы. Для niri файл можно подключить
+  отдельным include (`include "./cfg/orbitfm.kdl"`), не меняя остальной конфиг;
 - системный трей — `src/tray/` (SNI / StatusNotifierItem на `ksni`, фича `tray` включена
   по умолчанию): работает с любым хостом SNI, проверено на Noctalia; на macOS и Windows
   модуль — no-op.

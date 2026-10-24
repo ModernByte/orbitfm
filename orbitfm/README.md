@@ -24,7 +24,21 @@ uses a Unix socket in `$XDG_RUNTIME_DIR` for single-instance IPC.
 Add the **OrbitFM** widget from the Add-widget picker. Clicking it runs
 `orbitfm toggle`: a running player appears or hides, and a stopped player starts
 with a visible window. The first click may take a moment while the application
-starts.
+starts. Compact modes are available through the same IPC:
+`orbitfm mode overlay`, `orbitfm mode listening` and `orbitfm mode focus`.
+
+## Window rules
+
+The widget opens the full Focus window. On tiling compositors the compact
+Overlay/Listening capsules need floating window rules, otherwise they are
+stretched to the full tile height. The repository ships ready rules for all
+three modes in `wm-configs/orbitfm-niri.kdl` and
+`wm-configs/orbitfm-hyprland.conf` (920×660, 420×620 and 420×152). For niri the
+file can be included without touching the rest of the config:
+
+```kdl
+include "./cfg/orbitfm.kdl"
+```
 
 ## Notes
 
