@@ -47,6 +47,8 @@ pub(crate) struct OrbitApp<'a> {
     session: &'a mut Session,
     globe_ready: bool,
     spectrum_overlay: SpectrumOverlay,
+    /// Аудио-деформация планеты на время показа окна (ADR-0028).
+    motion: MotionMixer,
     /// Орбитальное аудиокольцо Focus (ADR-0029).
     orbit_ring: OrbitRing,
     /// Callout выбранной/наведённой страны с fade-переходами.
@@ -65,6 +67,10 @@ pub(crate) struct OrbitApp<'a> {
   `CreationContext::wgpu_render_state`; без него глобус заменяется заглушкой, а ввод
   игнорируется. Признак per-run, потому что wgpu-ресурсы умирают вместе с прогоном.
 - `spectrum_overlay` — сглаженные level/flux эфира для кольца Listening (живёт кадрами).
+- `motion` — `MotionMixer` (ADR-0028): spring-squash, idle-дыхание и огибающие
+  полос. Обновляется один раз за кадр в `draw_layers`; результат
+  `GlobeMotion` получают шейдер, страны, маркеры, hit-test и callout. Как и
+  остальные per-run ресурсы, не переживает скрытие окна.
 - `orbit_ring` — модель и painter кругового аудиокольца за планетой (ADR-0029):
   presence, сглаженные метрики, 120 столбцов, комета и искры; живёт кадрами рядом
   с `SpectrumOverlay` и не переживает скрытие окна.
@@ -82,13 +88,17 @@ pub(crate) struct OrbitApp<'a> {
 - `toast` — одно текущее сообщение (3 секунды).
 
 Всё остальное живёт в `Session`: подсистемы (`audio`, `geo`, `radio`, `media`, `library`,
-`settings`, `runtime`), `globe_camera`, `spectrum_enabled`, `current_url`/`current_station`,
+`settings`, `runtime`), `globe_camera`, `visualizer_enabled`, `spectrum_enabled`,
+`current_url`/`current_station`,
 `search: SearchState` (строки запросов, `context`, `results`, `generation`, `pending`,
 `empty`, `error`, каналы поиска и рулетки), `markers`, `library_tab`, `country_filter`,
 `panel_open`, `show_help`, `window: WindowState` (видимость, размер, `intent`, `quitting`),
-`notices`, `wake`, `commands`, `audio_events`. `spectrum_enabled` инициализируется
-значением `audio.spectrum_enabled()` (по умолчанию `true`), синхронизируется с
-аудио-движком в `Session::tick()`, а ошибки включения фильтра доходят до UI через
+`notices`, `wake`, `commands`, `audio_events`. `visualizer_enabled` — пользовательский
+переключатель визуализатора и кольца, инициализируется значением
+`audio.spectrum_enabled()` (по умолчанию `true`); `spectrum_enabled` — фактическое
+состояние аудио-анализа, которое включается и тогда, когда визуализатор выключен,
+но движение глобуса требует полос. `Session::tick()` каждый кадр зеркалит
+`spectrum_enabled` из движка, а ошибки включения анализа доходят до UI через
 результат метода и показываются тостом.
 
 Читаемое состояние на кадр снимает `Frame` — зоны берут данные из него, а не из ядра:
@@ -103,6 +113,9 @@ struct Frame {
     current_favorite: bool,
     can_resume: bool,
     spectrum_target: Option<SpectrumTarget>,
+    /// Эффективная реактивность движения с поправкой на режим окна.
+    motion_reactivity: MotionReactivity,
+    motion_style: MotionStyle,
     /// Клик по сфере выбирает страну только в режиме страны (ТЗ §5.2).
     country_mode: bool,
     layout: DeskLayout,
@@ -112,7 +125,8 @@ struct Frame {
 `Frame::capture(&ctx, session, &mut visualizer, viewport)` вызывается до отрисовки зон:
 `Palette::for_ui(ctx.theme(), accent)`, `session.settings.settings()`,
 `session.audio.state()`, `session.audio.volume()`, `session.audio.spectrum()` →
-`SpectrumTarget` (шесть агрегатов и `bands` через `BandTargets::from_db`), сумма
+`SpectrumTarget` (шесть агрегатов и `bands` через `BandTargets::from_db`),
+`session.motion_reactivity()` и `settings.motion_style` для движения, сумма
 `marker.count` в `markers_total`, `library.is_favorite` для
 текущей станции, `current_url.is_some()` в `can_resume`,
 `search.context.mode == SearchMode::Country` в `country_mode` и
@@ -181,7 +195,8 @@ src/ui/
 - `src/app.rs` — единственная точка побочных эффектов: `apply_actions`/`apply_action`
   выполняют `Play`, `ToggleFavorite`, `SelectCountry`, `SwitchMode`, `SelectGenre`,
   `RunSearch`, `Roulette`, `ClearHistory`, `SetTheme`, `SetAccent`, `ToggleSpectrum`,
-  `SetVizBars`, `SetVolume`, `TogglePlayback`, `Stop`, `PlayRelative`, `Hide`, `Quit`,
+  `SetVizBars`, `SetMotion`, `SetReduceMotion`, `SetVolume`, `TogglePlayback`, `Stop`,
+  `PlayRelative`, `Hide`, `Quit`,
   `TogglePanel`, `ToggleHelp`, `SetWindowMode`, превращая каждое в вызов метода
   `Session`, и после каждого действия просят repaint.
 
@@ -270,9 +285,11 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
 5. `Session::take_intent()` → `ViewportCommand::Focus` (`UiIntent::Show`, окно уже
    открыто — остаётся вернуть фокус) или `ViewportCommand::Close` (`UiIntent::Close`).
 6. `Escape`, когда карточка открыта, → `session.show_help = false` + `mark_help_seen`.
-7. Repaint-политика: `SPECTRUM_REPAINT` (≈33 мс) при включённом FFT и
-   `Playing`/`Buffering`; импульсы камеры и маркеров запрашивает repaint сам
-   `globe_view`.
+7. Repaint-политика: `SPECTRUM_REPAINT` (≈33 мс) при включённом визуализаторе и
+   `Playing`/`Buffering`. `draw_layers` добавляет кадры движения: 33 мс при
+   `motion.intensity > 0.01`, иначе `MOTION_IDLE_REPAINT` (≈66 мс) — только если
+   эффективная реактивность включена; при `Off`/Reduce motion лишних кадров нет.
+   Импульсы камеры и маркеров запрашивает сам `globe_view`.
 
 `ui()` вызывает `draw()`: `Frame::capture` → `egui::CentralPanel` с прозрачной заливкой →
 `draw_layers` (глобус, HUD, панель, transport, help, легенда, toast) → `apply_actions`.
@@ -293,10 +310,13 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
 1. ПКМ + drag → `GlobeInput::drag_delta`; колесо при наведении → `scroll_delta`;
    ЛКМ → `primary_clicked`. Ввод под плавающими зонами отсекается
    `DeskLayout::blocks_point`.
-2. `GlobeCamera::update(stable_dt, &input)` обновляет ориентацию, инерцию и зум.
+2. `GlobeCamera::advance(stable_dt, &input)` обновляет ориентацию, инерцию и зум.
    `OrbitRing::paint` рисует кольцо до `paint_globe`, поэтому сфера перекрывает
-   его внутреннюю часть (ADR-0029).
-3. Hover страны (только в режиме «Страна»): `screen_to_sphere(hover_pos)` →
+   его внутреннюю часть (ADR-0029). `GlobeState.motion` пришёл из `MotionMixer`;
+   `globe_view` один раз за кадр получает `GlobeMotion.deform` и передаёт его
+   шейдеру, странам, маркерам, callout и hit-test.
+3. Hover страны (только в режиме «Страна»):
+   `screen_to_sphere_deformed(hover_pos, viewport, &deform)` →
    `country_at_sphere_point` (при ПКМ-drag hover отключается). `globe_view` рисует
    контур наведённой страны; выбранная страна получает акцентный контур 2 px и
    заливку-heatmap с альфой 26..96 от `log10` количества загруженных станций
@@ -304,8 +324,9 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
    маркером, `Grabbing` — при вращении.
 4. При клике сначала проверяется ближайший маркер в радиусе 10 px: он приоритетнее
    выбора страны и возвращает `UiAction::Play`.
-5. Если маркера нет и режим — «Страна», `screen_to_sphere` даёт точку сферы;
-   `OrbitApp::draw_layers` передаёт её в `GeoService::country_at_sphere_point`
+5. Если маркера нет и режим — «Страна», `screen_to_sphere_deformed` даёт точку
+   единичной сферы; `OrbitApp::draw_layers` передаёт её в
+   `GeoService::country_at_sphere_point`
    (`session.geo`) и при попадании создаёт `UiAction::SelectCountry`. Тот же путь
    используется для выбора из HUD. В режиме «Жанр» проверка страны отключена
    (`country_enabled = false`), поэтому клик по суше не меняет контекст.
@@ -314,11 +335,13 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
    крупнейшего кольца, корректно на антимеридиане); затем `Session::start_country_search`
    активирует страну в `search.context`, сбрасывает локальные фильтры и запрашивает
    `countrycode=<ISO alpha-2>`, `limit = 100`, `hide_broken = true`.
-7. Маркеры проецируются через `project_on_sphere`; наведение показывает двухстрочную
+7. Маркеры проецируются через `GlobeDeform::to_world` и `project_on_sphere`;
+   наведение показывает двухстрочную
    подпись по ТЗ §2.4 — имя (для группы `· +N`) и `место · kbps · кодек` — и
    курсор-указатель, станция в эфире получает `colors.active`, кольцо и пульс.
-   `paint_globe` добавляет paint callback без аудио-сигнала, затем
-   `paint_country_highlights` и `paint_markers` рисуют egui-оверлей; repaint
+   `paint_globe` получает `GlobeMotion`, затем
+   `paint_country_highlights` и `paint_markers` рисуют egui-оверлей с той же
+   деформацией; repaint
    запрашивается, пока камера `is_animating` или на сфере виден играющий маркер.
 8. Country callout (ТЗ §1): активная карточка — выбранная страна (`alpha → 1.0`),
    иначе наведённая (`alpha → 0.85`), в режиме «Жанр» — `None`. `update_callout`
@@ -343,14 +366,17 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
 - В правой части transport — cava-столбцы `viz_bars` (огибающая из шести агрегатов,
   не бинный FFT — ADR-0010, ADR-0022) и чип `Visualizer`. Спектр-фильтр включён
   при старте, поэтому столбцы оживают сразу с эфиром.
-- Чип вызывает `UiAction::ToggleSpectrum` → `Session::set_spectrum_enabled`, ядро делает
-  `runtime.block_on(AudioEngine::set_spectrum_enabled)`; ошибка показывается тостом и не
+- Чип вызывает `UiAction::ToggleSpectrum` → `Session::set_visualizer_enabled`, ядро делает
+  `runtime.block_on(AudioEngine::set_spectrum_enabled)` только если меняется
+  потребность в анализе; ошибка показывается тостом и не
   прерывает воспроизведение. Состояние чипа не сохраняется в настройках.
 - `Session::tick()` каждый кадр синхронизирует `spectrum_enabled` с движком, а
   `Frame::capture` преобразует `AudioEngine::spectrum()` в `SpectrumTarget` (включая
-  `bands: Option<BandTargets>`): он питает и `SpectrumOverlay::update` (кольцо
-  Listening), и `VisualizerModel::advance`. В Phase 0 `bands` только передаются
-  в `SpectrumTarget`; будущие потребители — ADR-0028.
+  `bands: Option<BandTargets>`): он питает `SpectrumOverlay` (кольцо
+  Listening), `VisualizerModel::advance` и `MotionMixer` (полосы и fallback
+  RMS/flux — ADR-0028). Если визуализатор выключен, но движение включено,
+  `analysis_needed` удерживает аудио-анализ; при `Off`/Reduce motion он
+  отключается.
   Модель (`visualizer`) живёт в `OrbitApp` как ресурс прогона, отрисовку делает
   `ui::widgets::viz_bars`: поле 156×46 px, зазор 2 px, скругление 1 px, градиент по
   абсолютной высоте, шапки пиков 2 px.
@@ -362,15 +388,22 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
   умолчанию 24) и меняется действием `UiAction::SetVizBars` — `Session::set_viz_bars`
   сохраняет настройку, а UI пересоздаёт модель.
 - `SpectrumOverlay::pulse()` (`0.75·level + 0.25·flux`, 0 при выключенном
-  фильтре) передаётся только в кольцо Listening. Аудио-пульс глобуса снят
-  2026-10-24: Fresnel-обод статичен, вершинный шейдер радиус не масштабирует.
-  Новое движение вернётся по ADR-0028 (Этап 9).
+  фильтре) передаётся только в кольцо Listening. Fresnel-обод глобуса
+  статичен; геометрию планеты двигает отдельный `MotionMixer` (ADR-0028):
+  squash, рябь и idle-дыхание уходят в `GlobeMotion`, а не в `pulse()`.
+- `MotionMixer::update` вызывается в `draw_layers` один раз за кадр с
+  `stable_dt`; цель — `SpectrumTarget` только в
+  `Playing`/`Buffering`/`Reconnecting`, иначе `None` (плавный возврат в idle).
+  Эффективная реактивность приходит из `Session::motion_reactivity()`
+  (Reduce motion → `Off`, Overlay ≤ `Low`, Listening — `Off`).
 - `OrbitRing` (ADR-0029) обновляется в `draw_layers` из `SpectrumTarget`, пока
   открыт Focus, включён визуализатор и эфир жив
   (`Playing`/`Buffering`/`Reconnecting`); иначе цели нет и кольцо плавно гаснет.
   Модуль не знает про аудио: корона, аврора, комета и искры — функции шести
   агрегатов, `dt` и времени. В Overlay/Listening кольцо не рисуется.
-- Пока визуализатор активен, `logic()` просит кадр каждые ~33 мс. В `globe_view`
+- Пока визуализатор активен, `logic()` просит кадр каждые ~33 мс. `draw_layers`
+  добавляет кадры движения: ~33 мс при `motion.intensity > 0.01`, ~66 мс для
+  idle-дыхания и ни одного лишнего кадра при `Off`/Reduce motion. В `globe_view`
   repaint запрашивается на ~33 мс при играющем маркере, анимирующемся кольце или
   авто-вращении; при ручном вращении и довороте — без задержки; до начала
   авто-вращения окно будится к концу 4-секундной паузы.
@@ -492,9 +525,11 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
   (`Session::set_theme`, `Session::set_accent`), перекраску делает UI.
 - Блок `Settings` в HUD (попап шестерёнки): пункты темы `System`/`Dark`/`Light`, шесть
   пресетов акцента (`Orbit`, `Emerald`, `Amber`, `Violet`, `Rose`, `Ocean`), выбор числа
-  столбцов `Visualizer bars`, `Hide window` и `Quit`. Изменение применяется сразу и
+  столбцов `Visualizer bars`, секция `Motion` (`Off`/`Low`/`Normal`/`High` и чекбокс
+  `Reduce motion`), `Hide window` и `Quit`. Изменение применяется сразу и
   сохраняется через `SettingsStore`; ошибка записи показывается тостом и не прерывает
-  воспроизведение.
+  воспроизведение. `Reduce motion` не перезаписывает `motion`: эффективная
+  реактивность просто становится `Off`.
 - `Palette` и `configure_style` живут в `ui/palette.rs`. `Palette::for_ui(ctx.theme(), accent)`
   вызывается в `Frame::capture` и задаёт цвета панелей, обводки, приглушённого и
   ошибочного текста, подложек и глобуса. В тёмной теме акцент совпадает с цветом маркеров;
@@ -566,8 +601,6 @@ root-вьюпорта, а не невидимое окно. `ViewportCommand::Ca
   aggregate по всем странам нет (отдельное решение, ADR-0015)
 - Roulette доступна только из GUI и всегда запускает воспроизведение; «только
   показать станцию без эфира» не поддерживается
-- Размер маркера учитывает только голоса (битрейт задаёт цвет); популярность жанра и
-  свежесть станции не участвуют
 - Hover страны вычисляется raycast-ом каждый кадр без кэша последней точки
 - `Next`/`Previous` из MPRIS и кнопки `⏮`/`⏭` в transport идут по текущему видимому
   списку (`play_relative(±1)` с циклом): очередь — снимок панели, а не постоянный
@@ -599,7 +632,7 @@ root-вьюпорта, а не невидимое окно. `ViewportCommand::Ca
 ## 14. Связанные документы
 
 - ADR-0002, ADR-0005, ADR-0006, ADR-0010, ADR-0012, ADR-0013, ADR-0014, ADR-0015,
-  ADR-0016, ADR-0017, ADR-0018, ADR-0019
+  ADR-0016, ADR-0017, ADR-0018, ADR-0019, ADR-0028, ADR-0029
 - `docs/modules/11-session.md`, `docs/interfaces/10-session.md` — контракт Application Core
 - `docs/interfaces/07-app.md` — контракт presentation-слоя
 - `docs/architecture/00-overview.md`

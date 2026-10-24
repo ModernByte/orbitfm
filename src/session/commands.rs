@@ -5,7 +5,7 @@
 //! [`UiIntent`](super::UiIntent).
 
 use crate::ipc::{IpcCommand, WindowModeArg};
-use crate::settings::{AccentColor, ThemeMode};
+use crate::settings::{AccentColor, MotionReactivity, ThemeMode};
 
 use super::WindowMode;
 
@@ -93,13 +93,37 @@ impl super::Session {
             .map_err(|err| err.to_string())
     }
 
-    pub(crate) fn set_spectrum_enabled(&mut self, enabled: bool) -> Result<(), String> {
-        match self
-            .runtime
-            .block_on(self.audio.set_spectrum_enabled(enabled))
-        {
+    pub(crate) fn set_visualizer_enabled(&mut self, enabled: bool) -> Result<(), String> {
+        self.visualizer_enabled = enabled;
+        self.sync_analysis()
+    }
+
+    pub(crate) fn set_motion(&mut self, motion: MotionReactivity) -> Result<(), String> {
+        self.settings
+            .set_motion(motion)
+            .map_err(|err| err.to_string())?;
+        self.sync_analysis()
+    }
+
+    pub(crate) fn set_reduce_motion(&mut self, reduce: bool) -> Result<(), String> {
+        self.settings
+            .set_reduce_motion(reduce)
+            .map_err(|err| err.to_string())?;
+        self.sync_analysis()
+    }
+
+    /// Анализ включён, если он нужен визуализатору или движению глобуса.
+    fn sync_analysis(&mut self) -> Result<(), String> {
+        let needed = self.analysis_needed();
+        if self.audio.spectrum_enabled() == needed {
+            self.spectrum_enabled = needed;
+            return Ok(());
+        }
+
+        let runtime = self.runtime.clone();
+        match runtime.block_on(self.audio.set_spectrum_enabled(needed)) {
             Ok(()) => {
-                self.spectrum_enabled = enabled;
+                self.spectrum_enabled = needed;
                 Ok(())
             }
             Err(err) => {

@@ -18,6 +18,7 @@ pub use camera::GlobeCamera;
 pub use countries::{CountryStyle, paint_country};
 pub use globe::{GlobeRenderer, paint_globe};
 pub use markers::{MarkerLabel, MarkerVisual, paint_markers, sphere_point};
+pub use motion::{GlobeDeform, GlobeMotion, MotionMixer};
 pub use spectrum::{SpectrumOverlay, SpectrumTarget};
 pub use visualizer::VisualizerModel;
 
@@ -31,7 +32,12 @@ impl GlobeCamera {
     pub fn idle_countdown(&self) -> Option<f32>;
     pub fn eye(&self) -> glam::Vec3;
     pub fn view_proj(&self, aspect: f32) -> glam::Mat4;
-    pub fn screen_to_sphere(&self, screen_pos: egui::Pos2, viewport: egui::Rect) -> Option<glam::Vec3>;
+    pub fn screen_to_sphere_deformed(
+        &self,
+        screen_pos: egui::Pos2,
+        viewport: egui::Rect,
+        deform: &GlobeDeform,
+    ) -> Option<glam::Vec3>;
     pub fn project_on_sphere(&self, point: glam::Vec3, viewport: egui::Rect) -> Option<egui::Pos2>;
 }
 
@@ -47,6 +53,7 @@ pub fn paint_globe(
     painter: &egui::Painter,
     rect: egui::Rect,
     camera: &GlobeCamera,
+    motion: &GlobeMotion,
 );
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -59,6 +66,7 @@ pub fn paint_country(
     painter: &egui::Painter,
     viewport: egui::Rect,
     camera: &GlobeCamera,
+    deform: &GlobeDeform,
     rings: &[Vec<[f64; 2]>],
     style: CountryStyle,
 );
@@ -119,7 +127,7 @@ impl SpectrumOverlay {
 }
 ```
 
-`CameraUniform` (`view_proj`, `light_direction`, `camera_position`) и
+`CameraUniform` (`view_proj`, `light_direction`, `camera_position`, `motion`) и
 `GlobeCallback` — внутренние типы модуля. Полный контракт —
 `docs/interfaces/04-render.md`.
 
@@ -149,11 +157,13 @@ impl SpectrumOverlay {
   часть обращённой к камере полусферы.
 - `pitch` ограничен ±85°; `yaw` нормализуется в `[0, 2π)`.
 - Проекция: FOV 45°, near 0.1, far 50, DirectX-стиль NDC (wgpu): `glam::camera::rh`.
-- `screen_to_sphere`: NDC → unproject (z=0 и z=1) → луч из `eye` → ближайшее
-  пересечение с единичной сферой.
-- `project_on_sphere`: точка единичной сферы → view-projection → экранные координаты;
-  `None` для задней полусферы (`point · eye <= 1`), нечисловых значений и выхода
-  за viewport.
+- `screen_to_sphere_deformed`: NDC → unproject (z=0 и z=1) → луч из `eye`;
+  `eye`, near и far переводятся в пространство единичной сферы обратным
+  масштабом `GlobeDeform::to_unit`, затем ищется ближайшее пересечение.
+  Без деформации поведение прежнее.
+- `project_on_sphere`: точка поверхности → view-projection → экранные координаты;
+  `None` для задней полусферы (`point · eye <= |point|²`), нечисловых значений
+  и выхода за viewport. Принимает и единичную, и деформированную точку.
 - `projected_radius(viewport)`: `focal = 0.5·height / tan(45°/2)`,
   `radius = focal / sqrt(distance² − 1)` — экранный радиус силуэта; центр совпадает
   с центром viewport'а. Радиус передаётся в `OrbitRing::paint` (ADR-0029).
@@ -190,8 +200,11 @@ impl SpectrumOverlay {
   текстура уходит за горизонт сферы. Позиция камеры приходит в uniform
   (`camera_position`). Аудио-пульс удалён 2026-10-24; новое движение — по
   ADR-0028.
-- Вершинный шейдер не масштабирует радиус: hit-test и маркеры остаются на
-  сфере радиуса 1.
+- Вершинный шейдер применяет деформацию из uniform `motion`: анизотропный
+  масштаб `vec3(scale_xz, scale_y, scale_xz)`, трёхлепестковую рябь по долготе
+  с затуханием к полюсам и нормаль `normalize(normal / scale)`. Входная вершина
+  берётся как точка единичной сферы, поэтому меш и egui-оверлей используют
+  одну деформацию.
 - Подписи стран — вне текущего объёма; контуры и маркеры рисует egui-оверлей.
 
 ## 6. Контуры стран
@@ -244,7 +257,8 @@ impl SpectrumOverlay {
 - `SpectrumTarget` — срез метрик (`centroid_hz`, `spread_hz`, `flux`, `flatness`,
   `rms_db`) и опциональных полос `bands` без зависимости от аудио-модуля.
   `BandTargets::from_db` нормирует дБFS в `0.0..=1.0` (пол −90 дБ, диапазон 80 дБ).
-  В Phase 0 поле передаётся, но ещё не читается кольцом и глобусом.
+  Полосы читает `MotionMixer` (ADR-0028); кольцо Listening по-прежнему работает
+  от метрик оверлея.
 - `SpectrumOverlay` сглаживает значения экспоненциально; первый кадр принимается
   как есть, `None` запускает затухание. Состояние живёт в `OrbitApp`.
 - `render/visualizer.rs` (`VisualizerModel`) — модель cava-столбцов (ADR-0022):
@@ -262,7 +276,36 @@ impl SpectrumOverlay {
 - Метрики агрегированные, поэтому и огибающая визуализатора — художественная
   оценка, а не покадровый спектр по бинам (ADR-0010, ADR-0019).
 
-## 9. Тесты
+## 9. Аудио-реактивное движение
+
+- `render/motion.rs` — чистый домен без egui/wgpu: `GlobeDeform`, `GlobeMotion`
+  и `MotionMixer`. Микшер живёт в presentation-слое (`OrbitApp`) на время
+  показа окна и не зависит от рендерера глобуса.
+- `MotionMixer::update(target, reactivity, style, dt)` обновляет пружину
+  вертикального сжатия: цель `1 − amount · bass_env + idle`, жёсткость 120,
+  затухание 14, полунеявный интегратор шагами не более 1/240 с; `dt`
+  ограничен 0,1 с. `scale_xz = 1/sqrt(scale_y)` сохраняет объём: планета
+  сжимается по вертикали и расширяется по горизонтали.
+- Огибающие полос асимметричны: атака 30 мс, спад 220 мс. Без `bands`
+  используют `rms_db` (−60..0 дБ) и `flux`. `None` плавно гасит аудио-вклад
+  (τ = 100 мс): через 300 мс остаётся ≈5 %, через 500 мс — менее 1 % рабочей
+  амплитуды.
+- Idle-дыхание 0,12 Гц с амплитудой 0,35 % (Low/Normal) или 0,5 % (High)
+  продолжает движение без эфира. `Off` мгновенно возвращает `IDENTITY` и
+  `GlobeMotion::disabled(style)`.
+- Лимиты `MotionReactivity`: Low — 1,0 % сжатия и 0,15 % ряби; Normal —
+  2,0 % и 0,25 %; High — 3,5 % и 0,40 %. Эффективную реактивность выбирает
+  Application Core (Overlay ≤ Low, Listening/Reduce motion — Off).
+- `GlobeMotion::uniform_values` отдаёт `[scale_y−1, scale_xz−1, ripple,
+  ripple_phase]` в `CameraUniform.motion`.
+- Деформация применяется ко всем слоям одинаково: шейдер — к мешу, `paint_country`
+  и маркеры — через `GlobeDeform::to_world`, hit-test — лучом, переведённым
+  `to_unit` в пространство единичной сферы. Рябь в hit-test не входит: она
+  художественная и не меняет силуэт заметно.
+- `GlobeMotion.yaw_sway`, `roll` и `flash` в Phase 1 равны нулю; их потребители
+  появятся в Phase 3.
+
+## 10. Тесты
 
 - все треугольники меша обращены наружу;
 - вершины лежат на единичной сфере, UV в `[0, 1]`;
@@ -286,12 +329,22 @@ impl SpectrumOverlay {
 - uniform камеры несёт позицию `eye` и нормализованное направление света,
   матрица `view_proj` конечна;
 - heatmap стран: интенсивность растёт с количеством станций и насыщается,
-  группированные маркеры суммируются, сравнение ISO-кода регистронезависимо.
+  группированные маркеры суммируются, сравнение ISO-кода регистронезависимо;
+- `MotionMixer` в `Off` возвращает `IDENTITY`, лимиты реактивности соблюдаются,
+  сжатие сохраняет объём (`scale_xz > 1`), возврат после Stop укладывается в
+  300/500 мс, idle-дыхание работает без данных, `dt` ограничен;
+- без полос движение использует `rms_db` и `flux`;
+- `GlobeDeform::to_world`/`to_unit` взаимно обратны, `uniform_values` содержит
+  `scale_y−1` и `scale_xz−1`;
+- деформированный луч попадает в ту же точку поверхности, что и проекция
+  маркера; `GlobeCallback` передаёт `motion` без нарушения POD-раскладки.
 
-## 10. Связанные ADR
+## 11. Связанные ADR
 
 - ADR-0002: Выбор GUI-стека
 - ADR-0008: Геопространственный поиск
 - ADR-0010: Экспериментальный FFT-визуализатор
 - ADR-0012: Маркеры станций на глобусе
 - ADR-0015: UX-редизайн «Orbital Desk» (контуры стран, `fly_to`)
+- ADR-0028: Аудио-реактивная деформация глобуса
+- ADR-0029: Орбитальное аудиокольцо

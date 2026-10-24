@@ -6,7 +6,7 @@ use eframe::egui::{Pos2, Rect, Vec2};
 use glam::camera::rh::{proj::directx, view};
 use glam::{Mat4, Vec3, Vec4};
 
-use super::GlobeInput;
+use super::{GlobeDeform, GlobeInput, GlobeMotion};
 
 const FOV_Y_RADIANS: f32 = std::f32::consts::FRAC_PI_4;
 const NEAR_PLANE: f32 = 0.1;
@@ -52,6 +52,8 @@ pub(crate) struct CameraUniform {
     pub view_proj: [[f32; 4]; 4],
     pub light_direction: [f32; 4],
     pub camera_position: [f32; 4],
+    /// x = scale_y − 1, y = scale_xz − 1, z = ripple, w = ripple_phase.
+    pub motion: [f32; 4],
 }
 
 /// Орбитальная камера вокруг глобуса радиусом 1.
@@ -239,7 +241,15 @@ impl GlobeCamera {
     }
 
     /// Пересечение луча из экранной точки со сферой радиусом 1.
-    pub fn screen_to_sphere(&self, screen_pos: Pos2, viewport: Rect) -> Option<Vec3> {
+    ///
+    /// То же, но луч переводится в пространство единичной сферы обратным
+    /// масштабом `deform` (ADR-0028). Возвращённая точка всегда единичная.
+    pub fn screen_to_sphere_deformed(
+        &self,
+        screen_pos: Pos2,
+        viewport: Rect,
+        deform: &GlobeDeform,
+    ) -> Option<Vec3> {
         if viewport.width() <= 0.0 || viewport.height() <= 0.0 || !viewport.contains(screen_pos) {
             return None;
         }
@@ -251,7 +261,9 @@ impl GlobeCamera {
         let near = unproject(inverse, ndc_x, ndc_y, 0.0)?;
         let far = unproject(inverse, ndc_x, ndc_y, 1.0)?;
 
-        let origin = self.eye();
+        let origin = deform.to_unit(self.eye());
+        let near = deform.to_unit(near);
+        let far = deform.to_unit(far);
         let direction = (far - near).normalize_or_zero();
         if direction == Vec3::ZERO {
             return None;
@@ -268,7 +280,8 @@ impl GlobeCamera {
         (distance >= 0.0).then(|| (origin + direction * distance).normalize())
     }
 
-    /// Проецирует точку единичной сферы в экранные координаты.
+    /// Проецирует точку поверхности в экранные координаты. Точка может быть
+    /// как единичной, так и уже деформированной (`GlobeDeform::to_world`).
     ///
     /// Возвращает `None` для обратной полусферы, выхода за viewport и
     /// нечисловых координат.
@@ -276,7 +289,7 @@ impl GlobeCamera {
         if viewport.width() <= 0.0 || viewport.height() <= 0.0 {
             return None;
         }
-        if point.dot(self.eye()) <= 1.0 {
+        if point.dot(self.eye()) <= point.length_squared() {
             return None;
         }
 
@@ -294,13 +307,14 @@ impl GlobeCamera {
             .then_some(position)
     }
 
-    pub(crate) fn uniform(&self, aspect: f32) -> CameraUniform {
+    pub(crate) fn uniform_with_motion(&self, aspect: f32, motion: &GlobeMotion) -> CameraUniform {
         let light = Vec3::new(0.35, 0.28, 0.90).normalize();
         let eye = self.eye();
         CameraUniform {
             view_proj: self.view_proj(aspect).to_cols_array_2d(),
             light_direction: [light.x, light.y, light.z, 0.0],
             camera_position: [eye.x, eye.y, eye.z, 0.0],
+            motion: motion.uniform_values(),
         }
     }
 }
@@ -337,7 +351,7 @@ mod tests {
     fn center_ray_hits_visible_hemisphere() {
         let camera = GlobeCamera::default();
         let hit = camera
-            .screen_to_sphere(viewport().center(), viewport())
+            .screen_to_sphere_deformed(viewport().center(), viewport(), &GlobeDeform::IDENTITY)
             .expect("центр экрана должен попадать в сферу");
 
         assert!((hit.length() - 1.0).abs() < 1e-5);
@@ -352,7 +366,7 @@ mod tests {
             ..GlobeCamera::default()
         };
         let hit = camera
-            .screen_to_sphere(viewport().center(), viewport())
+            .screen_to_sphere_deformed(viewport().center(), viewport(), &GlobeDeform::IDENTITY)
             .expect("центр экрана должен попадать в сферу");
 
         let lat = hit.y.asin().to_degrees();
@@ -409,7 +423,11 @@ mod tests {
         let camera = GlobeCamera::default();
         let corner = viewport().left_top();
 
-        assert!(camera.screen_to_sphere(corner, viewport()).is_none());
+        assert!(
+            camera
+                .screen_to_sphere_deformed(corner, viewport(), &GlobeDeform::IDENTITY)
+                .is_none()
+        );
     }
 
     #[test]
@@ -478,7 +496,7 @@ mod tests {
         }
 
         let hit = camera
-            .screen_to_sphere(viewport().center(), viewport())
+            .screen_to_sphere_deformed(viewport().center(), viewport(), &GlobeDeform::IDENTITY)
             .expect("после доворота центр должен попадать в сферу");
         let lat = hit.y.asin().to_degrees();
         let lon = hit.x.atan2(hit.z).to_degrees();
@@ -640,7 +658,7 @@ mod tests {
     #[test]
     fn uniform_carries_eye_and_light() {
         let camera = GlobeCamera::default();
-        let uniform = camera.uniform(1.0);
+        let uniform = camera.uniform_with_motion(1.0, &GlobeMotion::default());
 
         let eye = camera.eye();
         assert_eq!(&uniform.camera_position[..3], &[eye.x, eye.y, eye.z]);
@@ -654,5 +672,43 @@ mod tests {
                 .flatten()
                 .all(|value| value.is_finite())
         );
+        assert_eq!(uniform.motion, [0.0, 0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn uniform_keeps_motion_in_pod_layout() {
+        assert_eq!(std::mem::size_of::<CameraUniform>() % 16, 0);
+        assert_eq!(std::mem::align_of::<CameraUniform>(), 4);
+
+        let camera = GlobeCamera::default();
+        let motion = GlobeMotion {
+            deform: GlobeDeform::new(0.98),
+            ripple: 0.002,
+            ripple_phase: 0.75,
+            ..GlobeMotion::default()
+        };
+        let uniform = camera.uniform_with_motion(1.0, &motion);
+
+        assert!((uniform.motion[0] + 0.02).abs() < 1e-6);
+        assert_eq!(uniform.motion[2], 0.002);
+        assert_eq!(uniform.motion[3], 0.75);
+    }
+
+    #[test]
+    fn deformed_hit_test_matches_projected_surface() {
+        let camera = GlobeCamera::default();
+        let viewport = viewport();
+        let deform = GlobeDeform::new(0.97);
+        let unit = Vec3::Z;
+
+        let world = deform.to_world(unit);
+        let screen = camera
+            .project_on_sphere(world, viewport)
+            .expect("деформированная точка перед камерой");
+        let hit = camera
+            .screen_to_sphere_deformed(screen, viewport, &deform)
+            .expect("луч должен пересекать единичную сферу");
+
+        assert!((hit - unit).length() < 1e-3, "hit: {hit:?}");
     }
 }

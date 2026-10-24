@@ -61,6 +61,91 @@ impl AccentColor {
     }
 }
 
+/// Реактивность аудио-движения глобуса (ADR-0028).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MotionReactivity {
+    Off,
+    Low,
+    #[default]
+    Normal,
+    High,
+}
+
+impl MotionReactivity {
+    pub const ALL: [Self; 4] = [Self::Off, Self::Low, Self::Normal, Self::High];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Low => "Low",
+            Self::Normal => "Normal",
+            Self::High => "High",
+        }
+    }
+
+    pub fn is_enabled(self) -> bool {
+        self != Self::Off
+    }
+
+    /// Максимальное сжатие по вертикали, доли единицы.
+    pub fn squash_limit(self) -> f32 {
+        match self {
+            Self::Off => 0.0,
+            Self::Low => 0.010,
+            Self::Normal => 0.020,
+            Self::High => 0.035,
+        }
+    }
+
+    /// Максимальная амплитуда ряби, доли радиуса.
+    pub fn ripple_limit(self) -> f32 {
+        match self {
+            Self::Off => 0.0,
+            Self::Low => 0.0015,
+            Self::Normal => 0.0025,
+            Self::High => 0.0040,
+        }
+    }
+
+    /// Амплитуда idle-дыхания, доли единицы.
+    pub fn idle_amplitude(self) -> f32 {
+        match self {
+            Self::Off => 0.0,
+            Self::Low | Self::Normal => 0.0035,
+            Self::High => 0.0050,
+        }
+    }
+
+    /// Ограничение сверху для режима окна: Overlay не выше Low.
+    pub fn capped(self, cap: Self) -> Self {
+        if self.rank() <= cap.rank() { self } else { cap }
+    }
+
+    fn rank(self) -> u8 {
+        match self {
+            Self::Off => 0,
+            Self::Low => 1,
+            Self::Normal => 2,
+            Self::High => 3,
+        }
+    }
+}
+
+/// Характер аудио-движения глобуса (ADR-0028).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MotionStyle {
+    #[default]
+    Auto,
+    SoftPulse,
+    GrooveSway,
+    BassDrop,
+    AmbientDrift,
+    SparkleTwitch,
+    BeatMarch,
+}
+
 /// Настройки оформления.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -71,6 +156,14 @@ pub struct Settings {
     pub viz_bars: u8,
     /// Карточка управления уже показывалась — дальше она только по `?`.
     pub help_seen: bool,
+    /// Реактивность аудио-движения глобуса (ADR-0028).
+    pub motion: MotionReactivity,
+    /// Характер движения; Auto выбирает по сигналу.
+    pub motion_style: MotionStyle,
+    /// Перевороты камеры на сильном onset; по умолчанию выключены.
+    pub allow_flips: bool,
+    /// Reduce motion: геометрия и качка неподвижны, эфир продолжается.
+    pub reduce_motion: bool,
 }
 
 /// Доступные варианты числа столбцов визуализатора.
@@ -85,6 +178,10 @@ impl Default for Settings {
             accent: AccentColor::Blue,
             viz_bars: DEFAULT_VIZ_BARS,
             help_seen: false,
+            motion: MotionReactivity::Normal,
+            motion_style: MotionStyle::Auto,
+            allow_flips: false,
+            reduce_motion: false,
         }
     }
 }
@@ -180,6 +277,22 @@ impl SettingsStore {
             return Ok(());
         }
         self.settings.help_seen = true;
+        self.save()
+    }
+
+    pub fn set_motion(&mut self, motion: MotionReactivity) -> Result<(), SettingsError> {
+        if self.settings.motion == motion {
+            return Ok(());
+        }
+        self.settings.motion = motion;
+        self.save()
+    }
+
+    pub fn set_reduce_motion(&mut self, reduce: bool) -> Result<(), SettingsError> {
+        if self.settings.reduce_motion == reduce {
+            return Ok(());
+        }
+        self.settings.reduce_motion = reduce;
         self.save()
     }
 
@@ -292,6 +405,47 @@ mod tests {
         assert_eq!(store.settings().accent, AccentColor::Blue);
         assert_eq!(store.settings().viz_bars, DEFAULT_VIZ_BARS);
         assert!(!store.settings().help_seen);
+        assert_eq!(store.settings().motion, MotionReactivity::Normal);
+        assert_eq!(store.settings().motion_style, MotionStyle::Auto);
+        assert!(!store.settings().allow_flips);
+        assert!(!store.settings().reduce_motion);
+    }
+
+    #[test]
+    fn roundtrip_persists_motion_preferences() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        {
+            let mut store = SettingsStore::load(path.clone()).unwrap();
+            store.set_motion(MotionReactivity::High).unwrap();
+            store.set_reduce_motion(true).unwrap();
+        }
+
+        let store = SettingsStore::load(path).unwrap();
+        assert_eq!(store.settings().motion, MotionReactivity::High);
+        assert_eq!(store.settings().motion_style, MotionStyle::Auto);
+        assert!(!store.settings().allow_flips);
+        assert!(store.settings().reduce_motion);
+    }
+
+    #[test]
+    fn motion_reactivity_caps_and_limits() {
+        assert_eq!(
+            MotionReactivity::High.capped(MotionReactivity::Low),
+            MotionReactivity::Low
+        );
+        assert_eq!(
+            MotionReactivity::Low.capped(MotionReactivity::Low),
+            MotionReactivity::Low
+        );
+        assert_eq!(
+            MotionReactivity::Off.capped(MotionReactivity::High),
+            MotionReactivity::Off
+        );
+        assert!(!MotionReactivity::Off.is_enabled());
+        assert!(MotionReactivity::Normal.is_enabled());
+        assert_eq!(MotionReactivity::Off.squash_limit(), 0.0);
+        assert!(MotionReactivity::High.squash_limit() > MotionReactivity::Normal.squash_limit());
     }
 
     #[test]

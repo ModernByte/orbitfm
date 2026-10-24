@@ -61,7 +61,8 @@ Core не принимают `&egui::Context` — детали в `docs/interfac
 | Поле | Тип | Пояснение |
 |------|-----|-----------|
 | `globe_camera` | `GlobeCamera` | Позиция камеры должна переживать закрытие окна (ADR-0018 п. 2); вращение и зум пишет presentation, Core вызывает `fly_to` |
-| `spectrum_enabled` | `bool` | Зеркало состояния движка; инициализируется `audio.spectrum_enabled()` (по умолчанию `true`), каждый `tick()` перечитывается, при ошибке включения `set_spectrum_enabled` откатывает поле |
+| `visualizer_enabled` | `bool` | Пользовательский переключатель визуализатора и кольца; инициализируется `audio.spectrum_enabled()` (по умолчанию `true`) |
+| `spectrum_enabled` | `bool` | Фактическое состояние аудио-анализа; включается по `analysis_needed` (визуализатор или движение глобуса), каждый `tick()` перечитывается из движка, при ошибке включения откатывается |
 | `current_url` | `Option<String>` | Заполняется из `start_station` и из `AudioEvent::Started`; не очищается при `Stopped`/`Error` — нужен для повторного запуска из MPRIS |
 | `current_station` | `Option<Station>` | Метаданные эфира: `status`, MPRIS, подсветка строки списка |
 | `search` | `SearchState` | Всё о поиске: строки запросов, контекст, результаты, поколение, незавершённые задания |
@@ -70,6 +71,11 @@ Core не принимают `&egui::Context` — детали в `docs/interfac
 | `country_filter` | `CountryFilterState` | Локальные фильтры панели (`text`, `genre`, `sort`, `compact_rows`) |
 | `panel_open` | `bool` | Панель станций; `true` по умолчанию |
 | `show_help` | `bool` | `!settings.settings().help_seen` при создании ядра |
+
+Эффективную реактивность движения отдаёт `motion_reactivity()` (ADR-0028):
+`reduce_motion` → `Off`; Focus — значение настройки, Overlay — не выше `Low`,
+Listening — `Off`. `motion_reactivity()`, `analysis_needed()` и `sync_analysis()`
+не хранят отдельного состояния: они вычисляются из настроек и режима окна.
 
 ### 2.3. Окно и очередь сообщений
 
@@ -99,7 +105,7 @@ Core не принимают `&egui::Context` — детали в `docs/interfac
 |------|-----------------|--------------------------------------|
 | `mod.rs` | Ядро: владение подсистемами, пробуждение, `status`, ре-экспорт контрактов пакета | `Session`, `AppServices`, `Notice`, `ParkOutcome`, `WakeHandle`, `LibraryTab`; наружу из `window.rs` — `UiIntent`, `WindowMode`, `WindowState`, `WINDOW_TITLE` |
 | `window.rs` | Состояние окна: режим (`WindowMode`), геометрия и заголовки по режиму, намерения UI, признак перезапуска (ADR-0018, ADR-0021) | `WindowMode` (+ `ALL`/`label`/`default_size`/`min_size`/`title`/`as_str`), `UiIntent`, `WindowState`, `WINDOW_SIZE`, `WINDOW_MIN_SIZE`, `WINDOW_TITLE`, `OVERLAY_SIZE`, `OVERLAY_MIN_SIZE`, `OVERLAY_TITLE`, `LISTENING_SIZE`, `LISTENING_MIN_SIZE`, `LISTENING_TITLE` |
-| `commands.rs` | Разбор `IpcCommand` (общий для окна и парковки), `impl From<WindowModeArg> for WindowMode` и настроек оформления | `Session::{execute, process_commands, set_theme, set_accent, set_viz_bars, set_spectrum_enabled, mark_help_seen}` |
+| `commands.rs` | Разбор `IpcCommand` (общий для окна и парковки), `impl From<WindowModeArg> for WindowMode` и настроек оформления и движения | `Session::{execute, process_commands, set_theme, set_accent, set_viz_bars, set_visualizer_enabled, set_motion, set_reduce_motion, mark_help_seen}` |
 | `playback.rs` | Аудио-события, запуск/остановка, избранное, история, очередь `prev`/`next`, витрина MPRIS | `Session::{process_audio_events, apply_audio_event, resolve_station, start_station, spawn_click, toggle_favorite, clear_history, focus_country, set_volume, set_audio_paused, resume_playback, toggle_playback, stop_playback, process_media_commands, execute_media_command, visible_queue, play_relative, sync_media}` |
 | `search.rs` | Поиск по имени/стране/жанру с поколениями ответов и рулетка | `SearchMode`, `SearchContext`, `SearchState`, `SearchResponse`, `STATION_LOOKUP_TIMEOUT`, `Session::{start_search, start_country_search, start_genre_search, switch_mode, poll_search, start_roulette, poll_roulette, apply_roulette}` |
 | `markers.rs` | Агрегация станций с координатами в маркеры глобуса | `GlobeMarker`, `build_markers` (+ `#[cfg(test)] sample_station`, `geo_station`) |
@@ -327,9 +333,11 @@ process_audio_events → process_commands → process_media_commands
 `execute(&IpcCommand) -> String` — общий разбор для окна и парковки (полная
 таблица — `docs/interfaces/10-session.md` § 4). Здесь же `impl From<WindowModeArg>
 for WindowMode`: `src/ipc/` не знает доменного режима, превращение делает Core
-(ADR-0021 п. 5). Настройки оформления идут через
+(ADR-0021 п. 5). Настройки оформления и движения идут через
 `SettingsStore` и возвращают `Result<(), String>`: `set_theme`, `set_accent`,
-`set_viz_bars`, `set_spectrum_enabled`; `mark_help_seen` ошибку только
+`set_viz_bars`, `set_motion`, `set_reduce_motion`; `set_visualizer_enabled`
+вызывает `sync_analysis()` и меняет пользовательский переключатель, а не
+состояние анализа напрямую; `mark_help_seen` ошибку только
 логирует. Перекрашиванием `egui` занимается presentation: после `set_theme`/
 `set_accent` он сам вызывает `palette::configure_style` (ADR-0018 п. 3).
 

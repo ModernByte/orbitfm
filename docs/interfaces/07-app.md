@@ -28,7 +28,7 @@ root-вьюпорта: цикл завершается, управление в�
 4. Держать ресурсы одного прогона: тему и акцент (`palette::configure_style`), системный
    цветной emoji-шрифт (ADR-0017), `GlobeRenderer`, вставленный в `callback_resources`
    wgpu-рендерера, `FaviconCache` с его текстурами, `reqwest::Client` для иконок,
-   `SpectrumOverlay`, `CalloutState`, `VisualizerModel`, `Toast`.
+   `SpectrumOverlay`, `motion: MotionMixer`, `CalloutState`, `VisualizerModel`, `Toast`.
 5. Устанавливать `WakeHandle` в начале прогона (`OrbitApp::new` → `wake.install`, замыкание
    зовёт `Context::request_repaint`) и оставлять его снятым после закрытия окна
    (`Session::end_window` → `wake.clear`), чтобы фоновые задачи не будили несуществующий цикл.
@@ -45,7 +45,8 @@ root-вьюпорта: цикл завершается, управление в�
      `UiAction::Play`, и `apply_action` вызывает `Session::start_station` (запускается
      представитель группы);
    - иначе `globe_view` возвращает точку на сфере, полученную от
-     `GlobeCamera::screen_to_sphere` (`GlobeResponse::clicked_point`);
+     `GlobeCamera::screen_to_sphere_deformed` с текущей `GlobeMotion.deform`
+     (`GlobeResponse::clicked_point`);
    - `src/app.rs` спрашивает страну у `GeoService::country_at_sphere_point` и создаёт
      `UiAction::SelectCountry`;
    - решение принимает ядро: `Session::focus_country` мягко доворачивает камеру к центру
@@ -174,8 +175,10 @@ presentation-слоем позже — в `logic()` следующего кад�
 5. `Session::take_intent()` → `ViewportCommand::Focus` (`UiIntent::Show`) или
    `ViewportCommand::Close` (`UiIntent::Close`).
 6. `Escape` закрывает карточку управления (`session.show_help = false` + `mark_help_seen`).
-7. Repaint-политика: при включённом FFT и `Playing`/`Buffering` — repaint через 33 мс
-   (`SPECTRUM_REPAINT`); пульс маркеров запрашивает repaint сам `globe_view`.
+7. Repaint-политика: при включённом визуализаторе и `Playing`/`Buffering` — repaint через 33 мс
+   (`SPECTRUM_REPAINT`); `draw_layers` добавляет кадры движения (33 мс при активном
+   эфире, 66 мс для idle-дыхания; при `Off`/Reduce motion — без лишних кадров);
+   пульс маркеров запрашивает repaint сам `globe_view`.
 
 `ui()` вызывает `draw()`: `Frame::capture` снимает читаемое состояние в снапшот,
 `egui::CentralPanel` с прозрачной рамкой рисует `draw_layers` (глобус → HUD → панель →
@@ -326,7 +329,8 @@ focusable, ↑/↓ переводят фокус на соседа по види
 ## Зависимости
 
 `OrbitApp<'a>` владеет только кадрами и per-run ресурсами: `session: &'a mut Session`,
-`globe_ready`, `spectrum_overlay: SpectrumOverlay`, `orbit_ring: OrbitRing`,
+`globe_ready`, `spectrum_overlay: SpectrumOverlay`, `motion: MotionMixer`,
+`orbit_ring: OrbitRing`,
 `callout: CalloutState`, `visualizer: VisualizerModel`, `favicons: FaviconCache`,
 `http: reqwest::Client`, `toast: Toast`. Подсистемами (`AudioEngine`, `GeoService`, `RadioBrowserClient`,
 `MediaControls`, `StationLibrary`, `SettingsStore`, `GlobeCamera`, `tokio::runtime::Handle`)
@@ -334,9 +338,10 @@ focusable, ↑/↓ переводят фокус на соседа по види
 (`session.audio`, `session.geo`, `session.library`, `session.settings`, `session.runtime`)
 и через методы ядра — `Session::start_station`, `focus_country`, `start_country_search`,
 `start_genre_search`, `start_search`, `switch_mode`, `start_roulette`, `toggle_favorite`,
-`clear_history`, `set_theme`, `set_accent`, `set_spectrum_enabled`, `set_viz_bars`,
+`clear_history`, `set_theme`, `set_accent`, `set_visualizer_enabled`, `set_viz_bars`,
+`set_motion`, `set_reduce_motion`,
 `set_volume`, `play_relative`, `toggle_playback`, `stop_playback`, `hide`, `quit`,
-`window_mode`/`set_window_mode`, `tick`, `take_intent`, `take_notices`,
+`window_mode`/`set_window_mode`, `motion_reactivity`, `tick`, `take_intent`, `take_notices`,
 `panel_open`/`show_help`.
 
 Из `src/ui/` используются `UiAction`, `DeskLayout`, `LayoutDensity`,
@@ -345,8 +350,9 @@ focusable, ↑/↓ переводят фокус на соседа по види
 `PanelState`, `HudState`, `FaviconCache` и `decode_favicon`, `Toast`, капсулы
 `capsule::{overlay_top, overlay_favorites, listening}`, `widgets::glass_panel`,
 `overlays::help_card`/`density_legend`, `SearchMode` (ре-экспорт
-`crate::session::search`). Из `src/render/` — `GlobeRenderer`, `SpectrumOverlay`,
-`SpectrumTarget`, `VisualizerModel`; из `src/settings/` — `Settings`.
+`crate::session::search`). Из `src/render/` — `GlobeRenderer`, `MotionMixer`,
+`SpectrumOverlay`, `SpectrumTarget`, `VisualizerModel`; из `src/settings/` —
+`Settings`, `MotionReactivity`, `MotionStyle`.
 
 Подмена реализаций в тестах не требуется; модульные тесты
 проверяют чистые функции (`format_status`, `playback_label`, `country_label`,

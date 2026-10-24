@@ -1,7 +1,7 @@
 # Модуль: Настройки оформления
 
 **Путь в коде:** `src/settings/mod.rs`  
-**Ответственность:** Хранение темы и акцентного цвета, локальная персистентность.  
+**Ответственность:** Хранение темы, акцентного цвета, параметров визуализатора и аудио-движения, локальная персистентность.  
 **Зависимости:** serde, serde_json, thiserror
 
 ---
@@ -9,15 +9,16 @@
 ## 1. Назначение
 
 Единственная точка работы с пользовательскими предпочтениями оформления.  
-Модуль не зависит от egui и GUI: он хранит перечисления `ThemeMode` и
-`AccentColor`, а Application Core применяет их к стилям и палитре. Решение —
-ADR-0014.
+Модуль не зависит от egui и GUI: он хранит перечисления `ThemeMode`,
+`AccentColor`, `MotionReactivity` и `MotionStyle`, а Application Core применяет
+их к стилям, палитре и движению глобуса. Решения — ADR-0014, ADR-0019,
+ADR-0028.
 
 ## 2. Состав модуля
 
 | Файл | Назначение |
 |------|------------|
-| `mod.rs` | `SettingsStore`, `Settings`, `ThemeMode`, `AccentColor`, `default_path` |
+| `mod.rs` | `SettingsStore`, `Settings`, `ThemeMode`, `AccentColor`, `MotionReactivity`, `MotionStyle`, `VIZ_BAR_CHOICES`, `default_path` |
 
 ## 3. Данные
 
@@ -25,10 +26,21 @@ ADR-0014.
 |------|----------|--------------|
 | `theme` | `system`, `dark`, `light` | `system` |
 | `accent` | `blue`, `green`, `amber`, `violet`, `rose`, `cyan` | `blue` |
+| `viz_bars` | 16, 24, 32 (иное притягивается к ближайшему) | 24 |
+| `help_seen` | `true` после первого показа карточки управления | `false` |
+| `motion` | `off`, `low`, `normal`, `high` | `normal` |
+| `motion_style` | `auto`, `soft-pulse`, `groove-sway`, `bass-drop`, `ambient-drift`, `sparkle-twitch`, `beat-march` | `auto` |
+| `allow_flips` | перевороты камеры на onset (Phase 3) | `false` |
+| `reduce_motion` | отключает геометрию и качку, эфир продолжается | `false` |
 
 Акценты — пресеты с фиксированными RGB-компонентами (`AccentColor::rgb`).
 Произвольный цвет отложен: перетаскивание color picker приводило бы к записи
 файла несколько раз в секунду.
+
+`MotionReactivity` задаёт пределы `squash_limit` (1,0/2,0/3,5 % для
+Low/Normal/High), `ripple_limit` (0,15/0,25/0,40 %) и `idle_amplitude`
+(0,35/0,35/0,50 %); `capped` ограничивает режим окна. `MotionStyle::Auto`
+оставлен значением по умолчанию для будущего выбора по сигналу (Phase 2).
 
 ## 4. Персистентность
 
@@ -62,6 +74,12 @@ $HOME/.config/orbitfm/settings.json   (если XDG_CONFIG_HOME не задан/
   Этапа 9); качества и рейтинга в цвете больше нет.
 - Меню «Настройки» в HUD содержит выбор темы и шесть акцентных образцов;
   ошибки хранилища показываются тостом.
+- Секция `Motion` в HUD: чипы `Off`/`Low`/`Normal`/`High` и чекбокс
+  `Reduce motion`; изменения применяются сразу и сохраняются. При
+  `reduce_motion` эффективная реактивность — `Off`, но настройка `motion`
+  не перезаписывается.
+- Число столбцов визуализатора (`viz_bars`) меняется в меню «Настройки» и
+  применяется к следующему кадру.
 
 ## 6. Ограничения
 

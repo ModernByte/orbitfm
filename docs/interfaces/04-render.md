@@ -50,15 +50,17 @@ impl GlobeCamera {
     /// Матрица вида и проекции для заданного aspect.
     pub fn view_proj(&self, aspect: f32) -> glam::Mat4;
 
-    /// Экранные координаты → точка на единичной сфере.
-    pub fn screen_to_sphere(
+    /// Экранные координаты → точка на единичной сфере с учётом деформации:
+    /// луч переводится в пространство единичной сферы обратным масштабом.
+    pub fn screen_to_sphere_deformed(
         &self,
         screen_pos: egui::Pos2,
         viewport: egui::Rect,
+        deform: &GlobeDeform,
     ) -> Option<glam::Vec3>;
 
-    /// Точка единичной сферы → экранные координаты; `None` для обратной полусферы
-    /// и выхода за viewport.
+    /// Точка поверхности → экранные координаты; `None` для обратной полусферы
+    /// и выхода за viewport. Принимает как единичную, так и деформированную точку.
     pub fn project_on_sphere(
         &self,
         point: glam::Vec3,
@@ -84,9 +86,14 @@ impl GlobeRenderer {
     pub fn paint(&self, render_pass: &mut wgpu::RenderPass<'_>);
 }
 
-/// Добавляет paint callback глобуса в painter. Аудио-пульс не передаётся:
-/// Fresnel-обод атмосферы статичен.
-pub fn paint_globe(painter: &egui::Painter, rect: egui::Rect, camera: &GlobeCamera);
+/// Добавляет paint callback глобуса в painter. `motion` задаёт squash и
+/// рябь текущего кадра; Fresnel-обод остаётся статичным.
+pub fn paint_globe(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    camera: &GlobeCamera,
+    motion: &GlobeMotion,
+);
 
 /// Стиль страны: заливка и линия контура.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -104,6 +111,7 @@ pub fn paint_country(
     painter: &egui::Painter,
     viewport: egui::Rect,
     camera: &GlobeCamera,
+    deform: &GlobeDeform,
     rings: &[Vec<[f64; 2]>],
     style: CountryStyle,
 );
@@ -139,6 +147,68 @@ pub fn paint_markers(
     color: egui::Color32,
     time: f64,
 );
+
+/// Линейная деформация сферы с сохранением объёма (ADR-0028).
+/// Реактивность и стиль приходят из `crate::settings`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GlobeDeform {
+    /* scale_y, scale_xz */
+}
+
+impl GlobeDeform {
+    pub const IDENTITY: Self;
+
+    /// `scale_xz = 1 / sqrt(scale_y)`; нефинитное значение — identity.
+    pub fn new(scale_y: f32) -> Self;
+    pub fn scale_y(&self) -> f32;
+    pub fn scale_xz(&self) -> f32;
+
+    /// Точка единичной сферы → точка видимой поверхности.
+    pub fn to_world(self, unit: glam::Vec3) -> glam::Vec3;
+
+    /// Обратное преобразование; для перевода луча в пространство сферы.
+    pub fn to_unit(self, world: glam::Vec3) -> glam::Vec3;
+}
+
+/// Снимок движения на кадр; чистые числа без ссылок на GPU/UI.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct GlobeMotion {
+    pub deform: GlobeDeform,
+    /// Амплитуда радиальной ряби, `0.0..=0.004`.
+    pub ripple: f32,
+    pub ripple_phase: f32,
+    /// Музыкальная добавка к yaw; в Phase 1 равна нулю.
+    pub yaw_sway: f32,
+    /// Переворот камеры; в Phase 1 равен нулю.
+    pub roll: f32,
+    /// Усиление Fresnel-кромки; в Phase 1 равно нулю.
+    pub flash: f32,
+    pub style: MotionStyle,
+    /// Аудио-интенсивность 0..1 для выбора частоты кадров.
+    pub intensity: f32,
+}
+
+impl GlobeMotion {
+    pub fn disabled(style: MotionStyle) -> Self;
+    /// Значения `CameraUniform.motion`: `[scale_y−1, scale_xz−1, ripple, phase]`.
+    pub fn uniform_values(&self) -> [f32; 4];
+}
+
+/// Spring-squash, огибающие и idle-дыхание; живёт в presentation-слое.
+#[derive(Debug, Default)]
+pub struct MotionMixer { /* ... */ }
+
+impl MotionMixer {
+    /// `target = None` — нет эфира: возврат к idle-дыханию.
+    /// `reactivity` — уже эффективная реактивность с поправкой на режим окна.
+    pub fn update(
+        &mut self,
+        target: Option<SpectrumTarget>,
+        reactivity: MotionReactivity,
+        style: MotionStyle,
+        dt: f32,
+    ) -> GlobeMotion;
+}
 
 /// Нормированные уровни полос `0.0..=1.0`; не зависит от аудио-модуля.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -186,7 +256,8 @@ impl SpectrumOverlay {
 ```
 
 `CameraUniform` — внутренний тип (`pub(crate)`), содержащий `view_proj`,
-`light_direction` и позицию камеры `camera_position`. `GlobeCallback`
+`light_direction`, позицию камеры `camera_position` и `motion` (`scale_y−1`,
+`scale_xz−1`, амплитуда ряби, фаза). `GlobeCallback`
 реализует `egui_wgpu::CallbackTrait` и не входит в публичный экспорт: снаружи
 используется `paint_globe`.
 
@@ -204,21 +275,36 @@ impl SpectrumOverlay {
   восток. Доворот `fly_to` и любое взаимодействие сбрасывают отсчёт. Наведение
   курсора простоем не считается. `idle_countdown` возвращает остаток паузы,
   `is_idle_spinning` — факт вращения.
-- `screen_to_sphere` возвращает нормализованную точку единичной сферы или `None`,
-  если луч не пересекает сферу либо точка вне viewport.
+- `screen_to_sphere_deformed` переводит луч (`eye`, near, far) в пространство
+  единичной сферы обратным масштабом `GlobeDeform::to_unit` и возвращает точку
+  единичной сферы для `GeoService`; без деформации это прежний
+  `screen_to_sphere`. `None` — луч не пересекает сферу или точка вне viewport.
 - `project_on_sphere` — обратная операция: отсекает точки задней полусферы
-  (`point · eye <= 1`), нечисловые координаты и результат вне viewport. Используется
-  для проецирования маркеров станций.
+  по условию `point · eye <= |point|²` (работает и для деформированных точек),
+  нечисловые координаты и результат вне viewport. Используется для маркеров,
+  стран и якоря callout.
+- `GlobeDeform` — общий источник геометрии: маркеры, кольца стран и hit-test
+  переводятся тем же `to_world`/`to_unit`, что и вершины меша. Рябь в hit-test
+  не входит: при амплитуде ≤0,4 % расхождение меньше пикселя.
+- `MotionMixer::update` — чистая модель без egui/wgpu: асимметричные огибающие
+  Bass/High (атака 30 мс, спад 220 мс), spring-squash (`target = 1 − amount·bass`,
+  `scale_xz = 1/√scale_y`), idle-дыхание 0,12 Гц и возврат после Stop с
+  `RELEASE_TAU = 0,10 с`. При `Off` возвращает `GlobeMotion::disabled` и
+  сбрасывает историю; `dt` ограничен 0,1 с, интегратор идёт шагом ≤1/240 с.
+  Без полос (`bands = None`) Bass — нормированный RMS, High — flux.
 - `projected_radius(viewport)` — экранный радиус силуэта единичной сферы:
   `focal = 0.5·height / tan(FOV/2)`, `radius = focal / sqrt(distance² − 1)`.
   Нулевой или нечисловой viewport даёт 0. Центр силуэта совпадает с центром
   viewport'а; радиус питает орбитальное аудиокольцо (ADR-0029).
 - `paint_globe` не создаёт ресурсов: `GlobeRenderer` должен быть заранее вставлен в
   `callback_resources` (это делает `OrbitApp::new`). Если ресурса нет, callback
-  пропускает отрисовку. Вершинный шейдер не масштабирует радиус; hit-test и
-  проекция маркеров остаются на сфере радиуса 1. Всё, что painter рисует до
-  вызова `paint_globe`, оказывается за сферой; этим пользуется орбитальное
-  аудиокольцо (ADR-0029).
+  пропускает отрисовку. Вершинный шейдер применяет анизотропный масштаб
+  `(scale_xz, scale_y, scale_xz)`, трёхлепестковую рябь по долготе с затуханием
+  к полюсам и пересчитывает нормаль как `normalize(normal / scale)`; нормаль
+  ряби не считается. Маркеры, страны и hit-test используют тот же `GlobeDeform`,
+  поэтому не «плывут» при squash. Всё, что painter рисует до вызова
+  `paint_globe`, оказывается за сферой; этим пользуется орбитальное аудиокольцо
+  (ADR-0029).
 - Атмосфера — статичный Fresnel-обод в фрагментном шейдере:
   `pow(1 - dot(normal, view), 3.2) · 0.12`; поверх лежит узкая кромка
   `pow(1 - facing, 9) · 0.2`. Аудио-пульс удалён 2026-10-24 (ADR-0023,
@@ -234,8 +320,7 @@ impl SpectrumOverlay {
 - `SpectrumTarget.bands` заполняется App Core из `SpectrumFrame.bands` через
   `BandTargets::from_db` (пол −90 дБ, диапазон 80 дБ); при `None` потребители
   обязаны деградировать к полному RMS+flux, а не исчезать (ADR-0027, ADR-0028).
-  В Phase 0 поле только передаётся: орбитальное кольцо и глобус его не читают,
-  пока не появятся потребители Phase 1.
+  С Phase 1 полосы читает `MotionMixer`: Bass ведёт squash, High — рябь.
 - `SpectrumOverlay::pulse` — смесь сглаженного уровня и flux (`0.75/0.25`),
   ограниченная `[0, 1]`; при невидимом оверлее возвращает 0. App Core передаёт
   значение в кольцо Listening; при выключенном визуализаторе и тишине кольцо

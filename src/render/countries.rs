@@ -3,7 +3,7 @@
 use eframe::egui::{Color32, Mesh, Painter, Pos2, Rect, Shape, Stroke};
 use glam::Vec3;
 
-use super::{GlobeCamera, sphere_point};
+use super::{GlobeCamera, GlobeDeform, sphere_point};
 
 /// Максимальный шаг между точками контура при проецировании (градусы дуги).
 const MAX_ARC_STEP_DEGREES: f32 = 2.0;
@@ -21,12 +21,15 @@ pub struct CountryStyle {
 
 /// Рисует кольца страны (`[lon, lat]`, градусы) поверх области глобуса.
 ///
+/// Кольца живут на единичной сфере; `deform` переводит их на видимую
+/// поверхность планеты, поэтому контуры не «плавают» при squash.
 /// Заливка рисуется только для колец, целиком видимых на передней полусфере
 /// и попадающих в viewport; контур обрезается по горизонту.
 pub fn paint_country(
     painter: &Painter,
     viewport: Rect,
     camera: &GlobeCamera,
+    deform: &GlobeDeform,
     rings: &[Vec<[f64; 2]>],
     style: CountryStyle,
 ) {
@@ -39,7 +42,7 @@ pub fn paint_country(
         if points.len() < 3 {
             continue;
         }
-        paint_ring(painter, viewport, camera, &points, style);
+        paint_ring(painter, viewport, camera, deform, &points, style);
     }
 }
 
@@ -47,11 +50,12 @@ fn paint_ring(
     painter: &Painter,
     viewport: Rect,
     camera: &GlobeCamera,
+    deform: &GlobeDeform,
     points: &[Vec3],
     style: CountryStyle,
 ) {
     if let Some(fill) = style.fill
-        && let Some(polygon) = project_fill(camera, viewport, points)
+        && let Some(polygon) = project_fill(camera, viewport, deform, points)
     {
         let triangles = triangulate(&polygon);
         if !triangles.is_empty() {
@@ -67,7 +71,7 @@ fn paint_ring(
     }
 
     let (runs, _) = visible_runs(points, camera.eye());
-    for polyline in project_runs(camera, viewport, &runs) {
+    for polyline in project_runs(camera, viewport, deform, &runs) {
         painter.add(Shape::line(polyline, style.stroke));
     }
 }
@@ -111,14 +115,19 @@ fn slerp(start: Vec3, end: Vec3, t: f32, angle: f32) -> Vec3 {
     (start * ((1.0 - t) * angle).sin() / sin + end * (t * angle).sin() / sin).normalize_or_zero()
 }
 
-fn project_fill(camera: &GlobeCamera, viewport: Rect, points: &[Vec3]) -> Option<Vec<Pos2>> {
+fn project_fill(
+    camera: &GlobeCamera,
+    viewport: Rect,
+    deform: &GlobeDeform,
+    points: &[Vec3],
+) -> Option<Vec<Pos2>> {
     let eye = camera.eye();
     let mut projected = Vec::with_capacity(points.len());
     for point in points {
         if point.dot(eye) <= 1.0 {
             return None;
         }
-        projected.push(camera.project_on_sphere(*point, viewport)?);
+        projected.push(camera.project_on_sphere(deform.to_world(*point), viewport)?);
     }
     (projected.len() >= 3).then_some(projected)
 }
@@ -195,12 +204,17 @@ fn push_point(points: &mut Vec<Vec3>, point: Vec3) {
     }
 }
 
-fn project_runs(camera: &GlobeCamera, viewport: Rect, runs: &[Vec<Vec3>]) -> Vec<Vec<Pos2>> {
+fn project_runs(
+    camera: &GlobeCamera,
+    viewport: Rect,
+    deform: &GlobeDeform,
+    runs: &[Vec<Vec3>],
+) -> Vec<Vec<Pos2>> {
     let mut polylines = Vec::new();
     for run in runs {
         let mut line = Vec::new();
         for point in run {
-            match camera.project_on_sphere(*point, viewport) {
+            match camera.project_on_sphere(deform.to_world(*point), viewport) {
                 Some(position) => line.push(position),
                 None => {
                     if line.len() >= 2 {
@@ -354,13 +368,49 @@ mod tests {
     #[test]
     fn fill_requires_fully_visible_ring() {
         let camera = GlobeCamera::default();
+        let deform = GlobeDeform::IDENTITY;
         assert!(
-            project_fill(&camera, viewport(), &sphere_ring(&small_ring(0.0, 0.0))).is_some(),
+            project_fill(
+                &camera,
+                viewport(),
+                &deform,
+                &sphere_ring(&small_ring(0.0, 0.0))
+            )
+            .is_some(),
             "кольцо перед камерой должно заливаться"
         );
         assert!(
-            project_fill(&camera, viewport(), &sphere_ring(&small_ring(0.0, 180.0))).is_none(),
+            project_fill(
+                &camera,
+                viewport(),
+                &deform,
+                &sphere_ring(&small_ring(0.0, 180.0))
+            )
+            .is_none(),
             "кольцо на обратной стороне не заливается"
+        );
+    }
+
+    #[test]
+    fn deform_moves_projected_ring() {
+        let camera = GlobeCamera::default();
+        let ring = sphere_ring(&small_ring(0.0, 0.0));
+        let identity = project_fill(&camera, viewport(), &GlobeDeform::IDENTITY, &ring)
+            .expect("кольцо перед камерой");
+        let squashed = project_fill(&camera, viewport(), &GlobeDeform::new(0.96), &ring)
+            .expect("деформированное кольцо перед камерой");
+
+        let identity_top = identity
+            .iter()
+            .map(|point| point.y)
+            .fold(f32::INFINITY, f32::min);
+        let squashed_top = squashed
+            .iter()
+            .map(|point| point.y)
+            .fold(f32::INFINITY, f32::min);
+        assert!(
+            squashed_top > identity_top,
+            "при сжатии по вертикали верх кольца опускается"
         );
     }
 
@@ -396,7 +446,13 @@ mod tests {
         let ring = vec![[f64::NAN, 0.0], [0.0, 0.0], [1.0, 1.0], [2.0, 0.0]];
         assert!(sphere_ring(&ring).is_empty());
         assert!(
-            project_fill(&camera, viewport(), &sphere_ring(&ring)).is_none(),
+            project_fill(
+                &camera,
+                viewport(),
+                &GlobeDeform::IDENTITY,
+                &sphere_ring(&ring)
+            )
+            .is_none(),
             "невалидное кольцо не должно заливаться"
         );
     }

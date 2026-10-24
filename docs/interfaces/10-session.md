@@ -71,12 +71,19 @@ Application Core — слой, который переживает закрыт�
 | `set_theme` | `pub(crate) fn set_theme(&mut self, theme: ThemeMode) -> Result<(), String>` | Сохранение темы в `SettingsStore` |
 | `set_accent` | `pub(crate) fn set_accent(&mut self, accent: AccentColor) -> Result<(), String>` | Сохранение акцента |
 | `set_viz_bars` | `pub(crate) fn set_viz_bars(&mut self, bars: u8) -> Result<(), String>` | Число столбцов визуализатора (ADR-0019) |
-| `set_spectrum_enabled` | `pub(crate) fn set_spectrum_enabled(&mut self, enabled: bool) -> Result<(), String>` | Включение визуализатора; по умолчанию движок уже включён, при ошибке поле откатывается к значению движка |
+| `set_visualizer_enabled` | `pub(crate) fn set_visualizer_enabled(&mut self, enabled: bool) -> Result<(), String>` | Пользовательский переключатель визуализатора и кольца; включает или выключает аудио-анализ по `analysis_needed`, при ошибке поле откатывается к значению движка (ADR-0028) |
+| `set_motion` | `pub(crate) fn set_motion(&mut self, motion: MotionReactivity) -> Result<(), String>` | Сохраняет реактивность движения и пересчитывает необходимость анализа |
+| `set_reduce_motion` | `pub(crate) fn set_reduce_motion(&mut self, reduce: bool) -> Result<(), String>` | Сохраняет Reduce motion и пересчитывает необходимость анализа |
+| `motion_reactivity` | `pub(crate) fn motion_reactivity(&self) -> MotionReactivity` | Эффективная реактивность: Reduce motion → `Off`; Focus — настройка, Overlay — не выше `Low`, Listening — `Off` |
+| `analysis_needed` | `pub(crate) fn analysis_needed(&self) -> bool` | `visualizer_enabled \|\| (motion.is_enabled() && !reduce_motion)` — анализ нужен хотя бы одному потребителю |
 | `mark_help_seen` | `pub(crate) fn mark_help_seen(&mut self)` | Запоминает, что карточка управления показывалась; ошибка только `warn!` |
 
 Поля `Session` — `pub(crate)`: presentation читает и редактирует их напрямую
 (`search.query`, `panel_open`, `show_help`, `library_tab`, `country_filter`,
 `globe_camera`, `markers`), но побочные эффекты обязан выполнять через методы.
+`visualizer_enabled` — пользовательский переключатель визуализатора и кольца;
+`spectrum_enabled` — фактическое состояние аудио-анализа, которое может быть
+включено и при выключенном визуализаторе, если движение глобуса его требует.
 
 ## 2. Типы-сообщения между Core и presentation
 
@@ -198,7 +205,8 @@ pub(crate) const LISTENING_TITLE: &str = "OrbitFM · Listening";
 - методы `Session` не принимают `&egui::Context` и ничего не рисуют;
 - геометрия окна хранится как `[f32; 2]`, а не `egui::Vec2`;
 - ошибки возвращаются как `Result<_, String>` (`start_station`, `set_volume`,
-  `set_theme`, `set_accent`, `set_viz_bars`, `set_spectrum_enabled`), а не как
+  `set_theme`, `set_accent`, `set_viz_bars`, `set_visualizer_enabled`,
+  `set_motion`, `set_reduce_motion`), а не как
   доменный тип UI;
 - способ сообщить пользователю выбирает вызывающий: UI показывает `Toast`
   (`Notice`, а также собственные `Err` от методов), припаркованный цикл пишет

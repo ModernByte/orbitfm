@@ -4,6 +4,7 @@ mod camera;
 mod countries;
 mod globe;
 mod markers;
+mod motion;
 mod spectrum;
 mod visualizer;
 
@@ -13,6 +14,7 @@ pub use camera::GlobeCamera;
 pub use countries::{CountryStyle, paint_country};
 pub use globe::{GlobeRenderer, paint_globe};
 pub use markers::{MarkerLabel, MarkerVisual, paint_markers, sphere_point};
+pub use motion::{GlobeDeform, GlobeMotion, MotionMixer};
 pub use spectrum::{BandTargets, SpectrumOverlay, SpectrumTarget};
 pub(crate) use spectrum::{MIN_RMS_DB, RMS_RANGE_DB};
 pub use visualizer::{VisualizerModel, bar_color};

@@ -24,7 +24,7 @@ use crate::audio::PlaybackState;
 use crate::geo::Country;
 use crate::services::Station;
 use crate::session::WindowMode;
-use crate::settings::{AccentColor, ThemeMode};
+use crate::settings::{AccentColor, MotionReactivity, ThemeMode};
 
 /// Режим поиска выбирает ядро, UI только показывает переключатель.
 pub(crate) use crate::session::search::SearchMode;
@@ -45,6 +45,10 @@ pub(crate) enum UiAction {
     ToggleSpectrum(bool),
     /// Число столбцов визуализатора: 16, 24 или 32 (ADR-0019).
     SetVizBars(u8),
+    /// Реактивность аудио-движения глобуса (ADR-0028).
+    SetMotion(MotionReactivity),
+    /// Reduce motion: выключить геометрическое движение, оставив эфир.
+    SetReduceMotion(bool),
     SetVolume(f64),
     TogglePlayback,
     Stop,

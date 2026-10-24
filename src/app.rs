@@ -11,11 +11,13 @@ use eframe::egui;
 use tracing::{debug, warn};
 
 use crate::audio::PlaybackState;
-use crate::render::{BandTargets, GlobeRenderer, SpectrumOverlay, SpectrumTarget, VisualizerModel};
+use crate::render::{
+    BandTargets, GlobeRenderer, MotionMixer, SpectrumOverlay, SpectrumTarget, VisualizerModel,
+};
 use crate::services::USER_AGENT;
 use crate::session::search::SearchMode;
 use crate::session::{Notice, Session, UiIntent};
-use crate::settings::Settings;
+use crate::settings::{MotionReactivity, MotionStyle, Settings};
 use crate::ui::UiAction;
 use crate::ui::globe_view::{self, CalloutState, GlobeState};
 use crate::ui::images::{FaviconCache, MAX_FAVICON_BYTES, decode_favicon};
@@ -28,6 +30,8 @@ use crate::ui::{capsule, hud, overlays, station_panel, widgets};
 
 /// Частота перерисовки при включённом FFT: ~30 кадров в секунду.
 const SPECTRUM_REPAINT: Duration = Duration::from_millis(33);
+/// Idle-дыхание планеты: около 15 кадров в секунду (ADR-0028).
+const MOTION_IDLE_REPAINT: Duration = Duration::from_millis(66);
 /// Опрос фоновых favicon-загрузок.
 const FAVICON_REPAINT: Duration = Duration::from_millis(120);
 /// Таймаут HTTP-запроса иконки станции.
@@ -52,6 +56,8 @@ pub(crate) struct OrbitApp<'a> {
     session: &'a mut Session,
     globe_ready: bool,
     spectrum_overlay: SpectrumOverlay,
+    /// Аудио-деформация планеты на время показа окна (ADR-0028).
+    motion: MotionMixer,
     /// Орбитальное аудиокольцо за планетой в Focus (ADR-0029).
     orbit_ring: OrbitRing,
     /// Callout выбранной/наведённой страны с fade-переходами.
@@ -92,6 +98,7 @@ impl<'a> OrbitApp<'a> {
             session,
             globe_ready,
             spectrum_overlay: SpectrumOverlay::default(),
+            motion: MotionMixer::default(),
             orbit_ring: OrbitRing::default(),
             callout: CalloutState::default(),
             visualizer,
@@ -188,6 +195,7 @@ impl<'a> OrbitApp<'a> {
         let session = &mut *self.session;
         let favicons = &mut self.favicons;
         let spectrum_overlay = &mut self.spectrum_overlay;
+        let motion_mixer = &mut self.motion;
         let orbit_ring = &mut self.orbit_ring;
         let callout = &mut self.callout;
         let visualizer = &self.visualizer;
@@ -200,9 +208,26 @@ impl<'a> OrbitApp<'a> {
         spectrum_overlay.update(frame.spectrum_target, ui.input(|input| input.stable_dt));
         let pulse = spectrum_overlay.pulse();
 
+        // Эфир живёт только в воспроизведении; пауза и Stop возвращают
+        // планету в idle-дыхание (ADR-0028).
+        let motion_target = if matches!(
+            &frame.playback,
+            PlaybackState::Playing | PlaybackState::Buffering | PlaybackState::Reconnecting
+        ) {
+            frame.spectrum_target
+        } else {
+            None
+        };
+        let motion = motion_mixer.update(
+            motion_target,
+            frame.motion_reactivity,
+            frame.motion_style,
+            ui.input(|input| input.stable_dt),
+        );
+
         // Кольцо — часть Focus-сцены: в капсулах оно не рисуется и гаснет.
         let ring_live = density == LayoutDensity::Full
-            && session.spectrum_enabled
+            && session.visualizer_enabled
             && matches!(
                 &frame.playback,
                 PlaybackState::Playing | PlaybackState::Buffering | PlaybackState::Reconnecting
@@ -228,6 +253,7 @@ impl<'a> OrbitApp<'a> {
                         palette,
                         GlobeState {
                             camera: &mut session.globe_camera,
+                            motion: &motion,
                             ready: self.globe_ready,
                             markers: &session.markers,
                             current_uuid: session
@@ -352,7 +378,7 @@ impl<'a> OrbitApp<'a> {
                                     current: session.current_station.as_ref(),
                                     favorite: frame.current_favorite,
                                     can_resume: frame.can_resume,
-                                    spectrum_enabled: session.spectrum_enabled,
+                                    spectrum_enabled: session.visualizer_enabled,
                                     roulette_pending: session.search.roulette_pending,
                                     volume: frame.volume,
                                     visualizer,
@@ -472,6 +498,16 @@ impl<'a> OrbitApp<'a> {
             }
         }
 
+        if frame.motion_reactivity.is_enabled() {
+            // Активный эфир — 30 fps; idle-дыханию хватает 15 fps.
+            let cadence = if motion.intensity > 0.01 {
+                SPECTRUM_REPAINT
+            } else {
+                MOTION_IDLE_REPAINT
+            };
+            ui.ctx().request_repaint_after(cadence);
+        }
+
         actions
     }
 
@@ -514,8 +550,18 @@ impl<'a> OrbitApp<'a> {
                 palette::configure_style(ctx, self.session.settings.settings());
             }
             UiAction::ToggleSpectrum(enabled) => {
-                if let Err(err) = self.session.set_spectrum_enabled(enabled) {
+                if let Err(err) = self.session.set_visualizer_enabled(enabled) {
                     self.toast.error(ctx, format!("FFT unavailable: {err}"));
+                }
+            }
+            UiAction::SetMotion(motion) => {
+                if let Err(err) = self.session.set_motion(motion) {
+                    self.toast.error(ctx, format!("Motion not saved: {err}"));
+                }
+            }
+            UiAction::SetReduceMotion(reduce) => {
+                if let Err(err) = self.session.set_reduce_motion(reduce) {
+                    self.toast.error(ctx, format!("Motion not saved: {err}"));
                 }
             }
             UiAction::SetVizBars(bars) => {
@@ -564,6 +610,9 @@ struct Frame {
     current_favorite: bool,
     can_resume: bool,
     spectrum_target: Option<SpectrumTarget>,
+    /// Эффективная реактивность движения с поправкой на режим окна.
+    motion_reactivity: MotionReactivity,
+    motion_style: MotionStyle,
     /// Клик по сфере выбирает страну только в режиме страны (ТЗ §5.2).
     country_mode: bool,
     layout: DeskLayout,
@@ -589,7 +638,7 @@ impl Frame {
                 .map(|bands| BandTargets::from_db(bands.bass_db, bands.mid_db, bands.high_db)),
         });
         // Визуализатор живёт кадрами: без данных или в паузе — idle-дыхание.
-        let viz_active = session.spectrum_enabled
+        let viz_active = session.visualizer_enabled
             && matches!(
                 playback,
                 PlaybackState::Playing | PlaybackState::Buffering | PlaybackState::Reconnecting
@@ -605,6 +654,8 @@ impl Frame {
         );
         Self {
             palette: Palette::for_ui(ctx.theme(), settings.accent),
+            motion_reactivity: session.motion_reactivity(),
+            motion_style: settings.motion_style,
             settings,
             volume: session.audio.volume(),
             markers_total: session.markers.iter().map(|marker| marker.count).sum(),
@@ -693,7 +744,7 @@ impl eframe::App for OrbitApp<'_> {
             self.session.mark_help_seen();
         }
 
-        if self.session.spectrum_enabled
+        if self.session.visualizer_enabled
             && matches!(
                 self.session.audio.state(),
                 PlaybackState::Playing | PlaybackState::Buffering

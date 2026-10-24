@@ -6,7 +6,7 @@ use crate::audio::PlaybackState;
 use crate::geo::GeoService;
 use crate::services::Station;
 use crate::session::WindowMode;
-use crate::settings::{AccentColor, Settings, ThemeMode, VIZ_BAR_CHOICES};
+use crate::settings::{AccentColor, MotionReactivity, Settings, ThemeMode, VIZ_BAR_CHOICES};
 
 use super::icons::{close_button, gear_button, help_button, moon_button, panel_button};
 use super::images::FaviconCache;
@@ -251,6 +251,26 @@ fn right_side(
                             }
                         }
                     });
+                    ui.add_space(4.0);
+                    ui.label(egui::RichText::new("Motion").strong().color(palette.text));
+                    ui.horizontal_wrapped(|ui| {
+                        for motion in MotionReactivity::ALL {
+                            let selected = state.settings.motion == motion;
+                            if ui.selectable_label(selected, motion.label()).clicked() && !selected
+                            {
+                                menu_action = Some(UiAction::SetMotion(motion));
+                                ui.close();
+                            }
+                        }
+                    });
+                    let mut reduce_motion = state.settings.reduce_motion;
+                    if ui
+                        .checkbox(&mut reduce_motion, "Reduce motion")
+                        .on_hover_text("Stop squash, ripple and camera sway")
+                        .changed()
+                    {
+                        menu_action = Some(UiAction::SetReduceMotion(reduce_motion));
+                    }
                     ui.add_space(4.0);
                     ui.label(egui::RichText::new("Window").strong().color(palette.text));
                     ui.horizontal_wrapped(|ui| {

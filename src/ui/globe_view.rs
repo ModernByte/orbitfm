@@ -6,8 +6,8 @@ use eframe::egui;
 
 use crate::geo::{Country, GeoService};
 use crate::render::{
-    CountryStyle, GlobeCamera, GlobeInput, MarkerLabel, MarkerVisual, paint_country, paint_globe,
-    paint_markers, sphere_point,
+    CountryStyle, GlobeCamera, GlobeDeform, GlobeInput, GlobeMotion, MarkerLabel, MarkerVisual,
+    paint_country, paint_globe, paint_markers, sphere_point,
 };
 use crate::session::markers::GlobeMarker;
 
@@ -153,6 +153,8 @@ pub(crate) struct CalloutState {
 
 pub(crate) struct GlobeState<'a> {
     pub camera: &'a mut GlobeCamera,
+    /// Аудио-деформа планеты: та же, что у меша, маркеров и hit-test (ADR-0028).
+    pub motion: &'a GlobeMotion,
     pub ready: bool,
     pub markers: &'a [GlobeMarker],
     pub current_uuid: Option<&'a str>,
@@ -225,15 +227,19 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
 
     let (dt, elapsed) = ui.input(|input| (input.stable_dt, input.unstable_dt));
     state.camera.advance(dt, elapsed, &input);
+    let deform = state.motion.deform;
 
-    let marker_screens = marker_screens(state.camera, state.markers, globe_rect);
+    let marker_screens = marker_screens(state.camera, state.markers, globe_rect, &deform);
 
     if let Some(position) = input.primary_clicked {
         if let Some(index) = nearest_marker(&marker_screens, position) {
             response
                 .actions
                 .push(UiAction::Play(state.markers[index].station.clone()));
-        } else if let Some(point) = state.camera.screen_to_sphere(position, globe_rect) {
+        } else if let Some(point) = state
+            .camera
+            .screen_to_sphere_deformed(position, globe_rect, &deform)
+        {
             response.clicked_point =
                 Some((f64::from(point.x), f64::from(point.y), f64::from(point.z)));
         }
@@ -249,23 +255,24 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
         paint_vignette(ui.painter(), globe_rect);
     }
 
-    paint_globe(ui.painter(), globe_rect, state.camera);
+    paint_globe(ui.painter(), globe_rect, state.camera, state.motion);
 
     let hovered = hover_pos.and_then(|position| nearest_marker(&marker_screens, position));
-    let hovered_country = if !state.country_enabled
-        || sense.dragged_by(egui::PointerButton::Secondary)
-    {
-        None
-    } else {
-        hover_pos
-            .and_then(|position| country_at_position(state.camera, globe_rect, state.geo, position))
-    };
+    let hovered_country =
+        if !state.country_enabled || sense.dragged_by(egui::PointerButton::Secondary) {
+            None
+        } else {
+            hover_pos.and_then(|position| {
+                country_at_position(state.camera, globe_rect, state.geo, position, &deform)
+            })
+        };
 
     if state.country_enabled {
         paint_country_highlights(
             ui.painter(),
             globe_rect,
             state.camera,
+            &deform,
             state.geo,
             CountryHighlight {
                 markers: state.markers,
@@ -319,6 +326,7 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
     update_callout(state.callout, active_callout, dt);
     let scene = CalloutScene {
         camera: state.camera,
+        deform,
         globe_rect,
         layout: state.layout,
         palette,
@@ -364,8 +372,9 @@ fn country_at_position<'a>(
     viewport: egui::Rect,
     geo: &'a GeoService,
     position: egui::Pos2,
+    deform: &GlobeDeform,
 ) -> Option<&'a Country> {
-    let point = camera.screen_to_sphere(position, viewport)?;
+    let point = camera.screen_to_sphere_deformed(position, viewport, deform)?;
     geo.country_at_sphere_point(f64::from(point.x), f64::from(point.y), f64::from(point.z))
 }
 
@@ -379,6 +388,7 @@ fn paint_country_highlights(
     painter: &egui::Painter,
     globe_rect: egui::Rect,
     camera: &GlobeCamera,
+    deform: &GlobeDeform,
     geo: &GeoService,
     highlight: CountryHighlight<'_>,
     palette: &Palette,
@@ -395,6 +405,7 @@ fn paint_country_highlights(
             painter,
             globe_rect,
             camera,
+            deform,
             &shape.rings,
             CountryStyle {
                 fill: Some(egui::Color32::from_rgba_unmultiplied(
@@ -422,6 +433,7 @@ fn paint_country_highlights(
             painter,
             globe_rect,
             camera,
+            deform,
             &shape.rings,
             CountryStyle {
                 fill: (count > 0).then_some(egui::Color32::from_rgba_unmultiplied(
@@ -524,6 +536,7 @@ fn update_callout(state: &mut CalloutState, active: Option<(&Country, f32)>, dt:
 /// Контекст кадра для карточки страны: камера, раскладка, палитра и данные.
 struct CalloutScene<'a> {
     camera: &'a GlobeCamera,
+    deform: GlobeDeform,
     globe_rect: egui::Rect,
     layout: DeskLayout,
     palette: &'a Palette,
@@ -535,6 +548,7 @@ struct CalloutScene<'a> {
 fn paint_country_callout(painter: &egui::Painter, scene: &CalloutScene<'_>, card: &CalloutCard) {
     let CalloutScene {
         camera,
+        deform,
         globe_rect,
         layout,
         palette,
@@ -546,7 +560,10 @@ fn paint_country_callout(painter: &egui::Painter, scene: &CalloutScene<'_>, card
         .country_shape(&card.iso)
         .and_then(|shape| shape.focus_point())
         .and_then(|(lat, lon)| {
-            camera.project_on_sphere(sphere_point(lat as f32, lon as f32), globe_rect)
+            camera.project_on_sphere(
+                deform.to_world(sphere_point(lat as f32, lon as f32)),
+                globe_rect,
+            )
         })
     else {
         return;
@@ -659,13 +676,17 @@ fn marker_screens(
     camera: &GlobeCamera,
     markers: &[GlobeMarker],
     viewport: egui::Rect,
+    deform: &GlobeDeform,
 ) -> Vec<(usize, egui::Pos2)> {
     markers
         .iter()
         .enumerate()
         .filter_map(|(index, marker)| {
             camera
-                .project_on_sphere(sphere_point(marker.lat, marker.lon), viewport)
+                .project_on_sphere(
+                    deform.to_world(sphere_point(marker.lat, marker.lon)),
+                    viewport,
+                )
                 .map(|position| (index, position))
         })
         .collect()
@@ -918,8 +939,9 @@ mod tests {
         let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
 
         let mut camera = GlobeCamera::default();
+        let deform = GlobeDeform::IDENTITY;
         assert!(
-            country_at_position(&camera, viewport, &geo, viewport.center()).is_none(),
+            country_at_position(&camera, viewport, &geo, viewport.center(), &deform).is_none(),
             "в центре по умолчанию океан"
         );
 
@@ -927,8 +949,43 @@ mod tests {
         while camera.is_animating() {
             camera.update(0.05, &GlobeInput::default());
         }
-        let country = country_at_position(&camera, viewport, &geo, viewport.center())
+        let country = country_at_position(&camera, viewport, &geo, viewport.center(), &deform)
             .expect("после доворота под курсором Германия");
         assert_eq!(country.iso_a2, "DE");
+    }
+
+    #[test]
+    fn marker_screens_follow_the_deformation() {
+        let camera = GlobeCamera::default();
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let marker = GlobeMarker {
+            station: geo_station("a", 45.0, 0.0),
+            lat: 45.0,
+            lon: 0.0,
+            count: 1,
+            popularity: 0.0,
+            bitrate: 0,
+            members: vec!["a".to_owned()],
+        };
+
+        let identity = marker_screens(
+            &camera,
+            std::slice::from_ref(&marker),
+            viewport,
+            &GlobeDeform::IDENTITY,
+        );
+        let squashed = marker_screens(
+            &camera,
+            std::slice::from_ref(&marker),
+            viewport,
+            &GlobeDeform::new(0.95),
+        );
+
+        assert_eq!(identity.len(), 1);
+        assert_eq!(squashed.len(), 1);
+        assert!(
+            squashed[0].1.y > identity[0].1.y,
+            "при вертикальном сжатии маркер опускается к центру"
+        );
     }
 }

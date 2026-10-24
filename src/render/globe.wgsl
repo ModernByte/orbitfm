@@ -2,6 +2,8 @@ struct Camera {
     view_proj: mat4x4<f32>,
     light_direction: vec4<f32>,
     camera_position: vec4<f32>,
+    // x = scale_y − 1, y = scale_xz − 1, z = ripple, w = ripple_phase.
+    motion: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -24,9 +26,25 @@ struct VertexOutput {
 @vertex
 fn vs_main(input: VertexInput) -> VertexOutput {
     var output: VertexOutput;
-    let world_position = input.position;
+
+    // Squash с сохранением объёма: scale_xz компенсирует вертикаль.
+    let scale = vec3<f32>(
+        1.0 + camera.motion.y,
+        1.0 + camera.motion.x,
+        1.0 + camera.motion.y,
+    );
+
+    // Три лепестка по долготе, затухающие к полюсам.
+    let longitude = atan2(input.position.x, input.position.z);
+    let lobes = pow(max(cos(3.0 * longitude + camera.motion.w), 0.0), 2.0);
+    let equator = 1.0 - abs(input.position.y);
+    let ripple = camera.motion.z * lobes * equator * equator;
+
+    let world_position = input.position * scale * (1.0 + ripple);
+
     output.clip_position = camera.view_proj * vec4(world_position, 1.0);
-    output.normal = input.normal;
+    // Обратная транспонированная диагональ масштаба; нормаль ряби не считается.
+    output.normal = normalize(input.normal / scale);
     output.uv = input.uv;
     output.world_position = world_position;
     return output;

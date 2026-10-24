@@ -27,7 +27,7 @@ use crate::library::StationLibrary;
 use crate::media::MediaControls;
 use crate::render::GlobeCamera;
 use crate::services::{RadioBrowserClient, Station};
-use crate::settings::SettingsStore;
+use crate::settings::{MotionReactivity, SettingsStore};
 use crate::tray::{TrayHandle, TraySnapshot};
 use crate::ui::single_line;
 use crate::ui::station_filter::CountryFilterState;
@@ -122,6 +122,9 @@ pub(crate) struct Session {
     pub(crate) wake: WakeHandle,
 
     pub(crate) globe_camera: GlobeCamera,
+    /// Пользовательский переключатель cava-визуализатора и кольца.
+    pub(crate) visualizer_enabled: bool,
+    /// Идёт ли аудио-анализ сейчас: визуализатор или движение глобуса.
     pub(crate) spectrum_enabled: bool,
     pub(crate) current_url: Option<String>,
     pub(crate) current_station: Option<Station>,
@@ -156,7 +159,8 @@ impl Session {
             runtime,
         } = services;
         let audio_events = audio.subscribe();
-        let spectrum_enabled = audio.spectrum_enabled();
+        let visualizer_enabled = audio.spectrum_enabled();
+        let spectrum_enabled = visualizer_enabled;
         let show_help = !settings.settings().help_seen;
         Self {
             audio,
@@ -171,6 +175,7 @@ impl Session {
             runtime,
             wake,
             globe_camera: GlobeCamera::default(),
+            visualizer_enabled,
             spectrum_enabled,
             current_url: None,
             current_station: None,
@@ -245,6 +250,25 @@ impl Session {
 
     pub(crate) fn window_mode(&self) -> WindowMode {
         self.window.mode
+    }
+
+    /// Эффективная реактивность движения: Reduce motion и режим окна (ADR-0028).
+    pub(crate) fn motion_reactivity(&self) -> MotionReactivity {
+        let settings = self.settings.settings();
+        if settings.reduce_motion {
+            return MotionReactivity::Off;
+        }
+        match self.window.mode {
+            WindowMode::Focus => settings.motion,
+            WindowMode::Overlay => settings.motion.capped(MotionReactivity::Low),
+            WindowMode::Listening => MotionReactivity::Off,
+        }
+    }
+
+    /// Нужен ли аудио-анализ: визуализатору или движению глобуса.
+    pub(crate) fn analysis_needed(&self) -> bool {
+        let settings = self.settings.settings();
+        self.visualizer_enabled || (settings.motion.is_enabled() && !settings.reduce_motion)
     }
 
     /// Меняет режим и гарантирует, что окно будет видно: в `Focus`-раскладке

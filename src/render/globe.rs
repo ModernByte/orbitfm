@@ -6,6 +6,7 @@ use wgpu::util::DeviceExt;
 
 use super::GlobeCamera;
 use super::camera::CameraUniform;
+use super::motion::GlobeMotion;
 
 const GLOBE_SHADER: &str = include_str!("globe.wgsl");
 const EARTH_TEXTURE: &[u8] = include_bytes!("../../assets/textures/earth.jpg");
@@ -196,10 +197,10 @@ pub struct GlobeCallback {
 }
 
 impl GlobeCallback {
-    /// Снимает текущее состояние камеры для отрисовки кадра.
-    pub fn new(camera: &GlobeCamera, aspect: f32) -> Self {
+    /// Снимает текущее состояние камеры и движения для отрисовки кадра.
+    pub fn new(camera: &GlobeCamera, aspect: f32, motion: &GlobeMotion) -> Self {
         Self {
-            uniform: camera.uniform(aspect),
+            uniform: camera.uniform_with_motion(aspect, motion),
         }
     }
 }
@@ -232,8 +233,13 @@ impl CallbackTrait for GlobeCallback {
 }
 
 /// Добавляет callback с глобусом в painter.
-pub fn paint_globe(painter: &egui::Painter, rect: egui::Rect, camera: &GlobeCamera) {
-    let callback = GlobeCallback::new(camera, rect.aspect_ratio());
+pub fn paint_globe(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    camera: &GlobeCamera,
+    motion: &GlobeMotion,
+) {
+    let callback = GlobeCallback::new(camera, rect.aspect_ratio(), motion);
     painter.add(egui_wgpu::Callback::new_paint_callback(rect, callback));
 }
 
