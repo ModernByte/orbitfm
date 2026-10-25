@@ -9,7 +9,9 @@
 `station_filter`), `tokio`, `tracing`  
 **Решение:** ADR-0018 «Скрытие окна = закрытие вьюпорта с перезапуском UI-цикла»,
 ADR-0020 «Иконка в системном трее (StatusNotifierItem на ksni)»,
-ADR-0021 «Режимы окна (`WindowMode`)»
+ADR-0021 «Режимы окна (`WindowMode`)», ADR-0030 «Локализация интерфейса»
+(типизированные `Notice`), ADR-0031 «Панель настроек и персистентность»
+(drawer настроек, громкость commit-on-release)
 
 ---
 
@@ -24,8 +26,8 @@ ADR-0021 «Режимы окна (`WindowMode`)»
 | Живёт в `src/session/` (переживает закрытие окна) | Живёт в presentation (один прогон UI) |
 |---|---|
 | `AudioEngine`, `GeoService`, `RadioBrowserClient`, `MediaControls`, `TrayHandle`, `StationLibrary`, `SettingsStore`, `tokio::runtime::Handle`, `WakeHandle` | `GlobeRenderer` в `callback_resources`, `egui`-стиль (`palette::configure_style`), цветной emoji-шрифт |
-| Текущая станция и URL, контекст/результаты/маркеры поиска и поколение, `library_tab`, `country_filter`, `globe_camera`, `panel_open`, `show_help`, `spectrum_enabled` | `VisualizerModel`, `SpectrumOverlay`, `CalloutState`, `FaviconCache` с текстурами, `reqwest::Client` для иконок, `Toast` |
-| Геометрия окна (`WindowState`: `visible`, `size`, `intent`, `quitting`) и очередь `Notice` | `globe_ready`, чтение `egui::Context`, раскладка `DeskLayout` и рисование зон |
+| Текущая станция и URL, контекст/результаты/маркеры поиска и поколение, `library_tab`, `country_filter`, `globe_camera`, `panel_open`, `settings_open`, `show_help`, `spectrum_enabled`, разрешённый `language` | `VisualizerModel`, `SpectrumOverlay`, `CalloutState`, `FaviconCache` с текстурами, `reqwest::Client` для иконок, `Toast` |
+| Геометрия окна (`WindowState`: `visible`, `size`, `intent`, `quitting`), очередь типизированных `Notice` и `pending_volume` | `globe_ready`, чтение `egui::Context`, раскладка `DeskLayout` и рисование зон |
 | Исполнение `IpcCommand`/`MediaCommand`/`TrayCommand`, `park()` | `UiAction` → вызовы методов `Session`; `UiIntent` → `ViewportCommand` |
 
 Правило слоя (AGENTS § 4.2): presentation зависит от Core, а не наоборот. Методы
@@ -47,7 +49,7 @@ Core не принимают `&egui::Context` — детали в `docs/interfac
 | `media` | `Option<MediaControls>` | `None`, когда MPRIS недоступен (нет D-Bus); тогда очередь команд нет |
 | `tray` | `Option<TrayHandle>` | `None`, когда SNI-хоста нет или сборка без фичи `tray`; сам `Option` меняется и в рантайме: мёртвый трей `sync_tray` выключает ветку |
 | `library` | `StationLibrary` | Избранное и история (до 20 записей, `HISTORY_LIMIT`) |
-| `settings` | `SettingsStore` | Тема, акцент, `viz_bars`, `help_seen` |
+| `settings` | `SettingsStore` | Тема, акцент, язык, `viz_bars`, `volume`, `visualizer_enabled`, признаки движения, `help_seen`; `Session::new` восстанавливает из него громкость |
 | `runtime` | `tokio::runtime::Handle` | `block_on` для коротких аудио-операций и `spawn` для сетевых задач |
 | `wake` | `WakeHandle` | Разделяемый слот пробуждения: `Arc<Mutex<Option<Notifier>>>` |
 
@@ -61,8 +63,9 @@ Core не принимают `&egui::Context` — детали в `docs/interfac
 | Поле | Тип | Пояснение |
 |------|-----|-----------|
 | `globe_camera` | `GlobeCamera` | Позиция камеры должна переживать закрытие окна (ADR-0018 п. 2); вращение и зум пишет presentation, Core вызывает `fly_to` |
-| `visualizer_enabled` | `bool` | Пользовательский переключатель визуализатора и кольца; инициализируется `audio.spectrum_enabled()` (по умолчанию `true`) |
+| `visualizer_enabled` | `bool` | Пользовательский переключатель визуализатора и кольца; инициализируется из `stored.visualizer_enabled` (ADR-0031) и сохраняется через `set_visualizer_enabled` |
 | `spectrum_enabled` | `bool` | Фактическое состояние аудио-анализа; включается по `analysis_needed` (открытое окно и визуализатор или движение глобуса), каждый `tick()` перечитывается из движка, при ошибке включения откатывается |
+| `language` | `Language` | Разрешённый язык интерфейса: `System` из настроек свёрнут в конкретный язык при старте и при каждой смене (ADR-0030); его читает `effective_language()` и кладёт в `TraySnapshot` |
 | `current_url` | `Option<String>` | Заполняется из `start_station` и из `AudioEvent::Started`; не очищается при `Stopped`/`Error` — нужен для повторного запуска из MPRIS |
 | `current_station` | `Option<Station>` | Метаданные эфира: `status`, MPRIS, подсветка строки списка |
 | `search` | `SearchState` | Всё о поиске: строки запросов, контекст, результаты, поколение, незавершённые задания |
@@ -87,7 +90,9 @@ Listening — `Off`. `motion_reactivity()`, `analysis_needed()` и `sync_analysi
 | Поле | Тип | Пояснение |
 |------|-----|-----------|
 | `window` | `WindowState` | `visible`, `size: Option<[f32; 2]>`, `mode: WindowMode`, `reopen`, `intent: Option<UiIntent>`, `quitting` (`src/session/window.rs`) |
-| `notices` | `VecDeque<Notice>` | Очередь сообщений Core → пользователю; `take_notices()` забирает всю очередь через `std::mem::take` |
+| `settings_open` | `bool` | Открыт ли правый drawer настроек (ADR-0031); `false` при создании ядра |
+| `pending_volume` | `Option<f64>` | Громкость перетаскивания, ещё не записанная на диск: `preview_volume` ставит, `commit_volume` и `set_volume` снимают, `end_window` дописывает в настройки через `flush_pending_volume` |
+| `notices` | `VecDeque<Notice>` | Очередь сообщений Core → пользователю; `Notice` — ключ причины плюс незапереводимый `detail` (`src/session/notice.rs`, ADR-0030); `take_notices()` забирает всю очередь через `std::mem::take` |
 | `tray_snapshot` | `Option<TraySnapshot>` | Последний опубликованный треем снимок: `sync_tray` шлёт в SNI только изменение |
 
 `size: Option<...>` — `None` только до первого `begin_window` (то есть на самом
@@ -108,19 +113,22 @@ Listening — `Off`. `motion_reactivity()`, `analysis_needed()` и `sync_analysi
 
 | Файл | Ответственность | Типы и функции наружу (`pub(crate)`) |
 |------|-----------------|--------------------------------------|
-| `mod.rs` | Ядро: владение подсистемами, пробуждение, `status`, ре-экспорт контрактов пакета | `Session`, `AppServices`, `Notice`, `ParkOutcome`, `WakeHandle`, `LibraryTab`; наружу из `window.rs` — `UiIntent`, `WindowMode`, `WindowState`, `WINDOW_TITLE` |
-| `window.rs` | Состояние окна: режим (`WindowMode`), геометрия и заголовки по режиму, намерения UI, признак перезапуска (ADR-0018, ADR-0021) | `WindowMode` (+ `ALL`/`label`/`default_size`/`min_size`/`title`/`as_str`), `UiIntent`, `WindowState`, `WINDOW_SIZE`, `WINDOW_MIN_SIZE`, `WINDOW_TITLE`, `OVERLAY_SIZE`, `OVERLAY_MIN_SIZE`, `OVERLAY_TITLE`, `LISTENING_SIZE`, `LISTENING_MIN_SIZE`, `LISTENING_TITLE` |
-| `commands.rs` | Разбор `IpcCommand` (общий для окна и парковки), `impl From<WindowModeArg> for WindowMode` и настроек оформления и движения | `Session::{execute, process_commands, set_theme, set_accent, set_viz_bars, set_visualizer_enabled, set_motion, set_motion_style, set_allow_flips, set_reduce_motion, mark_help_seen}` |
-| `playback.rs` | Аудио-события, запуск/остановка, избранное, история, очередь `prev`/`next`, витрина MPRIS | `Session::{process_audio_events, apply_audio_event, resolve_station, start_station, spawn_click, toggle_favorite, clear_history, focus_country, set_volume, set_audio_paused, resume_playback, toggle_playback, stop_playback, process_media_commands, execute_media_command, visible_queue, play_relative, sync_media}` |
+| `mod.rs` | Ядро: владение подсистемами, пробуждение, drawer настроек и язык, `status`, ре-экспорт контрактов пакета | `Session`, `AppServices`, `Notice`, `NoticeKey`, `ParkOutcome`, `WakeHandle`, `LibraryTab`, `StationStartError`; наружу из `window.rs` — `UiIntent`, `WindowMode`, `WindowState`, `WINDOW_TITLE` |
+| `notice.rs` | Типизированные сообщения пользователю: ядро называет причину, строку берёт каталог `i18n` (ADR-0030) | `Notice { Info(NoticeKey), Error { key, detail } }`, `NoticeKey` |
+| `window.rs` | Состояние окна: режим (`WindowMode`), геометрия и заголовки по режиму, намерения UI, признак перезапуска (ADR-0018, ADR-0021) | `WindowMode` (+ `ALL`/`default_size`/`min_size`/`title`/`as_str`), `UiIntent`, `WindowState`, `WINDOW_SIZE`, `WINDOW_MIN_SIZE`, `WINDOW_TITLE`, `OVERLAY_SIZE`, `OVERLAY_MIN_SIZE`, `OVERLAY_TITLE`, `LISTENING_SIZE`, `LISTENING_MIN_SIZE`, `LISTENING_TITLE` |
+| `commands.rs` | Разбор `IpcCommand` (общий для окна и парковки), `impl From<WindowModeArg> for WindowMode` и настроек оформления, языка и движения | `Session::{execute, process_commands, set_theme, set_accent, set_language, set_viz_bars, set_visualizer_enabled, set_motion, set_motion_style, set_allow_flips, set_reduce_motion, settle_analysis, mark_help_seen}` |
+| `playback.rs` | Аудио-события, запуск/остановка, громкость commit-on-release, избранное, история, очередь `prev`/`next`, витрина MPRIS | `Session::{process_audio_events, apply_audio_event, resolve_station, start_station, spawn_click, toggle_favorite, clear_history, focus_country, set_volume, preview_volume, commit_volume, flush_pending_volume, set_audio_paused, resume_playback, toggle_playback, stop_playback, process_media_commands, execute_media_command, visible_queue, visible_queue_len, play_relative, sync_media}` |
 | `search.rs` | Поиск по имени/стране/жанру с поколениями ответов и рулетка | `SearchMode`, `SearchContext`, `SearchState`, `SearchResponse`, `STATION_LOOKUP_TIMEOUT`, `Session::{start_search, start_country_search, start_genre_search, switch_mode, poll_search, start_roulette, poll_roulette, apply_roulette}` |
 | `markers.rs` | Агрегация станций с координатами в маркеры глобуса | `GlobeMarker`, `build_markers` (+ `#[cfg(test)] sample_station`, `geo_station`) |
 | `tray.rs` | Трей: публикация снимка и исполнение `TrayCommand` тем же dispatch | `Session::{sync_tray, process_tray_commands, execute_tray_command}` (приватные `nudge_volume`, `tray_snapshot`) |
 | `park.rs` | Простой без окна: `select!` по IPC, MPRIS, трею, аудио и ответу рулетки | `ParkOutcome`, `Session::park` (приватные `Parked`, `wait_on`, `media_recv`, `tray_recv`, `roulette_recv`) |
 
 Помощники `mpris_artist`, `country_search_params`, `roulette_label`,
-`station_geo`, `station_popularity`, `Parked`, `wait_on`, `media_recv`,
-`tray_recv`, `roulette_recv`, `format_status` остаются приватными: ими
-пользуется один файл.
+`station_geo`, `station_popularity`, `analysis_required`, `sync_analysis`,
+`apply_and_persist_volume`, `Parked`, `wait_on`, `media_recv`, `tray_recv`,
+`roulette_recv`, `format_status` остаются приватными: ими пользуются один-два
+файла пакета. Локализованные подписи режимов, тем и стилей движения живут не в
+Core: `src/i18n/labels.rs` и `mode_label` в `src/ui/settings_panel.rs`.
 
 ## 4. Поведение
 
@@ -143,12 +151,13 @@ Listening — `Off`. `motion_reactivity()`, `analysis_needed()` и `sync_analysi
    radio.get_station(uuid))`;
 3. таймаут маппится в `RadioError::Network("stations catalog timeout")`.
 
-`start_station(station)`:
-1. `url_resolved.trim()` — пусто ⇒ `Err("station has no url_resolved")`;
-2. `block_on(audio.play(&url))` — ошибка возвращена как `String`;
+`start_station(station) -> Result<(), StationStartError>`:
+1. `url_resolved.trim()` — пусто ⇒ `Err(StationStartError::NoUrl)`;
+2. `block_on(audio.play(&url))` — отказ движка возвращён как
+   `Err(StationStartError::Audio(err))`, техническая строка не переводится;
 3. сохраняются `current_url` и `current_station`;
 4. `library.record_played` — станция встаёт в начало истории; ошибка не мешает
-   слушать: `warn!` + `Notice::Error("History not saved: …")`;
+   слушать: `warn!` + `notify_error_detail(NoticeKey::HistoryNotSaved, …)`;
 5. `spawn_click(stationuuid)` — фоновая задача `radio.send_click`, ошибка только
    логируется;
 6. `sync_media()`.
@@ -156,10 +165,11 @@ Listening — `Off`. `motion_reactivity()`, `analysis_needed()` и `sync_analysi
 ### 4.3. Избранное и история
 
 `toggle_favorite(&station)` — `library.toggle_favorite`; успех логируется
-`debug!`, ошибка даёт `warn!` и `Notice::Error("Favorites not saved: …")`.
-`clear_history()` — при успехе `Notice::Info("History cleared")`, при ошибке
-`Notice::Error("Failed to clear history: …")`. Ошибки библиотеки никогда не
-прерывают воспроизведение.
+`debug!`, ошибка даёт `warn!` и
+`notify_error_detail(NoticeKey::FavoritesNotSaved, …)`.
+`clear_history()` — при успехе `notify_info(NoticeKey::HistoryCleared)`, при
+ошибке `notify_error_detail(NoticeKey::ClearHistoryFailed, …)`. Ошибки
+библиотеки никогда не прерывают воспроизведение.
 
 ### 4.4. Фокус страны
 
@@ -185,7 +195,8 @@ Listening — `Off`. `motion_reactivity()`, `analysis_needed()` и `sync_analysi
 по `stationuuid`; шаг считается как `(index + step).rem_euclid(len)`, то есть со
 циклом в обе стороны. Если текущей станции в списке нет, `+1` даёт первый
 элемент, `-1` — последний. Запуск станции идёт через `start_station`, ошибка —
-`Notice::Error`. Источники одинаковые: кнопки `⏮`/`⏭` (`UiAction::PlayRelative`) и
+`NoticeKey::StationWithoutUrl` или `NoticeKey::PlaybackFailed` с технической
+подробностью. Источники одинаковые: кнопки `⏮`/`⏭` (`UiAction::PlayRelative`) и
 MPRIS `Next`/`Previous`.
 
 ### 4.6. Синхронизация с MPRIS
@@ -204,7 +215,9 @@ MPRIS `Next`/`Previous`.
 полей — то, что осталось, при отсутствии обоих — `single_line(tags)`, дальше
 `None`; `art_url` — `station.favicon` без изменений; `url` — `url_resolved`
 (если непустой после `trim`), иначе `current_url`, иначе пустая строка;
-`volume` — `audio.volume()`. Без `current_station` заголовок — URL потока
+`volume` — `audio.volume()`; `can_go_next`/`can_go_previous` —
+`visible_queue_len() > 0`, то есть число станций в очереди без клонирования.
+Без `current_station` заголовок — URL потока
 (пустой URL при наличии трека даёт `WINDOW_TITLE`), `artist` и `art_url` — `None`.
 Ошибка `set_playback` только логируется.
 `sync_media()` вызывается каждый `tick()`, при `end_window()`, после `start_station()`
@@ -239,9 +252,12 @@ MPRIS `Next`/`Previous`.
   списком и не возвращает старые маркеры;
 - `Ok(outcome)` — `empty = stations.is_empty()`, `results = outcome.stations`,
   `markers = build_markers(outcome.geo_stations)`, `pending = false`, `rx = None`;
-- `Err(err)` — ошибка Radio Browser: `error = Some(err)`, маркеры очищаются,
+- `Err(err)` — ошибка Radio Browser: `error = Some(err)` (техническая строка
+  `RadioError`, UI рисует её как есть — в отличие от `Notice`), маркеры очищаются,
   `pending = false`, `rx = None` (результаты прошлого ответа остаются в списке);
-- `Disconnected` — `error = Some("search task ended unexpectedly")`.
+- `Disconnected` — отправитель исчез: `notify_error(NoticeKey::SearchTaskEnded)`
+  (ядро называет только причину, строку берёт каталог `i18n` — ADR-0030),
+  `pending = false`, `rx = None`; `search.error` при этом не заполняется.
 
 Лимиты зафиксированы константами `search.rs`: `SEARCH_RESULT_LIMIT = 100`,
 `COUNTRY_RESULT_LIMIT = 100`, `GENRE_RESULT_LIMIT = 200`,
@@ -258,12 +274,15 @@ MPRIS `Next`/`Previous`.
 `None` — отправитель исчез:
 
 - `Some(Ok(station))` — сбрасывает pending и канал, берёт подпись
-  `roulette_label` («имя — страна», без пустых разделителей, иначе `unnamed station`),
-  цель `geo_lat.zip(geo_long)`, запускает станцию; при успехе `fly_to` на
-  `ROULETTE_FLY_MS = 900 мс` (если координаты есть) и `Notice::Info("Roulette: <подпись>")`;
-  ошибка запуска — `Notice::Error("Roulette did not start: …")`;
-- `Some(Err(err))` — `Notice::Error("Roulette: <err>")`, текущий эфир не меняется;
-- `None` — `Notice::Error("Roulette: task ended unexpectedly")`.
+  `roulette_label` («имя — страна», без пустых разделителей; `None`, если имени и
+  страны нет — UI подставит локализованный «без названия»), цель
+  `geo_lat.zip(geo_long)`, запускает станцию; при успехе `fly_to` на
+  `ROULETTE_FLY_MS = 900 мс` (если координаты есть) и
+  `notify_info(NoticeKey::RouletteStarted { station })`; ошибка запуска —
+  `notify_error_detail(NoticeKey::RouletteFailed, …)`;
+- `Some(Err(err))` — сбрасывает pending и канал и даёт тот же
+  `NoticeKey::RouletteFailed` с `err` в `detail`; текущий эфир не меняется;
+- `None` — сброс pending и канала плюс `notify_error(NoticeKey::RouletteTaskEnded)`.
 
 Тот же `apply_roulette` вызывает припаркованный цикл (`Parked::Roulette`), иначе
 рулетка из трея при закрытом окне осталась бы невостребованной: ответ приходит
@@ -327,8 +346,9 @@ process_audio_events → process_commands → process_media_commands
 `volume`, `status`, `mode` (обе формы), все `MediaCommand` (`Play`, `Pause`, `PlayPause`, `Stop`,
 `SetVolume`, `Next`, `Previous`) и все `TrayCommand` (`Toggle`, `Show`,
 `PlayPause`, `Stop`, `Previous`, `Next`, `Roulette`, `VolumeUp`, `VolumeDown`,
-`SetTheme`, `Quit`). `hide` ничего не делает (окно уже закрыто), `show` и
-`toggle` ставят `UiIntent::Show` и выводят `park()`. `mode <режим>` при
+`SetTheme`, `Settings`, `Quit`). `hide` ничего не делает (окно уже закрыто), `show`,
+`toggle` и `settings` ставят `UiIntent::Show` и выводят `park()` — drawer
+открывается уже на следующем показе. `mode <режим>` при
 скрытом окне меняет только `window.mode` и тоже выводит `park()`: новое окно
 сразу собирается с геометрией режима, без перезапуска ради перезапуска. `quit`
 ставит `quitting` и выводит `ParkOutcome::Quit`.
@@ -338,26 +358,52 @@ process_audio_events → process_commands → process_media_commands
 `execute(&IpcCommand) -> String` — общий разбор для окна и парковки (полная
 таблица — `docs/interfaces/10-session.md` § 4). Здесь же `impl From<WindowModeArg>
 for WindowMode`: `src/ipc/` не знает доменного режима, превращение делает Core
-(ADR-0021 п. 5). Настройки оформления и движения идут через
+(ADR-0021 п. 5). Настройки оформления, языка и движения идут через
 `SettingsStore` и возвращают `Result<(), String>`: `set_theme`, `set_accent`,
 `set_viz_bars`, `set_motion`, `set_motion_style`, `set_allow_flips`,
 `set_reduce_motion`;
 `set_visualizer_enabled`
+сохраняет настройку (сбой — `warn!` и `NoticeKey::VisualizerNotSaved`), затем
 вызывает `sync_analysis()` и меняет пользовательский переключатель, а не
 состояние анализа напрямую; `mark_help_seen` ошибку только
 логирует. Перекрашиванием `egui` занимается presentation: после `set_theme`/
-`set_accent` он сам вызывает `palette::configure_style` (ADR-0018 п. 3).
+`set_accent`/`set_language` он сам вызывает `palette::configure_style` (ADR-0018 п. 3).
+
+`set_language(language)` сохраняет настройку и тут же разворачивает `System` в
+конкретный язык в поле `language`, после чего вызывает `sync_tray()`: меню трея
+перестраивается без перезапуска (ADR-0030). UI читает язык через
+`effective_language()` — там `System` уже не встречается.
+
+`set_volume`, `preview_volume` и `commit_volume` (`src/session/playback.rs`) —
+три пути одной громкости (ADR-0031). Дискретные команды — IPC `volume`,
+`MediaCommand::SetVolume`, колесо и пункты меню трея — зовут `set_volume`: он
+снимает `pending_volume`, применяет значение ядру и пишет его в `SettingsStore`
+сразу. Перетаскивание слайдера (`UiAction::PreviewVolume` → `preview_volume`)
+меняет только звук и кладёт значение в `pending_volume`, а отпускание
+(`UiAction::CommitVolume` → `commit_volume`) записывает его. `end_window()`
+зовёт `flush_pending_volume()`, чтобы drag, прерванный скрытием окна, не потерял
+значение; ошибка сохранения — `warn!` и `NoticeKey::VolumeNotSaved`.
+
+`open_settings()` / `close_settings()` / `toggle_settings()` (`src/session/mod.rs`)
+ведут поле `settings_open` (ADR-0031). Открытие в `Listening` сначала переводит
+окно в `Overlay` — drawer в капсуле не помещается, — а при закрытом окне ещё и
+ставит `UiIntent::Show`. UI закрывает drawer по `UiAction::CloseSettings`,
+переключает по `UiAction::ToggleSettings`; выбор режима `Listening` закрывает его
+в `src/app.rs`.
 
 ### 4.13. Трей: снимок и команды (ADR-0020)
 
-`sync_tray()` собирает `TraySnapshot { window_visible, playing, station, theme }`
+`sync_tray()` собирает
+`TraySnapshot { window_visible, playing, station, theme, language }`
 из того же состояния, что и `status`/MPRIS: `playing` — `Playing | Buffering |
 Reconnecting`, `station` — `single_line(name)` при живом эфире иначе `None`,
-`theme` — из `SettingsStore`. Публикация только по изменению: сравнение с
+`theme` — из `SettingsStore`, `language` — поле `Session.language` (уже
+разрешённый, без `System`), от которого зависят подписи меню (ADR-0030).
+Публикация только по изменению: сравнение с
 `tray_snapshot`, `publish` в канал `TrayHandle`, а `false` (поток-владелец умер)
 гасит ветку — `tray` и `tray_snapshot` обнуляются, повторных dbus-round-trip не
-будет. Вызовы: каждый `tick()`, каждый `end_window()` и после каждого события в
-`park()`.
+будет. Вызовы: каждый `tick()`, каждый `end_window()`, после `set_language` и
+после каждого события в `park()`.
 
 `process_tray_commands()` вычерпывает `tray.commands` через `try_recv` (путь
 открытого окна), а `execute_tray_command(TrayCommand)` исполняет одну команду —
@@ -369,12 +415,15 @@ Reconnecting`, `station` — `single_line(name)` при живом эфире и
 | `PlayPause` / `Stop` | `toggle_playback()` / `stop_playback()`, ошибка — только `warn!` |
 | `Previous` / `Next` | `play_relative(∓1)` по видимой очереди |
 | `Roulette` | `start_roulette()`, ответ придёт в `Parked::Roulette` или в следующем `tick()` |
-| `VolumeUp` / `VolumeDown` | `nudge_volume(±VOLUME_STEP /* 0.1 */)` с `clamp` к `0.0..=1.0` до вызова аудио-ядра |
-| `SetTheme(mode)` | `set_theme(mode)` в `SettingsStore`; ошибка — `Notice::Error` |
+| `VolumeUp` / `VolumeDown` | `nudge_volume(±VOLUME_STEP /* 0.1 */)` с `clamp` к `0.0..=1.0` до вызова аудио-ядра; дальше `set_volume` — значение применяется и сохраняется сразу, сбой только `warn!` |
+| `SetTheme(mode)` | `set_theme(mode)` в `SettingsStore`; ошибка — `notify_error_detail(NoticeKey::ThemeNotSaved, …)` |
+| `Settings` | `open_settings()`: открывает drawer настроек и показывает окно (в `Listening` сначала переводит в `Overlay`) |
 | `Quit` | `window.quit()` |
 
-Ошибки команд трея в пользователя не кричат: трей не ждёт ответа, поэтому
-неудача уходит в `warn!`, а видимый результат — обновлённый снимок.
+Ошибки команд трея не кричат пользователю: неудача воспроизведения и громкости
+уходит в `warn!`, а виден результат лишь обновлённым снимком. `SetTheme`
+исключение — он кладёт `NoticeKey::ThemeNotSaved` в очередь, и пользователь
+прочитает её на следующем показе окна: трей ответа не ждёт.
 
 ### 4.14. Режимы окна (ADR-0021)
 
@@ -396,7 +445,11 @@ Reconnecting`, `station` — `single_line(name)` при живом эфире и
 признак стоит, открывает вьюпорт заново без парковки — иначе живой resize на
 Wayland был бы просьбой, которую композитор вправе отбросить (ADR-0018 п. 5).
 Заголовок — часть контракта: по нему WM-правила из `wm-configs/` подбирают
-размер капсулы, поэтому у каждого режима он свой.
+размер капсулы, поэтому у каждого режима он свой. Drawer настроек в `Listening`
+не помещается: `open_settings()` переключает режим на `Overlay`, а выбор
+`Listening` из UI закрывает drawer (`close_settings`). Drawer живёт только внутри
+одного показа окна: перед `park()` главный цикл вызывает `close_settings()`, а
+ветка `reopen` (смена режима) его сохраняет (ADR-0031 п. 4).
 
 ## 5. Текущие ограничения
 
@@ -412,9 +465,11 @@ Wayland был бы просьбой, которую композитор впр
 - `status` в припаркованном состоянии всегда отвечает `window hidden`;
   `toggle` опирается на признак `Session`, а не на состояние композитора: окно,
   свёрнутое WM, считается открытым и `toggle` его закрывает.
-- Смена темы/акцента из IPC невозможна: этих команд в протоколе нет (ADR-0005),
-  `set_accent` вызывают только действия UI. Тема доступна из трея (`SetTheme`),
-  но при закрытом окне перекраска `egui` произойдёт лишь на следующем показе.
+- Смена темы/акцента/языка из IPC невозможна: этих команд в протоколе нет
+  (ADR-0005), `set_accent` и `set_language` вызывают только drawer настроек.
+  Тема доступна из трея (`SetTheme`), язык — нет: `TraySnapshot` его показывает,
+  но не меняет. При закрытом окне перекраска `egui` произойдёт лишь на следующем
+  показе.
 - Часть состояния (`search.query`, `panel_open`, `show_help`, `library_tab`,
   `country_filter`, `globe_camera`) UI правит напрямую через `&mut`-поля;
   инкапсуляция держится на соглашении «побочные эффекты — только через методы».
@@ -436,10 +491,12 @@ Wayland был бы просьбой, которую композитор впр
 
 ## 6. Тестирование
 
-Unit-тесты лежат в модулах: `mod.rs` — молчание `WakeHandle` без слота и все
-варианты `format_status`; `window.rs` — чередование `toggle`, отсутствие
-намерения при `hide` закрытого окна, обе ветки смены режима, единичность
-`reopen`, геометрия и заголовок каждого режима, изоляция пользовательского
+Unit-тесты лежат в модулах: `mod.rs` — молчание `WakeHandle` без слота,
+отсутствие потребности в анализе без окна и его следование настройкам
+визуализатора и движения, все варианты `format_status`; `window.rs` —
+чередование `toggle`, отсутствие намерения при `hide` закрытого окна, обе ветки
+смены режима, единичность `reopen`, порядок `WindowMode::ALL` от полного к
+минимальному, геометрия и заголовок каждого режима, изоляция пользовательского
 размера в `Focus`; `commands.rs` — префикс `error` у неизвестной команды,
 round-trip протокола и `WindowModeArg → WindowMode`; `playback.rs` — приоритет
 локации над тегами в MPRIS;
@@ -448,7 +505,8 @@ round-trip протокола и `WindowModeArg → WindowMode`; `playback.rs` �
 координатам, пропуск невалидных и `(0, 0)`, дедупликация по UUID, популярность =
 `votes`, максимумы по группе. `tray.rs` — это тонкий dispatcher над существующими
 методами, отдельного теста он требует только через живой SNI (ниже) и тесты
-модуля `src/tray/`.
+модуля `src/tray/`, где снимок сравнивается по содержимому, а все подписи меню
+берутся из каталога языка снимка.
 
 Живая проверка механизма — в ADR-0018 («Проверка реализации»): `hide` убирает
 окно из раскладки niri, в скрытом состоянии работают `play`, `volume`, `status`,
@@ -461,9 +519,14 @@ round-trip протокола и `WindowModeArg → WindowMode`; `playback.rs` �
 - ADR-0018: Скрытие окна = закрытие вьюпорта с перезапуском UI-цикла
 - ADR-0020: Иконка в системном трее (StatusNotifierItem на ksni)
 - ADR-0021: Режимы окна (`WindowMode`) и IPC-глагол `mode`
+- ADR-0030: Локализация интерфейса (типизированные `Notice` и `NoticeKey`)
+- ADR-0031: Панель настроек и персистентность (drawer, громкость commit-on-release)
 - `docs/interfaces/10-session.md` — формальный контракт `Session`
 - `docs/modules/12-tray.md`, `docs/interfaces/11-tray.md` — модуль трея
+- `docs/modules/13-i18n.md`, `docs/interfaces/12-i18n.md` — каталоги строк, в том
+  числе `notices` и `labels`
 - `docs/modules/07-app-core.md` — presentation-слой (`src/app.rs`, `src/ui/*`)
 - `docs/architecture/00-overview.md` § 4, § 4.1 — состав Application Layer
 - `docs/interfaces/05-ipc.md`, `docs/interfaces/06-media.md`,
-  `docs/modules/09-library.md`, `docs/modules/10-settings.md`
+  `docs/modules/09-library.md`, `docs/modules/10-settings.md`,
+  `docs/modules/14-ui-settings.md`

@@ -1,75 +1,135 @@
 # Модуль: Панель настроек (drawer)
 
 **Путь в коде:** `src/ui/settings_panel.rs`  
-**Ответственность:** Правая панель настроек, scrim и модальные действия.  
-**Зависимости:** egui, `ui::palette`, `ui::widgets`, `i18n`, `settings`.
+**Ответственность:** Содержимое правой панели настроек; scrim и модалка — в `app.rs`.  
+**Зависимости:** egui, `ui::animation`, `ui::palette`, `ui::widgets`, `ui::icons`, `i18n`, `settings`, `session::WindowMode`.
 
 ---
 
 ## 1. Назначение
 
 Единое место изменения всех пользовательских настроек (ADR-0031). Drawer
-заменяет popup из HUD: один скролл, секции, пояснения, полноширинные контролы.
-Модуль только рисует и возвращает `UiAction`; сохранение выполняет `Session`.
+пришёл на смену popup из шестерёнки HUD: один скролл, секции, пояснения,
+полноширинные контролы и подписи из каталога уже разрешённого языка (смена
+языка видна в том же кадре). Модуль только рисует содержимое и возвращает
+`Vec<UiAction>`; сохранение и прочие побочные эффекты выполняют `OrbitApp` и
+`Session`. Каркас стекла, scrim и приход/уход считает `app.rs` (`draw_settings`)
+по прогрессам `animation::FrameMotion`.
 
 ## 2. Состояние
 
 | Владелец | Поле | Смысл |
 |----------|------|-------|
 | `Session` | `settings_open: bool` | drawer открыт |
-| `DeskLayout` | `settings: Option<Rect>` | зона панели в текущем кадре |
+| `Session` | `pending_volume: Option<f64>` | громкость незавершённого перетаскивания |
+| `OrbitApp` | `drawer_rect: Option<Rect>` | прямоугольник с последнего открытого кадра |
+| `OrbitApp` | `transitions: Transitions` | прогрессы `drawer` и `scrim` кадра |
 | `OrbitApp` | `Toast` | сообщения об ошибках сохранения |
+| `DeskLayout` | `settings: Option<Rect>` | зона панели в текущем кадре |
 
-Зона drawer'а вычисляется в `DeskLayout::compute`. Она входит в
-`blocks_point`, поэтому глобус не получает клики и drag, начавшиеся над ней.
-В `Listening` зоны нет: drawer принудительно закрыт.
+Зона считается в `DeskLayout::compute` (`settings_rect`): ширина
+`min(SETTINGS_WIDTH = 340, viewport.width() − 2·MARGIN)`, правая колонна на всю
+высоту между полями. Она входит в `blocks_point`, поэтому глобус не получает
+клики и drag, начатые над ней. В `Listening` зоны нет: `Session::open_settings`
+в этом режиме сначала переводит окно в `Overlay`.
+
+Содержимое входит одним `stagger` по прогрессу drawer'а: заголовок и шесть
+блоков секций (`BLOCK_HEADER`…`BLOCK_ABOUT`). Гаснут только краски — `dimmed` с
+`fade_visuals` правят `Visuals`, `widgets::faded_group` приглушает контролы, чей
+цвет приходит из палитры. Раскладка, идентификаторы виджетов и hit-зоны
+остаются неподвижными (ADR-0032 §7).
 
 ## 3. Секции
 
-- **Appearance** — тема, акцент, визуализатор, число столбцов.
-- **Language** — `System` и 10 языков с нативными именами.
-- **Audio** — громкость.
-- **Motion & accessibility** — реактивность, стиль, flips, reduce motion.
-- **Window** — Focus/Overlay/Listening, Hide, Quit.
-- **About** — версия, app-id, лицензия, пояснение про фоновую работу.
+- **Appearance** — тема (`ThemeMode::ALL`), акцент (шесть плашек-свотчей с
+  подсказкой), чекбокс визуализатора (`UiAction::ToggleSpectrum`), число столбцов
+  из `VIZ_BAR_CHOICES`.
+- **Language** — `Language::ALL`: `System` и 10 языков с нативными именами,
+  пояснение.
+- **Audio** — громкость (`widgets::volume_slider_width`, 230 px) и пояснение.
+- **Motion & accessibility** — реактивность (`MotionReactivity::ALL`), характер
+  движения (`MotionStyle::ALL`), reduce motion, flips.
+- **Window** — `WindowMode::ALL`, пояснение, чекбокс карточки управления,
+  `Hide`, `Quit`.
+- **About** — версия, лицензия, app-id, пояснение про фоновую работу и трей,
+  подсказка про сохранение.
 
-Неактивные контролы (flips при выключенном движении) остаются видимыми и
-объясняют причину. Выбор значения не закрывает drawer.
+Подписи секций и подсказки — из `SettingsText` каталога, значения enum'ов — из
+`i18n::labels` (`theme_label`, `accent_label`, `motion_label`, `style_label`,
+`language_label`); собственных `label()` у `settings`-enum'ов нет. Режимы окна
+подписывает локальный `mode_label`: `WindowMode` — тип session, а i18n от него не
+зависит.
+
+Неактивные контролы остаются видимыми и объясняют причину: flips выключаются при
+`motion == Off` или `reduce_motion`, и вместо общей подсказки показывается
+`flips_unavailable`. Выбор значения не закрывает drawer.
 
 ## 4. Открытие и закрытие
 
 | Источник | Поведение |
 |----------|-----------|
-| Шестерёнка Focus | toggle drawer |
-| Шестерёнка Overlay | toggle drawer |
-| Ctrl+, | toggle drawer в Focus/Overlay |
-| Ctrl+, в Listening | перевести окно в Overlay и открыть |
-| Трей «Settings…» | показать окно, при Listening — Overlay, открыть drawer |
-| Scrim / крестик / Escape | закрыть drawer |
-| Hide, WM-close, park | `close_settings()` |
-| Смена WindowMode | drawer сохраняется только при reopen |
-| Выбор Listening | закрыть drawer |
+| Шестерёнка HUD (Focus) | toggle drawer; видима и в узком окне |
+| Шестерёнка верхней капсулы (Overlay) | toggle drawer |
+| Ctrl+, (`modifiers.command` + `Comma`) | toggle drawer в Focus и Overlay |
+| Ctrl+, в Listening | `open_settings` переводит окно в Overlay и открывает drawer |
+| Трей «Settings…» | `open_settings`: показывает окно, при Listening — Overlay |
+| Scrim, крестик заголовка, Escape | `CloseSettings` |
+| Hide, WM-close, park | закрытие вьюпорта закрывает drawer |
+| Смена WindowMode | drawer переживает пересоздание viewport |
+| Выбор Listening | `SetWindowMode(Listening)` закрывает drawer |
 
-`run_session` вызывает `close_settings()` после проверки `take_reopen()`, поэтому
-пересоздание viewport'а из-за смены режима сохраняет drawer, а любое другое
-закрытие — нет.
+`run_session` после возврата `run_window` вызывает `end_window()`, затем
+проверяет `take_reopen()` и только после него `close_settings()`. Поэтому
+пересоздание viewport из-за смены режима сохраняет drawer, а любое другое
+закрытие — нет. В `OrbitApp::logic` Escape снимает самый верхний модальный слой:
+сначала drawer, затем help.
 
 ## 5. Громкость
 
-`widgets::volume_slider*` возвращает `SliderResponse { changed, committed }`.
-При drag применяется только `audio.set_volume`; на release, клике или
-клавиатурном шаге — `Session::commit_volume` с записью файла. Pending-значение
-сбрасывается в файл при `hide`, `end_window` и `quit`.
+`widgets::volume_slider` и `widgets::volume_slider_width` возвращают
+`SliderResponse { changed, committed }`, где `committed` — отпускание drag либо
+изменение без продолжающегося drag (клик по треку, клавиша). Зоны — drawer,
+transport и верхняя капсула Overlay — переводят это в два действия:
+
+- `changed && !committed` → `UiAction::PreviewVolume` → `Session::preview_volume`:
+  только `audio.set_volume` и `pending_volume`, файл не трогается;
+- `committed` → `UiAction::CommitVolume` → `Session::commit_volume`: звук плюс
+  запись в `SettingsStore`, pending сбрасывается.
+
+Клавиатурный шаг тоже коммитит: стрелки ±5 %, Home/End — край. Дискретные
+команды (IPC `Volume`, трей VolumeUp/Down, MPRIS) идут через `Session::set_volume`
+и пишут файл сразу. Прерванный drag дописывает в файл `end_window()` через
+`flush_pending_volume()` — этот путь покрывает `Hide`, WM-close и `Quit`, так как
+все они заканчиваются закрытием вьюпорта. Значение клампится в `0.0..=1.0`,
+non-finite заменяется на `DEFAULT_VOLUME`.
 
 ## 6. Ввод
 
-Scrim рисуется на весь viewport под drawer'ом (`Order::Foreground`), клик по
-нему закрывает панель, колесо и клики не доходят до глобуса. Тосты остаются
-выше. `Escape` сначала закрывает drawer, затем help.
+Scrim — `egui::Area` на весь viewport в `Order::Foreground`, затемнение
+`SCRIM_ALPHA = 90` (чёрное в тёмной теме, белое в светлой); клик по нему даёт
+`CloseSettings`. Drawer — область того же порядка, аллоцирована позже и забирает
+ввод у скрима; тосты аллоцируются ещё позже и остаются выше. Пока drawer открыт,
+`globe_view` считает кадр модальным (`layout.settings.is_some()`): вращение, зум
+и клик по сфере не обрабатываются, а вне модалки работает фильтр по
+`press_origin` — жест, начатый под панелью, глобус не двигает.
+
+На уходе `DeskLayout` уже не отдаёт зону, поэтому каркас и содержимое дорисовываются
+по сохранённому `drawer_rect`: скрим получает `Sense::hover`, drawer —
+`interactable(false)`. Гаснущие слои рисуются, но ввод не принимают. Скрытия окна
+по Escape нет.
 
 ## 7. Тесты
 
-- `blocks_point` для открытого/закрытого drawer'а и узкого viewport;
-- ширина clamp и отсутствие зоны в Listening;
-- `SliderResponse`: drag → только changed, release → committed;
-- закрытие drawer'а на hide/park и сохранение при reopen.
+- `layout`: `open_settings_drawer_blocks_its_column`,
+  `closed_settings_drawer_does_not_block_anything`,
+  `drawer_clamps_width_on_a_narrow_viewport`, `listening_has_no_drawer_zone`;
+- `settings_panel`: reduce motion даёт конечную альфу без перехода, блоки идут
+  по порядку на входе и в обратном порядке на выходе, альфа не выходит из
+  `0..=1` включая NaN;
+- `session::window`: `mode_switch_of_an_open_window_reopens_it` — reopen
+  отличается от закрытия, только поэтому drawer при смене режима сохраняется;
+- `i18n::labels`: у каждого значения `ThemeMode`, `AccentColor`,
+  `MotionReactivity`, `MotionStyle` есть непустая подпись;
+- `settings`: `roundtrip_persists_language_volume_and_visualizer`,
+  `invalid_volume_is_sanitized_on_load_and_write`,
+  `unknown_language_code_falls_back_without_touching_other_fields`.
