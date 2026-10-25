@@ -299,6 +299,9 @@ jobs:
     needs: [version, linux, windows, macos]
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Download AppImage
         uses: actions/download-artifact@v4
         with:
@@ -339,6 +342,26 @@ jobs:
           sha256sum -- "${files[@]}" > SHA256SUMS
           cat SHA256SUMS
 
+      - name: Собрать текст релиза из CHANGELOG
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          awk -v version="$VERSION" '
+            index($0, "## [" version "]") == 1 { take = 1; next }
+            take && /^## \[/ { take = 0 }
+            take { print }
+          ' docs/CHANGELOG.md > release-notes.md
+          if [[ ! -s release-notes.md ]]; then
+            echo "в docs/CHANGELOG.md нет секции [$VERSION] — релиз без текста не выкатываем" >&2
+            exit 1
+          fi
+          {
+            echo ""
+            echo "Руководство пользователя — в [вики проекта](https://github.com/ModernByte/orbitfm/wiki)."
+          } >> release-notes.md
+          cat release-notes.md
+
       - name: Publish GitHub Release
         timeout-minutes: 20
         uses: softprops/action-gh-release@v2
@@ -350,5 +373,6 @@ jobs:
             release/SHA256SUMS
           prerelease: ${{ needs.version.outputs.prerelease }}
           make_latest: ${{ needs.version.outputs.make_latest }}
-          generate_release_notes: true
+          body_path: release-notes.md
+          generate_release_notes: false
           fail_on_unmatched_files: true
