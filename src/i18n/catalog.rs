@@ -8,6 +8,9 @@ pub(crate) struct Catalog {
     pub capsule: CapsuleText,
     pub overlay: OverlayText,
     pub settings: SettingsText,
+    /// Строки SNI-меню: читаются только `src/tray/sni.rs`, поэтому в сборке
+    /// без Linux и без фичи `tray` поле формально не востребовано.
+    #[cfg_attr(not(all(target_os = "linux", feature = "tray")), allow(dead_code))]
     pub tray: TrayText,
     pub notices: NoticeText,
     pub labels: LabelText,
@@ -145,6 +148,7 @@ pub(crate) struct SettingsText {
     pub saved_hint: &'static str,
 }
 
+#[cfg_attr(not(all(target_os = "linux", feature = "tray")), allow(dead_code))]
 pub(crate) struct TrayText {
     pub show_window: &'static str,
     pub hide_window: &'static str,

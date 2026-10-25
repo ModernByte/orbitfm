@@ -65,6 +65,15 @@ SMTC и Now Playing — там интеграции подтверждены т�
   «История (NN)» обрезалась правым краем панели, а вместе с ней обрезалась и
   подпись под ней. В других плотностях и языках с длинными подписями (DE, FR)
   эффект был сильнее; ширина панели от локализации не зависит
+- Сборка на Windows и macOS не проходит `clippy -D warnings`: `Catalog::tray` и
+  поля `TrayText` читались только из `src/tray/sni.rs`, который живёт на Linux,
+  поэтому вне Linux объявлялись мёртвым кодом. Поле и структура получили
+  `cfg_attr` с тем же условием, что у модуля трея
+- Flatpak-манифест: в `flatpak-cargo-sources.json` не хватало восьми
+  транзитивных crate'ов, которые принесла фича eframe `system_fonts`
+  (`egui_system_font_provider`, `fontique`, `parlance`, `poll-promise`,
+  `roxmltree`, `sys-locale`, `unicode-script`, `yeslogic-fontconfig-sys`);
+  проверка метаданных в CI падала на первом же пуше после локализации
 
 ## [0.9.0-rc.3] - 2026-10-24
 
