@@ -34,15 +34,6 @@ impl WindowMode {
     /// Все режимы в порядке возрастания плотности — для переключателя в UI.
     pub(crate) const ALL: [Self; 3] = [Self::Focus, Self::Overlay, Self::Listening];
 
-    /// Короткая подпись для меню.
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::Focus => "Focus",
-            Self::Overlay => "Overlay",
-            Self::Listening => "Listening",
-        }
-    }
-
     /// Размер для `ViewportBuilder` нового окна.
     pub(crate) fn default_size(self) -> [f32; 2] {
         match self {
@@ -275,8 +266,8 @@ mod tests {
 
     #[test]
     fn modes_are_listed_from_full_to_minimal() {
-        let labels: Vec<&str> = WindowMode::ALL.iter().map(|mode| mode.label()).collect();
-        assert_eq!(labels, ["Focus", "Overlay", "Listening"]);
+        let codes: Vec<&str> = WindowMode::ALL.iter().map(|mode| mode.as_str()).collect();
+        assert_eq!(codes, ["focus", "overlay", "listening"]);
     }
 
     #[test]

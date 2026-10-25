@@ -5,24 +5,45 @@ use eframe::egui;
 
 use std::sync::OnceLock;
 
+use crate::i18n;
+use crate::settings::Language;
+
+use super::animation;
 use super::icons::{MousePose, draw_mouse};
 use super::palette::{Palette, heat_color};
+use super::widgets::faded;
 
 /// Карточка управления: правый клик — орбита, ЛКМ — страна/маркер,
 /// колесо — зум. Рисуются иконки мыши в трёх позах.
-pub(crate) fn help_card(ui: &mut egui::Ui, palette: &Palette) {
+///
+/// `progress` — прогресс входа зоны из [`animation::Transitions`]: строки
+/// появляются снизу вверх одним stagger, каркас рисует `app.rs`.
+pub(crate) fn help_card(ui: &mut egui::Ui, palette: &Palette, language: Language, progress: f32) {
+    let text = i18n::catalog(language);
     let rows = [
-        (MousePose::Orbit, "Right-drag", "orbit"),
-        (MousePose::Click, "Left click", "country / station"),
-        (MousePose::Wheel, "Scroll", "zoom"),
+        (
+            MousePose::Orbit,
+            text.overlay.right_drag,
+            text.overlay.orbit,
+        ),
+        (
+            MousePose::Click,
+            text.overlay.left_click,
+            text.overlay.country_station,
+        ),
+        (MousePose::Wheel, text.overlay.scroll, text.overlay.zoom),
     ];
 
     palette.panel(14).show(ui, |ui| {
         ui.set_min_size(ui.available_size());
-        for (pose, button, action) in rows {
+        for (index, (pose, button, action)) in rows.into_iter().enumerate() {
             let (rect, _) = ui
                 .allocate_exact_size(egui::vec2(ui.available_width(), 30.0), egui::Sense::hover());
             if !ui.is_rect_visible(rect) {
+                continue;
+            }
+            let shown = animation::alpha(animation::stagger(index, progress));
+            if shown == 0.0 {
                 continue;
             }
             let painter = ui.painter();
@@ -31,7 +52,7 @@ pub(crate) fn help_card(ui: &mut egui::Ui, palette: &Palette) {
                 egui::pos2(rect.left() + 12.0, rect.center().y),
                 10.0,
                 pose,
-                palette.accent,
+                faded(palette.accent, shown),
             );
             let text_x = rect.left() + 30.0;
             painter.text(
@@ -39,21 +60,28 @@ pub(crate) fn help_card(ui: &mut egui::Ui, palette: &Palette) {
                 egui::Align2::LEFT_CENTER,
                 button,
                 egui::FontId::proportional(11.5),
-                palette.text,
+                faded(palette.text, shown),
             );
             painter.text(
                 egui::pos2(text_x, rect.center().y + 8.0),
                 egui::Align2::LEFT_CENTER,
                 action,
                 egui::FontId::proportional(10.5),
-                palette.muted,
+                faded(palette.muted, shown),
             );
         }
     });
 }
 
 /// Легенда «Station density»: радужный градиент Low → High.
-pub(crate) fn density_legend(ui: &mut egui::Ui, palette: &Palette) {
+pub(crate) fn density_legend(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    language: Language,
+    progress: f32,
+) {
+    let text = i18n::catalog(language);
+    let shown = animation::alpha(progress);
     palette.panel(14).show(ui, |ui| {
         ui.set_min_size(ui.available_size());
         let (rect, _) =
@@ -61,13 +89,16 @@ pub(crate) fn density_legend(ui: &mut egui::Ui, palette: &Palette) {
         if !ui.is_rect_visible(rect) {
             return;
         }
+        if shown == 0.0 {
+            return;
+        }
         let painter = ui.painter();
         painter.text(
             egui::pos2(rect.left(), rect.top()),
             egui::Align2::LEFT_TOP,
-            "Station density",
+            text.overlay.station_density,
             egui::FontId::proportional(11.0),
-            palette.muted,
+            faded(palette.muted, shown),
         );
 
         let bar = egui::Rect::from_min_max(
@@ -85,22 +116,22 @@ pub(crate) fn density_legend(ui: &mut egui::Ui, palette: &Palette) {
                     egui::pos2(x1 + 0.5, bar.bottom()),
                 ),
                 0.0,
-                *color,
+                faded(*color, shown),
             );
         }
         painter.text(
             egui::pos2(bar.left(), bar.bottom() + 8.0),
             egui::Align2::LEFT_TOP,
-            "Low",
+            text.overlay.low,
             egui::FontId::proportional(10.0),
-            palette.muted,
+            faded(palette.muted, shown),
         );
         painter.text(
             egui::pos2(bar.right(), bar.bottom() + 8.0),
             egui::Align2::RIGHT_TOP,
-            "High",
+            text.overlay.high,
             egui::FontId::proportional(10.0),
-            palette.muted,
+            faded(palette.muted, shown),
         );
     });
 }

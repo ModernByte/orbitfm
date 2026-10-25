@@ -47,20 +47,6 @@ impl Language {
         Self::Japanese,
     ];
 
-    /// Языки, для которых существует каталог. Без `System`.
-    pub const TRANSLATIONS: [Self; 10] = [
-        Self::English,
-        Self::Russian,
-        Self::French,
-        Self::German,
-        Self::Spanish,
-        Self::Italian,
-        Self::Portuguese,
-        Self::Chinese,
-        Self::Korean,
-        Self::Japanese,
-    ];
-
     pub fn code(self) -> &'static str {
         match self {
             Self::System => "system",

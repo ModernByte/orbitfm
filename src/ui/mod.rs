@@ -3,6 +3,7 @@
 //! Модули получают только нужные срезы состояния и возвращают [`UiAction`];
 //! побочные эффекты выполняет `OrbitApp`.
 
+pub(crate) mod animation;
 pub(crate) mod capsule;
 pub(crate) mod globe_view;
 pub(crate) mod hud;
@@ -23,6 +24,7 @@ pub(crate) mod widgets;
 
 use crate::audio::PlaybackState;
 use crate::geo::Country;
+use crate::i18n;
 use crate::services::Station;
 use crate::session::WindowMode;
 use crate::settings::{AccentColor, Language, MotionReactivity, MotionStyle, ThemeMode};
@@ -76,14 +78,18 @@ pub(crate) enum UiAction {
     SetWindowMode(WindowMode),
 }
 
-pub(crate) fn playback_label(state: &PlaybackState) -> String {
+/// Подпись состояния эфира: статусная строка HUD, капсул и transport (ADR-0030).
+/// Ошибку несёт libmpv, поэтому локализуется только слово `error`, а `detail`
+/// остаётся как есть.
+pub(crate) fn playback_label(language: Language, state: &PlaybackState) -> String {
+    let labels = &i18n::catalog(language).labels;
     match state {
-        PlaybackState::Stopped => "stopped".to_owned(),
-        PlaybackState::Playing => "on air".to_owned(),
-        PlaybackState::Paused => "paused".to_owned(),
-        PlaybackState::Buffering => "buffering".to_owned(),
-        PlaybackState::Reconnecting => "reconnecting".to_owned(),
-        PlaybackState::Error(message) => format!("error: {message}"),
+        PlaybackState::Stopped => labels.playback_stopped.to_owned(),
+        PlaybackState::Playing => labels.playback_on_air.to_owned(),
+        PlaybackState::Paused => labels.playback_paused.to_owned(),
+        PlaybackState::Buffering => labels.playback_buffering.to_owned(),
+        PlaybackState::Reconnecting => labels.playback_reconnecting.to_owned(),
+        PlaybackState::Error(message) => format!("{}: {message}", labels.playback_error),
     }
 }
 
@@ -121,12 +127,33 @@ mod tests {
 
     #[test]
     fn playback_labels_are_human_readable() {
-        assert_eq!(playback_label(&PlaybackState::Stopped), "stopped");
-        assert_eq!(playback_label(&PlaybackState::Playing), "on air");
         assert_eq!(
-            playback_label(&PlaybackState::Error("timeout".to_owned())),
+            playback_label(Language::English, &PlaybackState::Stopped),
+            "stopped"
+        );
+        assert_eq!(
+            playback_label(Language::English, &PlaybackState::Playing),
+            "on air"
+        );
+        assert_eq!(
+            playback_label(
+                Language::English,
+                &PlaybackState::Error("timeout".to_owned())
+            ),
             "error: timeout"
         );
+    }
+
+    /// Каталог — единственный источник подписей состояния: язык передаётся, а не
+    /// зашит в match.
+    #[test]
+    fn playback_labels_come_from_the_catalog() {
+        for language in Language::ALL {
+            assert_eq!(
+                playback_label(language, &PlaybackState::Reconnecting),
+                i18n::catalog(language).labels.playback_reconnecting
+            );
+        }
     }
 
     #[test]

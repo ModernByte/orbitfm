@@ -5,18 +5,39 @@
 //! поле не собирается, а неизвестный язык честно падает в английский.
 
 mod catalog;
+mod de;
 mod en;
+mod es;
+mod fr;
+mod it;
+mod ja;
+mod ko;
 mod labels;
+mod pt;
+mod ru;
+mod zh;
 
 pub(crate) use catalog::{Catalog, LabelText};
 pub(crate) use labels::{accent_label, language_label, motion_label, style_label, theme_label};
 
 use crate::settings::Language;
 
-/// Каталог уже разрешённого языка. `System` и языки без перевода читают
-/// английский источник: пустого каталога UI не увидит никогда.
-pub(crate) fn catalog(_language: Language) -> &'static Catalog {
-    &en::CATALOG
+/// Каталог уже разрешённого языка. `System` читает английский источник: `Session`
+/// резолвит окружение при старте и при смене настройки (ADR-0030 §2), поэтому
+/// `System` доходит сюда только в тестах и в треях без снимка.
+pub(crate) fn catalog(language: Language) -> &'static Catalog {
+    match language {
+        Language::System | Language::English => &en::CATALOG,
+        Language::Russian => &ru::CATALOG,
+        Language::French => &fr::CATALOG,
+        Language::German => &de::CATALOG,
+        Language::Spanish => &es::CATALOG,
+        Language::Italian => &it::CATALOG,
+        Language::Portuguese => &pt::CATALOG,
+        Language::Chinese => &zh::CATALOG,
+        Language::Korean => &ko::CATALOG,
+        Language::Japanese => &ja::CATALOG,
+    }
 }
 
 /// Подставляет именованные плейсхолдеры `{name}`. Неизвестные остаются как есть:
@@ -33,6 +54,15 @@ pub(crate) fn fill(template: &str, args: &[(&str, &str)]) -> String {
 mod tests {
     use super::*;
 
+    /// Имена `{placeholder}` в порядке появления.
+    fn placeholders(template: &str) -> Vec<&str> {
+        template
+            .split(['{', '}'])
+            .enumerate()
+            .filter_map(|(index, part)| (index % 2 == 1).then_some(part))
+            .collect()
+    }
+
     macro_rules! assert_group_non_empty {
         ($catalog:expr, $group:ident { $($field:ident),* $(,)? }) => {
             $(
@@ -40,13 +70,23 @@ mod tests {
                     !$catalog.$group.$field.trim().is_empty(),
                     concat!(stringify!($group), ".", stringify!($field))
                 );
+                assert_eq!(
+                    placeholders(catalog(Language::English).$group.$field),
+                    placeholders($catalog.$group.$field),
+                    concat!(
+                        stringify!($group),
+                        ".",
+                        stringify!($field),
+                        ": наборы плейсхолдеров разошлись с английским"
+                    )
+                );
             )*
         };
     }
 
-    #[test]
-    fn english_catalog_has_no_blank_strings() {
-        let c = catalog(Language::English);
+    /// Каталог обязан быть заполненным и сохранять `{placeholder}` английского
+    /// источника — иначе `fill` молча оставит `{count}` в интерфейсе.
+    fn assert_catalog_complete(c: &Catalog) {
         assert_group_non_empty!(
             c,
             common {
@@ -104,9 +144,7 @@ mod tests {
                 results,
                 results_count,
                 results_of,
-                favorites,
                 favorites_count,
-                history,
                 history_count,
                 pick_country_or_genre,
                 quiet_sector,
@@ -282,6 +320,32 @@ mod tests {
                 playback_error,
             }
         );
+    }
+
+    #[test]
+    fn english_catalog_is_complete() {
+        assert_catalog_complete(catalog(Language::English));
+    }
+
+    /// Каталог обязан покрыть каждый вариант enum: `System` — не язык каталога,
+    /// он разрешается в английский. Проверка на указателе ловит язык, который
+    /// молча вернулся к английскому.
+    #[test]
+    fn every_translation_language_has_its_own_catalog() {
+        let english = catalog(Language::English);
+        for language in Language::ALL
+            .into_iter()
+            .filter(|language| *language != Language::System)
+        {
+            let c = catalog(language);
+            if language != Language::English {
+                assert!(
+                    !std::ptr::eq(c, english),
+                    "{language:?} отдаёт английский каталог"
+                );
+            }
+            assert_catalog_complete(c);
+        }
     }
 
     #[test]

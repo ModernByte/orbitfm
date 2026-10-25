@@ -40,6 +40,8 @@ pub(crate) enum TrayCommand {
     VolumeUp,
     VolumeDown,
     SetTheme(ThemeMode),
+    /// Открыть drawer настроек (ADR-0031): окно показывается, если спрятано.
+    Settings,
     Quit,
 }
 

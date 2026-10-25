@@ -22,6 +22,7 @@ pub(crate) enum NoticeKey {
     ClearHistoryFailed,
     PlaybackFailed,
     StationWithoutUrl,
+    SearchTaskEnded,
     RouletteStarted { station: Option<String> },
     RouletteFailed,
     RouletteTaskEnded,

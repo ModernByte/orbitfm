@@ -46,7 +46,8 @@ pub(crate) struct DeskLayout {
     pub hud: Option<egui::Rect>,
     pub panel: Option<egui::Rect>,
     pub transport: Option<egui::Rect>,
-    /// Карточка управления мышью: видима только по требованию (первый запуск или `?`).
+    /// Карточка управления мышью: видима только по требованию (первый запуск или
+    /// переключатель в настройках).
     pub help: Option<egui::Rect>,
     pub legend: Option<egui::Rect>,
     /// Нижняя зона капсулы Overlay: избранные станции.
@@ -199,6 +200,18 @@ impl DeskLayout {
         .flatten()
         .any(|zone| zone.contains(point))
     }
+
+    /// Отступ тоста от нижнего края окна: стек встаёт над занятой нижней зоной
+    /// текущей плотности, поэтому в Focus он не режет transport, а в Overlay —
+    /// избранное (ADR-0032 §4). В Listening нижней зоны нет — только поле.
+    pub(crate) fn toast_offset(&self, viewport: egui::Rect) -> f32 {
+        let bottom_zone = match self.density {
+            LayoutDensity::Full => self.transport,
+            LayoutDensity::Compact => self.capsule,
+            LayoutDensity::Minimal => None,
+        };
+        bottom_zone.map_or(MARGIN, |zone| viewport.bottom() - zone.top() + GAP)
+    }
 }
 
 /// Зона drawer'а: правая колонна на всю высоту между полями.
@@ -343,6 +356,30 @@ mod tests {
         assert!(layout.settings.is_none());
         let drawer_point = egui::pos2(1280.0 - SETTINGS_WIDTH / 2.0, 400.0);
         assert!(!layout.blocks_point(drawer_point));
+    }
+
+    /// Якорь стека тостов зависит от плотности: над занятой нижней зоной, а не
+    /// на постоянном отступе (ADR-0032 §4).
+    #[test]
+    fn toast_anchor_clears_the_bottom_zone_of_its_density() {
+        let rect = viewport();
+        let layout = focus(false, false);
+        let transport = layout.transport.expect("transport есть");
+        assert_eq!(
+            layout.toast_offset(rect),
+            rect.bottom() - transport.top() + GAP
+        );
+
+        let overlay = DeskLayout::compute(rect, false, false, false, WindowMode::Overlay);
+        let capsule = overlay.capsule.expect("капсула есть");
+        assert_eq!(
+            overlay.toast_offset(rect),
+            rect.bottom() - capsule.top() + GAP
+        );
+
+        // Listening: нижней зоны нет, остаётся только поле окна.
+        let listening = DeskLayout::compute(rect, false, false, false, WindowMode::Listening);
+        assert_eq!(listening.toast_offset(rect), MARGIN);
     }
 
     #[test]

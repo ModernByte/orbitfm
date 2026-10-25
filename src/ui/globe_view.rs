@@ -11,6 +11,7 @@ use crate::render::{
 };
 use crate::session::markers::GlobeMarker;
 
+use super::animation;
 use super::layout::DeskLayout;
 use super::orbit_ring::OrbitRing;
 use super::palette::{Palette, heat_color};
@@ -28,8 +29,8 @@ const STAR_COUNT: usize = 160;
 /// Полосы вертикального градиента космоса и глубина виньетки (ТЗ §3.1, §5.1 п. 5).
 const SPACE_BANDS: usize = 12;
 const VIGNETTE_BANDS: usize = 6;
-/// Длительность fade-in/out callout (ТЗ §1.2: 120–180 мс).
-const CALLOUT_FADE_SECONDS: f32 = 0.15;
+/// Длительность fade-in/out callout: 180 мс из контракта ADR-0032.
+const CALLOUT_FADE_SECONDS: f32 = animation::CALLOUT;
 const CALLOUT_HOVER_ALPHA: f32 = 0.85;
 /// Расстояние от якоря до карточки — длина leader line.
 const CALLOUT_LEADER: f32 = 26.0;
@@ -173,6 +174,8 @@ pub(crate) struct GlobeState<'a> {
     pub allow_flips: bool,
     /// Callout страны: переживает кадр ради fade-in/out (ТЗ §1.2).
     pub callout: &'a mut CalloutState,
+    /// Reduce motion: карточка появляется и гаснет без перехода (ADR-0032).
+    pub reduce_motion: bool,
 }
 
 #[derive(Debug, Default)]
@@ -344,7 +347,7 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
             None => hovered_country.map(|country| (country, CALLOUT_HOVER_ALPHA)),
         });
     let active_callout = active_callout.flatten();
-    update_callout(state.callout, active_callout, dt);
+    update_callout(state.callout, active_callout, dt, state.reduce_motion);
     let scene = CalloutScene {
         camera: state.camera,
         deform,
@@ -499,9 +502,14 @@ fn country_station_count(markers: &[GlobeMarker], iso_a2: &str) -> usize {
         .sum()
 }
 
-/// Прозрачность цвета с учётом фэйда карточки.
 /// Плавное появление и исчезновение callout (ТЗ §1.2): карточки идут к своей цели.
-fn update_callout(state: &mut CalloutState, active: Option<(&Country, f32)>, dt: f32) {
+/// Reduce motion (ADR-0032) убирает переход: карточка сразу в конечном состоянии.
+fn update_callout(
+    state: &mut CalloutState,
+    active: Option<(&Country, f32)>,
+    dt: f32,
+    reduce: bool,
+) {
     match active {
         Some((country, target)) => {
             let same = state
@@ -531,10 +539,10 @@ fn update_callout(state: &mut CalloutState, active: Option<(&Country, f32)>, dt:
         }
     }
 
-    let step = if dt > 0.0 {
-        1.0 - (-dt / CALLOUT_FADE_SECONDS).exp()
-    } else {
+    let step = if reduce || dt <= 0.0 {
         1.0
+    } else {
+        1.0 - (-dt / CALLOUT_FADE_SECONDS).exp()
     };
     for card in [&mut state.current, &mut state.previous]
         .into_iter()
@@ -884,21 +892,31 @@ mod tests {
         let germany = country("DE", "Germany");
         let mut state = CalloutState::default();
 
-        update_callout(&mut state, Some((&germany, CALLOUT_HOVER_ALPHA)), 0.05);
+        update_callout(
+            &mut state,
+            Some((&germany, CALLOUT_HOVER_ALPHA)),
+            0.05,
+            false,
+        );
         let card = state.current.as_ref().expect("карточка появилась");
         assert!(card.alpha > 0.0 && card.alpha < CALLOUT_HOVER_ALPHA);
 
         for _ in 0..20 {
-            update_callout(&mut state, Some((&germany, CALLOUT_HOVER_ALPHA)), 0.05);
+            update_callout(
+                &mut state,
+                Some((&germany, CALLOUT_HOVER_ALPHA)),
+                0.05,
+                false,
+            );
         }
         assert!(
             (state.current.as_ref().unwrap().alpha - CALLOUT_HOVER_ALPHA).abs() < 0.01,
             "за 1 с hover-карточка выходит на 0.85"
         );
 
-        update_callout(&mut state, None, 0.05);
+        update_callout(&mut state, None, 0.05, false);
         for _ in 0..20 {
-            update_callout(&mut state, None, 0.05);
+            update_callout(&mut state, None, 0.05, false);
         }
         assert!(
             state
@@ -909,15 +927,31 @@ mod tests {
     }
 
     #[test]
+    fn reduce_motion_skips_the_callout_transition() {
+        let germany = country("DE", "Germany");
+        let mut state = CalloutState::default();
+
+        update_callout(&mut state, Some((&germany, 1.0)), 0.016, true);
+        assert_eq!(state.current.as_ref().expect("карточка").alpha, 1.0);
+
+        update_callout(&mut state, None, 0.016, true);
+        assert!(
+            state
+                .current
+                .is_none_or(|card| card.alpha <= CALLOUT_EPSILON)
+        );
+    }
+
+    #[test]
     fn callout_switch_keeps_the_old_card_for_fade_out() {
         let germany = country("DE", "Germany");
         let france = country("FR", "France");
         let mut state = CalloutState::default();
 
         for _ in 0..20 {
-            update_callout(&mut state, Some((&germany, 1.0)), 0.05);
+            update_callout(&mut state, Some((&germany, 1.0)), 0.05, false);
         }
-        update_callout(&mut state, Some((&france, 1.0)), 0.05);
+        update_callout(&mut state, Some((&france, 1.0)), 0.05, false);
 
         let current = state.current.as_ref().expect("новая страна");
         let previous = state.previous.as_ref().expect("старая ещё видна");
@@ -934,7 +968,7 @@ mod tests {
         );
 
         for _ in 0..20 {
-            update_callout(&mut state, Some((&france, 1.0)), 0.05);
+            update_callout(&mut state, Some((&france, 1.0)), 0.05, false);
         }
         assert!(state.previous.is_none(), "исчезающая карточка убирается");
         assert!(state.current.as_ref().unwrap().alpha > 0.99);
@@ -944,7 +978,7 @@ mod tests {
     fn callout_stays_quiet_without_a_country() {
         let mut state = CalloutState::default();
         for _ in 0..30 {
-            update_callout(&mut state, None, 0.05);
+            update_callout(&mut state, None, 0.05, false);
         }
         assert!(
             state

@@ -20,6 +20,7 @@ use crate::session::search::SearchMode;
 use crate::session::{Notice, NoticeKey, Session, StationStartError, UiIntent, WindowMode};
 use crate::settings::{Language, MotionReactivity, MotionStyle, Settings};
 use crate::ui::UiAction;
+use crate::ui::animation::{self, FrameMotion, Transitions, ZoneFlags};
 use crate::ui::globe_view::{self, CalloutState, GlobeState};
 use crate::ui::images::{FaviconCache, MAX_FAVICON_BYTES, decode_favicon};
 use crate::ui::layout::{DeskLayout, LayoutDensity};
@@ -51,8 +52,6 @@ const ALLOWED_FAVICON_MIME: &[&str] = &[
 const GLASS_RADIUS_MAJOR: f32 = 16.0;
 /// Скругление маленьких зон (легенда, карточка управления).
 const GLASS_RADIUS_MINOR: f32 = 14.0;
-/// Толщина обводки стеклянной панели.
-const GLASS_BORDER: f32 = 1.0;
 /// Затемнение стола под открытым drawer настроек (ADR-0031).
 const SCRIM_ALPHA: u8 = 90;
 
@@ -72,6 +71,7 @@ fn notice_text(
         NoticeKey::ClearHistoryFailed => notices.clear_history_failed,
         NoticeKey::PlaybackFailed => notices.playback_failed,
         NoticeKey::StationWithoutUrl => notices.station_without_url,
+        NoticeKey::SearchTaskEnded => notices.search_task_ended,
         NoticeKey::RouletteStarted { station } => {
             let label = station
                 .clone()
@@ -109,6 +109,11 @@ pub(crate) struct OrbitApp<'a> {
     favicons: FaviconCache,
     http: reqwest::Client,
     toast: Toast,
+    /// Переходы UI этого прогона окна (ADR-0032).
+    transitions: Transitions,
+    /// Прямоугольник drawer'а с последнего открытого кадра: нужен, чтобы
+    /// панель гасла по месту, а не исчезала скачком (ADR-0032).
+    drawer_rect: Option<egui::Rect>,
 }
 
 impl<'a> OrbitApp<'a> {
@@ -153,6 +158,8 @@ impl<'a> OrbitApp<'a> {
                 .build()
                 .expect("конфигурация HTTP-клиента favicon корректна"),
             toast: Toast::default(),
+            transitions: Transitions::new(),
+            drawer_rect: None,
         }
     }
 
@@ -230,7 +237,14 @@ impl<'a> OrbitApp<'a> {
             )
             .show(ui, |ui| {
                 actions = self.draw_layers(ui, &frame);
-                self.toast.draw(&ctx, &frame.palette);
+                // Якорь тостов считается по плотности: в Focus стек встаёт над
+                // transport, в Overlay — над избранным (ADR-0032 §4).
+                self.toast.draw(
+                    &ctx,
+                    &frame.palette,
+                    frame.layout.toast_offset(viewport),
+                    frame.settings.reduce_motion,
+                );
                 ui.allocate_rect(viewport, egui::Sense::hover());
             });
 
@@ -253,6 +267,26 @@ impl<'a> OrbitApp<'a> {
         let palette = &frame.palette;
         let layout = frame.layout;
         let density = layout.density;
+
+        // Прогрессы переходов считаются один раз на кадр (ADR-0032): зоны
+        // читают готовые значения, а каркас стеклянных зон гаснет здесь.
+        if layout.settings.is_some() {
+            self.drawer_rect = layout.settings;
+        }
+        let mut ui_motion = self.transitions.frame(
+            ui.ctx(),
+            ZoneFlags {
+                scene: density == LayoutDensity::Full,
+                panel: layout.panel.is_some(),
+                help: layout.help.is_some(),
+                legend: layout.legend.is_some(),
+                drawer: layout.settings.is_some(),
+                capsules: density == LayoutDensity::Compact,
+                favorites: density == LayoutDensity::Compact && layout.capsule.is_some(),
+                listening: density == LayoutDensity::Minimal,
+            },
+            frame.settings.reduce_motion,
+        );
 
         // Пульс считается один раз на кадр для кольца Listening; глобус
         // от аудио больше не пульсирует (снято до Этапа 9).
@@ -321,6 +355,7 @@ impl<'a> OrbitApp<'a> {
                                 && density == LayoutDensity::Full
                                 && frame.motion_reactivity.is_enabled(),
                             callout,
+                            reduce_motion: ui_motion.reduce,
                         },
                     )
                 })
@@ -336,19 +371,26 @@ impl<'a> OrbitApp<'a> {
 
         match density {
             LayoutDensity::Full => {
+                // Вход стола: один stagger на прогон окна (ADR-0032 §4).
+                let hud_in = animation::alpha(animation::stagger(0, ui_motion.scene));
+                let panel_in = animation::alpha(animation::stagger(1, ui_motion.scene));
+                let help_in = animation::alpha(animation::stagger(2, ui_motion.scene));
+                let transport_in = animation::alpha(animation::stagger(3, ui_motion.scene));
+
                 if let Some(hud_rect) = layout.hud {
                     widgets::glass_panel(
                         ui.painter(),
                         hud_rect,
                         palette,
                         GLASS_RADIUS_MAJOR,
-                        GLASS_BORDER,
+                        hud_in,
                     );
                     actions.extend(
                         ui.scope_builder(horizontal(hud_rect), |ui| {
                             hud::show(
                                 ui,
                                 palette,
+                                &mut ui_motion,
                                 hud::HudState {
                                     query: &mut session.search.query,
                                     country_query: &mut session.search.country_query,
@@ -362,6 +404,7 @@ impl<'a> OrbitApp<'a> {
                                     playback: &frame.playback,
                                     panel_open: session.panel_open,
                                     help_open: session.show_help,
+                                    language: frame.language,
                                 },
                             )
                         })
@@ -370,12 +413,13 @@ impl<'a> OrbitApp<'a> {
                 }
 
                 if let Some(panel_rect) = layout.panel {
+                    let panel_a = animation::alpha(panel_in * ui_motion.panel);
                     widgets::glass_panel(
                         ui.painter(),
-                        panel_rect,
+                        panel_rect.translate(egui::vec2(-animation::slide_x(panel_a), 0.0)),
                         palette,
                         GLASS_RADIUS_MAJOR,
-                        GLASS_BORDER,
+                        panel_a,
                     );
                     actions.extend(
                         ui.scope_builder(
@@ -386,6 +430,7 @@ impl<'a> OrbitApp<'a> {
                                 station_panel::show(
                                     ui,
                                     palette,
+                                    &mut ui_motion,
                                     station_panel::PanelState {
                                         tab: &mut session.library_tab,
                                         country: session.search.context.country.as_ref(),
@@ -403,6 +448,7 @@ impl<'a> OrbitApp<'a> {
                                             .current_station
                                             .as_ref()
                                             .map(|station| station.stationuuid.as_str()),
+                                        language: frame.language,
                                     },
                                 )
                             },
@@ -417,13 +463,14 @@ impl<'a> OrbitApp<'a> {
                         transport_rect,
                         palette,
                         GLASS_RADIUS_MAJOR,
-                        GLASS_BORDER,
+                        transport_in,
                     );
                     actions.extend(
                         ui.scope_builder(horizontal(transport_rect), |ui| {
                             transport::show(
                                 ui,
                                 palette,
+                                &mut ui_motion,
                                 TransportState {
                                     playback: &frame.playback,
                                     current: session.current_station.as_ref(),
@@ -434,6 +481,7 @@ impl<'a> OrbitApp<'a> {
                                     volume: frame.volume,
                                     visualizer,
                                     favicons,
+                                    language: frame.language,
                                 },
                             )
                         })
@@ -442,50 +490,55 @@ impl<'a> OrbitApp<'a> {
                 }
 
                 if let Some(help_rect) = layout.help {
+                    let help_a = animation::alpha(help_in * ui_motion.help);
                     widgets::glass_panel(
                         ui.painter(),
-                        help_rect,
+                        help_rect.translate(egui::vec2(0.0, animation::rise_y(help_a))),
                         palette,
                         GLASS_RADIUS_MINOR,
-                        GLASS_BORDER,
+                        help_a,
                     );
                     ui.scope_builder(vertical(help_rect), |ui| {
-                        overlays::help_card(ui, palette);
+                        overlays::help_card(ui, palette, frame.language, help_a);
                     });
                 }
                 if let Some(legend_rect) = layout.legend {
+                    let legend_a = animation::alpha(ui_motion.legend);
                     widgets::glass_panel(
                         ui.painter(),
-                        legend_rect,
+                        legend_rect.translate(egui::vec2(0.0, animation::rise_y(legend_a))),
                         palette,
                         GLASS_RADIUS_MINOR,
-                        GLASS_BORDER,
+                        legend_a,
                     );
                     ui.scope_builder(vertical(legend_rect), |ui| {
-                        overlays::density_legend(ui, palette);
+                        overlays::density_legend(ui, palette, frame.language, legend_a);
                     });
                 }
             }
             LayoutDensity::Compact => {
                 if let Some(hud_rect) = layout.hud {
+                    let capsule_a = animation::alpha(ui_motion.capsules);
                     widgets::glass_panel(
                         ui.painter(),
                         hud_rect,
                         palette,
                         GLASS_RADIUS_MAJOR,
-                        GLASS_BORDER,
+                        capsule_a,
                     );
                     actions.extend(
                         ui.scope_builder(horizontal(hud_rect), |ui| {
                             capsule::overlay_top(
                                 ui,
                                 palette,
+                                &mut ui_motion,
                                 capsule::OverlayTop {
                                     playback: &frame.playback,
                                     current: session.current_station.as_ref(),
                                     can_resume: frame.can_resume,
                                     volume: frame.volume,
                                     favicons,
+                                    language: frame.language,
                                 },
                             )
                         })
@@ -493,18 +546,20 @@ impl<'a> OrbitApp<'a> {
                     );
                 }
                 if let Some(capsule_rect) = layout.capsule {
+                    let favorites_a = animation::alpha(ui_motion.favorites);
                     widgets::glass_panel(
                         ui.painter(),
                         capsule_rect,
                         palette,
                         GLASS_RADIUS_MAJOR,
-                        GLASS_BORDER,
+                        favorites_a,
                     );
                     actions.extend(
                         ui.scope_builder(vertical(capsule_rect), |ui| {
                             capsule::overlay_favorites(
                                 ui,
                                 palette,
+                                &mut ui_motion,
                                 capsule::OverlayFavorites {
                                     favorites: session.library.favorites(),
                                     playing_uuid: session
@@ -512,6 +567,7 @@ impl<'a> OrbitApp<'a> {
                                         .as_ref()
                                         .map(|station| station.stationuuid.as_str()),
                                     favicons,
+                                    language: frame.language,
                                 },
                             )
                         })
@@ -521,18 +577,20 @@ impl<'a> OrbitApp<'a> {
             }
             LayoutDensity::Minimal => {
                 if let Some(row_rect) = layout.hud {
+                    let row_a = animation::alpha(ui_motion.listening);
                     widgets::glass_panel(
                         ui.painter(),
                         row_rect,
                         palette,
                         GLASS_RADIUS_MAJOR,
-                        GLASS_BORDER,
+                        row_a,
                     );
                     actions.extend(
                         ui.scope_builder(horizontal(row_rect), |ui| {
                             capsule::listening(
                                 ui,
                                 palette,
+                                &mut ui_motion,
                                 capsule::Listening {
                                     playback: &frame.playback,
                                     current: session.current_station.as_ref(),
@@ -540,6 +598,7 @@ impl<'a> OrbitApp<'a> {
                                     can_resume: frame.can_resume,
                                     pulse,
                                     favicons,
+                                    language: frame.language,
                                 },
                             )
                         })
@@ -549,7 +608,7 @@ impl<'a> OrbitApp<'a> {
             }
         }
 
-        actions.extend(draw_settings(ui, frame));
+        actions.extend(draw_settings(ui, frame, &mut ui_motion, self.drawer_rect));
 
         if frame.motion_reactivity.is_enabled() {
             // Активный эфир — 30 fps; idle-дыханию хватает 15 fps.
@@ -639,6 +698,7 @@ impl<'a> OrbitApp<'a> {
                 if let Err(err) = self.session.set_reduce_motion(reduce) {
                     self.error_toast(ctx, NoticeKey::MotionNotSaved, Some(err));
                 }
+                palette::configure_style(ctx, self.session.settings.settings());
             }
             UiAction::SetVizBars(bars) => {
                 if let Err(err) = self.session.set_viz_bars(bars) {
@@ -784,54 +844,76 @@ impl Frame {
     }
 }
 
-/// Скрим + drawer настроек поверх всех зон (ADR-0031).
+/// Скрим + drawer настроек поверх всех зон (ADR-0031, ADR-0032).
 ///
 /// Layer `Foreground`: затемнение перехватывает клики и scroll стола, а drawer
 /// как аллоцирован позже — забирает ввод у скрима. Закрытием считаются клик по
 /// скриму и Escape, который обрабатывает [`eframe::App::logic`].
-fn draw_settings(ui: &mut egui::Ui, frame: &Frame) -> Vec<UiAction> {
-    let Some(drawer_rect) = frame.layout.settings else {
-        return Vec::new();
-    };
+///
+/// На выходе `layout.settings` уже `None`, поэтому каркас берёт последний
+/// прямоугольник `last_drawer_rect`: геометрия кадра не меняется, zones стола
+/// не дёргаются. Гаснущий drawer рисует содержимое, но не принимает ввод.
+fn draw_settings(
+    ui: &mut egui::Ui,
+    frame: &Frame,
+    motion: &mut FrameMotion<'_>,
+    last_drawer_rect: Option<egui::Rect>,
+) -> Vec<UiAction> {
     let palette = &frame.palette;
     let mut volume = frame.volume;
     let mut actions = Vec::new();
 
-    egui::Area::new(egui::Id::unique("orbitfm_settings_scrim"))
-        .fixed_pos(frame.viewport.min)
-        .default_size(frame.viewport.size())
-        .order(egui::Order::Foreground)
-        .show(ui.ctx(), |ui| {
-            let (rect, response) =
-                ui.allocate_exact_size(frame.viewport.size(), egui::Sense::click());
-            let dim = if matches!(ui.ctx().theme(), egui::Theme::Dark) {
-                egui::Color32::from_black_alpha(SCRIM_ALPHA)
-            } else {
-                egui::Color32::from_white_alpha(SCRIM_ALPHA)
-            };
-            ui.painter().rect_filled(rect, 0.0, dim);
-            if response.clicked() {
-                actions.push(UiAction::CloseSettings);
-            }
-        });
+    let open = frame.layout.settings.is_some();
+    let Some(rect) = frame.layout.settings.or(last_drawer_rect) else {
+        return actions;
+    };
+    let scrim = animation::alpha(motion.scrim);
+    let drawer = animation::alpha(motion.drawer);
+    if scrim == 0.0 && drawer == 0.0 {
+        return actions;
+    }
 
+    if scrim > 0.0 {
+        egui::Area::new(egui::Id::unique("orbitfm_settings_scrim"))
+            .fixed_pos(frame.viewport.min)
+            .default_size(frame.viewport.size())
+            .order(egui::Order::Foreground)
+            .show(ui.ctx(), |ui| {
+                // Гаснущий scrim не должен ловить клики: окно уже закрывается.
+                let sense = if open {
+                    egui::Sense::click()
+                } else {
+                    egui::Sense::hover()
+                };
+                let (rect, response) = ui.allocate_exact_size(frame.viewport.size(), sense);
+                let dim = if matches!(ui.ctx().theme(), egui::Theme::Dark) {
+                    egui::Color32::from_black_alpha(SCRIM_ALPHA)
+                } else {
+                    egui::Color32::from_white_alpha(SCRIM_ALPHA)
+                };
+                ui.painter()
+                    .rect_filled(rect, 0.0, widgets::faded(dim, scrim));
+                if response.clicked() {
+                    actions.push(UiAction::CloseSettings);
+                }
+            });
+    }
+
+    // Drawer приходит справа: в закрытом состоянии смещён на SLIDE_X вправо.
+    let shifted = rect.translate(egui::vec2(animation::slide_x(drawer), 0.0));
     egui::Area::new(egui::Id::unique("orbitfm_settings_drawer"))
-        .fixed_pos(drawer_rect.min)
-        .default_size(drawer_rect.size())
+        .fixed_pos(shifted.min)
+        .default_size(shifted.size())
+        .interactable(open)
         .order(egui::Order::Foreground)
         .show(ui.ctx(), |ui| {
-            widgets::glass_panel(
-                ui.painter(),
-                drawer_rect,
-                palette,
-                GLASS_RADIUS_MAJOR,
-                GLASS_BORDER,
-            );
-            ui.set_min_size(drawer_rect.size());
-            ui.set_max_size(drawer_rect.size());
+            widgets::glass_panel(ui.painter(), shifted, palette, GLASS_RADIUS_MAJOR, drawer);
+            ui.set_min_size(rect.size());
+            ui.set_max_size(rect.size());
             actions.extend(settings_panel::show(
                 ui,
                 palette,
+                motion,
                 SettingsState {
                     settings: frame.settings,
                     language: frame.language,

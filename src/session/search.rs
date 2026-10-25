@@ -263,7 +263,9 @@ impl super::Session {
             },
             Err(mpsc::error::TryRecvError::Empty) => {}
             Err(mpsc::error::TryRecvError::Disconnected) => {
-                self.search.error = Some("search task ended unexpectedly".to_owned());
+                // Отправитель исчез — тот же путь, что у рулетки: ядро называет
+                // причину ключом, строку берёт каталог (ADR-0030 §6).
+                self.notify_error(NoticeKey::SearchTaskEnded);
                 self.search.pending = false;
                 self.search.rx = None;
             }

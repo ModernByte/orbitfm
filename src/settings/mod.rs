@@ -79,15 +79,6 @@ pub enum MotionReactivity {
 impl MotionReactivity {
     pub const ALL: [Self; 4] = [Self::Off, Self::Low, Self::Normal, Self::High];
 
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Off => "Off",
-            Self::Low => "Low",
-            Self::Normal => "Normal",
-            Self::High => "High",
-        }
-    }
-
     pub fn is_enabled(self) -> bool {
         self != Self::Off
     }
@@ -160,18 +151,6 @@ impl MotionStyle {
         Self::SparkleTwitch,
         Self::BeatMarch,
     ];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Auto => "Auto",
-            Self::SoftPulse => "Soft Pulse",
-            Self::GrooveSway => "Groove Sway",
-            Self::BassDrop => "Bass Drop",
-            Self::AmbientDrift => "Ambient Drift",
-            Self::SparkleTwitch => "Sparkle Twitch",
-            Self::BeatMarch => "Beat March",
-        }
-    }
 
     /// Номер стиля для `CameraUniform.motion2.y`; Auto — 0.
     pub fn id(self) -> f32 {
@@ -604,12 +583,11 @@ mod tests {
     }
 
     #[test]
-    fn motion_styles_have_ids_labels_and_band_requirements() {
+    fn motion_styles_have_ids_and_band_requirements() {
         assert_eq!(MotionStyle::ALL.len(), 7);
         assert_eq!(MotionStyle::Auto.id(), 0.0);
         assert_eq!(MotionStyle::SoftPulse.id(), 1.0);
         assert_eq!(MotionStyle::BeatMarch.id(), 6.0);
-        assert_eq!(MotionStyle::BassDrop.label(), "Bass Drop");
         assert!(MotionStyle::BassDrop.requires_bands());
         assert!(MotionStyle::SparkleTwitch.requires_bands());
         assert!(MotionStyle::BeatMarch.requires_bands());

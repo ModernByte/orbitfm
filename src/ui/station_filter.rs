@@ -1,6 +1,8 @@
 //! Локальные фильтры и сортировка станций выбранной страны.
 
+use crate::i18n;
 use crate::services::Station;
+use crate::settings::Language;
 
 /// Жанровые чипы панели страны.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,20 +25,24 @@ impl GenreTag {
         GenreTag::Metal,
     ];
 
-    pub(crate) fn label(self) -> &'static str {
+    /// Подпись чипа для языка интерфейса (ADR-0030).
+    pub(crate) fn label(self, language: Language) -> &'static str {
+        let labels = &i18n::catalog(language).labels;
         match self {
-            GenreTag::Rock => "Rock",
-            GenreTag::Pop => "Pop",
-            GenreTag::Jazz => "Jazz",
-            GenreTag::Electronic => "Electronic",
-            GenreTag::News => "News",
-            GenreTag::Metal => "Metal",
+            GenreTag::Rock => labels.genre_rock,
+            GenreTag::Pop => labels.genre_pop,
+            GenreTag::Jazz => labels.genre_jazz,
+            GenreTag::Electronic => labels.genre_electronic,
+            GenreTag::News => labels.genre_news,
+            GenreTag::Metal => labels.genre_metal,
         }
     }
 
-    /// Совпадение по подстроке в списке тегов без учёта регистра.
+    /// Совпадение по подстроке в списке тегов без учёта регистра. Сравниваем с
+    /// английским источником: теги Radio Browser — данные, они не переводятся.
     pub(crate) fn matches(self, tags: &str) -> bool {
-        tags.to_lowercase().contains(&self.label().to_lowercase())
+        tags.to_lowercase()
+            .contains(&self.label(Language::English).to_lowercase())
     }
 }
 
@@ -56,11 +62,13 @@ impl StationSort {
         StationSort::Name,
     ];
 
-    pub(crate) fn label(self) -> &'static str {
+    /// Подпись пункта сортировки для языка интерфейса (ADR-0030).
+    pub(crate) fn label(self, language: Language) -> &'static str {
+        let labels = &i18n::catalog(language).labels;
         match self {
-            StationSort::Popularity => "Popularity",
-            StationSort::Bitrate => "Bitrate",
-            StationSort::Name => "Name",
+            StationSort::Popularity => labels.sort_popularity,
+            StationSort::Bitrate => labels.sort_bitrate,
+            StationSort::Name => labels.sort_name,
         }
     }
 }
@@ -187,6 +195,34 @@ mod tests {
 
         filter.text = "Germany".to_owned();
         assert_eq!(filtered_results(&stations, &filter).len(), 3);
+    }
+
+    #[test]
+    fn labels_come_from_the_english_catalog() {
+        let labels = &i18n::catalog(Language::English).labels;
+        let genres = [
+            (GenreTag::Rock, labels.genre_rock),
+            (GenreTag::Pop, labels.genre_pop),
+            (GenreTag::Jazz, labels.genre_jazz),
+            (GenreTag::Electronic, labels.genre_electronic),
+            (GenreTag::News, labels.genre_news),
+            (GenreTag::Metal, labels.genre_metal),
+        ];
+        for (tag, expected) in genres {
+            assert_eq!(tag.label(Language::English), expected);
+        }
+        assert_eq!(
+            StationSort::Popularity.label(Language::English),
+            labels.sort_popularity
+        );
+        assert_eq!(
+            StationSort::Bitrate.label(Language::English),
+            labels.sort_bitrate
+        );
+        assert_eq!(StationSort::Name.label(Language::English), labels.sort_name);
+        // Английский источник каталога зафиксирован литералом.
+        assert_eq!(GenreTag::Rock.label(Language::English), "Rock");
+        assert_eq!(StationSort::Name.label(Language::English), "Name");
     }
 
     #[test]

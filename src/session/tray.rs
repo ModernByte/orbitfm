@@ -69,6 +69,7 @@ impl super::Session {
                     self.notify_error_detail(NoticeKey::ThemeNotSaved, err);
                 }
             }
+            TrayCommand::Settings => self.open_settings(),
             TrayCommand::Quit => self.quit(),
         }
     }
