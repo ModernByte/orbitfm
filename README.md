@@ -1,197 +1,426 @@
 # OrbitFM
 
-**3D Interactive Global Radio Player**  
-Под эгидой [ModernByte](https://github.com/ModernByte)
+**Плеер интернет-радио с 3D-глобусом**  
+Под эгидой [ModernByte](https://github.com/ModernByte) · версия `0.10.0-rc.1`
 
-OrbitFM — кроссплатформенный десктоп-плеер интернет-радио с интерактивным 3D-глобусом.  
-Приоритетная платформа — Linux (Niri, Hyprland, Noctalia v5). Поддержка Windows и macOS
-запланирована.
+[![Релиз](https://img.shields.io/github/v/release/ModernByte/orbitfm?include_prereleases)](https://github.com/ModernByte/orbitfm/releases)
+[![Статус CI](https://img.shields.io/github/actions/workflow/status/ModernByte/orbitfm/ci.yml?branch=main)](https://github.com/ModernByte/orbitfm/actions/workflows/ci.yml)
+[![Rust](https://img.shields.io/badge/rust-1.95%2B-orange?logo=rust&logoColor=white)](https://www.rust-lang.org)
+[![Платформы](https://img.shields.io/badge/Linux%20%C2%B7%20Windows%20%C2%B7%20macOS-blueviolet)](#системные-требования)
 
-## Основные возможности
+## Что это
 
-- Интерактивный 3D-глобус с выбором страны (raycasting + Point-in-Polygon)
-- Режим «Страна»: hover-контур, поиск страны в HUD, локальные фильтры и сортировка
-  станций
-- Маркеры станций на глобусе с подписями, группировкой и запуском по клику
-- Избранное и история станций с локальным хранением и запуском без сети
-- Темы интерфейса (системная / тёмная / светлая) и шесть акцентов с сохранением
-  настроек
-- Воспроизведение станций из Radio Browser
-- Скрытие окна без остановки процесса: эфир, IPC, MPRIS и трей продолжают работать
-- Режимы окна Focus/Overlay/Listening с капсульными раскладками и IPC `mode …`;
-  состояние — в Application Core (ADR-0021)
-- Иконка в системном трее (SNI): меню, колесо громкости и команды при скрытом окне
-- Интеграция с Noctalia v5 (виджет панели)
-- MPRIS / системные медиа-клавиши
-- Cava-визуализатор на агрегированных метриках эфира и пульс глобуса в такт
-  (ADR-0022, ADR-0023)
-- Аудио-реактивная планета: spring-squash, шесть стилей движения, onset/beat,
-  перевороты камеры и Reduce motion (ADR-0028)
-- Орбитальное аудиокольцо в Focus: корона из 120 столбцов, аврора, комета и
-  искры на onset (ADR-0029)
-- Трёхполосный анализ эфира Bass/Mid/High без PCM-tap (ADR-0027); при скрытом
-  окне анализ снимается
-- AppImage для Linux x86_64 (libmpv и FFmpeg внутри)
-- Flatpak для Linux x86_64 (libmpv/libass/libplacebo из исходников)
-- MSI для Windows x64 (libmpv из MSYS2, WiX) и DMG для macOS (libmpv из Homebrew)
-- Single-instance архитектура (Unix-сокет / Windows named pipe)
+OrbitFM — плеер интернет-радио, где каталог показан глобусом, а не списком: крутите планету, кликните по стране —
+и её станции лежат рядом в списке; так же можно искать по жанру или по названию станции. Закрытие окна музыку не
+останавливает: приложение работает одним процессом, живёт в системном трее и принимает команды из терминала и от
+медиа-клавиш. Для экрана есть три режима — от большого рабочего стола с глобусом до компактной капсулы в углу.
+Приоритетная платформа — Linux (Wayland и X11), сборки есть для Windows и macOS; версия `0.10.0-rc.1` —
+пре-релиз, отдельные детали ещё могут меняться.
 
-## Статус
+## Что умеет
 
-**Пре-релиз `v0.9.0-rc.3`:** Этап 9 завершён — аудио-реактивная планета. Эфир
-раскладывается на Bass/Mid/High без PCM-tap
-([ADR-0027](docs/adr/0027-трёхполосный-анализ-эфира.md)); глобус дышит и качается
-в такт spring-squash'ем, шесть стилей движения и Auto с onset/beat-детектором
-([ADR-0028](docs/adr/0028-аудио-реактивная-деформация-глобуса.md)); за планетой в
-Focus живёт орбитальное аудиокольцо с короной, авророй, кометой и искрами
-([ADR-0029](docs/adr/0029-орбитальное-аудиокольцо.md)). Пока окно закрыто,
-аудио-анализ снимается, поэтому скрытый эфир не тратит CPU (19–23 % → ≈2 %).
-Приёмка Linux на niri 26.04: live FLAC/MP3, hide/show, все режимы, моно-поток и
-реконнект; правила окон Focus/Overlay/Listening проверены для плагина Noctalia.
+- **3D-глобус.** Клик по стране выбирает её, наведение рисует контур, выбранная страна подсвечивается
+  «heatmap»-заливкой: чем больше станций загружено, тем ярче. Границы вшиты в бинарник, глобус работает без сети.
+- **Поиск.** По стране (до 100 станций), по жанру во всём мире (до 200, с маркерами на глобусе) и по названию
+  станции. Есть локальные фильтры и сортировка по популярности, битрейту, имени.
+- **Избранное и история.** Звезда у каждой станции, вкладки «Результаты», «Избранное», «История». Избранное
+  открывается и без сети; история держит последние 20 станций.
+- **Радиорулетка.** Запускает случайную станцию по всему миру, камера перелетает к ней, результат показывается
+  уведомлением.
+- **Живая картинка.** Визуализатор на 16, 24 или 32 полосы, орбитальное аудиокольцо в Focus и аудио-реактивная
+  планета: глобус дышит и качается в такт эфиру, шесть стилей движения, перевороты камеры. Всё выключается одной
+  галкой «Уменьшить движение».
+- **Системный трей (Linux).** Пуск/Пауза, Stop, предыдущая и следующая, радиорулетка, громкость, настройки, выход;
+  колесо мыши по иконке меняет громкость. Первая строка меню: «Сейчас играет: …», «Пауза: …» или
+  «Ничего не играет».
+- **Медиа-клавиши и системные виджеты.** MPRIS на Linux, System Media Transport Controls на Windows, метаданные
+  Now Playing на macOS.
+- **11 языков интерфейса** — «Системный» плюс 10 языков, смена без перезапуска.
+- **Настройки.** Тема (системная / тёмная / светлая), акцент, язык, громкость, визуализатор, реактивность и стиль
+  движения, «Уменьшить движение», компоновка окна. Сохраняются автоматически.
+- **Три режима окна** — Focus / Overlay / Listening, переключение из интерфейса и командой `orbitfm mode …`.
+- **Виджет для панели Noctalia v5** и готовые правила окон для niri и Hyprland.
 
-**Этап 8 (0.8.0-rc.1):** Application Core, режимы окна и системный трей.
-Скрытие окна закрывает root-вьюпорт: UI-цикл останавливается, но
-процесс, эфир, IPC, MPRIS и трей живут, а состоянием владеет `src/session/`
-([ADR-0018](docs/adr/0018-скрытие-окна-закрытием-вьюпорта.md)). Режимы окна
-`Focus`/`Overlay`/`Listening`
-([ADR-0021](docs/adr/0021-режимы-окна-windowmode.md)): Overlay — компактная
-капсула с HUD-строкой, мини-глобусом и избранным, Listening — одна строка
-now-playing с пульсом; переключение — IPC `mode …` или меню шестерёнки, возврат в
-Focus — кнопка expand. Трей по SNI
-([ADR-0020](docs/adr/0020-иконка-в-системном-трее-sni.md)): меню, колесо громкости
-и все команды при скрытом окне. Доступность: focus-ring, роли и подписи
-контролов, клавиатурный шаг громкости и навигация ↑/↓ по списку станций
-(Space/Enter запускают станцию).
+## Системные требования
 
-Раскладка Focus (фазы 1–6): интерфейс переведён на
-«Orbital Desk» (HUD, доминирующий глобус, правый drawer, transport). Режим «Страна»:
-наведение и выбор страны подсвечивают контур, HUD ищет страну по названию или
-ISO-коду, панель показывает до 100 станций с локальными фильтрами по
-имени/жанру/штату и сортировкой; выбор страны мягко доворачивает камеру. Режим
-«Жанр» ищет станции по тегу (до 200) с маркерами; все маркеры одного размера и
-цвета, а качество (битрейт, кодек) и рейтинг (голоса) видны в подписи при
-наведении. «Рулетка» запускает случайную станцию с перелётом камеры и тостом,
-MPRIS показывает страну/штат. Живой глобус: Fresnel-обод атмосферы пульсирует от
-сглаженного уровня/flux при воспроизведении, выбранная страна получает
-heatmap-заливку по числу загруженных станций.
+| Платформа | Что нужно |
+|-----------|-----------|
+| Linux | Wayland или X11; видеосистема, с которой работает wgpu-рендерер; `libmpv` (в AppImage и Flatpak уже внутри) |
+| Windows | x64 (установщик собирается с `-arch x64`); отдельная `libmpv` не нужна — `libmpv-2.dll` кладётся в MSI |
+| macOS | 13.0 и новее — это `LSMinimumSystemVersion` собранного `.app`; DMG собирается под архитектуру машины-сборщика, в CI это Apple Silicon (arm64); `libmpv` бандлится в `.app` |
 
-**Фаза 6 и доводка:** плавающая раскладка full-bleed (геометрия зон в
-`DeskLayout`), кастомные контролы (pill-переключатель, жанровые чипы, поиск с
-подсказками, LIVE-бейдж, круглая play/pause), асинхронный favicon-кэш,
-цветной emoji-шрифт для флагов, prev/next по видимому списку, английские строки,
-синтетический cava-визуализатор на 16/24/32 столбца вместо FFT-strip, единые
-маркеры с деталями при наведении, country callout с leader line, пульс глобуса в
-такт эфиру и медленное авто-вращение после простоя, осветлённый глобус с key light
-и Fresnel-кромкой.
+Конкретные версии Windows и Linux-дистрибутивов репозиторий не фиксирует: проверены сборки CI на `windows-latest`
+и `macos-latest`. Для красивой картинки дополнительно нужны **Noto Color Emoji** (цветные флаги стран) и системный
+**CJK-шрифт** для китайского, корейского или японского интерфейса.
 
-**Этап 7 завершён:** плагин Noctalia оформлен как источник каталога — добавлены
-`catalog.toml`, README с требованиями и карточка 960×540; манифест прошёл
-официальный community-валидатор. Также добавлены темы и кастомизация — блок «Оформление» с выбором
-системной, тёмной или светлой темы и одного из шести акцентов; настройки
-сохраняются в `$XDG_CONFIG_HOME/orbitfm/settings.json`, акцент окрашивает выделение,
-гиперссылки и маркеры. Также добавлены избранное и история станций — вкладки
-«Результаты / Избранное / История», звезда у каждой строки, сохранение в
-`$XDG_DATA_HOME/orbitfm/library.json` и запуск сохранённых станций без сети. На
-глобусе есть маркеры станций с координатами: наведение показывает подпись, клик
-запускает станцию. Ранее добавлены экспериментальный FFT-визуализатор и упаковка
-Linux — AppImage с метаданными рабочего стола и встроенными libmpv/FFmpeg, а также
-Flatpak с libmpv/libass/libplacebo из исходников. Также
-реализованы интеграция Noctalia v5 и правила окон для Niri и Hyprland, интерактивный
-3D-глобус с выбором страны, каталог Radio Browser (DNS-discovery, поиск, failover,
-кэш, click-tracking), воспроизведение станции по UUID и MPRIS с метаданными станции.
-CI собирает и тестирует проект на Linux и macOS, проверяет компиляцию под Windows,
-а также публикует неподписанные MSI и DMG артефактами. Готовые пакеты пре-релиза —
-[страница релизов](https://github.com/ModernByte/orbitfm/releases). Кроссплатформенные
-медиа-интеграции — привязка SMTC к HWND и Now Playing на macOS — пока не
-реализованы.
-Целевой UX и план —
-[`docs/ui/design-vision.md`](docs/ui/design-vision.md) и
-[`docs/ui/implementation-plan.md`](docs/ui/implementation-plan.md).
+## Установка
 
-Границы стран (Natural Earth 110m) и текстура Земли встроены в бинарник, поэтому
-глобус работает offline.
+Готовые сборки — на странице релизов: <https://github.com/ModernByte/orbitfm/releases>. Рядом с пакетами лежит
+файл `SHA256SUMS`, так что перед первым запуском можно сверить контрольную сумму: `sha256sum -c SHA256SUMS`.
 
-Интеграции:
+### AppImage (Linux x86_64)
 
-- `orbitfm/` — плагин Noctalia (`modernbyte/orbitfm`) с манифестом, виджетом,
-  README и карточкой каталога; требуется `orbitfm` в `PATH`;
-- `catalog.toml` — каталог плагинов для git-источника. Подключение:
-
-  ```bash
-  noctalia msg plugins source add orbitfm git https://github.com/ModernByte/orbitfm
-  noctalia msg plugins enable modernbyte/orbitfm
-  ```
-
-- `wm-configs/orbitfm-niri.kdl` и `wm-configs/orbitfm-hyprland.conf` — готовые
-  правила плавающих окон по заголовкам режимов: Focus 920×660, Overlay 420×620,
-  Listening 420×152. Они нужны в том числе для окон, которые открывает плагин
-  Noctalia; без них niri тайлит капсулы. Niri-правила дополнительно якорят окно
-  к правому верхнему углу, чтобы оно появлялось под панелью Noctalia у виджета,
-  а не в центре экрана. Для niri файл можно подключить отдельным include
-  (`include "./cfg/orbitfm.kdl"`), не меняя остальной конфиг;
-- системный трей — `src/tray/` (SNI / StatusNotifierItem на `ksni`, фича `tray` включена
-  по умолчанию): работает с любым хостом SNI, проверено на Noctalia; на macOS и Windows
-  модуль — no-op.
-
-Сборка AppImage (Linux x86_64):
+Файл называется `OrbitFM-<версия>-x86_64.AppImage`, например `OrbitFM-0.10.0-rc.1-x86_64.AppImage`. Права root и
+установка не нужны — приложение rootless по определению, и `libmpv` с FFmpeg уже внутри:
 
 ```bash
-./packaging/linux/build-appimage.sh
+chmod +x OrbitFM-0.10.0-rc.1-x86_64.AppImage
+./OrbitFM-0.10.0-rc.1-x86_64.AppImage
 ```
 
-Скрипт собирает release-бинарник, бандлит libmpv/FFmpeg через `linuxdeploy` и
-складывает `target/appimage/OrbitFM-<version>-x86_64.AppImage`. Инструменты
-`linuxdeploy` и `appimagetool` скачиваются при первом запуске, если не заданы через
-`LINUXDEPLOY` / `APPIMAGETOOL`.
+Если FUSE недоступен (контейнеры, минимальные образы) или не нужна интеграция через монтирование, запускайте в
+режиме распаковки: `APPIMAGE_EXTRACT_AND_RUN=1 ./OrbitFM-0.10.0-rc.1-x86_64.AppImage`. Виджету Noctalia и командам
+`orbitfm …` нужен запускаемый `orbitfm` в `PATH` — удобно сделать символьную ссылку на AppImage.
 
-Нативные установщики собираются в CI (артефакты `OrbitFM-windows-x64-msi` и
-`OrbitFM-macos-dmg`):
+### Установщики Windows и macOS
 
-- Windows: `packaging/windows/build-msi.ps1` — MSI через WiX 5, libmpv из MSYS2
-  UCRT64; per-user установка в `%LOCALAPPDATA%\Programs\OrbitFM`;
-- macOS: `packaging/macos/build-dmg.sh` — `.app` с зависимостями из Homebrew,
-  ad-hoc подпись и UDZO DMG.
+Оба лежат на странице релизов и **не подписаны** коммерческим сертификатом.
 
-Установщики не подписаны сертификатами: MSI без Authenticode, DMG без Developer ID
-и нотаризации.
+- **Windows:** `OrbitFM-<версия>-windows-x64.msi` — установка для текущего пользователя, файлы в
+  `%LOCALAPPDATA%\Programs\OrbitFM`, ярлык в меню «Пуск». Authenticode-подписи нет, поэтому SmartScreen может
+  попросить подтверждение.
+- **macOS:** `OrbitFM-<версия>-macos-<arch>.dmg` (в CI — `arm64`). Откройте образ и перетащите `OrbitFM.app` в
+  `/Applications`. Подпись только ad-hoc (`codesign --sign -`), нотаризации нет, поэтому при первом запуске
+  Gatekeeper блокирует приложение: штатный обход — правый клик по приложению → «Открыть», а если не помогает,
+  `xattr -d com.apple.quarantine /Applications/OrbitFM.app`
 
-Требования для сборки:
+### Сборка из исходников
 
-- Rust 1.95+
-- Linux с Wayland/X11
-- системная библиотека libmpv с заголовками
-  (Debian/Ubuntu: `libmpv-dev`, Arch: `mpv`, Fedora: `mpv-libs-devel`)
+Нужен Rust 1.95 или новее (Edition 2024). Системные пакеты — те же, что ставит CI (`.github/workflows/ci.yml`,
+шаг Install system dependencies; Debian/Ubuntu; для других дистрибутивов: Arch — `mpv`, Fedora —
+`mpv-libs-devel`):
 
-Подробный план — [ROADMAP](docs/ROADMAP.md), изменения — [CHANGELOG](docs/CHANGELOG.md).
+```bash
+sudo apt-get install -y --no-install-recommends \
+  libgl1-mesa-dev libmpv-dev libwayland-dev libx11-dev \
+  libxcursor-dev libxi-dev libxkbcommon-dev libxrandr-dev
+git clone https://github.com/ModernByte/orbitfm
+cd orbitfm
+cargo build --release
+./target/release/orbitfm
+```
 
-## Документация
+Пакеты собираются и локально: `./packaging/linux/build-appimage.sh` (результат —
+`target/appimage/OrbitFM-<версия>-x86_64.AppImage`) и `./packaging/linux/build-flatpak.sh` (нужен
+`flatpak-builder` и runtime 25.08). Flatpak в релизы не входит, а его IPC-сокет живёт в sandbox, поэтому виджет
+Noctalia и команды `orbitfm …` с Flatpak-сборкой не работают.
 
-| Документ | Описание |
-|----------|----------|
-| [SRS](orbitfm_srs.md) | Технические требования и инженерная спецификация |
-| [Архитектура](docs/architecture/00-overview.md) | Высокоуровневый обзор |
-| [UX «Orbital Desk»](docs/ui/design-vision.md) | Целевой интерфейс и референс-макет |
-| [План UX-редизайна](docs/ui/implementation-plan.md) | Фазы, контракты и тесты Этапа 8 |
-| [ADR](docs/adr/) | Architecture Decision Records |
-| [ROADMAP](docs/ROADMAP.md) | План развития |
-| [CONTRIBUTING](docs/CONTRIBUTING.md) | Правила разработки и стиль кода |
-| [AGENTS](docs/AGENTS.md) | Правила работы AI-агентов |
+### Виджет для панели Noctalia v5
 
-## Стек (кратко)
+OrbitFM поставляет виджет панели как плагин `modernbyte/orbitfm`: одна кнопка показывает и прячет плеер через тот
+же IPC. Нужен Noctalia v5 с Plugin API 3 и `orbitfm` в `PATH`. Команды `install` у `noctalia msg plugins` нет —
+установка идёт через источник плагинов:
 
-- **Язык:** Rust (Edition 2024)
-- **GUI:** eframe + egui + egui-wgpu
-- **Аудио:** libmpv (безопасная обёртка `libmpv2`)
-- **Гео:** geo + geojson + rstar
-- **Сеть:** reqwest + Radio Browser API
-- **Интеграции:** Noctalia (Luau), MPRIS (playwire)
+```bash
+noctalia msg plugins source add orbitfm git https://github.com/ModernByte/orbitfm
+noctalia msg plugins update orbitfm
+noctalia msg plugins enable modernbyte/orbitfm
+```
 
-Подробности — в ADR и SRS.
+Дальше виджет добавляется в интерфейсе: настройки бара → «Add widget» → **OrbitFM**. Проверить, что плагин на
+месте, можно командой `noctalia msg plugins list`.
+
+### Правила окон для niri и Hyprland
+
+В тайловых окружениях компактные капсулы без правил растянутся на всю высоту тайла. Готовые файлы лежат в
+`wm-configs/` и фиксируют размеры всех трёх режимов по заголовку окна:
+
+```kdl
+// ~/.config/niri/config.kdl
+include "./cfg/orbitfm.kdl"   // скопированный wm-configs/orbitfm-niri.kdl
+```
+
+Для Hyprland подключите `wm-configs/orbitfm-hyprland.conf` (`windowrulev2`: `float`, `center`, `stayfocused` и
+размеры); этот синтаксис работает в Hyprland 0.52 и в совместимом режиме 0.53+, где помечен как устаревший, — при
+обновлении проверяйте документацию Hyprland. Правила niri дополнительно ставят окно под панель Noctalia (якорь к
+правому верхнему углу) вместо центра экрана; отступ `x` при другой раскладке бара подбирается вручную.
+
+## Быстрый старт
+
+1. Запустите OrbitFM. Если плеер уже работает, новый запуск просто покажет существующее окно — процесс один.
+2. При первом запуске поверх глобуса появится карточка с жестами мыши; закройте её `Esc`.
+3. Кликните левой кнопкой по стране — камера мягко довернётся, страна подсветится, справа откроется список станций.
+4. Вкладка **«Результаты»** — найденные станции; при желании отфильтруйте по имени или жанру либо отсортируйте по
+   битрейту.
+5. Нажмите **Play** в строке станции — или выделите её стрелками и нажмите `Space`.
+6. Крутите глобус перетаскиванием правой кнопкой, приближайте колесом; левый клик по маркеру запускает станцию.
+7. Нужен другой запрос — введите текст в строку HUD («Поиск станций…» или «Поиск страны…») и нажмите `Enter`, либо
+   переключитесь на **«Жанр»** и выберите тег.
+8. Понравившуюся станцию отметьте **звездой** (избранное), всё прослушанное складывается в «Историю» (20 последних,
+   чистятся кнопкой во вкладке).
+9. Не знаете, что включить, — **«Радиорулетка»**: случайная станция со всего мира.
+10. Шестерёнка (или `Ctrl+,`) открывает настройки; «Скрыть окно» прячет окно, а музыка, трей и команды продолжают
+    работать. Выйти полностью — «Выход» в трее или `orbitfm quit`.
+
+## Режимы окна
+
+| Режим | Размер (по умолчанию / минимум) | Для чего | Как переключить |
+|-------|--------------------------------|----------|-----------------|
+| **Focus** | 920×660 / 720×480 | Полный рабочий стол: большой глобус, панель станций, транспорт, визуализатор и аудиокольцо | «Настройки» → «Окно» → «Компоновка»; `orbitfm mode focus` |
+| **Overlay** | 420×620 / 360×480 | Компактная капсула: строка HUD, мини-глобус, избранное (до 8 станций), громкость и Play/Stop | То же меню; кнопка «Открыть Focus» для возврата; `orbitfm mode overlay` |
+| **Listening** | 420×152 / 360×120 | Одна строка «сейчас играет» с пульсом эфира | То же меню; `orbitfm mode listening` |
+
+`orbitfm mode` без аргумента отвечает, какой режим активен, а `orbitfm mode <режим>` переключает его даже при
+скрытом окне; при незапущенном плеере команда стартует сразу в этом режиме. Настройки из Listening открываются в
+компоновке Overlay — в одну строку панель не помещается. Режимы различаются заголовком окна (`OrbitFM`,
+`OrbitFM · Overlay`, `OrbitFM · Listening`), поэтому правила окон из `wm-configs/` подбирают размер именно к
+капсуле: без них тайловый WM растянет Overlay и Listening на весь тайл, и капсула перестанет быть капсулой.
+
+## Управление: мышь, клавиатура и медиа-клавиши
+
+**Глобус мышью:** левый клик — выбрать страну или запустить станцию по маркеру; перетаскивание правой кнопкой —
+орбитальное вращение с инерцией; колесо — зум; наведение на страну — контур и подсказка с флагом, названием и
+числом станций. Вернуть карточку жестов: «Настройки» → «Показать управление мышью».
+
+**Клавиатура в окне:** `Tab` / `Shift+Tab` — переход по элементам (фокус виден); `↑` / `↓` — по списку станций,
+`Space` или `Enter` — запустить выделенную; стрелки и `Home` / `End` — переключатели, чипы жанров, дискретный шаг
+громкости; `Enter` в строке поиска — выполнить поиск, в подсказках — выбрать первый вариант; `Esc` — закрыть панель
+настроек, затем карточку управления; `Ctrl+,` (macOS — `Cmd+,`) — открыть или закрыть настройки. Глобальных
+горячих клавиш на всю систему в текущей версии нет.
+
+**Медиа-клавиши и виджеты.** Play/Pause, Stop, следующая и предыдущая станция, громкость приходят из MPRIS (Linux),
+SMTC (Windows) и Now Playing (macOS); всё работает и при скрытом окне. На Linux плеер виден как
+`org.mpris.MediaPlayer2.OrbitFM`, поэтому им управляет и `playerctl`. Рантайм-проверки SMTC и Now Playing на
+Windows/macOS ещё не выполнены — там интеграции собраны, но проверялись только сборкой и тестами.
+
+**Команды из терминала:**
+
+```bash
+orbitfm toggle              # показать или скрыть окно (команда по умолчанию)
+orbitfm show | orbitfm hide
+orbitfm status              # состояние, станция, громкость, окно, режим
+orbitfm mode overlay        # focus | overlay | listening
+orbitfm play <stationuuid>  # запустить станцию по UUID из Radio Browser
+orbitfm stop
+orbitfm volume 0.4          # 0.0–1.0
+orbitfm quit                # завершить процесс
+orbitfm --help              # -h: список команд; -V / --version — версия сборки
+```
+
+## Язык интерфейса
+
+Язык меняется в **Настройки → Язык**: 11 значений — «Системный» и 10 языков (English, Русский, Français, Deutsch,
+Español, Italiano, Português, 中文, 한국어, 日本語). Переведён весь интерфейс: HUD, панель станций, транспорт, обе
+капсулы, подсказки, настройки, уведомления и меню трея. Названия станций, стран и жанров приходят из Radio Browser
+и остаются как есть, как и служебные строки (CLI, протокол IPC, заголовки окон). «Системный» читает переменные
+окружения по порядку `LC_ALL` → `LC_MESSAGES` → `LANG`; теги вида `ru_RU.UTF-8` или `pt-BR` распознаются,
+`C`/`POSIX` и неизвестная локаль дают английский. Смена языка применяется сразу, перезапуск не нужен.
+
+**Квадратики вместо азиатских шрифтов.** OrbitFM не вкладывает CJK-шрифты: он просит fontconfig найти подходящий
+системный. Если 中文, 한국어 или 日本語 рисуются tofu — нужен установленный шрифт с поддержкой CJK (например,
+Noto Sans CJK вашего дистрибутива); это зависимость от окружения, а не дефект программы. Флаги стран рисуются
+глифами системного **Noto Color Emoji**, который ищется по четырём стандартным путям (`/usr/share/fonts/noto/`,
+`/usr/share/fonts/truetype/noto/`, `/usr/share/fonts/google-noto-emoji/`, `/usr/share/fonts/TTF/`); без него
+интерфейс работает как прежде, только без флагов.
+
+## Неполадки
+
+- **Не запускается, сообщение «не удалось запустить GUI».** Окно рисуется через wgpu: проверьте, что работает
+  графический стек и сессия Wayland или X11. Если под Wayland что-то не так, попробуйте запуск под X11 (XWayland).
+- **Фон окна чёрный или серый вместо полупрозрачного «стекла».** Прозрачность с wgpu на Linux работает; на Windows и
+  macOS у неё есть известные ограничения (задокументированы в ADR-0002). На функциональность это не влияет.
+- **Нет звука или старт падает с «не удалось инициализировать аудио-ядро».** Нативной сборке нужна системная
+  `libmpv`: Debian/Ubuntu — `libmpv-dev`, Fedora — `mpv-libs-devel`, Arch — `mpv`. AppImage, MSI и DMG носят
+  `libmpv` с собой.
+- **Список пустой, «Станции не найдены».** Каталог — внешний Radio Browser: серверы находятся через DNS
+  (`all.api.radio-browser.info`), затем зеркала перебираются при сетевых ошибках и `5xx`/`429`/`408`. Проверьте сеть
+  и DNS, попробуйте позже или измените запрос.
+- **Станция не играет, «Playback failed».** Обычно это сам вещатель: выключенный или битый сервер, гео-блокировка,
+  переезд потока. OrbitFM переподключается при обрыве и останавливается, когда попытки исчерпаны; `orbitfm status`
+  покажет `playing`, `buffering`, `reconnecting` или `error`.
+- **Нужен лог для задачи на GitHub.** Логи пишет в stderr тот процесс, который поднял GUI: завершите плеер
+  (`orbitfm quit`), затем запустите с подробным фильтром — `RUST_LOG=debug orbitfm show 2> ~/orbitfm.log`.
+- **Overlay и Listening растянулись на весь экран** или **вместо флагов квадратики** — не добавлены правила окон
+  тайлового WM (см. раздел про niri и Hyprland) либо не найден системный Noto Color Emoji.
+- **Иконки трея нет.** На Linux трей работает по StatusNotifierItem и требует хоста SNI: Noctalia, KDE, Hyprland,
+  Sway/waybar; в GNOME нужно расширение вроде AppIndicator/StatusNotifier. Без хоста иконка не появится — это
+  штатная деградация, управляйте через `orbitfm …`. На Windows и macOS трея пока нет: модуль там намеренно no-op.
+- **В меню трея «Ничего не играет».** Процесс жив, но воспроизведение не запущено или поток не загрузился. Запустите
+  станцию из меню («Пуск/Пауза», «Радиорулетка») или из окна.
+- **Как выйти полностью.** Закрытие окна — не выход. Выход: «Выход» в меню трея, «Выход» в секции «Окно» настроек
+  или `orbitfm quit`.
+- **Где настройки и библиотека.** Логика одна для всех ОС: сначала XDG-переменные, иначе домашний каталог;
+  IPC-транспорт — `$XDG_RUNTIME_DIR/orbitfm.sock` на Linux, `\\.\pipe\orbitfm` на Windows, сокет в `$TMPDIR` на
+  macOS.
+
+  ```text
+  $XDG_CONFIG_HOME/orbitfm/settings.json   (обычно ~/.config/orbitfm/settings.json)
+  $XDG_DATA_HOME/orbitfm/library.json      (обычно ~/.local/share/orbitfm/library.json)
+  ```
+
+- **Настройки не сохранились или «слетели».** При повреждённом файле программа предупредит и продолжит сессию со
+  значениями по умолчанию, не перезаписывая ваш файл. Сброс: `orbitfm quit`, затем переименовать
+  `~/.config/orbitfm/settings.json` и `~/.local/share/orbitfm/library.json` в `.bak`. Избранное и история живут в
+  `library.json`: их удаление чистит их, но не трогает оформление.
+- **Виджет Noctalia не управляет плеером.** Виджет вызывает `orbitfm toggle`, поэтому нативный бинарник должен быть в
+  `PATH`; с Flatpak-сборкой внешний CLI не работает (сокет в sandbox).
+
+## Для разработчиков
+
+Архитектура, решения и контракты лежат рядом с кодом: [обзор архитектуры](docs/architecture/00-overview.md),
+[ADR](docs/adr/), [модули](docs/modules/), [интерфейсы](docs/interfaces/). Правила участия —
+[CONTRIBUTING](docs/CONTRIBUTING.md), план и история изменений — [ROADMAP](docs/ROADMAP.md) и
+[CHANGELOG](docs/CHANGELOG.md). Целевой UX — [docs/ui/design-vision.md](docs/ui/design-vision.md), технические
+требования — [orbitfm_srs.md](orbitfm_srs.md).
+
+## Вики
+
+Пользовательская документация живёт в [вики репозитория](https://github.com/ModernByte/orbitfm/wiki) и в каталоге
+[docs/wiki/](docs/wiki/) — это одни и те же страницы. Начните с [карты разделов](docs/wiki/Home.md):
+
+| Страница | О чём |
+|---|---|
+| [Установка](docs/wiki/01-Установка.md) | AppImage / MSI / DMG, сборка из исходников, Flatpak, контрольные суммы |
+| [Первый запуск](docs/wiki/02-Первый-запуск.md) | Две минуты от иконки до звучащей станции |
+| [Режимы окна](docs/wiki/03-Режимы-окна.md) | Focus / Overlay / Listening и правила окон для niri и Hyprland |
+| [Настройки и язык](docs/wiki/04-Настройки-и-язык.md) | Drawer настроек, `settings.json`, 11 языков интерфейса |
+| [Управление и горячие клавиши](docs/wiki/05-Управление-и-горячие-клавиши.md) | Мышь, клавиши, медиа-клавиши, команды CLI |
+| [Noctalia](docs/wiki/06-Noctalia.md) | Виджет в баре, git-источник плагина, позиция окна |
+| [Трей и MPRIS](docs/wiki/07-Трей-и-MPRIS.md) | Меню трея целиком и управление при скрытом окне |
+| [Варианты использования](docs/wiki/08-Варианты-использования.md) | Семь готовых сценариев: фон, язык, второй экран, тишина |
+| [Неполадки](docs/wiki/09-Неполадки.md) | Нет звука, квадратики вместо флагов, растянутая капсула, логи |
+| [Глоссарий](docs/wiki/10-Глоссарий.md) | Термины проекта человеческим языком |
+
+## Благодарности
+
+ModernByte собирал OrbitFM из чужой хорошей работы и не считает это зазорным: почти каждая приятная деталь
+интерфейса — чья-то многолетняя поддержка. Спасибо сообществу egui и `eframe` за то, что UI и 3D-глобус помещаются
+в одном окне, а `wgpu` — за то, что это работает на обычной видеосистеме. Спасибо проекту mpv: `libmpv` уже годы
+честно тянет воспроизведение, включая самые каприжные потоки. Спасибо сообществу Radio Browser за бесплатный
+каталог станций и зеркала — без него клик по стране ничего бы не значил. Спасибо Natural Earth за границы стран и
+тем, кто делает шрифты Noto, — от них зависят контуры и флаги. И отдельно спасибо noctalia.dev, niri и Hyprland:
+это окружение, ради которого OrbitFM задумывался как Linux First.
+
+**Зависимости Rust** (названия и версии — из `Cargo.toml` и `Cargo.lock`).
+
+| Crate | Версия | Зачем в OrbitFM |
+|-------|--------|-----------------|
+| [eframe](https://docs.rs/eframe) | 0.37 | Окно и цикл приложения: `wayland`, `x11`, `wgpu`, `accesskit`, `system_fonts`, `default_fonts` |
+| [egui-wgpu](https://docs.rs/egui-wgpu) | 0.37 | Полотно egui поверх wgpu-сцены глобуса |
+| [epaint](https://docs.rs/epaint) | 0.37 | Кастомная отрисовка UI; фича `color_fonts` даёт цветные флаги |
+| [wgpu](https://docs.rs/wgpu) | 30 | Рендер сферы глобуса, маркеров, света и атмосферы |
+| [geo](https://docs.rs/geo) | 0.33 | Point-in-Polygon: страна по точке на сфере |
+| [geojson](https://docs.rs/geojson) | 1.0 | Чтение датасета границ `assets/geojson/world-110m.json` |
+| [rstar](https://docs.rs/rstar) | 0.13 | R-Tree по bounding box стран — быстрый отбор кандидатов |
+| [glam](https://docs.rs/glam) | 0.34 | Матрицы и векторы камеры для униформ |
+| [bytemuck](https://docs.rs/bytemuck) | 1.25 | Безопасное приведение вершин и униформ к байтам для буферов |
+| [libmpv2](https://docs.rs/libmpv2) | 6.0 | Обёртка C API libmpv: воспроизведение, громкость, события, реконнект |
+| [playwire](https://crates.io/crates/playwire) | 2.0 | MPRIS на Linux, SMTC на Windows, Now Playing на macOS |
+| [reqwest](https://docs.rs/reqwest) | 0.13 | HTTP к серверам Radio Browser и загрузка фавиконов (rustls, json) |
+| [tokio](https://docs.rs/tokio) | 1.54 | Async runtime, каналы, таймауты, DNS-discovery зеркал |
+| [serde](https://docs.rs/serde) | 1.0 | Сериализация настроек, библиотеки и ответов API |
+| [serde_json](https://docs.rs/serde_json) | 1.0 | `settings.json`, `library.json`, разбор JSON Radio Browser |
+| [thiserror](https://docs.rs/thiserror) | 2.0 | Типизированные ошибки внутри модулей |
+| [anyhow](https://docs.rs/anyhow) | 1.0 | Ошибки и контекст на границах и при запуске процесса |
+| [tracing](https://docs.rs/tracing) | 0.1 | Логи подсистем |
+| [tracing-subscriber](https://docs.rs/tracing-subscriber) | 0.3 | Консольный вывод логов с `env-filter` |
+| [image](https://docs.rs/image) | 0.25 | Декодирование текстуры Земли и фавиконов (JPEG/PNG/WebP) |
+| [url](https://docs.rs/url) | 2.5 | Разбор и проверка адресов потоков и фавиконов |
+| [libc](https://docs.rs/libc) | 0.2 | Установка C-локали для корректной работы libmpv |
+| [ksni](https://crates.io/crates/ksni) | 0.3.7 | StatusNotifierItem для трея (только Linux, фича `tray`; лицензия Unlicense отмечена в ADR-0020) |
+| [windows](https://docs.rs/windows) | 0.62 | Win32-окно-владелец для SMTC (только Windows) |
+| [tempfile](https://docs.rs/tempfile) | 3 | Временные каталоги в тестах (dev-зависимость) |
+
+**Проекты и данные вокруг:** [Radio Browser](https://www.radio-browser.info) и
+[его API-документация](https://docs.radio-browser.info/) — каталог станций, зеркала, click-tracking;
+[Natural Earth](https://www.naturalearthdata.com) — границы `ne_110m_admin_0_countries` в
+`assets/geojson/world-110m.json`, по отметке проектной документации public domain
+([ADR-0008](docs/adr/0008-геопространственный-поиск.md), [docs/modules/03-geo.md](docs/modules/03-geo.md));
+текстура Земли `assets/textures/earth.jpg` (2048×1024) встроена в бинарник и в документации тоже помечена как
+public domain ([docs/modules/04-render-globe.md](docs/modules/04-render-globe.md)) — конкретного автора репозиторий
+не указывает; [mpv](https://mpv.io) и его
+[встраиваемый libmpv](https://mpv.io/manual/master/#embedding-libmpv);
+[Noto Color Emoji](https://fonts.google.com/noto/specimen/Noto+Color+Emoji) для флагов
+([ADR-0017](docs/adr/0017-цветной-emoji-шрифт-для-флагов.md)), CJK — из системы
+([ADR-0030](docs/adr/0030-локализация-интерфейса.md)); [Noctalia](https://noctalia.dev) и
+[её плагины](https://docs.noctalia.dev/noctalia/plugins/development/) — панель, для которой сделан виджет;
+[niri](https://niri-wm.github.io/niri/) и [Hyprland](https://hyprland.org) — окружения для правил окон из
+`wm-configs/`; [Rust](https://www.rust-lang.org) (Edition 2024, `rust-version = 1.95`);
+[eframe / egui](https://github.com/emilk/egui); [cava](https://github.com/karlstav/cava) как визуальный ориентир
+визуализатора; `linuxdeploy` и `appimagetool` для AppImage, WiX для MSI.
+
+## Правовая информация и отказ от ответственности
+
+Это не юридическая консультация: если пункты ниже вызывают сомнения в вашей юрисдикции, обратитесь к своему юристу.
+
+**(а) «Как есть».** OrbitFM распространяется по лицензии MIT, и её раздел «DISCLAIMER OF WARRANTY» действует
+полностью: программа поставляется «КАК ЕСТЬ», БЕЗ КАКИХ-ЛИБО ГАРАНТИЙ, явных или подразумеваемых, включая гарантии
+товарной пригодности, пригодности для конкретной цели и ненарушения прав. Мы не обещаем, что приложение работает без
+ошибок, что выбранная станция заиграет и что поведение версии `0.x` совпадёт с поведением следующей.
+
+**(б) Ответственность.** В пределах, допускаемых применимым правом, авторы, контрибьюторы и ModernByte не отвечают за
+прямые, косвенные, случайные, особые и штрафные убытки, упущенную выгоду, утрату данных, прерванную работу или ущерб
+оборудованию, связанные с использованием программы или невозможностью её использовать. В некоторых юрисдикциях такие
+ограничения недопустимы, поэтому часть из них может к вам не применяться (в США дисклеймер должен быть заметным — см.
+[рекомендации FTC](https://www.ftc.gov/business-guidance/resources/using-conspicuous-language-make-effective-online-redisclaimers)).
+
+**(в) Станции и потоки.** Приложение ничего не транслирует, не записывает и не хранит аудио. Списки станций приходят
+из стороннего каталога Radio Browser, который поддерживает его сообщество; мы его не модерируем и не отвечаем за
+содержимое. Права на контент конкретной станции и легальность её прослушивания в вашей стране вы проверяете сами:
+ответственность за нарушение авторских прав и за соблюдение условий использования сервисов лежит на пользователе.
+
+**(г) Сеть и данные.** Программа обращается только к серверам Radio Browser (зеркала, разрешённые через
+`all.api.radio-browser.info`, включая запись о прослушивании `/json/url/<uuid>`) и к адресам, которые выбрали вы:
+потоку станции и её фавикону. Ваш IP-адрес виден вещателю — как при любом сетевом запросе. Аккаунтов, облачной
+синхронизации и телеметрии нет: в коде нет адресов аналитики, настройки, избранное и история лежат в ваших
+каталогах. Появление телеметрии потребует отдельного архитектурного решения и явного включения пользователем.
+
+**(д) Товарные знаки.** Noctalia, niri, Hyprland, mpv, Radio Browser, Rust, Windows, macOS и другие названия и
+логотипы принадлежат их владельцам; упоминание не означает аффилиации, одобрения или спонсорства.
+
+**(е) Статус пре-релиза.** До 1.0.0 приложение выходит как `0.x`, и совместимость форматов `settings.json` и
+`library.json`, протокола IPC и поведения режимов окна не гарантируется. Правила версионирования — в
+[docs/VERSIONMAP.md](docs/VERSIONMAP.md), изменения — в [docs/CHANGELOG.md](docs/CHANGELOG.md).
+
+**(ж) Сообщить о нарушении прав или о проблеме.** Единственный канал проекта — GitHub:
+[задачи репозитория](https://github.com/ModernByte/orbitfm/issues) (шаблоны: баг, предложение, ADR). Отдельного
+контакта для правообладателей и SECURITY-адреса в репозитории нет.
+
+### Disclaimer (English)
+
+**(a) AS IS.** OrbitFM is provided under the MIT License, and its “DISCLAIMER OF WARRANTY” section applies in full:
+the software is provided “AS IS”, WITHOUT WARRANTY OF ANY KIND, express or implied, including the warranties of
+merchantability, fitness for a particular purpose and noninfringement. We do not warrant that the program is
+error-free, that a chosen station will play, or that a `0.x` release will behave like a later one.
+
+**(b) Liability.** To the extent permitted by applicable law, the authors, contributors and ModernByte shall not be
+liable for any direct, indirect, incidental, special, exemplary or consequential damages, loss of profits, loss of
+data, interruption of operation or damage to equipment arising from use of or inability to use the software. Some
+jurisdictions do not allow such limitations, so parts of it may not apply to you; in the United States a disclaimer
+must be conspicuous (see
+[FTC guidance](https://www.ftc.gov/business-guidance/resources/using-conspicuous-language-make-effective-online-redisclaimers)).
+
+**(c) Stations and streams.** The application does not broadcast, record or store audio. Station lists come from the
+third-party [Radio Browser](https://www.radio-browser.info) directory, maintained by its own community; we neither
+moderate it nor vouch for its contents. You are responsible for the rights in a station's content, for the legality
+of listening to it in your jurisdiction and for complying with any service's terms of use.
+
+**(d) Network and personal data.** The application contacts only Radio Browser servers (mirrors resolved via
+`all.api.radio-browser.info`, including the listen notification endpoint `/json/url/<uuid>`) and the addresses you
+choose: a station stream and its favicon. Your IP address is visible to the broadcaster, as with any network
+request. There are no accounts, no cloud sync and no telemetry, and settings, favorites and history stay in your own
+user directories.
+
+**(e) Trademarks.** Noctalia, niri, Hyprland, mpv, Radio Browser, Rust, Windows, macOS and other names and logos
+belong to their owners; mentioning them implies no affiliation, endorsement or sponsorship.
+
+**(f) Pre-release status.** Until 1.0.0 the application ships as a `0.x` pre-release, and compatibility of
+`settings.json`, `library.json`, the IPC protocol and window-mode behaviour is not guaranteed.
+
+**(g) Reporting infringement or problems.** The project's only channel is GitHub:
+[repository issues](https://github.com/ModernByte/orbitfm/issues). There is no dedicated rights-holder contact and
+no SECURITY contact.
+
+This text is not legal advice; consult your own lawyer if any part is unclear where you live.
 
 ## Лицензия
 
-MIT
+[![Лицензия MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+MIT © 2026 ModernByte — полный текст в файле [LICENSE](LICENSE). Именно он задаёт отказ от гарантий и ограничение
+ответственности; раздел выше его расширяет, но не отменяет.
 
 ---
 
-© ModernByte
+© ModernByte · [Релизы](https://github.com/ModernByte/orbitfm/releases) ·
+[Документация](https://github.com/ModernByte/orbitfm/tree/main/docs)
