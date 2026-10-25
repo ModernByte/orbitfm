@@ -8,6 +8,7 @@ use tracing_subscriber::EnvFilter;
 mod app;
 mod audio;
 mod geo;
+mod i18n;
 mod ipc;
 mod library;
 mod media;
@@ -316,6 +317,9 @@ fn run_session(
             // парковки — следующий прогон уже с геометрией нового режима (ADR-0021 п. 3).
             continue;
         }
+        // Drawer живёт только внутри одного показа окна: hide, WM-close и парковка
+        // его закрывают, а mode-switch (строка выше) сохраняет (ADR-0031 п. 4).
+        session.close_settings();
         session.settle_analysis();
         if matches!(session.park(), ParkOutcome::Quit) {
             return Ok(());

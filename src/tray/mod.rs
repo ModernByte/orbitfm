@@ -17,7 +17,7 @@ mod sni;
 use tokio::sync::mpsc;
 
 use crate::ipc::WakeFn;
-use crate::settings::ThemeMode;
+use crate::settings::{Language, ThemeMode};
 
 /// Шаг громкости: и колесо по иконке, и пункты меню двигают громкость на него.
 pub(crate) const VOLUME_STEP: f64 = 0.1;
@@ -54,6 +54,8 @@ pub(crate) struct TraySnapshot {
     pub(crate) station: Option<String>,
     /// Текущая тема: активный пункт группы System/Dark/Light.
     pub(crate) theme: ThemeMode,
+    /// Разрешённый язык интерфейса: смена языка перестраивает меню (ADR-0030).
+    pub(crate) language: Language,
 }
 
 /// Живой трей: куда публиковать снимки и откуда читать команды.
@@ -112,6 +114,7 @@ mod tests {
         assert!(!snapshot.playing);
         assert_eq!(snapshot.station, None);
         assert_eq!(snapshot.theme, ThemeMode::default());
+        assert_eq!(snapshot.language, Language::default());
     }
 
     #[test]
@@ -121,10 +124,14 @@ mod tests {
             playing: true,
             station: Some("WFMU".to_owned()),
             theme: ThemeMode::Dark,
+            language: Language::French,
         };
         let same = hidden.clone();
         assert_eq!(hidden, same);
         hidden.window_visible = true;
         assert_ne!(hidden, same);
+        hidden.window_visible = false;
+        hidden.language = Language::German;
+        assert_ne!(hidden, same, "смена языка меняет меню");
     }
 }

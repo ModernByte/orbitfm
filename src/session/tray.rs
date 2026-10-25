@@ -8,6 +8,8 @@ use crate::audio::PlaybackState;
 use crate::tray::{TrayCommand, TraySnapshot, VOLUME_STEP};
 use crate::ui::single_line;
 
+use super::notice::NoticeKey;
+
 impl super::Session {
     /// Снимок состояния для SNI-хоста. Публикуется только при изменении:
     /// `update` блокирует поток трея до dbus-ответа, гонять его на каждый кадр
@@ -64,7 +66,7 @@ impl super::Session {
             TrayCommand::VolumeDown => self.nudge_volume(-VOLUME_STEP),
             TrayCommand::SetTheme(theme) => {
                 if let Err(err) = self.set_theme(theme) {
-                    self.notify_error(format!("Theme: {err}"));
+                    self.notify_error_detail(NoticeKey::ThemeNotSaved, err);
                 }
             }
             TrayCommand::Quit => self.quit(),
@@ -99,6 +101,7 @@ impl super::Session {
             playing,
             station,
             theme: self.settings.settings().theme,
+            language: self.language,
         }
     }
 }

@@ -24,7 +24,7 @@ use crate::audio::PlaybackState;
 use crate::geo::Country;
 use crate::services::Station;
 use crate::session::WindowMode;
-use crate::settings::{AccentColor, MotionReactivity, MotionStyle, ThemeMode};
+use crate::settings::{AccentColor, Language, MotionReactivity, MotionStyle, ThemeMode};
 
 /// Режим поиска выбирает ядро, UI только показывает переключатель.
 pub(crate) use crate::session::search::SearchMode;
@@ -42,6 +42,8 @@ pub(crate) enum UiAction {
     ClearHistory,
     SetTheme(ThemeMode),
     SetAccent(AccentColor),
+    /// Язык интерфейса из drawer настроек (ADR-0030).
+    SetLanguage(Language),
     ToggleSpectrum(bool),
     /// Число столбцов визуализатора: 16, 24 или 32 (ADR-0019).
     SetVizBars(u8),

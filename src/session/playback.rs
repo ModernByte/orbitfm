@@ -1,7 +1,9 @@
 //! Воспроизведение, избранное и системные медиа-контролы.
 //!
-//! Здесь нет egui: о проблемах `Session` сообщает через [`Notice`], а UI сам
-//! решает, показать тост или просто перерисовать состояние.
+//! Здесь нет egui: о проблемах `Session` сообщает через [`NoticeKey`], а UI сам
+//! решает, какой строкой каталога показать тост (ADR-0030).
+
+use std::fmt;
 
 use crate::audio::{AudioEvent, PlaybackState};
 use crate::geo::Country;
@@ -12,6 +14,25 @@ use crate::ui::station_filter::filtered_results;
 
 use super::LibraryTab;
 use super::WINDOW_TITLE;
+use super::notice::NoticeKey;
+
+/// Причина, по которой станция не запустилась: сообщение выбирает UI по ключу.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum StationStartError {
+    /// В записи станции пустой `url_resolved`.
+    NoUrl,
+    /// Отказ аудио-ядра; техническая подробность не переводится.
+    Audio(String),
+}
+
+impl fmt::Display for StationStartError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoUrl => f.write_str("station has no url_resolved"),
+            Self::Audio(err) => f.write_str(err),
+        }
+    }
+}
 
 impl super::Session {
     /// Собирает аудио-события, накопившиеся с прошлого кадра.
@@ -62,21 +83,21 @@ impl super::Session {
     }
 
     /// Запуск станции: mpv, история, click-трекинг и витрина MPRIS.
-    pub(crate) fn start_station(&mut self, station: Station) -> Result<(), String> {
+    pub(crate) fn start_station(&mut self, station: Station) -> Result<(), StationStartError> {
         let url = station.url_resolved.trim().to_owned();
         if url.is_empty() {
-            return Err("station has no url_resolved".to_owned());
+            return Err(StationStartError::NoUrl);
         }
 
         self.runtime
             .block_on(self.audio.play(&url))
-            .map_err(|err| err.to_string())?;
+            .map_err(|err| StationStartError::Audio(err.to_string()))?;
 
         self.current_url = Some(url);
         self.current_station = Some(station.clone());
         if let Err(err) = self.library.record_played(&station) {
             tracing::warn!(error = %err, "не удалось сохранить историю станций");
-            self.notify_error(format!("History not saved: {err}"));
+            self.notify_error_detail(NoticeKey::HistoryNotSaved, err.to_string());
         }
         self.spawn_click(station.stationuuid);
         self.sync_media();
@@ -98,17 +119,17 @@ impl super::Session {
             Ok(favorite) => tracing::debug!(favorite, "избранное обновлено"),
             Err(err) => {
                 tracing::warn!(error = %err, "не удалось сохранить избранное");
-                self.notify_error(format!("Favorites not saved: {err}"));
+                self.notify_error_detail(NoticeKey::FavoritesNotSaved, err.to_string());
             }
         }
     }
 
     pub(crate) fn clear_history(&mut self) {
         match self.library.clear_history() {
-            Ok(()) => self.notify_info("History cleared"),
+            Ok(()) => self.notify_info(NoticeKey::HistoryCleared),
             Err(err) => {
                 tracing::warn!(error = %err, "не удалось очистить историю");
-                self.notify_error(format!("Failed to clear history: {err}"));
+                self.notify_error_detail(NoticeKey::ClearHistoryFailed, err.to_string());
             }
         }
     }
@@ -125,10 +146,50 @@ impl super::Session {
         }
     }
 
+    /// Дискретная команда смены громкости (IPC, трей, MPRIS): применить и
+    /// сохранить сразу — она приходит готовым значением.
     pub(crate) fn set_volume(&mut self, volume: f64) -> Result<(), String> {
+        self.pending_volume = None;
+        self.apply_and_persist_volume(volume)
+    }
+
+    /// Preview перетаскивания слайдера: звук меняется сразу, файл — нет
+    /// (ADR-0031, commit-on-release).
+    pub(crate) fn preview_volume(&mut self, volume: f64) -> Result<(), String> {
         self.runtime
             .block_on(self.audio.set_volume(volume))
-            .map_err(|err| err.to_string())
+            .map_err(|err| err.to_string())?;
+        self.pending_volume = Some(volume);
+        Ok(())
+    }
+
+    /// Завершение перетаскивания, клик по треку или клавиатура: значение
+    /// становится настройкой.
+    pub(crate) fn commit_volume(&mut self, volume: f64) -> Result<(), String> {
+        self.pending_volume = None;
+        self.apply_and_persist_volume(volume)
+    }
+
+    /// Записывает незакрытый preview в настройки: зовётся при закрытии окна,
+    /// чтобы drag, прерванный скрытием, не потерял значение.
+    pub(crate) fn flush_pending_volume(&mut self) {
+        let Some(volume) = self.pending_volume.take() else {
+            return;
+        };
+        if let Err(err) = self.settings.set_volume(volume) {
+            tracing::warn!(error = %err, "не удалось сохранить громкость при закрытии окна");
+        }
+    }
+
+    fn apply_and_persist_volume(&mut self, volume: f64) -> Result<(), String> {
+        self.runtime
+            .block_on(self.audio.set_volume(volume))
+            .map_err(|err| err.to_string())?;
+        if let Err(err) = self.settings.set_volume(volume) {
+            tracing::warn!(error = %err, "не удалось сохранить громкость");
+            self.notify_error_detail(NoticeKey::VolumeNotSaved, err.to_string());
+        }
+        Ok(())
     }
 
     pub(crate) fn set_audio_paused(&mut self, paused: bool) -> Result<(), String> {
@@ -276,7 +337,12 @@ impl super::Session {
             None => queue.len() - 1,
         };
         if let Err(err) = self.start_station(queue[next].clone()) {
-            self.notify_error(err);
+            match err {
+                StationStartError::NoUrl => self.notify_error(NoticeKey::StationWithoutUrl),
+                StationStartError::Audio(detail) => {
+                    self.notify_error_detail(NoticeKey::PlaybackFailed, detail);
+                }
+            }
         }
     }
 

@@ -5,9 +5,10 @@
 //! [`UiIntent`](super::UiIntent).
 
 use crate::ipc::{IpcCommand, WindowModeArg};
-use crate::settings::{AccentColor, MotionReactivity, MotionStyle, ThemeMode};
+use crate::settings::{AccentColor, Language, MotionReactivity, MotionStyle, ThemeMode};
 
 use super::WindowMode;
+use super::notice::NoticeKey;
 
 impl From<WindowModeArg> for WindowMode {
     fn from(arg: WindowModeArg) -> Self {
@@ -80,6 +81,17 @@ impl super::Session {
             .map_err(|err| err.to_string())
     }
 
+    /// Язык сохраняется и разрешается сразу: UI и трей читают `self.language`,
+    /// перезапуск не нужен (ADR-0030).
+    pub(crate) fn set_language(&mut self, language: Language) -> Result<(), String> {
+        self.settings
+            .set_language(language)
+            .map_err(|err| err.to_string())?;
+        self.language = language.resolve();
+        self.sync_tray();
+        Ok(())
+    }
+
     pub(crate) fn set_accent(&mut self, accent: AccentColor) -> Result<(), String> {
         self.settings
             .set_accent(accent)
@@ -93,7 +105,13 @@ impl super::Session {
             .map_err(|err| err.to_string())
     }
 
+    /// Визуализатор — настройка, которая живёт в Core: переключает и FFT-анализ,
+    /// и сохранение (ADR-0031).
     pub(crate) fn set_visualizer_enabled(&mut self, enabled: bool) -> Result<(), String> {
+        if let Err(err) = self.settings.set_visualizer_enabled(enabled) {
+            tracing::warn!(error = %err, "не удалось сохранить видимость визуализатора");
+            self.notify_error_detail(NoticeKey::VisualizerNotSaved, err.to_string());
+        }
         self.visualizer_enabled = enabled;
         self.sync_analysis()
     }
