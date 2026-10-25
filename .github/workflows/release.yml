@@ -1,0 +1,354 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+# contents: write — ровно минимум для softprops/action-gh-release (создание
+# релиза и загрузка ассетов). Ничего шире не выдаём.
+permissions:
+  contents: write
+
+# Релиз не отменяем: cancel-in-progress между загрузкой ассетов и публикацией
+# оставил бы висячий draft/недоопубликованный релиз.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  version:
+    name: Проверка тега и версии
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      prerelease: ${{ steps.check.outputs.prerelease }}
+      make_latest: ${{ steps.check.outputs.make_latest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify tag against Cargo.toml
+        id: check
+        env:
+          # github.ref_name передаётся только через окружение: прямая
+          # интерполяция "${{ github.ref_name }}" внутрь run: дала бы исполняемый
+          # код из имени тега (регексп ниже — вторая линия защиты).
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
+            echo "Тег '$TAG' не соответствует формату vMAJOR.MINOR.PATCH[-rc.N]" >&2
+            exit 1
+          fi
+
+          version="$(cargo metadata --no-deps --format-version 1 \
+            | jq -er '.packages[] | select(.name == "orbitfm") | .version')"
+
+          # Защита от кривого тега: имена файлов собираются из версии Cargo.toml
+          # (build-appimage.sh, build-dmg.sh, build-msi.ps1), поэтому расхождение
+          # тега и Cargo.toml выложило бы артефакты 0.10.0 под тегом v0.9.0.
+          if [[ "v$version" != "$TAG" ]]; then
+            echo "Тег '$TAG' не совпадает с версией в Cargo.toml ('$version')" >&2
+            exit 1
+          fi
+
+          {
+            echo "version=$version"
+            # softprops/action-gh-release не поддерживает prerelease: auto:
+            # и в v2, и в v3 значение input сравнивается со строкой 'true', то есть
+            # auto молча дал бы обычный релиз для v0.10.0-rc.1. Считаем сами.
+            if [[ "$TAG" == *-* ]]; then
+              echo "prerelease=true"
+              # make_latest=true для pre-release отклоняет GitHub API
+              # («Drafts and prereleases cannot be set as latest»).
+              echo "make_latest=false"
+            else
+              echo "prerelease=false"
+              echo "make_latest=true"
+            fi
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Тег $TAG подтверждён версией Cargo.toml $version"
+
+  linux:
+    name: Linux (AppImage)
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo timeout 120 apt-get update \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=30 \
+            -o Acquire::ForceIPv4=true \
+            || echo "apt-get update не завершился вовремя; используются текущие списки"
+          sudo apt-get install -y --no-install-recommends \
+            libgl1-mesa-dev \
+            libmpv-dev \
+            libwayland-dev \
+            libx11-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxkbcommon-dev \
+            libxrandr-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      # build-appimage.sh сам выставляет APPIMAGE_EXTRACT_AND_RUN=1 (на Ubuntu 24.04
+      # нет libfuse2 — без него AppImage-рантаймы linuxdeploy/appimagetool не стартуют)
+      # и сам качает инструменты в target/appimage-tools; LINUXDEPLOY/APPIMAGETOOL —
+      # готовые точки для pinning из ADR-0011. Результат:
+      # target/appimage/OrbitFM-<version>-x86_64.AppImage.
+      - name: Build AppImage
+        timeout-minutes: 60
+        run: |
+          set -euo pipefail
+          cargo build --release --locked
+          bash packaging/linux/build-appimage.sh
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrbitFM-linux-appimage
+          path: target/appimage/OrbitFM-*.AppImage
+          if-no-files-found: error
+
+  windows:
+    name: Windows (MSI)
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSYS2 with libmpv
+        id: msys2
+        timeout-minutes: 30
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            binutils
+            mingw-w64-ucrt-x86_64-mpv
+          path-type: inherit
+
+      - name: Setup MSVC tools
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Prepare libmpv import library
+        shell: pwsh
+        env:
+          MPV_DLL: ${{ steps.msys2.outputs.msys2-location }}\ucrt64\bin\libmpv-2.dll
+        run: ./packaging/windows/prepare-libmpv.ps1 -MpvDll $env:MPV_DLL -OutDir build/mpv-lib
+
+      - name: Build release
+        shell: pwsh
+        timeout-minutes: 60
+        env:
+          RUSTFLAGS: -L native=${{ github.workspace }}\build\mpv-lib
+        run: cargo build --release --locked
+
+      - name: Stage application and runtime DLLs
+        shell: msys2 {0}
+        run: bash packaging/windows/stage-app.sh
+
+      # Порядок обязателен: stage-app.sh пересоздаёт dist/OrbitFM с нуля (rm -rf) и
+      # кладёт только orbitfm.exe с транзитивными DLL из UCRT64, поэтому CRT-DLL
+      # MSVC дописываются строго после стейджинга. WiX затем берёт весь каталог
+      # как есть, поэтому перестановка шагов либо роняет установку, либо ломает
+      # запуск на машине без установленного VC redist.
+      - name: Add MSVC runtime DLLs
+        shell: pwsh
+        run: |
+          $redist = Get-ChildItem "$env:VCINSTALLDIR\Redist\MSVC\*\x64\Microsoft.VC*.CRT" -Directory |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $redist) { throw 'Не найден MSVC CRT redist' }
+          Copy-Item "$($redist.FullName)\*.dll" dist/OrbitFM
+          Get-ChildItem dist/OrbitFM | Select-Object Name
+
+      # WiX 5.0.2, а не latest: v6+ требует принятия OSMF EULA и падает с WIX7015
+      # (обоснование — заголовок packaging/windows/build-msi.ps1).
+      - name: Install WiX
+        shell: pwsh
+        timeout-minutes: 20
+        run: dotnet tool update --global wix --version 5.0.2
+
+      - name: Build MSI
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: >-
+          ./packaging/windows/build-msi.ps1
+          -AppDir dist/OrbitFM
+          -Version $env:VERSION
+          -Output "dist/OrbitFM-${env:VERSION}-windows-x64.msi"
+
+      - name: Smoke-test MSI
+        shell: pwsh
+        timeout-minutes: 20
+        run: |
+          $msi = (Get-ChildItem dist -Filter '*.msi' | Select-Object -First 1).FullName
+          $log = Join-Path $env:RUNNER_TEMP 'msi-install.log'
+          $install = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @(
+            '/i', "`"$msi`"", '/qn', '/norestart', '/l*v', "`"$log`""
+          )
+          if ($install.ExitCode -notin 0, 3010) {
+            Get-Content $log -Tail 100
+            throw "msiexec install завершился с кодом $($install.ExitCode)"
+          }
+          $exe = Join-Path $env:LOCALAPPDATA 'Programs\OrbitFM\orbitfm.exe'
+          if (-not (Test-Path $exe)) { throw "не найден $exe" }
+          $uninstall = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @(
+            '/x', "`"$msi`"", '/qn', '/norestart'
+          )
+          if ($uninstall.ExitCode -notin 0, 3010) {
+            throw "msiexec uninstall завершился с кодом $($uninstall.ExitCode)"
+          }
+
+      # upload-artifact здесь только как транспорт между джобами: в релиз файл
+      # попадает через needs + download-artifact в джобе release.
+      - name: Upload MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrbitFM-windows-msi
+          path: dist/*.msi
+          if-no-files-found: error
+
+  macos:
+    name: macOS (DMG)
+    needs: version
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install libmpv and packaging tools
+        timeout-minutes: 30
+        run: brew install mpv dylibbundler librsvg
+
+      - name: Export libmpv search path
+        run: echo "LIBRARY_PATH=$(brew --prefix)/lib" >> "$GITHUB_ENV"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release
+        timeout-minutes: 60
+        run: cargo build --release --locked
+
+      # VERSION намеренно НЕ экспортируется: build-dmg.sh читает ${VERSION:-...} и
+      # подставил бы в имя файла значение из окружения, то есть v0.10.0-rc.1 с
+      # префиксом вместо 0.10.0-rc.1 из Cargo.toml.
+      - name: Build DMG
+        timeout-minutes: 30
+        run: bash packaging/macos/build-dmg.sh
+
+      - name: Smoke-test DMG
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          dmg=$(ls dist/*.dmg | head -n 1)
+          mount=$(mktemp -d)
+          hdiutil attach "$dmg" -nobrowse -quiet -mountpoint "$mount"
+          trap 'hdiutil detach "$mount" -quiet || true' EXIT
+          app="$mount/OrbitFM.app"
+          test -x "$app/Contents/MacOS/orbitfm"
+          codesign --verify --deep --strict "$app"
+          if otool -L "$app/Contents/MacOS/orbitfm" | grep -E '/(opt/homebrew|usr/local)/'; then
+            echo "бинарник ссылается на Homebrew" >&2
+            exit 1
+          fi
+          if find "$app/Contents/Frameworks" -name '*.dylib' -exec otool -L {} \; |
+            grep -E '/(opt/homebrew|usr/local)/'; then
+            echo "dylib ссылается на Homebrew" >&2
+            exit 1
+          fi
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrbitFM-macos-dmg
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  release:
+    name: Опубликовать релиз
+    needs: [version, linux, windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download AppImage
+        uses: actions/download-artifact@v4
+        with:
+          name: OrbitFM-linux-appimage
+          path: release
+
+      - name: Download MSI
+        uses: actions/download-artifact@v4
+        with:
+          name: OrbitFM-windows-msi
+          path: release
+
+      - name: Download DMG
+        uses: actions/download-artifact@v4
+        with:
+          name: OrbitFM-macos-dmg
+          path: release
+
+      - name: Build SHA256SUMS
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd release
+          mapfile -t files < <(find . -maxdepth 1 -type f -printf '%f\n' | sort)
+          if [[ ${#files[@]} -ne 3 ]]; then
+            echo "ожидалось 3 артефакта (AppImage, MSI, DMG), найдено ${#files[@]}: ${files[*]}" >&2
+            exit 1
+          fi
+          for f in "${files[@]}"; do
+            # Сегменты «OrbitFM-<version>-» без префикса v: ловит и артефакт,
+            # ошибочно собранный с VERSION из тега (OrbitFM-v0.10.0-rc.1-...).
+            if [[ $f != OrbitFM-"$VERSION"-* ]]; then
+              echo "имя файла '$f' не соответствует OrbitFM-$VERSION-<platform>.*" >&2
+              exit 1
+            fi
+          done
+          sha256sum -- "${files[@]}" > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Publish GitHub Release
+        timeout-minutes: 20
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: OrbitFM ${{ needs.version.outputs.version }}
+          files: |
+            release/OrbitFM-*
+            release/SHA256SUMS
+          prerelease: ${{ needs.version.outputs.prerelease }}
+          make_latest: ${{ needs.version.outputs.make_latest }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true

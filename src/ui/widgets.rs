@@ -9,8 +9,11 @@ use eframe::egui::{
     pos2,
 };
 
+use crate::i18n;
 use crate::render::bar_color;
+use crate::settings::Language;
 
+use super::animation;
 use super::icons;
 use super::palette::{Palette, mix_colors};
 
@@ -18,6 +21,13 @@ const PILL_RADIUS: f32 = 999.0;
 const LIVE_REPAINT: std::time::Duration = std::time::Duration::from_millis(120);
 /// Толщина верхнего блика стекла.
 const GLASS_RIM: f32 = 1.5;
+/// Осветление диска play/stop при наведении (ТЗ §3.4).
+const HOVER_LIFT: f32 = 0.18;
+/// Осветление обода активного диска.
+const RING_LIFT: f32 = 0.45;
+/// Потолок overshoot-шкалы: появление капсульной кнопки не может превышать
+/// конечный размер более чем на 15 % (ADR-0032 §2).
+const POP_LIMIT: f32 = 1.15;
 /// Горизонтальные пояса градиента заливки громкости (ТЗ §3.4).
 const VOLUME_FILL_BANDS: usize = 6;
 /// Шаг громкости стрелками клавиатуры.
@@ -32,6 +42,58 @@ pub(crate) fn faded(color: Color32, alpha: f32) -> Color32 {
         b,
         (f32::from(a) * alpha.clamp(0.0, 1.0)).round() as u8,
     )
+}
+
+/// Вся палитра на заданной прозрачности: содержимое капсулы гаснет тем же
+/// способом, что и её каркас (ADR-0032 §7 — движение только в отрисовке).
+/// Контролы получают уже погашенную палитру, поэтому аллокации не меняются.
+pub(crate) fn faded_palette(palette: &Palette, alpha: f32) -> Palette {
+    let mut dim = *palette;
+    for color in [
+        &mut dim.card_fill,
+        &mut dim.card_stroke,
+        &mut dim.muted,
+        &mut dim.error,
+        &mut dim.accent,
+        &mut dim.marker,
+        &mut dim.space_top,
+        &mut dim.space_bottom,
+        &mut dim.glass_top,
+        &mut dim.glass_bottom,
+        &mut dim.rim_light,
+        &mut dim.live,
+        &mut dim.chip_fill,
+        &mut dim.chip_stroke,
+        &mut dim.text,
+    ] {
+        *color = faded(*color, alpha);
+    }
+    dim
+}
+
+/// Групповое погасшение отрисовки: нужно для контролов, чей цвет приходит из
+/// `visuals` egui, а не из нашей палитры (кнопки-иконки). Прозрачность
+/// умножается на текущую, поэтому вложенные группы не теряют общий фэйд.
+/// Аллокации не двигаются — гаснет только нарисованное внутри `add`.
+pub(crate) fn faded_group<T>(
+    ui: &mut egui::Ui,
+    alpha: f32,
+    add: impl FnOnce(&mut egui::Ui) -> T,
+) -> T {
+    let base = ui.opacity();
+    ui.multiply_opacity(animation::alpha(alpha));
+    let result = add(ui);
+    ui.set_opacity(base);
+    result
+}
+
+/// Шкала появления капсульной кнопки: ease-out с перелётом через 1.0, но не
+/// дальше [`POP_LIMIT`]. Reduce motion сразу даёт конечный размер (ADR-0032 §3).
+pub(crate) fn pop_scale(progress: f32, reduce: bool) -> f32 {
+    if reduce {
+        return 1.0;
+    }
+    animation::eased(progress, animation::Curve::Overshoot).clamp(0.0, POP_LIMIT)
 }
 
 /// Кольцо клавиатурного фокуса вокруг прямоугольного контрола.
@@ -280,7 +342,8 @@ pub(crate) fn search_field(
 }
 
 /// Бейдж «● LIVE» с пульсом точки; сам просит перерисовку.
-pub(crate) fn live_badge(ui: &mut egui::Ui, palette: &Palette, active: bool) {
+pub(crate) fn live_badge(ui: &mut egui::Ui, palette: &Palette, active: bool, language: Language) {
+    let text = i18n::catalog(language);
     let time = ui.input(|input| input.time);
     let (rect, _) = ui.allocate_exact_size(Vec2::new(52.0, 18.0), egui::Sense::hover());
     if !ui.is_rect_visible(rect) {
@@ -312,7 +375,7 @@ pub(crate) fn live_badge(ui: &mut egui::Ui, palette: &Palette, active: bool) {
     ui.painter().text(
         pos2(rect.left() + 16.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
-        "LIVE",
+        text.common.live,
         egui::FontId::proportional(10.5),
         color,
     );
@@ -421,9 +484,23 @@ pub(crate) fn viz_bars(
     );
 }
 
+/// Результат слайдера громкости: значение изменилось и/или изменение
+/// закоммичено (ADR-0031, commit-on-release). Пока идёт drag — только preview,
+/// запись в настройки происходит на отпускание, клик по треку или клавишу.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct SliderResponse {
+    pub(crate) changed: bool,
+    pub(crate) committed: bool,
+}
+
 /// Громкость: динамик + тонкий accent-трек с круглой ручкой.
-pub(crate) fn volume_slider(ui: &mut egui::Ui, palette: &Palette, volume: &mut f64) -> bool {
-    volume_slider_width(ui, palette, volume, 126.0)
+pub(crate) fn volume_slider(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    volume: &mut f64,
+    language: Language,
+) -> SliderResponse {
+    volume_slider_width(ui, palette, volume, 126.0, language)
 }
 
 /// Та же громкость в заданной ширине: капсуле Overlay нужен короткий трек.
@@ -433,7 +510,9 @@ pub(crate) fn volume_slider_width(
     palette: &Palette,
     volume: &mut f64,
     width: f32,
-) -> bool {
+    language: Language,
+) -> SliderResponse {
+    let label = i18n::catalog(language).transport.volume;
     let (rect, response) =
         ui.allocate_exact_size(Vec2::new(width, 18.0), egui::Sense::click_and_drag());
     focus_ring(ui, &response, rect, 9.0);
@@ -510,8 +589,12 @@ pub(crate) fn volume_slider_width(
         *volume = f64::from(fraction);
         changed |= *volume != previous;
     }
-    response.widget_info(|| egui::WidgetInfo::slider(true, *volume, "Volume"));
-    changed
+    response.widget_info(|| egui::WidgetInfo::slider(true, *volume, label));
+    // Коммит — отпускание drag, клик или клавиша: всё, что не «продолжающийся
+    // drag» (ADR-0031). На кадрe отпускания changed может быть false (значение
+    // не двинулось), но drag_stopped всё равно закрывает pending.
+    let committed = response.drag_stopped() || (changed && !response.dragged());
+    SliderResponse { changed, committed }
 }
 
 /// Большая круглая play/pause с accent-кольцом.
@@ -534,12 +617,14 @@ pub(crate) fn circle_button_sized(
     enabled: bool,
     hint: &str,
 ) -> egui::Response {
-    let sense = if enabled {
-        egui::Sense::click()
-    } else {
-        egui::Sense::hover()
-    };
-    let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), sense);
+    let (rect, response) = ui.allocate_exact_size(
+        Vec2::splat(size),
+        if enabled {
+            egui::Sense::click()
+        } else {
+            egui::Sense::hover()
+        },
+    );
     if ui.is_rect_visible(rect) {
         let center = rect.center();
         // ТЗ §3.4: primary play — сплошной accent, чуть светлее при наведении.
@@ -547,44 +632,24 @@ pub(crate) fn circle_button_sized(
         let fill = if !enabled {
             palette.chip_fill
         } else if hoverable {
-            super::palette::mix_colors(palette.accent, Color32::WHITE, 0.18)
+            lift(palette.accent, HOVER_LIFT)
         } else {
             palette.accent
         };
         let ring = if enabled {
-            super::palette::mix_colors(palette.accent, Color32::WHITE, 0.45)
+            lift(palette.accent, RING_LIFT)
         } else {
             palette.muted
         };
-        let radius = size * 0.5 - 1.0;
-        ui.painter().circle_filled(center, radius, fill);
-        ui.painter()
-            .circle_stroke(center, radius, Stroke::new(1.6, ring));
         let glyph = if enabled {
             contrast_color(fill)
         } else {
             palette.muted
         };
-        if playing {
-            for dx in [-4.0, 4.0] {
-                ui.painter().rect_filled(
-                    egui::Rect::from_center_size(center + Vec2::new(dx, 0.0), Vec2::new(3.2, 12.0)),
-                    1.5,
-                    glyph,
-                );
-            }
-        } else {
-            ui.painter().add(Shape::convex_polygon(
-                vec![
-                    pos2(center.x - 4.5, center.y - 7.0),
-                    pos2(center.x - 4.5, center.y + 7.0),
-                    pos2(center.x + 7.0, center.y),
-                ],
-                glyph,
-                Stroke::NONE,
-            ));
+        let radius = draw_disc(ui, rect, 1.0, fill, ring, glyph, playing);
+        if radius > 0.0 {
+            circle_focus_ring(ui, &response, center, radius + 2.0);
         }
-        circle_focus_ring(ui, &response, center, radius + 2.0);
     }
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, hint));
     if enabled {
@@ -592,6 +657,162 @@ pub(crate) fn circle_button_sized(
     } else {
         response
     }
+}
+
+/// Капсульная кнопка play/stop на один кадр: всё, что нужно для её отрисовки.
+///
+/// Поля посчитаны вызывающим — переход цвета между состояниями воспроизведения
+/// и общий фэйд входа принадлежат капсуле, а не виджету.
+pub(crate) struct CapsuleDisc<'a> {
+    /// Палитра уже погашена фэйдом входа: из неё берутся лишь приглушённые
+    /// цвета неактивной кнопки.
+    pub palette: &'a Palette,
+    /// Диаметр аллокации; шкала живёт только в отрисовке.
+    pub size: f32,
+    /// Шкала появления из [`pop_scale`].
+    pub pop: f32,
+    /// Цвет диска: смешение «пауза → эфир» с альфой входа.
+    pub fill: Color32,
+    pub playing: bool,
+    pub enabled: bool,
+    pub hint: &'a str,
+}
+
+/// Капсульная кнопка play/stop: появление с overshoot (`pop`), press-сжатие по
+/// [`animation::PRESS`] и цвет диска из [`CapsuleDisc`].
+///
+/// Аллокация всегда [`Vec2::splat(disc.size)`]: шкала живёт только в отрисовке,
+/// поэтому hit-testing не смещается (ADR-0032 §7).
+pub(crate) fn capsule_button(
+    ui: &mut egui::Ui,
+    motion: &mut animation::FrameMotion<'_>,
+    press_key: egui::Id,
+    disc: &CapsuleDisc<'_>,
+) -> egui::Response {
+    let CapsuleDisc {
+        palette,
+        size,
+        pop,
+        fill,
+        playing,
+        enabled,
+        hint,
+    } = *disc;
+    let (rect, response) = ui.allocate_exact_size(
+        Vec2::splat(size),
+        if enabled {
+            egui::Sense::click()
+        } else {
+            egui::Sense::hover()
+        },
+    );
+    if ui.is_rect_visible(rect) {
+        let center = rect.center();
+        let mut scale = pop.max(0.0);
+        // Reduce motion глушит шкалу: переход не опрашивается вовсе, чтобы не
+        // занимать слот в PresenceStore окна.
+        if !motion.reduce {
+            let pressed = response.is_pointer_button_down_on();
+            let progress = motion.keyed.value(
+                ui.ctx(),
+                press_key,
+                pressed,
+                animation::PRESS,
+                motion.reduce,
+            );
+            scale *= pressed_scale(progress);
+        }
+        let hoverable = response.hovered() && enabled;
+        let fill = if !enabled {
+            palette.chip_fill
+        } else if hoverable {
+            lift(fill, HOVER_LIFT)
+        } else {
+            fill
+        };
+        let ring = if enabled {
+            lift(fill, RING_LIFT)
+        } else {
+            palette.muted
+        };
+        let glyph = if enabled {
+            // Глиф наследует альфу диска: погасшая при входе капсула не должна
+            // светиться иконкой. Выбор контраста берём из непрозрачного оттенка —
+            // у premultiplied-каналов погасшего диска luminance ниже, и глиф мог
+            // бы перевернуться посреди входа.
+            let [r, g, b, _] = fill.to_srgba_unmultiplied();
+            faded(
+                contrast_color(Color32::from_rgb(r, g, b)),
+                f32::from(fill.a()) / 255.0,
+            )
+        } else {
+            palette.muted
+        };
+        let radius = draw_disc(ui, rect, scale, fill, ring, glyph, playing);
+        if radius > 0.0 {
+            circle_focus_ring(ui, &response, center, radius + 2.0);
+        }
+    }
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, hint));
+    if enabled {
+        response.on_hover_text(hint)
+    } else {
+        response
+    }
+}
+
+/// Диск с глифом play/pause, нарисованный от центра `rect` с множителем `scale`.
+/// Возвращает радиус отрисованного диска (0.0 — рисовать нечего).
+fn draw_disc(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    scale: f32,
+    fill: Color32,
+    ring: Color32,
+    glyph: Color32,
+    playing: bool,
+) -> f32 {
+    let center = rect.center();
+    let radius = (rect.width() * 0.5 - 1.0) * scale;
+    if radius <= 0.0 {
+        return 0.0;
+    }
+    ui.painter().circle_filled(center, radius, fill);
+    ui.painter()
+        .circle_stroke(center, radius, Stroke::new(1.6, ring));
+    if playing {
+        for dx in [-4.0, 4.0] {
+            ui.painter().rect_filled(
+                egui::Rect::from_center_size(
+                    center + Vec2::new(dx * scale, 0.0),
+                    Vec2::new(3.2, 12.0) * scale,
+                ),
+                1.5 * scale,
+                glyph,
+            );
+        }
+    } else {
+        let point = |dx: f32, dy: f32| center + Vec2::new(dx, dy) * scale;
+        ui.painter().add(Shape::convex_polygon(
+            vec![point(-4.5, -7.0), point(-4.5, 7.0), point(7.0, 0.0)],
+            glyph,
+            Stroke::NONE,
+        ));
+    }
+    radius
+}
+
+/// Press-сжатие: 1.0 в покое, [`animation::PRESS_SCALE`] при удержании.
+fn pressed_scale(progress: f32) -> f32 {
+    1.0 - (1.0 - animation::PRESS_SCALE) * animation::alpha(progress)
+}
+
+/// Осветление к белому без изменения альфы: hover-подсветка не должна
+/// «пробивать» фэйд входа капсулы. Каналы берём в unmultiplied-виде, потому что
+/// `Color32` хранит их уже умноженными на альфу.
+fn lift(color: Color32, amount: f32) -> Color32 {
+    let [r, g, b, _] = mix_colors(color, Color32::WHITE, amount).to_srgba_unmultiplied();
+    Color32::from_rgba_unmultiplied(r, g, b, color.a())
 }
 
 /// Вкладки с иконкой и accent-подчёркиванием активной.
@@ -610,6 +831,8 @@ struct TabButton<'a> {
     tab: &'a Tab<'a>,
     palette: &'a Palette,
     active: bool,
+    /// Прогресс входа активной вкладки: индикатор отрастает и дожигается им же.
+    indicator: f32,
 }
 
 impl egui::Widget for TabButton<'_> {
@@ -650,13 +873,21 @@ impl egui::Widget for TabButton<'_> {
                 color,
             );
             if self.active {
+                let enter = animation::alpha(self.indicator);
+                let underline = egui::Rect::from_min_max(
+                    pos2(rect.left(), rect.bottom() - 2.0),
+                    pos2(rect.right(), rect.bottom()),
+                );
+                // Индикатор отрастает от левого края: чистая отрисовка,
+                // аллокация вкладки остаётся на месте (ADR-0032 §7).
+                let grown = underline.width() * enter;
                 ui.painter().rect_filled(
                     egui::Rect::from_min_max(
-                        pos2(rect.left(), rect.bottom() - 2.0),
-                        pos2(rect.right(), rect.bottom()),
+                        underline.min,
+                        pos2(underline.left() + grown, underline.bottom()),
                     ),
                     1.0,
-                    self.palette.accent,
+                    faded(self.palette.accent, enter),
                 );
             }
             focus_ring(ui, &response, rect, 6.0);
@@ -668,15 +899,20 @@ impl egui::Widget for TabButton<'_> {
     }
 }
 
-/// Возвращает индекс нажатой вкладки.
+/// Возвращает индекс нажатой вкладки. `indicator` — прогресс входа активной
+/// вкладки ([`animation::TAB`]), тем же значением гасится и список.
 pub(crate) fn tab_bar(
     ui: &mut egui::Ui,
     palette: &Palette,
     tabs: &[Tab<'_>],
     selected: usize,
+    indicator: f32,
 ) -> Option<usize> {
     let mut clicked = None;
-    ui.horizontal(|ui| {
+    // Перенос обязателен: ширины панели хватает три подписи только на коротких
+    // языках, а в DE/FR/RU и с длинными счётчиками («Результаты (128)») последняя
+    // вкладка обрезалась по правому краю панели.
+    ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 16.0;
         for (index, tab) in tabs.iter().enumerate() {
             if ui
@@ -684,6 +920,7 @@ pub(crate) fn tab_bar(
                     tab,
                     palette,
                     active: index == selected,
+                    indicator,
                 })
                 .clicked()
             {
@@ -829,6 +1066,7 @@ pub(crate) fn logo_mark(ui: &mut egui::Ui, palette: &Palette, size: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::settings::AccentColor;
 
     #[test]
     fn flag_emoji_maps_iso_to_regional_indicators() {
@@ -916,5 +1154,84 @@ mod tests {
         }
         assert!(rim.first().expect("есть точки").x <= rect.left() + 16.5);
         assert!(rim.last().expect("есть точки").x >= rect.right() - 16.5);
+    }
+
+    /// Палитра для тестов: важен альфа-канал, а не конкретный оттенок.
+    fn test_palette() -> Palette {
+        Palette::for_ui(egui::Theme::Dark, AccentColor::Blue)
+    }
+
+    /// `Color32` хранит каналы уже умноженными на альфу, поэтому round-trip
+    /// через unmultiplied даёт погрешность в один квант.
+    fn same_hue(first: Color32, second: Color32) -> bool {
+        let [r0, g0, b0, _] = first.to_srgba_unmultiplied();
+        let [r1, g1, b1, _] = second.to_srgba_unmultiplied();
+        [(r0, r1), (g0, g1), (b0, b1)]
+            .iter()
+            .all(|(from, to)| (*from as i16 - *to as i16).abs() <= 1)
+    }
+
+    #[test]
+    fn faded_palette_dims_every_channel_and_keeps_hue() {
+        let palette = test_palette();
+        let dim = faded_palette(&palette, 0.5);
+        assert_eq!(dim.text, faded(palette.text, 0.5));
+        assert_eq!(dim.accent, faded(palette.accent, 0.5));
+        assert_eq!(dim.glass_top, faded(palette.glass_top, 0.5));
+        assert!(
+            same_hue(palette.accent, dim.accent),
+            "фэйд не обесцвечивает палитру"
+        );
+
+        assert_eq!(faded_palette(&palette, 1.0).chip_fill, palette.chip_fill);
+        assert_eq!(faded_palette(&palette, 0.0).text.a(), 0);
+        assert_eq!(faded_palette(&palette, f32::NAN).text.a(), 0);
+    }
+
+    #[test]
+    fn pop_scale_flies_past_one_but_not_past_the_ceiling() {
+        assert_eq!(pop_scale(0.0, false), 0.0);
+        assert_eq!(pop_scale(1.0, false), 1.0);
+        let peak = (0..=100u8)
+            .map(|step| pop_scale(f32::from(step) / 100.0, false))
+            .fold(0.0f32, f32::max);
+        assert!(
+            peak > 1.0 && peak <= POP_LIMIT,
+            "перелёт слишком резкий: {peak}"
+        );
+    }
+
+    #[test]
+    fn reduce_motion_freezes_scale_at_the_final_size() {
+        for step in 0..=100u8 {
+            assert_eq!(pop_scale(f32::from(step) / 100.0, true), 1.0);
+        }
+    }
+
+    #[test]
+    fn pressed_scale_sits_between_rest_and_pinch() {
+        assert_eq!(pressed_scale(0.0), 1.0);
+        assert!(
+            (pressed_scale(1.0) - animation::PRESS_SCALE).abs() < 1e-6,
+            "удержание даёт полный press-размер"
+        );
+        let middle = pressed_scale(0.5);
+        assert!(middle < 1.0 && middle > animation::PRESS_SCALE);
+    }
+
+    #[test]
+    fn lift_brightens_without_piercing_the_entrance_fade() {
+        let dim = faded(Color32::from_rgb(0x3B, 0x82, 0xF6), 0.5);
+        let lifted = lift(dim, HOVER_LIFT);
+        assert_eq!(lifted.a(), dim.a(), "hover не должен поднимать альфу");
+        let [r0, g0, b0, _] = dim.to_srgba_unmultiplied();
+        let [r, g, b, _] = lifted.to_srgba_unmultiplied();
+        let before = (u16::from(r0), u16::from(g0), u16::from(b0));
+        let after = (u16::from(r), u16::from(g), u16::from(b));
+        assert!(
+            r > r0 && g > g0 && b > b0,
+            "hover светлее покоя: {after:?} против {before:?}"
+        );
+        assert_eq!(lift(Color32::WHITE, 1.0), Color32::WHITE);
     }
 }

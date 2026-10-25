@@ -12,6 +12,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tracing::{info, warn};
 
 use super::{TrayCommand, TraySnapshot, icon};
+use crate::i18n;
 use crate::ipc::WakeFn;
 use crate::settings::ThemeMode;
 
@@ -140,6 +141,8 @@ impl Tray for OrbitTray {
         icon::ICONS.clone()
     }
 
+    /// Название станции — внешние данные Radio Browser, оно не переводится
+    /// (ADR-0030, п. 4); переводится только заглушка, когда станции нет.
     fn tool_tip(&self) -> ToolTip {
         ToolTip {
             icon_name: self.app_id.to_owned(),
@@ -149,7 +152,7 @@ impl Tray for OrbitTray {
                 .snapshot
                 .station
                 .clone()
-                .unwrap_or_else(|| "Nothing playing".to_owned()),
+                .unwrap_or_else(|| nothing_playing(&self.snapshot)),
         }
     }
 
@@ -173,10 +176,14 @@ impl Tray for OrbitTray {
     }
 
     fn menu(&self) -> Vec<MenuItem<Self>> {
+        // Язык берётся из снимка: `Session` публикует его разрешённым, а смена
+        // языка меняет сам снимок, поэтому меню перестраивается без перезапуска
+        // (ADR-0030, п. 8–9).
+        let text = i18n::catalog(self.snapshot.language);
         let toggle_label = if self.snapshot.window_visible {
-            "Hide window"
+            text.tray.hide_window
         } else {
-            "Show window"
+            text.tray.show_window
         };
         vec![
             MenuItem::Standard(StandardItem {
@@ -188,18 +195,22 @@ impl Tray for OrbitTray {
             standard(toggle_label, |tray| tray.send(TrayCommand::Toggle)),
             MenuItem::Separator,
             MenuItem::Checkmark(CheckmarkItem {
-                label: "Play/Pause".to_owned(),
+                label: text.tray.play_pause.to_owned(),
                 checked: self.snapshot.playing,
                 activate: Box::new(|tray: &mut Self| tray.send(TrayCommand::PlayPause)),
                 ..Default::default()
             }),
-            standard("Stop", |tray| tray.send(TrayCommand::Stop)),
-            standard("Previous", |tray| tray.send(TrayCommand::Previous)),
-            standard("Next", |tray| tray.send(TrayCommand::Next)),
-            standard("Radio Roulette", |tray| tray.send(TrayCommand::Roulette)),
+            standard(text.tray.stop, |tray| tray.send(TrayCommand::Stop)),
+            standard(text.tray.previous, |tray| tray.send(TrayCommand::Previous)),
+            standard(text.tray.next, |tray| tray.send(TrayCommand::Next)),
+            standard(text.tray.radio_roulette, |tray| {
+                tray.send(TrayCommand::Roulette)
+            }),
             MenuItem::Separator,
-            standard("Volume Up", |tray| tray.send(TrayCommand::VolumeUp)),
-            standard("Volume Down", |tray| tray.send(TrayCommand::VolumeDown)),
+            standard(text.tray.volume_up, |tray| tray.send(TrayCommand::VolumeUp)),
+            standard(text.tray.volume_down, |tray| {
+                tray.send(TrayCommand::VolumeDown)
+            }),
             MenuItem::Separator,
             MenuItem::RadioGroup(RadioGroup {
                 selected: ThemeMode::ALL
@@ -214,13 +225,14 @@ impl Tray for OrbitTray {
                 options: ThemeMode::ALL
                     .iter()
                     .map(|mode| RadioItem {
-                        label: theme_label(*mode).to_owned(),
+                        label: i18n::theme_label(self.snapshot.language, *mode).to_owned(),
                         ..Default::default()
                     })
                     .collect(),
             }),
             MenuItem::Separator,
-            standard("Quit", |tray| tray.send(TrayCommand::Quit)),
+            standard(text.tray.settings, |tray| tray.send(TrayCommand::Settings)),
+            standard(text.tray.quit, |tray| tray.send(TrayCommand::Quit)),
         ]
     }
 
@@ -245,21 +257,20 @@ fn standard(
 
 /// Первая строка меню — витрина, а не команда: `enabled: false` у StandardItem.
 fn now_playing_label(snapshot: &TraySnapshot) -> String {
+    let text = &i18n::catalog(snapshot.language).tray;
     match (&snapshot.station, snapshot.playing) {
-        (Some(station), true) => format!("Now playing: {station}"),
-        (Some(station), false) => format!("Paused: {station}"),
-        (None, _) => "Nothing playing".to_owned(),
+        (Some(station), true) => i18n::fill(text.now_playing, &[("station", station.as_str())]),
+        (Some(station), false) => i18n::fill(text.paused, &[("station", station.as_str())]),
+        (None, _) => nothing_playing(snapshot),
     }
 }
 
-/// Подписи темы для меню трея. `ui::palette::theme_label` — presentation-слой,
-/// и импортировать его сюда нельзя: трей не знает про egui (ADR-0020, п. 3).
-fn theme_label(mode: ThemeMode) -> &'static str {
-    match mode {
-        ThemeMode::System => "System",
-        ThemeMode::Dark => "Dark",
-        ThemeMode::Light => "Light",
-    }
+/// Заглушка, когда станция не играя: общая для тултипа и первой строки меню.
+fn nothing_playing(snapshot: &TraySnapshot) -> String {
+    i18n::catalog(snapshot.language)
+        .tray
+        .nothing_playing
+        .to_owned()
 }
 
 /// Первый существующий каталог тем: пользовательский XDG, затем системный.
@@ -290,6 +301,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
+    use crate::settings::Language;
 
     fn tray(snapshot: TraySnapshot) -> OrbitTray {
         let (commands, _sink) = tokio::sync::mpsc::unbounded_channel();
@@ -299,6 +311,15 @@ mod tests {
             snapshot,
             commands,
             wake: Arc::new(|| {}),
+        }
+    }
+
+    /// Подписи сверяются с английским источником каталога (ADR-0030, п. 3):
+    /// язык ставится явно, чтобы тесты не зависели от локали сборки.
+    fn english() -> TraySnapshot {
+        TraySnapshot {
+            language: Language::English,
+            ..Default::default()
         }
     }
 
@@ -341,20 +362,17 @@ mod tests {
 
     #[test]
     fn tooltip_shows_the_station_or_silence() {
-        assert_eq!(
-            tray(TraySnapshot::default()).tool_tip().description,
-            "Nothing playing"
-        );
+        assert_eq!(tray(english()).tool_tip().description, "Nothing playing");
         let snapshot = TraySnapshot {
             station: Some("WFMU".to_owned()),
-            ..Default::default()
+            ..english()
         };
         assert_eq!(tray(snapshot).tool_tip().description, "WFMU");
     }
 
     #[test]
-    fn menu_offers_window_playback_volume_theme_and_quit() {
-        let menu = tray(TraySnapshot::default()).menu();
+    fn menu_offers_window_playback_volume_theme_settings_and_quit() {
+        let menu = tray(english()).menu();
         let items = labels(&menu);
         assert_eq!(items.first(), Some(&"Nothing playing".to_owned()));
         assert!(items.contains(&"Show window".to_owned()));
@@ -362,11 +380,12 @@ mod tests {
         assert!(items.contains(&"Radio Roulette".to_owned()));
         assert!(items.contains(&"Volume Up".to_owned()));
         assert!(items.contains(&"System/Dark/Light".to_owned()));
+        assert!(items.contains(&"Settings…".to_owned()));
         assert_eq!(items.last(), Some(&"Quit".to_owned()));
 
         let visible = tray(TraySnapshot {
             window_visible: true,
-            ..Default::default()
+            ..english()
         })
         .menu();
         assert!(labels(&visible).contains(&"Hide window".to_owned()));
@@ -377,7 +396,7 @@ mod tests {
         let playing = tray(TraySnapshot {
             playing: true,
             station: Some("WFMU".to_owned()),
-            ..Default::default()
+            ..english()
         })
         .menu();
         let MenuItem::Standard(header) = &playing[0] else {
@@ -388,13 +407,57 @@ mod tests {
 
         let paused = tray(TraySnapshot {
             station: Some("WFMU".to_owned()),
-            ..Default::default()
+            ..english()
         })
         .menu();
         let MenuItem::Standard(header) = &paused[0] else {
             panic!("первым идёт заголовок");
         };
         assert_eq!(header.label, "Paused: WFMU");
+    }
+
+    /// Контракт ADR-0030 п. 9: трей читает каталог языка снимка. Проверяем
+    /// равенство с полями `tray` для каждого языка — так видно и литерал,
+    /// и перепутанное поле. `title` тултипа остаётся незакрытым контрактом
+    /// app-name (ADR-0030, п. 4).
+    #[test]
+    fn every_label_comes_from_the_catalog_for_the_snapshot_language() {
+        for language in Language::ALL {
+            let text = i18n::catalog(language);
+            let themes = ThemeMode::ALL
+                .iter()
+                .map(|mode| i18n::theme_label(language, *mode))
+                .collect::<Vec<_>>()
+                .join("/");
+            let snapshot = TraySnapshot {
+                language,
+                window_visible: true,
+                theme: ThemeMode::Dark,
+                ..Default::default()
+            };
+            assert_eq!(
+                labels(&tray(snapshot.clone()).menu()),
+                vec![
+                    text.tray.nothing_playing.to_owned(),
+                    text.tray.hide_window.to_owned(),
+                    text.tray.play_pause.to_owned(),
+                    text.tray.stop.to_owned(),
+                    text.tray.previous.to_owned(),
+                    text.tray.next.to_owned(),
+                    text.tray.radio_roulette.to_owned(),
+                    text.tray.volume_up.to_owned(),
+                    text.tray.volume_down.to_owned(),
+                    themes,
+                    text.tray.settings.to_owned(),
+                    text.tray.quit.to_owned(),
+                ],
+                "меню на {language:?} расходится с каталогом"
+            );
+
+            let tip = tray(snapshot).tool_tip();
+            assert_eq!(tip.title, "OrbitFM", "имя приложения не переводится");
+            assert_eq!(tip.description, text.tray.nothing_playing);
+        }
     }
 
     #[test]

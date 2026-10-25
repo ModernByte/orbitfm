@@ -13,6 +13,7 @@ use crate::ui::single_line;
 
 use super::LibraryTab;
 use super::markers::build_markers;
+use super::notice::NoticeKey;
 
 /// Станций в результатах поиска по имени.
 const SEARCH_RESULT_LIMIT: u32 = 100;
@@ -262,7 +263,9 @@ impl super::Session {
             },
             Err(mpsc::error::TryRecvError::Empty) => {}
             Err(mpsc::error::TryRecvError::Disconnected) => {
-                self.search.error = Some("search task ended unexpectedly".to_owned());
+                // Отправитель исчез — тот же путь, что у рулетки: ядро называет
+                // причину ключом, строку берёт каталог (ADR-0030 §6).
+                self.notify_error(NoticeKey::SearchTaskEnded);
                 self.search.pending = false;
                 self.search.rx = None;
             }
@@ -316,20 +319,22 @@ impl super::Session {
                                 std::time::Duration::from_millis(ROULETTE_FLY_MS),
                             );
                         }
-                        self.notify_info(format!("Roulette: {label}"));
+                        self.notify_info(NoticeKey::RouletteStarted { station: label });
                     }
-                    Err(err) => self.notify_error(format!("Roulette did not start: {err}")),
+                    Err(err) => {
+                        self.notify_error_detail(NoticeKey::RouletteFailed, err.to_string())
+                    }
                 }
             }
             Some(Err(err)) => {
                 self.search.roulette_pending = false;
                 self.search.roulette_rx = None;
-                self.notify_error(format!("Roulette: {err}"));
+                self.notify_error_detail(NoticeKey::RouletteFailed, err.to_string());
             }
             None => {
                 self.search.roulette_pending = false;
                 self.search.roulette_rx = None;
-                self.notify_error("Roulette: task ended unexpectedly");
+                self.notify_error(NoticeKey::RouletteTaskEnded);
             }
         }
     }
@@ -347,14 +352,15 @@ fn country_search_params(iso_a2: &str) -> SearchParams {
 }
 
 /// Подпись выпавшей станции: имя и страна, без пустых разделителей.
-fn roulette_label(station: &Station) -> String {
+/// `None` — станция без имени и страны: UI подставит локализованный «Untitled».
+fn roulette_label(station: &Station) -> Option<String> {
     let name = single_line(&station.name);
     let country = single_line(&station.country);
     match (name.is_empty(), country.is_empty()) {
-        (false, false) => format!("{name} — {country}"),
-        (false, true) => name,
-        (true, false) => country,
-        (true, true) => "unnamed station".to_owned(),
+        (false, false) => Some(format!("{name} — {country}")),
+        (false, true) => Some(name),
+        (true, false) => Some(country),
+        (true, true) => None,
     }
 }
 
@@ -416,13 +422,16 @@ mod tests {
     #[test]
     fn roulette_label_includes_country() {
         let mut station = sample_station();
-        assert_eq!(roulette_label(&station), "Test Radio — United States");
+        assert_eq!(
+            roulette_label(&station).as_deref(),
+            Some("Test Radio — United States")
+        );
 
         station.country.clear();
-        assert_eq!(roulette_label(&station), "Test Radio");
+        assert_eq!(roulette_label(&station).as_deref(), Some("Test Radio"));
 
         station.name.clear();
-        assert_eq!(roulette_label(&station), "unnamed station");
+        assert_eq!(roulette_label(&station), None);
     }
 
     #[test]

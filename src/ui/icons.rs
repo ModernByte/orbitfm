@@ -2,6 +2,9 @@
 
 use eframe::egui::{self, Color32, Pos2, Response, Sense, Shape, Stroke, Vec2, pos2};
 
+use crate::i18n;
+use crate::settings::Language;
+
 use super::widgets::focus_ring;
 
 fn icon_button(
@@ -54,12 +57,12 @@ pub(crate) fn star_button(ui: &mut egui::Ui, filled: bool, color: Color32, hint:
     )
 }
 
-pub(crate) fn stop_button(ui: &mut egui::Ui, enabled: bool) -> Response {
+pub(crate) fn stop_button(ui: &mut egui::Ui, enabled: bool, language: Language) -> Response {
     icon_button(
         ui,
         Vec2::new(28.0, 24.0),
         enabled,
-        "Stop",
+        i18n::catalog(language).common.stop,
         |painter, rect, color| {
             painter.rect_filled(
                 egui::Rect::from_center_size(rect.center(), Vec2::splat(9.0)),
@@ -123,24 +126,24 @@ pub(crate) fn heart_button(
     )
 }
 
-pub(crate) fn prev_button(ui: &mut egui::Ui, enabled: bool) -> Response {
+pub(crate) fn prev_button(ui: &mut egui::Ui, enabled: bool, language: Language) -> Response {
     icon_button(
         ui,
         Vec2::new(26.0, 24.0),
         enabled,
-        "Previous station",
+        i18n::catalog(language).common.previous_station,
         |painter, rect, color| {
             draw_skip(painter, rect.center(), 7.0, color, true);
         },
     )
 }
 
-pub(crate) fn next_button(ui: &mut egui::Ui, enabled: bool) -> Response {
+pub(crate) fn next_button(ui: &mut egui::Ui, enabled: bool, language: Language) -> Response {
     icon_button(
         ui,
         Vec2::new(26.0, 24.0),
         enabled,
-        "Next station",
+        i18n::catalog(language).common.next_station,
         |painter, rect, color| {
             draw_skip(painter, rect.center(), 7.0, color, false);
         },

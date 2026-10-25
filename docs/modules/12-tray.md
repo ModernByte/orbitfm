@@ -5,7 +5,8 @@
 клики и колесо; приём `TrayCommand` от пользователя и публикация `TraySnapshot`
 от Application Core.  
 **Зависимости:** `ksni` (только Linux, optional-фича `tray`), `tokio::sync::mpsc`,
-`tracing`, `crate::ipc::WakeFn` (тип пробуждения), `crate::settings::ThemeMode`  
+`tracing`, `crate::ipc::WakeFn` (тип пробуждения), `crate::settings::{Language, ThemeMode}`,
+`crate::i18n` (каталог подписей меню, ADR-0030)  
 **Решение:** ADR-0020 «Иконка в системном трее (StatusNotifierItem на ksni)»
 
 ---
@@ -19,8 +20,8 @@
 
 | Живёт в `src/tray/` | Не живёт в `src/tray/` |
 |---|---|
-| Регистрация SNI-item, меню `com.canonical.dbusmenu`, pixmap иконки, поток-владелец, каналы снимков и команд | Решение, что означает команда (`Session::execute_tray_command`), состояние эфира, станции, темы, окно |
-| `TrayCommand` / `TraySnapshot` / `TrayHandle` / `spawn` — контракт слоя | `IpcCommand`-протокол (`src/ipc/`), MPRIS-метаданные (`src/media/`), egui (`src/ui/`) |
+| Регистрация SNI-item, меню `com.canonical.dbusmenu`, pixmap иконки, поток-владелец, каналы снимков и команд | Решение, что означает команда (`Session::execute_tray_command`), состояние эфира, станции, темы, языка, окно |
+| `TrayCommand` / `TraySnapshot` / `TrayHandle` / `spawn` — контракт слоя | `IpcCommand`-протокол (`src/ipc/`), MPRIS-метаданные (`src/media/`), egui (`src/ui/`), каталог строк (`src/i18n/`) |
 
 Модуль не знает ни про egui, ни про `Station`: наружу идут только доменные
 типы-сообщения (`docs/interfaces/11-tray.md`). Обратная зависимость тоже
@@ -76,22 +77,24 @@
 | `Title`, `ToolTip.title` | `WINDOW_TITLE` = `OrbitFM` |
 | `Category` | `ApplicationStatus` |
 | `Status` | `Active`, если окно видно или идёт эфир |
-| `ToolTip.description` | `station` из снимка, иначе `"Nothing playing"` |
+| `ToolTip.description` | `station` из снимка, иначе `text.tray.nothing_playing` на языке снимка |
 | `IconPixmap` | `icon::ICONS` — 22/32/48, ARGB32 network byte order |
 | `IconThemePath` | первый существующий `.../icons/hicolor` (XDG_DATA_HOME, затем `/usr/share`), иначе пусто |
 | `Menu` | `/MenuBar`, собирается из снимка на каждое обновление |
-| Первый пункт меню | неактивная витрина: `Now playing: <station>`, `Paused: <station>` или `Nothing playing` — из `station` и `playing` |
+| Первый пункт меню | неактивная витрина: шаблон `text.tray.now_playing` или `text.tray.paused` с `{station}`, либо `text.tray.nothing_playing` — из `station`, `playing` и `language` |
 | `ItemIsMenu` | `false` (константа `MENU_ON_ACTIVATE` по умолчанию) — только тогда хост вызывает `Activate` |
 
 Иконка рисуется процедурно (диск планеты, наклонённое кольцо, точка эфира —
 пропорции `ui::widgets::logo_mark`) с 4× суперсэмплингом и src-over
 композицией слоёв. Новый бинарный ассет в репозиторий не добавлялся.
 
-Подписи меню — английский (конвенция UI-строк): Now playing / Paused / Nothing
-playing (неактивная первая строка) · Show/Hide window · Play/Pause · Stop ·
-Previous · Next · Radio Roulette · Volume Up/Down · System/Dark/Light · Quit.
-`theme_label` в `sni.rs` — своя функция, а не `ui::palette::theme_label`:
-presentation-слой модулю трея недоступен.
+Подписи меню — из `i18n::catalog` языка снимка, группа `text.tray` (ADR-0030);
+собственных UI-строк у `sni.rs` больше нет. Порядок пунктов: неактивная
+первая строка · разделитель · `show_window`/`hide_window` · разделитель ·
+`play_pause` (чекмарк) · `stop` · `previous` · `next` · `radio_roulette` ·
+разделитель · `volume_up` · `volume_down` · разделитель · радиогруппа тем ·
+разделитель · `settings` · `quit`. Подписи темы даёт `i18n::theme_label`:
+presentation-слой (`ui::palette`) модулю трея по-прежнему недоступен.
 
 ## 5. Ошибки и деградация
 
@@ -124,11 +127,12 @@ presentation-слой модулю трея недоступен.
 ## 7. Тестирование
 
 Unit-тесты покрывают контракт, не касаясь D-Bus: `mod.rs` — значения `Default`
-и сравнение снимков; `sni.rs` — `Status` по снимку, тултип, состав и состояние
-меню (чекбокс Play/Pause, выбранная тема), правило «одно действие = одна
-команда + одно пробуждение» и байтовый порядок пикселей; `icon.rs` — все
-размерности, alpha-first в ARGB32, непрозрачное ядро планеты и пустые углы,
-выход орбиты за диск, наличие точки эфира.
+(тема и язык) и сравнение снимков, где смена языка — тоже изменение; `sni.rs` —
+`Status` по снимку, тултип, состав и состояние меню (заголовок-витрина неактивна,
+чекмарк `play_pause`, выбранная тема), равенство всех подписей каталогу на каждом
+языке, правило «одно действие = одна команда + одно пробуждение» и байтовый
+порядок пикселей; `icon.rs` — все размерности, alpha-first в ARGB32, непрозрачное
+ядро планеты и пустые углы, выход орбиты за диск, наличие точки эфира.
 
 Живая проверка — ADR-0020, «Проверка реализации».
 
@@ -136,6 +140,9 @@ Unit-тесты покрывают контракт, не касаясь D-Bus: 
 
 - `docs/interfaces/11-tray.md` — формальный контракт модуля
 - ADR-0020 — протокол, зависимость, меню, иконка, деградация
+- ADR-0030 — каталог `text.tray` и язык снимка (заменяет English-only п. 5 ADR-0020)
+- ADR-0031 — drawer настроек, который открывает команда `Settings`
 - ADR-0018 — зачем трей нужен и куда впадают его команды
 - `docs/modules/11-session.md` § 4.13 — исполнение `TrayCommand` в Core
+- `docs/modules/13-i18n.md` — модуль каталога строк
 - `docs/modules/08-noctalia-wm.md` — Noctalia как SNI-хост и виджет

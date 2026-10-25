@@ -12,6 +12,8 @@ pub(crate) const HUD_HEIGHT: f32 = 58.0;
 /// Транспортная панель: контролы + громкость + 40 px визуализатора (ТЗ §3.3).
 pub(crate) const TRANSPORT_HEIGHT: f32 = 84.0;
 pub(crate) const PANEL_WIDTH: f32 = 312.0;
+/// Правый drawer настроек (ADR-0031): фиксированная ширина, clamp по viewport.
+pub(crate) const SETTINGS_WIDTH: f32 = 340.0;
 pub(crate) const HELP_SIZE: (f32, f32) = (216.0, 108.0);
 pub(crate) const LEGEND_SIZE: (f32, f32) = (190.0, 58.0);
 /// Нижняя зона капсулы Overlay с избранными станциями.
@@ -44,11 +46,14 @@ pub(crate) struct DeskLayout {
     pub hud: Option<egui::Rect>,
     pub panel: Option<egui::Rect>,
     pub transport: Option<egui::Rect>,
-    /// Карточка управления мышью: видима только по требованию (первый запуск или `?`).
+    /// Карточка управления мышью: видима только по требованию (первый запуск или
+    /// переключатель в настройках).
     pub help: Option<egui::Rect>,
     pub legend: Option<egui::Rect>,
     /// Нижняя зона капсулы Overlay: избранные станции.
     pub capsule: Option<egui::Rect>,
+    /// Правый drawer настроек: виден только когда открыт (ADR-0031).
+    pub settings: Option<egui::Rect>,
 }
 
 impl DeskLayout {
@@ -56,16 +61,17 @@ impl DeskLayout {
         viewport: egui::Rect,
         panel_open: bool,
         help_open: bool,
+        settings_open: bool,
         mode: WindowMode,
     ) -> Self {
         match LayoutDensity::for_mode(mode) {
-            LayoutDensity::Full => Self::full(viewport, panel_open, help_open),
-            LayoutDensity::Compact => Self::compact(viewport),
+            LayoutDensity::Full => Self::full(viewport, panel_open, help_open, settings_open),
+            LayoutDensity::Compact => Self::compact(viewport, settings_open),
             LayoutDensity::Minimal => Self::minimal(viewport),
         }
     }
 
-    fn full(viewport: egui::Rect, panel_open: bool, help_open: bool) -> Self {
+    fn full(viewport: egui::Rect, panel_open: bool, help_open: bool, settings_open: bool) -> Self {
         let hud_height = HUD_HEIGHT.min(viewport.height() * 0.22).max(48.0);
         let transport_height = TRANSPORT_HEIGHT.min(viewport.height() * 0.2).max(48.0);
 
@@ -121,11 +127,12 @@ impl DeskLayout {
             help,
             legend: Some(legend),
             capsule: None,
+            settings: settings_rect(viewport, settings_open),
         }
     }
 
     /// Капсула Overlay: станция сверху, мини-глобус в центре, избранные снизу.
-    fn compact(viewport: egui::Rect) -> Self {
+    fn compact(viewport: egui::Rect, settings_open: bool) -> Self {
         let hud_height = HUD_HEIGHT.min(viewport.height() * 0.22).max(48.0);
         let hud = inset(viewport, viewport.top() + MARGIN, hud_height);
         let capsule_height = (viewport.height() * CAPSULE_HEIGHT.0)
@@ -154,10 +161,12 @@ impl DeskLayout {
             help: None,
             legend: None,
             capsule: Some(capsule),
+            settings: settings_rect(viewport, settings_open),
         }
     }
 
-    /// Listening: единственная строка now-playing с пульсом.
+    /// Listening: единственная строка now-playing с пульсом. Drawer здесь не
+    /// помещается (ADR-0031): настройки открываются через Overlay.
     fn minimal(viewport: egui::Rect) -> Self {
         Self {
             density: LayoutDensity::Minimal,
@@ -172,6 +181,7 @@ impl DeskLayout {
             help: None,
             legend: None,
             capsule: None,
+            settings: None,
         }
     }
 
@@ -184,11 +194,35 @@ impl DeskLayout {
             self.panel,
             self.help,
             self.capsule,
+            self.settings,
         ]
         .into_iter()
         .flatten()
         .any(|zone| zone.contains(point))
     }
+
+    /// Отступ тоста от нижнего края окна: стек встаёт над занятой нижней зоной
+    /// текущей плотности, поэтому в Focus он не режет transport, а в Overlay —
+    /// избранное (ADR-0032 §4). В Listening нижней зоны нет — только поле.
+    pub(crate) fn toast_offset(&self, viewport: egui::Rect) -> f32 {
+        let bottom_zone = match self.density {
+            LayoutDensity::Full => self.transport,
+            LayoutDensity::Compact => self.capsule,
+            LayoutDensity::Minimal => None,
+        };
+        bottom_zone.map_or(MARGIN, |zone| viewport.bottom() - zone.top() + GAP)
+    }
+}
+
+/// Зона drawer'а: правая колонна на всю высоту между полями.
+fn settings_rect(viewport: egui::Rect, settings_open: bool) -> Option<egui::Rect> {
+    settings_open.then(|| {
+        let width = SETTINGS_WIDTH.min(viewport.width() - 2.0 * MARGIN);
+        egui::Rect::from_min_size(
+            egui::pos2(viewport.right() - MARGIN - width, viewport.top() + MARGIN),
+            egui::vec2(width, (viewport.height() - 2.0 * MARGIN).max(1.0)),
+        )
+    })
 }
 
 fn inset(viewport: egui::Rect, top: f32, height: f32) -> egui::Rect {
@@ -207,7 +241,7 @@ mod tests {
     }
 
     fn focus(panel_open: bool, help_open: bool) -> DeskLayout {
-        DeskLayout::compute(viewport(), panel_open, help_open, WindowMode::Focus)
+        DeskLayout::compute(viewport(), panel_open, help_open, false, WindowMode::Focus)
     }
 
     #[test]
@@ -259,7 +293,7 @@ mod tests {
     #[test]
     fn narrow_window_clamps_floating_zones() {
         let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(760.0, 500.0));
-        let layout = DeskLayout::compute(viewport, true, true, WindowMode::Focus);
+        let layout = DeskLayout::compute(viewport, true, true, false, WindowMode::Focus);
         let panel = layout.panel.expect("панель открыта");
         assert!(panel.left() >= viewport.left() + MARGIN - 0.5);
         assert!(panel.right() <= viewport.right() - MARGIN + 0.5);
@@ -270,7 +304,7 @@ mod tests {
     #[test]
     fn overlay_is_a_three_zone_capsule() {
         let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(420.0, 620.0));
-        let layout = DeskLayout::compute(viewport, true, true, WindowMode::Overlay);
+        let layout = DeskLayout::compute(viewport, true, true, false, WindowMode::Overlay);
         assert_eq!(layout.density, LayoutDensity::Compact);
         assert!(layout.panel.is_none());
         assert!(layout.transport.is_none());
@@ -291,7 +325,7 @@ mod tests {
     #[test]
     fn listening_is_a_single_row() {
         let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(420.0, 152.0));
-        let layout = DeskLayout::compute(viewport, true, true, WindowMode::Listening);
+        let layout = DeskLayout::compute(viewport, true, true, false, WindowMode::Listening);
         assert_eq!(layout.density, LayoutDensity::Minimal);
         assert!(layout.globe.is_none());
         assert!(layout.panel.is_none());
@@ -302,6 +336,66 @@ mod tests {
         assert_eq!(row.width(), viewport.width() - 2.0 * MARGIN);
         assert_eq!(row.height(), viewport.height() - 2.0 * MARGIN);
         assert!(layout.blocks_point(row.center()));
+    }
+
+    #[test]
+    fn open_settings_drawer_blocks_its_column() {
+        let layout = DeskLayout::compute(viewport(), true, false, true, WindowMode::Focus);
+        let drawer = layout.settings.expect("drawer открыт");
+        assert_eq!(drawer.width(), SETTINGS_WIDTH);
+        assert!(drawer.right() <= viewport().right() - MARGIN + 0.5);
+        assert!(drawer.top() >= viewport().top() + MARGIN - 0.5);
+        assert!(drawer.bottom() <= viewport().bottom() - MARGIN + 0.5);
+        assert!(layout.blocks_point(drawer.center()));
+    }
+
+    #[test]
+    fn closed_settings_drawer_does_not_block_anything() {
+        // Панель списка закрыта: иначе правая колонна занята ею, а не drawer'ом.
+        let layout = DeskLayout::compute(viewport(), false, false, false, WindowMode::Focus);
+        assert!(layout.settings.is_none());
+        let drawer_point = egui::pos2(1280.0 - SETTINGS_WIDTH / 2.0, 400.0);
+        assert!(!layout.blocks_point(drawer_point));
+    }
+
+    /// Якорь стека тостов зависит от плотности: над занятой нижней зоной, а не
+    /// на постоянном отступе (ADR-0032 §4).
+    #[test]
+    fn toast_anchor_clears_the_bottom_zone_of_its_density() {
+        let rect = viewport();
+        let layout = focus(false, false);
+        let transport = layout.transport.expect("transport есть");
+        assert_eq!(
+            layout.toast_offset(rect),
+            rect.bottom() - transport.top() + GAP
+        );
+
+        let overlay = DeskLayout::compute(rect, false, false, false, WindowMode::Overlay);
+        let capsule = overlay.capsule.expect("капсула есть");
+        assert_eq!(
+            overlay.toast_offset(rect),
+            rect.bottom() - capsule.top() + GAP
+        );
+
+        // Listening: нижней зоны нет, остаётся только поле окна.
+        let listening = DeskLayout::compute(rect, false, false, false, WindowMode::Listening);
+        assert_eq!(listening.toast_offset(rect), MARGIN);
+    }
+
+    #[test]
+    fn drawer_clamps_width_on_a_narrow_viewport() {
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(360.0, 480.0));
+        let layout = DeskLayout::compute(viewport, false, false, true, WindowMode::Overlay);
+        let drawer = layout.settings.expect("drawer в Overlay");
+        assert_eq!(drawer.width(), viewport.width() - 2.0 * MARGIN);
+        assert!(layout.blocks_point(drawer.center()));
+    }
+
+    #[test]
+    fn listening_has_no_drawer_zone() {
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(420.0, 152.0));
+        let layout = DeskLayout::compute(viewport, false, false, true, WindowMode::Listening);
+        assert!(layout.settings.is_none(), "в Listening drawer не рисуется");
     }
 
     #[test]

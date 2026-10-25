@@ -9,6 +9,7 @@
 
 pub(crate) mod commands;
 pub(crate) mod markers;
+pub(crate) mod notice;
 pub(crate) mod park;
 pub(crate) mod playback;
 pub(crate) mod search;
@@ -27,13 +28,15 @@ use crate::library::StationLibrary;
 use crate::media::MediaControls;
 use crate::render::GlobeCamera;
 use crate::services::{RadioBrowserClient, Station};
-use crate::settings::{MotionReactivity, SettingsStore};
+use crate::settings::{Language, MotionReactivity, SettingsStore};
 use crate::tray::{TrayHandle, TraySnapshot};
 use crate::ui::single_line;
 use crate::ui::station_filter::CountryFilterState;
 
 use markers::GlobeMarker;
+pub(crate) use notice::{Notice, NoticeKey};
 pub(crate) use park::ParkOutcome;
+pub(crate) use playback::StationStartError;
 use search::SearchState;
 pub(crate) use window::{UiIntent, WINDOW_TITLE, WindowMode, WindowState};
 
@@ -47,13 +50,6 @@ pub(crate) enum LibraryTab {
     Results,
     Favorites,
     History,
-}
-
-/// Сообщение для пользователя. Как его показать, решает UI (обычно тостом).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Notice {
-    Info(String),
-    Error(String),
 }
 
 /// Разделяемое с фоновыми задачами пробуждение GUI-цикла.
@@ -126,6 +122,8 @@ pub(crate) struct Session {
     pub(crate) visualizer_enabled: bool,
     /// Идёт ли аудио-анализ сейчас: визуализатор или движение глобуса.
     pub(crate) spectrum_enabled: bool,
+    /// Разрешённый язык интерфейса: `System` из настроек уже развёрнут (ADR-0030).
+    pub(crate) language: Language,
     pub(crate) current_url: Option<String>,
     pub(crate) current_station: Option<Station>,
     pub(crate) search: SearchState,
@@ -133,6 +131,10 @@ pub(crate) struct Session {
     pub(crate) library_tab: LibraryTab,
     pub(crate) country_filter: CountryFilterState,
     pub(crate) panel_open: bool,
+    /// Открыт ли правый drawer настроек (ADR-0031).
+    pub(crate) settings_open: bool,
+    /// Громкость, изменённая перетаскиванием, но ещё не записанная на диск.
+    pub(crate) pending_volume: Option<f64>,
     pub(crate) show_help: bool,
     pub(crate) window: WindowState,
     pub(crate) notices: VecDeque<Notice>,
@@ -149,7 +151,7 @@ impl Session {
         services: AppServices,
     ) -> Self {
         let AppServices {
-            audio,
+            mut audio,
             geo,
             radio,
             media,
@@ -158,10 +160,15 @@ impl Session {
             settings,
             runtime,
         } = services;
+        let stored = settings.settings();
+        if let Err(err) = runtime.block_on(audio.set_volume(stored.volume)) {
+            tracing::warn!(error = %err, "не удалось восстановить громкость из настроек");
+        }
         let audio_events = audio.subscribe();
-        let visualizer_enabled = audio.spectrum_enabled();
-        let spectrum_enabled = visualizer_enabled;
-        let show_help = !settings.settings().help_seen;
+        let visualizer_enabled = stored.visualizer_enabled;
+        let spectrum_enabled = audio.spectrum_enabled();
+        let language = stored.language.resolve();
+        let show_help = !stored.help_seen;
         Self {
             audio,
             audio_events,
@@ -177,6 +184,7 @@ impl Session {
             globe_camera: GlobeCamera::default(),
             visualizer_enabled,
             spectrum_enabled,
+            language,
             current_url: None,
             current_station: None,
             search: SearchState::default(),
@@ -184,6 +192,8 @@ impl Session {
             library_tab: LibraryTab::default(),
             country_filter: CountryFilterState::default(),
             panel_open: true,
+            settings_open: false,
+            pending_volume: None,
             show_help,
             window: WindowState::shown(),
             notices: VecDeque::new(),
@@ -213,12 +223,49 @@ impl Session {
         std::mem::take(&mut self.notices)
     }
 
-    pub(crate) fn notify_info(&mut self, message: impl Into<String>) {
-        self.notices.push_back(Notice::Info(message.into()));
+    pub(crate) fn notify_info(&mut self, key: NoticeKey) {
+        self.notices.push_back(Notice::Info(key));
     }
 
-    pub(crate) fn notify_error(&mut self, message: impl Into<String>) {
-        self.notices.push_back(Notice::Error(message.into()));
+    pub(crate) fn notify_error(&mut self, key: NoticeKey) {
+        self.notices.push_back(Notice::Error { key, detail: None });
+    }
+
+    /// Ошибка с технической подробностью: `detail` не переводится (ADR-0030).
+    pub(crate) fn notify_error_detail(&mut self, key: NoticeKey, detail: impl Into<String>) {
+        self.notices.push_back(Notice::Error {
+            key,
+            detail: Some(detail.into()),
+        });
+    }
+
+    /// Язык, на котором UI рисует строки. `language` уже разрешён при старте
+    /// и при каждой смене настройки, поэтому `System` здесь не встречается.
+    pub(crate) fn effective_language(&self) -> Language {
+        self.language
+    }
+
+    /// Открывает drawer настроек; в Listening его нет (ADR-0031).
+    pub(crate) fn open_settings(&mut self) {
+        if self.window.mode == WindowMode::Listening {
+            self.set_window_mode(WindowMode::Overlay);
+        }
+        self.settings_open = true;
+        if !self.window.visible {
+            self.show();
+        }
+    }
+
+    pub(crate) fn close_settings(&mut self) {
+        self.settings_open = false;
+    }
+
+    pub(crate) fn toggle_settings(&mut self) {
+        if self.settings_open {
+            self.close_settings();
+        } else {
+            self.open_settings();
+        }
     }
 
     /// Показ окна: `launch` вызывает перед каждым прогоном UI.
@@ -230,6 +277,7 @@ impl Session {
     pub(crate) fn end_window(&mut self) {
         self.window.end();
         self.wake.clear();
+        self.flush_pending_volume();
         self.sync_media();
         self.sync_tray();
     }

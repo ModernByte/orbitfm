@@ -4,8 +4,20 @@ use eframe::egui;
 
 use crate::settings::{AccentColor, Settings, ThemeMode};
 
+/// `Style::animation_time` по умолчанию в egui 0.37.
+const EGUI_ANIMATION_TIME: f32 = 0.2;
+
 pub(crate) fn configure_style(ctx: &egui::Context, settings: Settings) {
     ctx.set_theme(theme_preference(settings.theme));
+    // Reduce motion — мастер-выключатель не только нашей геометрии, но и
+    // собственных переходов egui (ADR-0032).
+    ctx.all_styles_mut(|style| {
+        style.animation_time = if settings.reduce_motion {
+            0.0
+        } else {
+            EGUI_ANIMATION_TIME
+        };
+    });
 
     let accent = accent_color(settings.accent);
     let selection_text = contrast_text(accent);
@@ -31,25 +43,6 @@ pub(crate) fn theme_preference(mode: ThemeMode) -> egui::ThemePreference {
         ThemeMode::System => egui::ThemePreference::System,
         ThemeMode::Dark => egui::ThemePreference::Dark,
         ThemeMode::Light => egui::ThemePreference::Light,
-    }
-}
-
-pub(crate) fn theme_label(mode: ThemeMode) -> &'static str {
-    match mode {
-        ThemeMode::System => "System",
-        ThemeMode::Dark => "Dark",
-        ThemeMode::Light => "Light",
-    }
-}
-
-pub(crate) fn accent_label(accent: AccentColor) -> &'static str {
-    match accent {
-        AccentColor::Blue => "Orbit",
-        AccentColor::Green => "Emerald",
-        AccentColor::Amber => "Amber",
-        AccentColor::Violet => "Violet",
-        AccentColor::Rose => "Rose",
-        AccentColor::Cyan => "Ocean",
     }
 }
 

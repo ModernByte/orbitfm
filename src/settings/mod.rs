@@ -8,6 +8,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+pub mod language;
+
+pub use language::Language;
+
 const CONFIG_DIR: &str = "orbitfm";
 const FILE_NAME: &str = "settings.json";
 const TMP_FILE_NAME: &str = "settings.json.tmp";
@@ -74,15 +78,6 @@ pub enum MotionReactivity {
 
 impl MotionReactivity {
     pub const ALL: [Self; 4] = [Self::Off, Self::Low, Self::Normal, Self::High];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Off => "Off",
-            Self::Low => "Low",
-            Self::Normal => "Normal",
-            Self::High => "High",
-        }
-    }
 
     pub fn is_enabled(self) -> bool {
         self != Self::Off
@@ -157,18 +152,6 @@ impl MotionStyle {
         Self::BeatMarch,
     ];
 
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Auto => "Auto",
-            Self::SoftPulse => "Soft Pulse",
-            Self::GrooveSway => "Groove Sway",
-            Self::BassDrop => "Bass Drop",
-            Self::AmbientDrift => "Ambient Drift",
-            Self::SparkleTwitch => "Sparkle Twitch",
-            Self::BeatMarch => "Beat March",
-        }
-    }
-
     /// Номер стиля для `CameraUniform.motion2.y`; Auto — 0.
     pub fn id(self) -> f32 {
         match self {
@@ -188,14 +171,21 @@ impl MotionStyle {
     }
 }
 
-/// Настройки оформления.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Настройки оформления и поведения.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub theme: ThemeMode,
     pub accent: AccentColor,
+    /// Язык интерфейса; `System` разрешается при запуске (ADR-0030).
+    #[serde(deserialize_with = "language::deserialize_language")]
+    pub language: Language,
     /// Число столбцов визуализатора: 16, 24 или 32 (ADR-0019).
     pub viz_bars: u8,
+    /// Громкость 0.0..=1.0; сохраняется на отпускании слайдера (ADR-0031).
+    pub volume: f64,
+    /// Видимость визуализатора и аудиокольца (ADR-0031).
+    pub visualizer_enabled: bool,
     /// Карточка управления уже показывалась — дальше она только по `?`.
     pub help_seen: bool,
     /// Реактивность аудио-движения глобуса (ADR-0028).
@@ -212,13 +202,18 @@ pub struct Settings {
 pub const VIZ_BAR_CHOICES: [u8; 3] = [16, 24, 32];
 /// Значение по умолчанию (ТЗ: 24 столбца).
 pub const DEFAULT_VIZ_BARS: u8 = 24;
+/// Стартовая громкость: mpv по умолчанию звучит громче, чем нужно ночью.
+pub const DEFAULT_VOLUME: f64 = 0.7;
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
             theme: ThemeMode::System,
             accent: AccentColor::Blue,
+            language: Language::System,
             viz_bars: DEFAULT_VIZ_BARS,
+            volume: DEFAULT_VOLUME,
+            visualizer_enabled: true,
             help_seen: false,
             motion: MotionReactivity::Normal,
             motion_style: MotionStyle::Auto,
@@ -261,6 +256,7 @@ impl SettingsStore {
             Err(err) => return Err(SettingsError::Read(format!("{}: {err}", path.display()))),
         };
         settings.viz_bars = nearest_viz_bars(settings.viz_bars);
+        settings.volume = sanitized_volume(settings.volume);
         Ok(Self {
             path: Some(path),
             settings,
@@ -304,12 +300,37 @@ impl SettingsStore {
         self.save()
     }
 
+    pub fn set_language(&mut self, language: Language) -> Result<(), SettingsError> {
+        if self.settings.language == language {
+            return Ok(());
+        }
+        self.settings.language = language;
+        self.save()
+    }
+
     pub fn set_viz_bars(&mut self, bars: u8) -> Result<(), SettingsError> {
         let bars = nearest_viz_bars(bars);
         if self.settings.viz_bars == bars {
             return Ok(());
         }
         self.settings.viz_bars = bars;
+        self.save()
+    }
+
+    pub fn set_volume(&mut self, volume: f64) -> Result<(), SettingsError> {
+        let volume = sanitized_volume(volume);
+        if (self.settings.volume - volume).abs() < f64::EPSILON {
+            return Ok(());
+        }
+        self.settings.volume = volume;
+        self.save()
+    }
+
+    pub fn set_visualizer_enabled(&mut self, enabled: bool) -> Result<(), SettingsError> {
+        if self.settings.visualizer_enabled == enabled {
+            return Ok(());
+        }
+        self.settings.visualizer_enabled = enabled;
         self.save()
     }
 
@@ -372,6 +393,14 @@ impl SettingsStore {
             let _ = fs::remove_file(&tmp);
             SettingsError::Write(format!("{}: {err}", path.display()))
         })
+    }
+}
+
+fn sanitized_volume(volume: f64) -> f64 {
+    if volume.is_finite() {
+        volume.clamp(0.0, 1.0)
+    } else {
+        DEFAULT_VOLUME
     }
 }
 
@@ -461,12 +490,65 @@ mod tests {
         let store = SettingsStore::load(path).unwrap();
         assert_eq!(store.settings().theme, ThemeMode::Dark);
         assert_eq!(store.settings().accent, AccentColor::Blue);
+        assert_eq!(store.settings().language, Language::System);
         assert_eq!(store.settings().viz_bars, DEFAULT_VIZ_BARS);
+        assert!((store.settings().volume - DEFAULT_VOLUME).abs() < f64::EPSILON);
+        assert!(store.settings().visualizer_enabled);
         assert!(!store.settings().help_seen);
         assert_eq!(store.settings().motion, MotionReactivity::Normal);
         assert_eq!(store.settings().motion_style, MotionStyle::Auto);
         assert!(!store.settings().allow_flips);
         assert!(!store.settings().reduce_motion);
+    }
+
+    #[test]
+    fn roundtrip_persists_language_volume_and_visualizer() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        {
+            let mut store = SettingsStore::load(path.clone()).unwrap();
+            store.set_language(Language::Japanese).unwrap();
+            store.set_volume(0.42).unwrap();
+            store.set_visualizer_enabled(false).unwrap();
+        }
+
+        let store = SettingsStore::load(path).unwrap();
+        assert_eq!(store.settings().language, Language::Japanese);
+        assert!((store.settings().volume - 0.42).abs() < f64::EPSILON);
+        assert!(!store.settings().visualizer_enabled);
+    }
+
+    #[test]
+    fn unknown_language_code_falls_back_without_touching_other_fields() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        fs::write(
+            &path,
+            br#"{"theme":"light","language":"klingon","volume":0.3}"#,
+        )
+        .unwrap();
+
+        let store = SettingsStore::load(path).unwrap();
+        assert_eq!(store.settings().theme, ThemeMode::Light);
+        assert_eq!(store.settings().language, Language::System);
+        assert!((store.settings().volume - 0.3).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn invalid_volume_is_sanitized_on_load_and_write() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        fs::write(&path, br#"{"volume":7.5}"#).unwrap();
+        assert!(
+            (SettingsStore::load(path.clone()).unwrap().settings().volume - 1.0).abs()
+                < f64::EPSILON
+        );
+
+        let mut store = SettingsStore::ephemeral();
+        store.set_volume(f64::NAN).unwrap();
+        assert!((store.settings().volume - DEFAULT_VOLUME).abs() < f64::EPSILON);
+        store.set_volume(-3.0).unwrap();
+        assert!(store.settings().volume.abs() < f64::EPSILON);
     }
 
     #[test]
@@ -501,12 +583,11 @@ mod tests {
     }
 
     #[test]
-    fn motion_styles_have_ids_labels_and_band_requirements() {
+    fn motion_styles_have_ids_and_band_requirements() {
         assert_eq!(MotionStyle::ALL.len(), 7);
         assert_eq!(MotionStyle::Auto.id(), 0.0);
         assert_eq!(MotionStyle::SoftPulse.id(), 1.0);
         assert_eq!(MotionStyle::BeatMarch.id(), 6.0);
-        assert_eq!(MotionStyle::BassDrop.label(), "Bass Drop");
         assert!(MotionStyle::BassDrop.requires_bands());
         assert!(MotionStyle::SparkleTwitch.requires_bands());
         assert!(MotionStyle::BeatMarch.requires_bands());
