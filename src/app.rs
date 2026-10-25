@@ -17,14 +17,15 @@ use crate::render::{
 };
 use crate::services::USER_AGENT;
 use crate::session::search::SearchMode;
-use crate::session::{Notice, NoticeKey, Session, StationStartError, UiIntent};
-use crate::settings::{MotionReactivity, MotionStyle, Settings};
+use crate::session::{Notice, NoticeKey, Session, StationStartError, UiIntent, WindowMode};
+use crate::settings::{Language, MotionReactivity, MotionStyle, Settings};
 use crate::ui::UiAction;
 use crate::ui::globe_view::{self, CalloutState, GlobeState};
 use crate::ui::images::{FaviconCache, MAX_FAVICON_BYTES, decode_favicon};
 use crate::ui::layout::{DeskLayout, LayoutDensity};
 use crate::ui::orbit_ring::OrbitRing;
 use crate::ui::palette::{self, Palette};
+use crate::ui::settings_panel::{self, SettingsState};
 use crate::ui::toast::Toast;
 use crate::ui::transport::{self, TransportState};
 use crate::ui::{capsule, hud, overlays, station_panel, widgets};
@@ -52,6 +53,8 @@ const GLASS_RADIUS_MAJOR: f32 = 16.0;
 const GLASS_RADIUS_MINOR: f32 = 14.0;
 /// Толщина обводки стеклянной панели.
 const GLASS_BORDER: f32 = 1.0;
+/// Затемнение стола под открытым drawer настроек (ADR-0031).
+const SCRIM_ALPHA: u8 = 90;
 
 /// Строка тоста для ключа сообщения ядра: `detail` остаётся технической
 /// вставкой и не переводится (ADR-0030).
@@ -333,7 +336,6 @@ impl<'a> OrbitApp<'a> {
 
         match density {
             LayoutDensity::Full => {
-                let window_mode = session.window_mode();
                 if let Some(hud_rect) = layout.hud {
                     widgets::glass_panel(
                         ui.painter(),
@@ -358,10 +360,8 @@ impl<'a> OrbitApp<'a> {
                                     now_playing: session.current_station.as_ref(),
                                     favicons,
                                     playback: &frame.playback,
-                                    settings: frame.settings,
                                     panel_open: session.panel_open,
                                     help_open: session.show_help,
-                                    window_mode,
                                 },
                             )
                         })
@@ -549,6 +549,8 @@ impl<'a> OrbitApp<'a> {
             }
         }
 
+        actions.extend(draw_settings(ui, frame));
+
         if frame.motion_reactivity.is_enabled() {
             // Активный эфир — 30 fps; idle-дыханию хватает 15 fps.
             let cadence = if motion.intensity > 0.01 || session.globe_camera.is_flipping() {
@@ -645,8 +647,13 @@ impl<'a> OrbitApp<'a> {
                 let bars = self.session.settings.settings().viz_bars;
                 self.visualizer = VisualizerModel::new(usize::from(bars));
             }
-            UiAction::SetVolume(volume) => {
-                if let Err(err) = self.session.set_volume(volume) {
+            UiAction::PreviewVolume(volume) => {
+                if let Err(err) = self.session.preview_volume(volume) {
+                    self.error_toast(ctx, NoticeKey::VolumeNotSaved, Some(err));
+                }
+            }
+            UiAction::CommitVolume(volume) => {
+                if let Err(err) = self.session.commit_volume(volume) {
                     self.error_toast(ctx, NoticeKey::VolumeNotSaved, Some(err));
                 }
             }
@@ -668,7 +675,15 @@ impl<'a> OrbitApp<'a> {
                 self.session.show_help = !self.session.show_help;
                 self.session.mark_help_seen();
             }
-            UiAction::SetWindowMode(mode) => self.session.set_window_mode(mode),
+            UiAction::ToggleSettings => self.session.toggle_settings(),
+            UiAction::CloseSettings => self.session.close_settings(),
+            UiAction::SetWindowMode(mode) => {
+                self.session.set_window_mode(mode);
+                // В Listening drawer не помещается: выбор режима закрывает его.
+                if mode == WindowMode::Listening {
+                    self.session.close_settings();
+                }
+            }
         }
         ctx.request_repaint();
     }
@@ -697,6 +712,12 @@ struct Frame {
     /// Клик по сфере выбирает страну только в режиме страны (ТЗ §5.2).
     country_mode: bool,
     layout: DeskLayout,
+    /// Разрешённый язык: из него drawer берёт подписи (ADR-0030).
+    language: Language,
+    window_mode: WindowMode,
+    show_help: bool,
+    /// Всё окно: по нему рисуется затемнение под drawer.
+    viewport: egui::Rect,
 }
 
 impl Frame {
@@ -746,16 +767,82 @@ impl Frame {
                 .is_some_and(|station| session.library.is_favorite(&station.stationuuid)),
             can_resume: session.current_url.is_some(),
             country_mode: session.search.context.mode == SearchMode::Country,
+            language: session.effective_language(),
+            window_mode: session.window_mode(),
+            show_help: session.show_help,
+            viewport,
             layout: DeskLayout::compute(
                 viewport,
                 session.panel_open,
                 session.show_help,
+                session.settings_open,
                 session.window_mode(),
             ),
             playback,
             spectrum_target,
         }
     }
+}
+
+/// Скрим + drawer настроек поверх всех зон (ADR-0031).
+///
+/// Layer `Foreground`: затемнение перехватывает клики и scroll стола, а drawer
+/// как аллоцирован позже — забирает ввод у скрима. Закрытием считаются клик по
+/// скриму и Escape, который обрабатывает [`eframe::App::logic`].
+fn draw_settings(ui: &mut egui::Ui, frame: &Frame) -> Vec<UiAction> {
+    let Some(drawer_rect) = frame.layout.settings else {
+        return Vec::new();
+    };
+    let palette = &frame.palette;
+    let mut volume = frame.volume;
+    let mut actions = Vec::new();
+
+    egui::Area::new(egui::Id::unique("orbitfm_settings_scrim"))
+        .fixed_pos(frame.viewport.min)
+        .default_size(frame.viewport.size())
+        .order(egui::Order::Foreground)
+        .show(ui.ctx(), |ui| {
+            let (rect, response) =
+                ui.allocate_exact_size(frame.viewport.size(), egui::Sense::click());
+            let dim = if matches!(ui.ctx().theme(), egui::Theme::Dark) {
+                egui::Color32::from_black_alpha(SCRIM_ALPHA)
+            } else {
+                egui::Color32::from_white_alpha(SCRIM_ALPHA)
+            };
+            ui.painter().rect_filled(rect, 0.0, dim);
+            if response.clicked() {
+                actions.push(UiAction::CloseSettings);
+            }
+        });
+
+    egui::Area::new(egui::Id::unique("orbitfm_settings_drawer"))
+        .fixed_pos(drawer_rect.min)
+        .default_size(drawer_rect.size())
+        .order(egui::Order::Foreground)
+        .show(ui.ctx(), |ui| {
+            widgets::glass_panel(
+                ui.painter(),
+                drawer_rect,
+                palette,
+                GLASS_RADIUS_MAJOR,
+                GLASS_BORDER,
+            );
+            ui.set_min_size(drawer_rect.size());
+            ui.set_max_size(drawer_rect.size());
+            actions.extend(settings_panel::show(
+                ui,
+                palette,
+                SettingsState {
+                    settings: frame.settings,
+                    language: frame.language,
+                    window_mode: frame.window_mode,
+                    volume: &mut volume,
+                    show_help: frame.show_help,
+                },
+            ));
+        });
+
+    actions
 }
 
 /// Макет зоны: содержимое слева направо по центру.
@@ -820,9 +907,19 @@ impl eframe::App for OrbitApp<'_> {
             None => {}
         }
 
-        if self.session.show_help && ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
-            self.session.show_help = false;
-            self.session.mark_help_seen();
+        // Escape сначала снимает самый верхний модальный слой: drawer, затем help.
+        if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+            if self.session.settings_open {
+                self.session.close_settings();
+            } else if self.session.show_help {
+                self.session.show_help = false;
+                self.session.mark_help_seen();
+            }
+        }
+
+        // Ctrl+, — стандартный горячий вызов настроек (ADR-0031).
+        if ctx.input(|input| input.modifiers.command && input.key_pressed(egui::Key::Comma)) {
+            self.session.toggle_settings();
         }
 
         if self.session.visualizer_enabled

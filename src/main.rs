@@ -30,6 +30,9 @@ use session::{AppServices, ParkOutcome, Session, WINDOW_TITLE, WakeHandle, Windo
 use settings::SettingsStore;
 
 const APP_ID: &str = "org.modernbyte.OrbitFM";
+/// Секция About в drawer настроек (ADR-0031): версия и лицензия из манифеста.
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+const APP_LICENSE: &str = env!("CARGO_PKG_LICENSE");
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 const RETRY_ATTEMPTS: usize = 5;
 const RETRY_DELAY: Duration = Duration::from_millis(50);

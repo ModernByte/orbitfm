@@ -148,10 +148,9 @@ impl Language {
 
 /// Первая непустая локаль из цепочки; неизвестная или пустая — английский.
 fn resolve_tag(tag: Option<&str>) -> Option<Language> {
-    match tag.map(str::trim).filter(|tag| !tag.is_empty()) {
-        Some(tag) => Some(Language::from_tag(tag).unwrap_or(Language::English)),
-        None => None,
-    }
+    tag.map(str::trim)
+        .filter(|tag| !tag.is_empty())
+        .map(|tag| Language::from_tag(tag).unwrap_or(Language::English))
 }
 
 /// Неизвестный код в файле настроек не должен стоить остальных настроек.

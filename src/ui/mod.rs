@@ -13,6 +13,7 @@ pub(crate) mod mode_switch;
 pub(crate) mod orbit_ring;
 pub(crate) mod overlays;
 pub(crate) mod palette;
+pub(crate) mod settings_panel;
 pub(crate) mod station_filter;
 pub(crate) mod station_panel;
 pub(crate) mod station_row;
@@ -55,7 +56,10 @@ pub(crate) enum UiAction {
     SetAllowFlips(bool),
     /// Reduce motion: выключить геометрическое движение, оставив эфир.
     SetReduceMotion(bool),
-    SetVolume(f64),
+    /// Preview перетаскивания громкости: применять к аудио, не сохраняя (ADR-0031).
+    PreviewVolume(f64),
+    /// Завершение изменения громкости: сохранить (ADR-0031, commit-on-release).
+    CommitVolume(f64),
     TogglePlayback,
     Stop,
     /// Соседняя станция видимого списка: -1 — назад, +1 — вперёд, с wrap.
@@ -64,6 +68,10 @@ pub(crate) enum UiAction {
     Quit,
     TogglePanel,
     ToggleHelp,
+    /// Открыть/закрыть drawer настроек (ADR-0031).
+    ToggleSettings,
+    /// Закрыть drawer настроек: крестик, Escape, scrim.
+    CloseSettings,
     /// Смена режима окна Focus/Overlay/Listening (ADR-0021).
     SetWindowMode(WindowMode),
 }

@@ -211,8 +211,12 @@ pub(crate) fn show(
                     enabled = !enabled;
                     actions.push(UiAction::ToggleSpectrum(enabled));
                 }
-                if volume_slider(ui, palette, &mut volume) {
-                    actions.push(UiAction::SetVolume(volume));
+                let slider = volume_slider(ui, palette, &mut volume);
+                if slider.changed && !slider.committed {
+                    actions.push(UiAction::PreviewVolume(volume));
+                }
+                if slider.committed {
+                    actions.push(UiAction::CommitVolume(volume));
                 }
                 if ui.available_width() > SUMMARY_MIN_WIDTH {
                     ui.label(

@@ -8,11 +8,10 @@ mod catalog;
 mod en;
 mod labels;
 
+pub(crate) use catalog::{Catalog, LabelText};
 pub(crate) use labels::{accent_label, language_label, motion_label, style_label, theme_label};
 
 use crate::settings::Language;
-
-use catalog::Catalog;
 
 /// Каталог уже разрешённого языка. `System` и языки без перевода читают
 /// английский источник: пустого каталога UI не увидит никогда.

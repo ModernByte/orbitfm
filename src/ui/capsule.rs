@@ -9,7 +9,7 @@ use crate::audio::PlaybackState;
 use crate::services::Station;
 use crate::session::WindowMode;
 
-use super::icons::{close_button, expand_button, heart_button, stop_button};
+use super::icons::{close_button, expand_button, gear_button, heart_button, stop_button};
 use super::images::FaviconCache;
 use super::palette::Palette;
 use super::station_row::{RowContext, row_place, station_row};
@@ -139,8 +139,15 @@ pub(crate) fn overlay_top(
                 if expand_button(ui, "Open Focus layout").clicked() {
                     actions.push(UiAction::SetWindowMode(WindowMode::Focus));
                 }
-                if volume_slider_width(ui, palette, &mut volume, OVERLAY_VOLUME_WIDTH) {
-                    actions.push(UiAction::SetVolume(volume));
+                if gear_button(ui, "Settings").clicked() {
+                    actions.push(UiAction::ToggleSettings);
+                }
+                let slider = volume_slider_width(ui, palette, &mut volume, OVERLAY_VOLUME_WIDTH);
+                if slider.changed && !slider.committed {
+                    actions.push(UiAction::PreviewVolume(volume));
+                }
+                if slider.committed {
+                    actions.push(UiAction::CommitVolume(volume));
                 }
                 if stop_button(ui, !matches!(playback, PlaybackState::Stopped)).clicked() {
                     actions.push(UiAction::Stop);

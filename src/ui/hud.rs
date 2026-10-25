@@ -5,14 +5,11 @@ use eframe::egui;
 use crate::audio::PlaybackState;
 use crate::geo::GeoService;
 use crate::services::Station;
-use crate::session::WindowMode;
-use crate::settings::{
-    AccentColor, MotionReactivity, MotionStyle, Settings, ThemeMode, VIZ_BAR_CHOICES,
-};
+use crate::settings::ThemeMode;
 
 use super::icons::{close_button, gear_button, help_button, moon_button, panel_button};
 use super::images::FaviconCache;
-use super::palette::{Palette, accent_color, accent_label, theme_label};
+use super::palette::Palette;
 use super::widgets::{avatar, live_badge, logo_mark, search_field};
 use super::{
     SearchMode, UiAction, country_label, mode_switch, playback_label, single_line, truncate,
@@ -33,10 +30,8 @@ pub(crate) struct HudState<'a> {
     pub now_playing: Option<&'a Station>,
     pub favicons: &'a mut FaviconCache,
     pub playback: &'a PlaybackState,
-    pub settings: Settings,
     pub panel_open: bool,
     pub help_open: bool,
-    pub window_mode: WindowMode,
 }
 
 pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, mut state: HudState<'_>) -> Vec<UiAction> {
@@ -193,139 +188,12 @@ fn right_side(
         actions.push(UiAction::ToggleHelp);
     }
 
-    if !tight {
-        let mut menu_action: Option<UiAction> = None;
-        let gear = gear_button(ui, "Settings");
-        egui::Popup::menu(&gear)
-            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-            .show(|ui| {
-                egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    ui.set_min_width(220.0);
-                    ui.label(egui::RichText::new("Theme").strong().color(palette.text));
-                    for mode in ThemeMode::ALL {
-                        if ui
-                            .selectable_label(state.settings.theme == mode, theme_label(mode))
-                            .clicked()
-                            && state.settings.theme != mode
-                        {
-                            menu_action = Some(UiAction::SetTheme(mode));
-                            ui.close();
-                        }
-                    }
-                    ui.add_space(4.0);
-                    ui.label(egui::RichText::new("Accent").strong().color(palette.text));
-                    ui.horizontal_wrapped(|ui| {
-                        for accent in AccentColor::ALL {
-                            let selected = state.settings.accent == accent;
-                            let stroke = if selected {
-                                egui::Stroke::new(2.0, ui.visuals().strong_text_color())
-                            } else {
-                                egui::Stroke::new(1.0, palette.card_stroke)
-                            };
-                            let response = ui
-                                .add(
-                                    egui::Button::new("")
-                                        .fill(accent_color(accent))
-                                        .stroke(stroke)
-                                        .min_size(egui::vec2(24.0, 18.0)),
-                                )
-                                .on_hover_text(accent_label(accent));
-                            if response.clicked() && !selected {
-                                menu_action = Some(UiAction::SetAccent(accent));
-                                ui.close();
-                            }
-                        }
-                    });
-                    ui.add_space(4.0);
-                    ui.label(
-                        egui::RichText::new("Visualizer bars")
-                            .strong()
-                            .color(palette.text),
-                    );
-                    ui.horizontal_wrapped(|ui| {
-                        for bars in VIZ_BAR_CHOICES {
-                            let selected = state.settings.viz_bars == bars;
-                            if ui.selectable_label(selected, bars.to_string()).clicked()
-                                && !selected
-                            {
-                                menu_action = Some(UiAction::SetVizBars(bars));
-                                ui.close();
-                            }
-                        }
-                    });
-                    ui.add_space(4.0);
-                    ui.label(egui::RichText::new("Motion").strong().color(palette.text));
-                    ui.horizontal_wrapped(|ui| {
-                        for motion in MotionReactivity::ALL {
-                            let selected = state.settings.motion == motion;
-                            if ui.selectable_label(selected, motion.label()).clicked() && !selected
-                            {
-                                menu_action = Some(UiAction::SetMotion(motion));
-                                ui.close();
-                            }
-                        }
-                    });
-                    let mut reduce_motion = state.settings.reduce_motion;
-                    if ui
-                        .checkbox(&mut reduce_motion, "Reduce motion")
-                        .on_hover_text("Stop squash, ripple and camera sway")
-                        .changed()
-                    {
-                        menu_action = Some(UiAction::SetReduceMotion(reduce_motion));
-                    }
-                    let flips_available = state.settings.motion != MotionReactivity::Off
-                        && !state.settings.reduce_motion;
-                    let mut allow_flips = state.settings.allow_flips;
-                    ui.add_enabled_ui(flips_available, |ui| {
-                        if ui
-                            .checkbox(&mut allow_flips, "Allow flips")
-                            .on_hover_text("Roll the camera on strong beats after a pause")
-                            .changed()
-                        {
-                            menu_action = Some(UiAction::SetAllowFlips(allow_flips));
-                        }
-                    });
-                    ui.add_space(4.0);
-                    ui.label(
-                        egui::RichText::new("Motion style")
-                            .strong()
-                            .color(palette.text),
-                    );
-                    ui.horizontal_wrapped(|ui| {
-                        for style in MotionStyle::ALL {
-                            let selected = state.settings.motion_style == style;
-                            if ui.selectable_label(selected, style.label()).clicked() && !selected {
-                                menu_action = Some(UiAction::SetMotionStyle(style));
-                                ui.close();
-                            }
-                        }
-                    });
-                    ui.add_space(4.0);
-                    ui.label(egui::RichText::new("Window").strong().color(palette.text));
-                    ui.horizontal_wrapped(|ui| {
-                        for mode in WindowMode::ALL {
-                            let selected = state.window_mode == mode;
-                            if ui.selectable_label(selected, mode.label()).clicked() && !selected {
-                                menu_action = Some(UiAction::SetWindowMode(mode));
-                                ui.close();
-                            }
-                        }
-                    });
-                    ui.separator();
-                    if ui.button("Hide window").clicked() {
-                        menu_action = Some(UiAction::Hide);
-                        ui.close();
-                    }
-                    if ui.button("Quit").clicked() {
-                        menu_action = Some(UiAction::Quit);
-                        ui.close();
-                    }
-                });
-            });
-        if let Some(action) = menu_action {
-            actions.push(action);
-        }
+    // Шестерёка доступна и в узком окне: drawer — единственный вход в настройки.
+    if gear_button(ui, "Settings").clicked() {
+        actions.push(UiAction::ToggleSettings);
+    }
 
+    if !tight {
         let dark = matches!(ui.ctx().theme(), egui::Theme::Dark);
         if moon_button(ui, if dark { "Light theme" } else { "Dark theme" }).clicked() {
             actions.push(UiAction::SetTheme(if dark {

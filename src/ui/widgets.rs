@@ -421,8 +421,21 @@ pub(crate) fn viz_bars(
     );
 }
 
+/// Результат слайдера громкости: значение изменилось и/или изменение
+/// закоммичено (ADR-0031, commit-on-release). Пока идёт drag — только preview,
+/// запись в настройки происходит на отпускание, клик по треку или клавишу.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct SliderResponse {
+    pub(crate) changed: bool,
+    pub(crate) committed: bool,
+}
+
 /// Громкость: динамик + тонкий accent-трек с круглой ручкой.
-pub(crate) fn volume_slider(ui: &mut egui::Ui, palette: &Palette, volume: &mut f64) -> bool {
+pub(crate) fn volume_slider(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    volume: &mut f64,
+) -> SliderResponse {
     volume_slider_width(ui, palette, volume, 126.0)
 }
 
@@ -433,7 +446,7 @@ pub(crate) fn volume_slider_width(
     palette: &Palette,
     volume: &mut f64,
     width: f32,
-) -> bool {
+) -> SliderResponse {
     let (rect, response) =
         ui.allocate_exact_size(Vec2::new(width, 18.0), egui::Sense::click_and_drag());
     focus_ring(ui, &response, rect, 9.0);
@@ -511,7 +524,11 @@ pub(crate) fn volume_slider_width(
         changed |= *volume != previous;
     }
     response.widget_info(|| egui::WidgetInfo::slider(true, *volume, "Volume"));
-    changed
+    // Коммит — отпускание drag, клик или клавиша: всё, что не «продолжающийся
+    // drag» (ADR-0031). На кадрe отпускания changed может быть false (значение
+    // не двинулось), но drag_stopped всё равно закрывает pending.
+    let committed = response.drag_stopped() || (changed && !response.dragged());
+    SliderResponse { changed, committed }
 }
 
 /// Большая круглая play/pause с accent-кольцом.

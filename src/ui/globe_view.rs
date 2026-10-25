@@ -211,18 +211,28 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
         .hover_pos()
         .filter(|position| !state.layout.blocks_point(*position));
 
+    // Жёсткий фильтр по точке нажатия, а не по текущему курсору: жест, начатый
+    // над панелью или при открытом drawer, не должен вращать глобус (ADR-0031).
+    let press_blocked = ui.input(|input| {
+        input
+            .pointer
+            .press_origin()
+            .is_some_and(|origin| state.layout.blocks_point(origin))
+    });
+    let modal = state.layout.settings.is_some();
+
     let mut input = GlobeInput::default();
-    if sense.dragged_by(egui::PointerButton::Secondary) {
+    if sense.dragged_by(egui::PointerButton::Secondary) && !press_blocked && !modal {
         input.drag_delta = ui.input(|input| input.pointer.delta());
     }
-    if hover_pos.is_some() {
+    if hover_pos.is_some() && !modal {
         input.scroll_delta = ui.input(|input| input.smooth_scroll_delta.y);
     }
     if let Some(position) = sense
         .clicked_by(egui::PointerButton::Primary)
         .then(|| sense.interact_pointer_pos())
         .flatten()
-        .filter(|position| !state.layout.blocks_point(*position))
+        .filter(|position| !modal && !state.layout.blocks_point(*position))
     {
         input.primary_clicked = Some(position);
     }
