@@ -113,6 +113,7 @@ mod tests {
                 next_station,
                 live,
                 quit,
+                retry,
             }
         );
         assert_group_non_empty!(
@@ -142,10 +143,11 @@ mod tests {
                 no_stations,
                 intro,
                 results,
-                results_count,
+                favorites,
+                history,
+                station_count,
+                search_failed,
                 results_of,
-                favorites_count,
-                history_count,
                 pick_country_or_genre,
                 quiet_sector,
                 no_filter_match,

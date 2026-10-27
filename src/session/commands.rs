@@ -16,6 +16,7 @@ impl From<WindowModeArg> for WindowMode {
             WindowModeArg::Focus => Self::Focus,
             WindowModeArg::Overlay => Self::Overlay,
             WindowModeArg::Listening => Self::Listening,
+            WindowModeArg::Panel => Self::Panel,
         }
     }
 }
@@ -49,6 +50,10 @@ impl super::Session {
             IpcCommand::ModeQuery => format!("mode {}", self.window_mode().as_str()),
             IpcCommand::SetMode { mode } => {
                 self.set_window_mode((*mode).into());
+                "ok".to_owned()
+            }
+            IpcCommand::Panel => {
+                self.toggle_panel_dropdown();
                 "ok".to_owned()
             }
             IpcCommand::Quit => {
@@ -219,5 +224,6 @@ mod tests {
             WindowMode::from(WindowModeArg::Listening),
             WindowMode::Listening
         );
+        assert_eq!(WindowMode::from(WindowModeArg::Panel), WindowMode::Panel);
     }
 }

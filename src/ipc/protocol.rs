@@ -13,6 +13,7 @@ pub enum WindowModeArg {
     Focus,
     Overlay,
     Listening,
+    Panel,
 }
 
 impl WindowModeArg {
@@ -22,6 +23,7 @@ impl WindowModeArg {
             Self::Focus => "focus",
             Self::Overlay => "overlay",
             Self::Listening => "listening",
+            Self::Panel => "panel",
         }
     }
 
@@ -30,8 +32,9 @@ impl WindowModeArg {
             "focus" => Ok(Self::Focus),
             "overlay" => Ok(Self::Overlay),
             "listening" => Ok(Self::Listening),
+            "panel" => Ok(Self::Panel),
             other => Err(IpcError::InvalidArgument(format!(
-                "mode: ожидаются focus, overlay или listening, получено {other}"
+                "mode: ожидаются focus, overlay, listening или panel, получено {other}"
             ))),
         }
     }
@@ -58,6 +61,9 @@ pub enum IpcCommand {
     SetMode {
         mode: WindowModeArg,
     },
+    /// `panel`: выпадающая панель бар-виджета (ADR-0033). Повторная команда
+    /// при открытой панели скрывает её, из другого режима — переключает.
+    Panel,
     /// Неизвестная команда сохраняется для расширения протокола.
     Raw(String),
 }
@@ -100,6 +106,10 @@ impl IpcCommand {
             "quit" => {
                 reject_extra_args(parts.next())?;
                 Ok(Self::Quit)
+            }
+            "panel" => {
+                reject_extra_args(parts.next())?;
+                Ok(Self::Panel)
             }
             "mode" => match parts.next() {
                 None => Ok(Self::ModeQuery),
@@ -150,6 +160,7 @@ impl IpcCommand {
             Self::Volume { level } => format!("volume {level}"),
             Self::ModeQuery => "mode".to_owned(),
             Self::SetMode { mode } => format!("mode {}", mode.as_str()),
+            Self::Panel => "panel".to_owned(),
             Self::Raw(raw) => raw.clone(),
         }
     }
@@ -238,8 +249,21 @@ mod tests {
                 mode: WindowModeArg::Overlay
             }
         );
+        assert_eq!(
+            IpcCommand::parse("mode panel").unwrap(),
+            IpcCommand::SetMode {
+                mode: WindowModeArg::Panel
+            }
+        );
         assert!(IpcCommand::parse("mode fullscreen").is_err());
         assert!(IpcCommand::parse("mode focus extra").is_err());
+    }
+
+    #[test]
+    fn parses_panel_toggle() {
+        assert_eq!(IpcCommand::parse("panel").unwrap(), IpcCommand::Panel);
+        assert_eq!(IpcCommand::Panel.to_wire(), "panel");
+        assert!(IpcCommand::parse("panel extra").is_err());
     }
 
     #[test]

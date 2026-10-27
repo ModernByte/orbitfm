@@ -40,6 +40,7 @@ pub(crate) struct CommonText {
     pub next_station: &'static str,
     pub live: &'static str,
     pub quit: &'static str,
+    pub retry: &'static str,
 }
 
 pub(crate) struct HudText {
@@ -65,10 +66,11 @@ pub(crate) struct PanelText {
     pub no_stations: &'static str,
     pub intro: &'static str,
     pub results: &'static str,
-    pub results_count: &'static str,
+    pub favorites: &'static str,
+    pub history: &'static str,
+    pub station_count: &'static str,
+    pub search_failed: &'static str,
     pub results_of: &'static str,
-    pub favorites_count: &'static str,
-    pub history_count: &'static str,
     pub pick_country_or_genre: &'static str,
     pub quiet_sector: &'static str,
     pub no_filter_match: &'static str,

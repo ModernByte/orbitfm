@@ -46,8 +46,9 @@ OrbitFM — 3D Interactive Global Radio Player
   toggle               Показать/скрыть окно (по умолчанию)
   show                 Показать окно
   hide                 Скрыть окно
+  panel                Показать/скрыть выпадающую панель бар-виджета
   status               Состояние приложения
-  mode [режим]         Текущий режим окна или focus/overlay/listening
+  mode [режим]         Текущий режим окна или focus/overlay/listening/panel
   play <uuid>          Воспроизвести станцию по UUID (Radio Browser)
   stop                 Остановить воспроизведение
   volume <0.0-1.0>     Установить громкость
@@ -140,7 +141,7 @@ fn route_command(
 
     if !matches!(
         &command,
-        IpcCommand::Toggle | IpcCommand::Show | IpcCommand::SetMode { .. }
+        IpcCommand::Toggle | IpcCommand::Show | IpcCommand::Panel | IpcCommand::SetMode { .. }
     ) {
         bail!("OrbitFM не запущен");
     }
@@ -239,9 +240,11 @@ fn launch(runtime: &tokio::runtime::Runtime, command: &IpcCommand, explicit: boo
         settings,
         runtime: runtime.handle().clone(),
     };
-    // При незапущенном экземпляре `mode <режим>` задаёт режим первого окна (ADR-0021 п. 5).
+    // При незапущенном экземпляре `mode <режим>` задаёт режим первого окна (ADR-0021 п. 5),
+    // а `panel` из бар-виджета открывает сразу выпадающую панель (ADR-0033).
     let first_mode = match command {
         IpcCommand::SetMode { mode } => WindowMode::from(*mode),
+        IpcCommand::Panel => WindowMode::Panel,
         _ => WindowMode::default(),
     };
     let gui_result = run_session(commands, wake, services, first_mode);
@@ -332,13 +335,19 @@ fn run_session(
 
 fn run_window(session: &mut Session, size: [f32; 2]) -> Result<()> {
     let title = session.window_mode().title();
+    // Панель бар-виджета — поверхность без полей окна: CSD-полоса заголовка и
+    // системная рамка ломали бы эффект выпадающей панели (ADR-0033).
+    let mut viewport = eframe::egui::ViewportBuilder::default()
+        .with_title(title)
+        .with_app_id(APP_ID)
+        .with_inner_size(size)
+        .with_min_inner_size(session.window_min_size())
+        .with_transparent(true);
+    if session.window_mode().is_borderless() {
+        viewport = viewport.with_decorations(false);
+    }
     let options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_title(title)
-            .with_app_id(APP_ID)
-            .with_inner_size(size)
-            .with_min_inner_size(session.window_min_size())
-            .with_transparent(true),
+        viewport,
         renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     };

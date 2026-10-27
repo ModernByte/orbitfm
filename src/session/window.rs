@@ -15,23 +15,34 @@ pub(crate) const OVERLAY_MIN_SIZE: [f32; 2] = [360.0, 480.0];
 /// Окно Listening: одна строка now-playing с пульсом (ADR-0021).
 pub(crate) const LISTENING_SIZE: [f32; 2] = [420.0, 152.0];
 pub(crate) const LISTENING_MIN_SIZE: [f32; 2] = [360.0, 120.0];
+/// Выпадающая панель из бара Noctalia: единая поверхность без полей окна
+/// (ADR-0033). Ширина совпадает с типичной колонкой бара, высота — с запасом
+/// на список станций.
+pub(crate) const PANEL_SIZE: [f32; 2] = [400.0, 640.0];
+pub(crate) const PANEL_MIN_SIZE: [f32; 2] = [360.0, 480.0];
 /// Заголовок окна и запасной заголовок трека в MPRIS.
 pub(crate) const WINDOW_TITLE: &str = "OrbitFM";
 /// Заголовки капсул: по ним WM-правила подбирают размер режима (ADR-0021 п. 4).
 pub(crate) const OVERLAY_TITLE: &str = "OrbitFM · Overlay";
 pub(crate) const LISTENING_TITLE: &str = "OrbitFM · Listening";
+pub(crate) const PANEL_TITLE: &str = "OrbitFM · Panel";
 
 /// Режим отображения окна (ADR-0021). Focus — полный Orbital Desk.
+///
+/// `Panel` — выпадающая панель бар-виджета (ADR-0033): тот же процесс и сессия,
+/// но без декораций окна и только с зоной станций.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum WindowMode {
     #[default]
     Focus,
     Overlay,
     Listening,
+    Panel,
 }
 
 impl WindowMode {
-    /// Все режимы в порядке возрастания плотности — для переключателя в UI.
+    /// Режимы, доступные из настроек: `Panel` открывается только бар-виджетом
+    /// и IPC-командой `panel`, потому что это поверхность, а не раскладка стола.
     pub(crate) const ALL: [Self; 3] = [Self::Focus, Self::Overlay, Self::Listening];
 
     /// Размер для `ViewportBuilder` нового окна.
@@ -40,6 +51,7 @@ impl WindowMode {
             Self::Focus => WINDOW_SIZE,
             Self::Overlay => OVERLAY_SIZE,
             Self::Listening => LISTENING_SIZE,
+            Self::Panel => PANEL_SIZE,
         }
     }
 
@@ -48,6 +60,7 @@ impl WindowMode {
             Self::Focus => WINDOW_MIN_SIZE,
             Self::Overlay => OVERLAY_MIN_SIZE,
             Self::Listening => LISTENING_MIN_SIZE,
+            Self::Panel => PANEL_MIN_SIZE,
         }
     }
 
@@ -56,6 +69,7 @@ impl WindowMode {
             Self::Focus => WINDOW_TITLE,
             Self::Overlay => OVERLAY_TITLE,
             Self::Listening => LISTENING_TITLE,
+            Self::Panel => PANEL_TITLE,
         }
     }
 
@@ -65,7 +79,14 @@ impl WindowMode {
             Self::Focus => "focus",
             Self::Overlay => "overlay",
             Self::Listening => "listening",
+            Self::Panel => "panel",
         }
+    }
+
+    /// Панель бар-виджета не имеет ни заголовка, ни рамки: декорации окна
+    /// отключаются до создания viewport, иначе CSD рисует полосу заголовка.
+    pub(crate) fn is_borderless(self) -> bool {
+        matches!(self, Self::Panel)
     }
 }
 
@@ -132,6 +153,16 @@ impl WindowState {
             self.hide();
         } else {
             self.show();
+        }
+    }
+
+    /// Клик по бар-виджету (ADR-0033): открытая панель скрывается, иначе режим
+    /// переключается на выпадающую панель и показывается.
+    pub(super) fn toggle_panel(&mut self) {
+        if self.mode == WindowMode::Panel && self.visible {
+            self.hide();
+        } else {
+            self.set_mode(WindowMode::Panel);
         }
     }
 
@@ -255,13 +286,53 @@ mod tests {
     }
 
     #[test]
+    fn bar_panel_toggles_open_and_closed() {
+        let mut window = WindowState {
+            visible: true,
+            mode: WindowMode::Panel,
+            ..WindowState::default()
+        };
+        window.toggle_panel();
+        assert_eq!(window.take_intent(), Some(UiIntent::Close));
+
+        window.visible = false;
+        window.toggle_panel();
+        assert_eq!(window.take_intent(), Some(UiIntent::Show));
+        assert!(!window.take_reopen(), "панель уже в режиме Panel");
+
+        // Из другого режима первый клик переключает и показывает панель.
+        window.mode = WindowMode::Focus;
+        window.visible = true;
+        window.toggle_panel();
+        assert_eq!(window.mode, WindowMode::Panel);
+        assert_eq!(window.take_intent(), Some(UiIntent::Close));
+        assert!(window.take_reopen());
+    }
+
+    #[test]
     fn each_mode_carries_its_geometry_and_title() {
         assert_eq!(WindowMode::Focus.min_size(), WINDOW_MIN_SIZE);
         assert_eq!(WindowMode::Overlay.default_size(), OVERLAY_SIZE);
         assert_eq!(WindowMode::Listening.min_size(), LISTENING_MIN_SIZE);
+        assert_eq!(WindowMode::Panel.default_size(), PANEL_SIZE);
+        assert_eq!(WindowMode::Panel.min_size(), PANEL_MIN_SIZE);
         assert_eq!(WindowMode::Overlay.title(), OVERLAY_TITLE);
         assert_eq!(WindowMode::Focus.title(), WINDOW_TITLE);
         assert_eq!(WindowMode::Listening.as_str(), "listening");
+        assert_eq!(WindowMode::Panel.title(), PANEL_TITLE);
+        assert_eq!(WindowMode::Panel.as_str(), "panel");
+    }
+
+    #[test]
+    fn only_the_bar_panel_is_borderless_and_not_in_settings() {
+        assert!(WindowMode::Panel.is_borderless());
+        for mode in WindowMode::ALL {
+            assert!(!mode.is_borderless(), "{mode:?} обязан оставаться окном");
+        }
+        assert!(
+            !WindowMode::ALL.contains(&WindowMode::Panel),
+            "Panel открывается бар-виджетом, а не переключателем раскладки"
+        );
     }
 
     #[test]

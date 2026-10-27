@@ -26,6 +26,8 @@ pub(crate) const TOAST_OUT: f32 = 0.200;
 pub(crate) const CAPSULE: f32 = 0.180;
 /// Hover строки списка.
 pub(crate) const ROW_HOVER: f32 = 0.080;
+/// Hover кнопок-иконок, чипов и pill-кнопок (ADR-0034).
+pub(crate) const HOVER: f32 = 0.120;
 /// Press-сжатие капсульной кнопки.
 pub(crate) const PRESS: f32 = 0.120;
 /// Смещение стеклянной панели по горизонтали.

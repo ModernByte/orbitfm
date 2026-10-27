@@ -309,7 +309,7 @@ impl Session {
         match self.window.mode {
             WindowMode::Focus => settings.motion,
             WindowMode::Overlay => settings.motion.capped(MotionReactivity::Low),
-            WindowMode::Listening => MotionReactivity::Off,
+            WindowMode::Listening | WindowMode::Panel => MotionReactivity::Off,
         }
     }
 
@@ -329,6 +329,12 @@ impl Session {
     /// капсула бессмысленна, поэтому `mode <режим>` показывает окно.
     pub(crate) fn set_window_mode(&mut self, mode: WindowMode) {
         self.window.set_mode(mode);
+    }
+
+    /// `panel` из бар-виджета (ADR-0033): открытая панель закрывается, любой
+    /// другой режим переключается на панель и показывается.
+    pub(crate) fn toggle_panel_dropdown(&mut self) {
+        self.window.toggle_panel();
     }
 
     /// `true`, если смена режима требует нового прогона UI-цикла (ADR-0021 п. 3).

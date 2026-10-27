@@ -18,13 +18,23 @@ pub(crate) const HELP_SIZE: (f32, f32) = (216.0, 108.0);
 pub(crate) const LEGEND_SIZE: (f32, f32) = (190.0, 58.0);
 /// Нижняя зона капсулы Overlay с избранными станциями.
 const CAPSULE_HEIGHT: (f32, f32) = (0.40, 300.0);
+/// Поля выпадающей панели: стекло не касается кромки окна, чтобы скругления
+/// читались как карточка поверх стола (ADR-0033).
+const PANEL_MARGIN: f32 = 8.0;
+/// Шапка панели: строка бренда, поиск и режим поиска (8 px запаса).
+const PANEL_HEADER_HEIGHT: f32 = 134.0;
+/// Подвал панели: what's playing и контролы.
+const PANEL_FOOTER_HEIGHT: f32 = 64.0;
 
-/// Плотность набора виджетов: один и тот же UI-код, три уровня (ADR-0021 п. 2).
+/// Плотность набора виджетов: один и тот же UI-код, четыре уровня (ADR-0021,
+/// ADR-0033).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LayoutDensity {
     Full,
     Compact,
     Minimal,
+    /// Выпадающая панель бар-виджета: одна стеклянная поверхность без глобуса.
+    Panel,
 }
 
 impl LayoutDensity {
@@ -33,6 +43,7 @@ impl LayoutDensity {
             WindowMode::Focus => Self::Full,
             WindowMode::Overlay => Self::Compact,
             WindowMode::Listening => Self::Minimal,
+            WindowMode::Panel => Self::Panel,
         }
     }
 }
@@ -46,6 +57,9 @@ pub(crate) struct DeskLayout {
     pub hud: Option<egui::Rect>,
     pub panel: Option<egui::Rect>,
     pub transport: Option<egui::Rect>,
+    /// Единая стеклянная поверхность выпадающей панели (ADR-0033); в остальных
+    /// плотностях зоны рисуются отдельными карточками.
+    pub surface: Option<egui::Rect>,
     /// Карточка управления мышью: видима только по требованию (первый запуск или
     /// переключатель в настройках).
     pub help: Option<egui::Rect>,
@@ -68,6 +82,7 @@ impl DeskLayout {
             LayoutDensity::Full => Self::full(viewport, panel_open, help_open, settings_open),
             LayoutDensity::Compact => Self::compact(viewport, settings_open),
             LayoutDensity::Minimal => Self::minimal(viewport),
+            LayoutDensity::Panel => Self::panel(viewport, settings_open),
         }
     }
 
@@ -124,6 +139,7 @@ impl DeskLayout {
             hud: Some(hud),
             panel,
             transport: Some(transport),
+            surface: None,
             help,
             legend: Some(legend),
             capsule: None,
@@ -158,6 +174,7 @@ impl DeskLayout {
             hud: Some(hud),
             panel: None,
             transport: None,
+            surface: None,
             help: None,
             legend: None,
             capsule: Some(capsule),
@@ -178,6 +195,59 @@ impl DeskLayout {
             )),
             panel: None,
             transport: None,
+            surface: None,
+            help: None,
+            legend: None,
+            capsule: None,
+            settings: None,
+        }
+    }
+
+    /// Выпадающая панель: одна поверхность, внутри — шапка, список и подвал.
+    /// Открытый drawer настроек занимает ту же поверхность целиком: в 400 px
+    /// колонка drawer'а не оставила бы списку ни места, ни смысла (ADR-0031,
+    /// ADR-0033).
+    fn panel(viewport: egui::Rect, settings_open: bool) -> Self {
+        let surface = viewport.shrink(PANEL_MARGIN);
+        if settings_open {
+            return Self {
+                density: LayoutDensity::Panel,
+                globe: None,
+                hud: None,
+                panel: None,
+                transport: None,
+                surface: Some(surface),
+                help: None,
+                legend: None,
+                capsule: None,
+                settings: Some(surface),
+            };
+        }
+
+        let width = surface.width();
+        let header_height = PANEL_HEADER_HEIGHT.min(surface.height() * 0.4);
+        let footer_height = PANEL_FOOTER_HEIGHT.min(surface.height() * 0.25);
+        let hud = egui::Rect::from_min_size(surface.min, egui::vec2(width, header_height));
+        let transport = egui::Rect::from_min_size(
+            egui::pos2(surface.left(), surface.bottom() - footer_height),
+            egui::vec2(width, footer_height),
+        );
+        let top = hud.bottom() + 2.0;
+        let bottom = (transport.top() - 2.0)
+            .max(top + 80.0)
+            .min(surface.bottom());
+        let panel = egui::Rect::from_min_max(
+            egui::pos2(surface.left(), top),
+            egui::pos2(surface.right(), bottom),
+        );
+
+        Self {
+            density: LayoutDensity::Panel,
+            globe: None,
+            hud: Some(hud),
+            panel: Some(panel),
+            transport: Some(transport),
+            surface: Some(surface),
             help: None,
             legend: None,
             capsule: None,
@@ -194,6 +264,7 @@ impl DeskLayout {
             self.panel,
             self.help,
             self.capsule,
+            self.surface,
             self.settings,
         ]
         .into_iter()
@@ -206,7 +277,7 @@ impl DeskLayout {
     /// избранное (ADR-0032 §4). В Listening нижней зоны нет — только поле.
     pub(crate) fn toast_offset(&self, viewport: egui::Rect) -> f32 {
         let bottom_zone = match self.density {
-            LayoutDensity::Full => self.transport,
+            LayoutDensity::Full | LayoutDensity::Panel => self.transport,
             LayoutDensity::Compact => self.capsule,
             LayoutDensity::Minimal => None,
         };
@@ -411,6 +482,61 @@ mod tests {
         assert_eq!(
             LayoutDensity::for_mode(WindowMode::Listening),
             LayoutDensity::Minimal
+        );
+        assert_eq!(
+            LayoutDensity::for_mode(WindowMode::Panel),
+            LayoutDensity::Panel
+        );
+    }
+
+    #[test]
+    fn bar_panel_stacks_header_list_and_footer_on_one_surface() {
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 640.0));
+        let layout = DeskLayout::compute(viewport, true, true, false, WindowMode::Panel);
+        assert_eq!(layout.density, LayoutDensity::Panel);
+        assert!(layout.globe.is_none());
+        assert!(layout.help.is_none());
+        assert!(layout.legend.is_none());
+        assert!(layout.capsule.is_none());
+
+        let surface = layout.surface.expect("поверхность панели");
+        assert_eq!(surface.min, egui::pos2(PANEL_MARGIN, PANEL_MARGIN));
+        assert!(surface.right() <= viewport.right());
+        assert!(surface.bottom() <= viewport.bottom());
+
+        let header = layout.hud.expect("шапка");
+        let list = layout.panel.expect("список");
+        let footer = layout.transport.expect("подвал");
+        assert_eq!(header.width(), surface.width());
+        assert_eq!(footer.width(), surface.width());
+        assert!(header.top() >= surface.top());
+        assert!(list.top() >= header.bottom());
+        assert!(footer.top() >= list.bottom());
+        assert!(footer.bottom() <= surface.bottom());
+        assert!(list.height() > 200.0);
+        assert!(layout.blocks_point(surface.center()));
+    }
+
+    #[test]
+    fn bar_panel_settings_take_the_whole_surface() {
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 640.0));
+        let layout = DeskLayout::compute(viewport, true, true, true, WindowMode::Panel);
+        let surface = layout.surface.expect("поверхность панели");
+        assert_eq!(layout.settings, Some(surface));
+        assert!(layout.hud.is_none());
+        assert!(layout.panel.is_none());
+        assert!(layout.transport.is_none());
+        assert_eq!(layout.toast_offset(viewport), MARGIN);
+    }
+
+    #[test]
+    fn bar_panel_toast_anchor_clears_the_footer() {
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 640.0));
+        let layout = DeskLayout::compute(viewport, true, false, false, WindowMode::Panel);
+        let footer = layout.transport.expect("подвал");
+        assert_eq!(
+            layout.toast_offset(viewport),
+            viewport.bottom() - footer.top() + GAP
         );
     }
 }

@@ -41,6 +41,8 @@ pub(crate) enum UiAction {
     SwitchMode(SearchMode),
     SelectGenre(String),
     RunSearch,
+    /// Повторить последний запрос после ошибки сети (карточка ошибки панели).
+    RetrySearch,
     Roulette,
     ClearHistory,
     SetTheme(ThemeMode),

@@ -223,13 +223,13 @@ pub(crate) fn overlay_top(
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 faded_group(ui, enter, |ui| {
-                    if close_button(ui, text.common.hide_window_hint).clicked() {
+                    if close_button(ui, palette, text.common.hide_window_hint).clicked() {
                         actions.push(UiAction::Hide);
                     }
-                    if expand_button(ui, text.common.open_focus).clicked() {
+                    if expand_button(ui, palette, text.common.open_focus).clicked() {
                         actions.push(UiAction::SetWindowMode(WindowMode::Focus));
                     }
-                    if gear_button(ui, text.common.settings).clicked() {
+                    if gear_button(ui, palette, text.common.settings).clicked() {
                         actions.push(UiAction::ToggleSettings);
                     }
                 });
@@ -242,8 +242,13 @@ pub(crate) fn overlay_top(
                     actions.push(UiAction::CommitVolume(volume));
                 }
                 faded_group(ui, enter, |ui| {
-                    if stop_button(ui, !matches!(playback, PlaybackState::Stopped), language)
-                        .clicked()
+                    if stop_button(
+                        ui,
+                        palette,
+                        !matches!(playback, PlaybackState::Stopped),
+                        language,
+                    )
+                    .clicked()
                     {
                         actions.push(UiAction::Stop);
                     }
@@ -431,10 +436,10 @@ pub(crate) fn listening(
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 faded_group(ui, enter, |ui| {
-                    if close_button(ui, text.common.hide_window_hint).clicked() {
+                    if close_button(ui, palette, text.common.hide_window_hint).clicked() {
                         actions.push(UiAction::Hide);
                     }
-                    if expand_button(ui, text.common.open_focus).clicked() {
+                    if expand_button(ui, palette, text.common.open_focus).clicked() {
                         actions.push(UiAction::SetWindowMode(WindowMode::Focus));
                     }
                     if let Some(station) = current {
@@ -451,7 +456,7 @@ pub(crate) fn listening(
                         } else {
                             text.common.add_favorite
                         };
-                        if heart_button(ui, favorite, color, hint).clicked() {
+                        if heart_button(ui, palette, favorite, color, hint).clicked() {
                             actions.push(UiAction::ToggleFavorite(station.clone()));
                         }
                     }

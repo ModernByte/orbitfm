@@ -60,6 +60,7 @@ pub enum WindowModeArg {           // wire-тип глагола `mode` (ADR-002
     Focus,
     Overlay,
     Listening,
+    Panel,                         // поверхность бар-виджета (ADR-0033)
 }
 
 impl WindowModeArg {
@@ -71,6 +72,7 @@ pub enum IpcCommand {
     Toggle,
     Show,
     Hide,
+    Panel,                          // `panel` — показать/скрыть панель виджета
     Play { station_uuid: String },
     Stop,
     Status,
@@ -120,10 +122,11 @@ pub enum IpcCommand {
 toggle
 show
 hide
+panel
 play <stationuuid>
 stop
 status
-mode [focus|overlay|listening]
+mode [focus|overlay|listening|panel]
 quit
 volume <0.0..=1.0>
 ```
@@ -131,11 +134,14 @@ volume <0.0..=1.0>
 - Ответ: `ok`, `error <сообщение>`, многострочный `status` или одна строка `mode <режим>`
 - `status` возвращает `status <state>`, при наличии станции — `stationuuid <uuid>` и
   `name <name>`, затем `volume <0.00>`, `window visible|hidden` и `mode
-  focus|overlay|listening`;
+  focus|overlay|listening|panel`;
   состояние — `stopped|playing|paused|buffering|reconnecting|error`
 - `mode` без аргумента только спрашивает режим; `mode <режим>` переключает его и
   показывает окно (ADR-0021 п. 5). Неизвестное имя режима и лишние аргументы
   отклоняются на этапе разбора
+- `panel` — toggle поверхности бар-виджета (ADR-0033): видимая панель скрывается,
+  иначе окно открывается в `Panel`; при незапущенном экземпляре процесс стартует
+  сразу с панелью
 - `play <uuid>` ищет станцию в результатах последнего поиска, затем в каталоге Radio
   Browser (таймаут 8 с), запускает `url_resolved` и отправляет click; ошибки каталога
   возвращаются как `error <сообщение>`

@@ -7,14 +7,17 @@
 use eframe::egui;
 
 use crate::audio::PlaybackState;
-use crate::geo::GeoService;
+use crate::geo::{Country, GeoService};
 use crate::i18n;
 use crate::services::Station;
 use crate::settings::{Language, ThemeMode};
 
 use super::animation;
-use super::icons::{close_button, gear_button, help_button, moon_button, panel_button};
+use super::icons::{
+    close_button, gear_button, help_button, moon_button, panel_button, roulette_button,
+};
 use super::images::FaviconCache;
+use super::mode_switch::genre_label;
 use super::palette::Palette;
 use super::widgets::{avatar, faded_group, live_badge, logo_mark, search_field};
 use super::{
@@ -24,6 +27,10 @@ use super::{
 const COMPACT_HUD_WIDTH: f32 = 1000.0;
 const TIGHT_HUD_WIDTH: f32 = 840.0;
 const COUNTRY_SUGGESTIONS: usize = 6;
+/// Высота строки бренда в шапке панели. Строку нельзя отдавать на растяжение
+/// вертикальному layout: центрирование по перекрёстной оси тогда считает от
+/// всей высоты шапки и уводит поиск с режимами за её нижнюю границу.
+const PANEL_BRAND_ROW: f32 = 34.0;
 /// Позиция HUD в общем stagger входа Focus-стола. Индексы задает `app.rs`, где
 /// тем же значением гаснет каркас стеклянной зоны: содержимое обязано входить
 /// синхронно со своим стеклом.
@@ -100,7 +107,14 @@ pub(crate) fn show(
 
                 let search_width = if compact { 150.0 } else { 240.0 };
                 if state.mode == SearchMode::Country {
-                    actions.extend(country_search(ui, palette, &mut state, search_width));
+                    actions.extend(country_search(
+                        ui,
+                        palette,
+                        state.country_query,
+                        state.geo,
+                        search_width,
+                        state.language,
+                    ));
                 } else {
                     let hint = if state.context_active {
                         text.hud.filter_stations
@@ -149,25 +163,170 @@ fn playing(state: &HudState<'_>) -> bool {
     )
 }
 
+/// Состояние шапки выпадающей панели бар-виджета (ADR-0033).
+pub(crate) struct PanelHeaderState<'a> {
+    /// Альфа появления панели: шапка входит вместе со своей поверхностью.
+    pub entry: f32,
+    pub query: &'a mut String,
+    pub country_query: &'a mut String,
+    pub genre_query: &'a mut String,
+    pub mode: SearchMode,
+    pub selected_genre: Option<&'a str>,
+    pub context_active: bool,
+    pub country: Option<&'a Country>,
+    pub genre: Option<&'a str>,
+    pub geo: &'a GeoService,
+    pub roulette_pending: bool,
+    /// Разрешённый язык интерфейса (ADR-0030).
+    pub language: Language,
+}
+
+/// Шапка выпадающей панели: бренд, поиск и режим поиска. В отличие от HUD
+/// стола здесь нет now-playing и раскладок: панель живёт под бар-виджетом и
+/// открывается ради станций.
+pub(crate) fn panel_header(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    state: PanelHeaderState<'_>,
+) -> Vec<UiAction> {
+    let mut actions = Vec::new();
+    let text = i18n::catalog(state.language);
+    let context = match (state.country, state.genre) {
+        (Some(country), _) => {
+            let name = single_line(&country.name);
+            let name = if name.is_empty() {
+                country.iso_a2.clone()
+            } else {
+                name
+            };
+            i18n::fill(text.panel.country_prefix, &[("name", &name)])
+        }
+        (None, Some(genre)) => {
+            let tag = genre_label(state.language, genre);
+            i18n::fill(text.panel.genre_prefix, &[("genre", &tag)])
+        }
+        (None, None) => text.hud.subtitle.to_owned(),
+    };
+
+    palette.glass().show(ui, |ui| {
+        ui.set_min_size(ui.available_size());
+        faded_group(ui, state.entry, |ui| {
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 8.0;
+                ui.horizontal(|ui| {
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(ui.available_width(), PANEL_BRAND_ROW),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            logo_mark(ui, palette, 28.0);
+                            ui.vertical(|ui| {
+                                ui.spacing_mut().item_spacing.y = 0.0;
+                                ui.label(
+                                    egui::RichText::new("OrbitFM")
+                                        .size(15.0)
+                                        .strong()
+                                        .color(palette.text),
+                                );
+                                ui.label(
+                                    egui::RichText::new(truncate(&context, 26))
+                                        .size(10.0)
+                                        .color(palette.muted),
+                                );
+                            });
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if close_button(ui, palette, text.common.hide_window_hint)
+                                        .clicked()
+                                    {
+                                        actions.push(UiAction::Hide);
+                                    }
+                                    if gear_button(ui, palette, text.common.settings).clicked() {
+                                        actions.push(UiAction::ToggleSettings);
+                                    }
+                                    if roulette_button(
+                                        ui,
+                                        palette,
+                                        !state.roulette_pending,
+                                        text.transport.random_station,
+                                    )
+                                    .clicked()
+                                    {
+                                        actions.push(UiAction::Roulette);
+                                    }
+                                },
+                            );
+                        },
+                    );
+                });
+
+                let width = ui.available_width();
+                if state.mode == SearchMode::Country {
+                    actions.extend(country_search(
+                        ui,
+                        palette,
+                        state.country_query,
+                        state.geo,
+                        width,
+                        state.language,
+                    ));
+                } else {
+                    let hint = if state.context_active {
+                        text.hud.filter_stations
+                    } else {
+                        text.hud.search_stations
+                    };
+                    let output = search_field(
+                        ui,
+                        palette,
+                        egui::Id::unique("orbitfm_panel_search"),
+                        hint,
+                        state.query,
+                        width,
+                    );
+                    if output.enter {
+                        actions.push(UiAction::RunSearch);
+                    }
+                }
+
+                actions.extend(super::mode_switch::show(
+                    ui,
+                    palette,
+                    super::mode_switch::ModeState {
+                        mode: state.mode,
+                        selected_genre: state.selected_genre,
+                        genre_query: state.genre_query,
+                        language: state.language,
+                    },
+                ));
+            });
+        });
+    });
+
+    actions
+}
+
 /// Поиск страны с подсказками из `GeoService`; Enter выбирает первую страну.
 fn country_search(
     ui: &mut egui::Ui,
     palette: &Palette,
-    state: &mut HudState<'_>,
+    country_query: &mut String,
+    geo: &GeoService,
     width: f32,
+    language: Language,
 ) -> Vec<UiAction> {
     let mut actions = Vec::new();
-    let text = i18n::catalog(state.language);
+    let text = i18n::catalog(language);
     let output = search_field(
         ui,
         palette,
         egui::Id::unique("orbitfm_hud_country"),
         text.hud.search_country,
-        state.country_query,
+        country_query,
         width,
     );
-    let query = state.country_query.clone();
-    let suggestions = state.geo.search_countries(&query, COUNTRY_SUGGESTIONS);
+    let query = country_query.clone();
+    let suggestions = geo.search_countries(&query, COUNTRY_SUGGESTIONS);
     let show_popup = (output.response.has_focus() || output.enter) && !query.trim().is_empty();
 
     if show_popup && !suggestions.is_empty() {
@@ -217,16 +376,16 @@ fn right_side(
     } else {
         text.common.show_station_list
     };
-    if panel_button(ui, hint).clicked() {
+    if panel_button(ui, palette, hint).clicked() {
         actions.push(UiAction::TogglePanel);
     }
 
-    if help_button(ui, text.common.mouse_controls, state.help_open).clicked() {
+    if help_button(ui, palette, text.common.mouse_controls, state.help_open).clicked() {
         actions.push(UiAction::ToggleHelp);
     }
 
     // Шестерёка доступна и в узком окне: drawer — единственный вход в настройки.
-    if gear_button(ui, text.common.settings).clicked() {
+    if gear_button(ui, palette, text.common.settings).clicked() {
         actions.push(UiAction::ToggleSettings);
     }
 
@@ -237,7 +396,7 @@ fn right_side(
         } else {
             text.common.dark_theme
         };
-        if moon_button(ui, hint).clicked() {
+        if moon_button(ui, palette, hint).clicked() {
             actions.push(UiAction::SetTheme(if dark {
                 ThemeMode::Light
             } else {
@@ -305,7 +464,7 @@ fn right_side(
         ui.add_space(4.0);
     }
 
-    if close_button(ui, text.common.hide_window_hint).clicked() {
+    if close_button(ui, palette, text.common.hide_window_hint).clicked() {
         actions.push(UiAction::Hide);
     }
 

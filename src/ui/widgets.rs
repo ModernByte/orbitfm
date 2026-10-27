@@ -19,6 +19,8 @@ use super::palette::{Palette, mix_colors};
 
 const PILL_RADIUS: f32 = 999.0;
 const LIVE_REPAINT: std::time::Duration = std::time::Duration::from_millis(120);
+/// Кадры пульсации костяка списка.
+const SKELETON_REPAINT: std::time::Duration = std::time::Duration::from_millis(110);
 /// Толщина верхнего блика стекла.
 const GLASS_RIM: f32 = 1.5;
 /// Осветление диска play/stop при наведении (ТЗ §3.4).
@@ -94,6 +96,28 @@ pub(crate) fn pop_scale(progress: f32, reduce: bool) -> f32 {
         return 1.0;
     }
     animation::eased(progress, animation::Curve::Overshoot).clamp(0.0, POP_LIMIT)
+}
+
+/// Прогрессы hover/press одного контрола (ADR-0034). При reduce motion
+/// `animation_time` равен нулю, и egui сразу отдаёт конечное значение.
+pub(crate) fn control_motion(
+    ui: &egui::Ui,
+    id: egui::Id,
+    hovered: bool,
+    pressed: bool,
+) -> (f32, f32) {
+    let time = if ui.style().animation_time > 0.0 {
+        animation::HOVER
+    } else {
+        0.0
+    };
+    let hover = ui
+        .ctx()
+        .animate_bool_with_time(id.with("orbitfm-hover"), hovered, time);
+    let press = ui
+        .ctx()
+        .animate_bool_with_time(id.with("orbitfm-press"), pressed, time);
+    (hover, press)
 }
 
 /// Кольцо клавиатурного фокуса вокруг прямоугольного контрола.
@@ -224,15 +248,30 @@ pub(crate) fn pill(
     );
     let size = Vec2::new(galley.size().x + 28.0, 26.0);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    let (hover, press) = control_motion(
+        ui,
+        response.id,
+        response.hovered(),
+        response.is_pointer_button_down_on(),
+    );
     if ui.is_rect_visible(rect) {
-        let fill = if selected {
-            palette.accent
-        } else if response.hovered() {
-            palette.chip_fill
+        let (fill, stroke) = if selected {
+            (
+                mix_colors(palette.accent, Color32::WHITE, HOVER_LIFT * hover),
+                Stroke::NONE,
+            )
         } else {
-            Color32::TRANSPARENT
+            (
+                mix_colors(
+                    Color32::TRANSPARENT,
+                    palette.chip_fill,
+                    hover.max(0.45 * press),
+                ),
+                Stroke::new(1.0, faded(palette.chip_stroke, hover)),
+            )
         };
-        ui.painter().rect_filled(rect, PILL_RADIUS, fill);
+        ui.painter()
+            .rect(rect, PILL_RADIUS, fill, stroke, egui::StrokeKind::Middle);
         ui.painter()
             .galley(rect.center() - galley.size() * 0.5, galley, text_color);
     }
@@ -261,11 +300,30 @@ pub(crate) fn chip(
     );
     let size = Vec2::new(galley.size().x + 18.0, 22.0);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    let (hover, press) = control_motion(
+        ui,
+        response.id,
+        response.hovered(),
+        response.is_pointer_button_down_on(),
+    );
     if ui.is_rect_visible(rect) {
         let (fill, stroke) = if selected {
-            (palette.accent, Stroke::NONE)
+            (
+                mix_colors(palette.accent, Color32::WHITE, 0.08 * hover),
+                Stroke::NONE,
+            )
         } else {
-            (palette.chip_fill, Stroke::new(1.0, palette.chip_stroke))
+            (
+                mix_colors(
+                    palette.chip_fill,
+                    palette.accent,
+                    0.14 * hover + 0.06 * press,
+                ),
+                Stroke::new(
+                    1.0,
+                    mix_colors(palette.chip_stroke, palette.accent, 0.65 * hover),
+                ),
+            )
         };
         ui.painter()
             .rect(rect, PILL_RADIUS, fill, stroke, egui::StrokeKind::Middle);
@@ -313,22 +371,38 @@ pub(crate) fn search_field(
         Stroke::new(1.0, palette.chip_stroke),
         egui::StrokeKind::Inside,
     );
-    icons::draw_search(
-        ui.painter(),
-        pos2(rect.left() + 16.0, rect.center().y),
-        5.0,
-        palette.muted,
-    );
     let inner = egui::Rect::from_min_max(
         pos2(rect.left() + 28.0, rect.top()),
         pos2(rect.right() - 10.0, rect.bottom()),
     );
+    // Рамку поля рисуем сами: собственный frame TextEdit дал бы вторую
+    // прямоугольную обводку внутри pill-формы.
     let edit = egui::TextEdit::singleline(text)
         .hint_text(hint)
         .desired_width(inner.width() - 8.0)
         .align(egui::Align2::LEFT_CENTER)
+        .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(0, 5)))
         .id(id);
     let response = ui.put(inner, edit);
+    let focused = response.has_focus();
+    let (hover, _) = control_motion(ui, id, background.hovered() || response.hovered(), false);
+    let highlight = if focused { 1.0 } else { hover };
+    if highlight > 0.0 {
+        let rim = mix_colors(palette.chip_stroke, palette.accent, 0.85 * highlight);
+        ui.painter().rect_stroke(
+            rect,
+            PILL_RADIUS,
+            Stroke::new(1.0, rim),
+            egui::StrokeKind::Inside,
+        );
+    }
+    icons::paint_icon(
+        ui,
+        icons::Icon::Search,
+        pos2(rect.left() + 17.0, rect.center().y),
+        15.0,
+        mix_colors(palette.muted, palette.accent, highlight),
+    );
     let enter = response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
     FieldOutput {
         rect,
@@ -548,10 +622,11 @@ pub(crate) fn volume_slider_width(
 
     // Иконка динамика внутри выделенного прямоугольника — иначе она наползает на
     // соседний чип.
-    icons::draw_speaker(
-        ui.painter(),
-        pos2(rect.left() + 7.0, rect.center().y),
-        7.0,
+    icons::paint_icon(
+        ui,
+        icons::Icon::Volume,
+        pos2(rect.left() + 9.0, rect.center().y),
+        14.0,
         palette.text,
     );
     let track = egui::Rect::from_min_max(
@@ -815,133 +890,358 @@ fn lift(color: Color32, amount: f32) -> Color32 {
     Color32::from_rgba_unmultiplied(r, g, b, color.a())
 }
 
-/// Вкладки с иконкой и accent-подчёркиванием активной.
-pub(crate) enum TabIcon {
-    Results,
-    Star,
-    Clock,
-}
+/// Однорядный сегментированный переключатель вкладок. Активный сегмент
+/// подсвечен accent-пилюлей, которая плавно переезжает к новому выбору.
+///
+/// Пилюля живёт только в отрисовке: каждый сегмент занимает фиксированную
+/// долю ширины, поэтому хиттест не зависит от анимации (ADR-0032 §7).
+/// Возвращает индекс нажатого сегмента.
+pub(crate) fn segmented_tabs(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    id_salt: &str,
+    labels: &[&str],
+    selected: usize,
+    reduce: bool,
+) -> Option<usize> {
+    if labels.is_empty() {
+        return None;
+    }
+    let selected = selected.min(labels.len() - 1);
+    let (rect, _) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 32.0), egui::Sense::hover());
+    if !ui.is_rect_visible(rect) {
+        return None;
+    }
 
-pub(crate) struct Tab<'a> {
-    pub icon: TabIcon,
-    pub label: &'a str,
-}
+    let track = rect.shrink(0.5);
+    ui.painter()
+        .rect_filled(track, PILL_RADIUS, palette.chip_fill);
+    ui.painter().rect_stroke(
+        track,
+        PILL_RADIUS,
+        Stroke::new(1.0, palette.chip_stroke),
+        egui::StrokeKind::Inside,
+    );
 
-struct TabButton<'a> {
-    tab: &'a Tab<'a>,
-    palette: &'a Palette,
-    active: bool,
-    /// Прогресс входа активной вкладки: индикатор отрастает и дожигается им же.
-    indicator: f32,
-}
+    let inner = track.shrink(3.0);
+    let segment = inner.width() / labels.len() as f32;
+    let position = if reduce {
+        selected as f32
+    } else {
+        ui.ctx().animate_value_with_time(
+            ui.scope_id().with((id_salt, "pill")),
+            selected as f32,
+            animation::TAB,
+        )
+    };
+    let pill = egui::Rect::from_min_size(
+        pos2(inner.left() + segment * position, inner.top()),
+        Vec2::new(segment, inner.height()),
+    );
+    ui.painter().rect_filled(pill, PILL_RADIUS, palette.accent);
 
-impl egui::Widget for TabButton<'_> {
-    fn ui(self, ui: &mut egui::Ui) -> egui::Response {
-        let color = if self.active {
-            self.palette.accent
+    let mut clicked = None;
+    for (index, label) in labels.iter().enumerate() {
+        let cell = egui::Rect::from_min_size(
+            pos2(inner.left() + segment * index as f32, inner.top()),
+            Vec2::new(segment, inner.height()),
+        );
+        let response = ui.interact(
+            cell,
+            ui.scope_id().with((id_salt, index)),
+            egui::Sense::click(),
+        );
+        let active = index == selected;
+        let (hover, press) = control_motion(
+            ui,
+            response.id,
+            response.hovered(),
+            response.is_pointer_button_down_on(),
+        );
+        if !active && (hover > 0.0 || press > 0.0) {
+            ui.painter().rect_filled(
+                cell.shrink(1.0),
+                PILL_RADIUS,
+                faded(palette.text, 0.05 * hover + 0.04 * press),
+            );
+        }
+        let color = if active {
+            contrast_color(palette.accent)
         } else {
-            self.palette.muted
+            mix_colors(palette.muted, palette.text, hover)
         };
-        let galley = ui.painter().layout_no_wrap(
-            self.tab.label.to_owned(),
+        ui.painter().text(
+            cell.center(),
+            egui::Align2::CENTER_CENTER,
+            *label,
             egui::FontId::proportional(12.5),
             color,
         );
-        let size = Vec2::new(20.0 + galley.size().x, 30.0);
-        let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
-        if ui.is_rect_visible(rect) {
-            let icon_center = pos2(rect.left() + 7.0, rect.center().y - 4.0);
-            match self.tab.icon {
-                TabIcon::Results => icons::draw_list_icon(
-                    ui.painter(),
-                    egui::Rect::from_center_size(icon_center, Vec2::splat(12.0)),
-                    color,
-                ),
-                TabIcon::Star => {
-                    let points = star_points(icon_center, 7.0, 3.0);
-                    ui.painter()
-                        .add(Shape::closed_line(points, Stroke::new(1.2, color)));
-                }
-                TabIcon::Clock => icons::draw_clock(ui.painter(), icon_center, 6.5, color),
-            }
-            ui.painter().galley(
-                pos2(
-                    icon_center.x + 10.0,
-                    rect.center().y - 4.0 - galley.size().y * 0.5,
-                ),
-                galley,
-                color,
-            );
-            if self.active {
-                let enter = animation::alpha(self.indicator);
-                let underline = egui::Rect::from_min_max(
-                    pos2(rect.left(), rect.bottom() - 2.0),
-                    pos2(rect.right(), rect.bottom()),
-                );
-                // Индикатор отрастает от левого края: чистая отрисовка,
-                // аллокация вкладки остаётся на месте (ADR-0032 §7).
-                let grown = underline.width() * enter;
-                ui.painter().rect_filled(
-                    egui::Rect::from_min_max(
-                        underline.min,
-                        pos2(underline.left() + grown, underline.bottom()),
-                    ),
-                    1.0,
-                    faded(self.palette.accent, enter),
-                );
-            }
-            focus_ring(ui, &response, rect, 6.0);
-        }
+        focus_ring(ui, &response, cell.shrink(1.0), PILL_RADIUS);
         response.widget_info(|| {
-            egui::WidgetInfo::selected(egui::Role::Tab, true, self.active, self.tab.label)
+            egui::WidgetInfo::selected(egui::Role::Tab, true, index == selected, *label)
         });
-        response
-    }
-}
-
-/// Возвращает индекс нажатой вкладки. `indicator` — прогресс входа активной
-/// вкладки ([`animation::TAB`]), тем же значением гасится и список.
-pub(crate) fn tab_bar(
-    ui: &mut egui::Ui,
-    palette: &Palette,
-    tabs: &[Tab<'_>],
-    selected: usize,
-    indicator: f32,
-) -> Option<usize> {
-    let mut clicked = None;
-    // Перенос обязателен: ширины панели хватает три подписи только на коротких
-    // языках, а в DE/FR/RU и с длинными счётчиками («Результаты (128)») последняя
-    // вкладка обрезалась по правому краю панели.
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = 16.0;
-        for (index, tab) in tabs.iter().enumerate() {
-            if ui
-                .add(TabButton {
-                    tab,
-                    palette,
-                    active: index == selected,
-                    indicator,
-                })
-                .clicked()
-            {
-                clicked = Some(index);
-            }
+        if response.clicked() {
+            clicked = Some(index);
         }
-    });
+    }
     clicked
 }
 
-fn star_points(center: Pos2, outer: f32, inner: f32) -> Vec<Pos2> {
-    (0..10)
-        .map(|index| {
-            let radius = if index % 2 == 0 { outer } else { inner };
-            let angle = -std::f32::consts::FRAC_PI_2 + index as f32 * std::f32::consts::PI / 5.0;
-            pos2(
-                center.x + radius * angle.cos(),
-                center.y + radius * angle.sin(),
-            )
-        })
-        .collect()
+/// Знак центрированной заглушки списка.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EmptyMark {
+    Globe,
+    Search,
+    Star,
+    Clock,
+    Filter,
+}
+
+pub(crate) struct EmptyState<'a> {
+    pub mark: EmptyMark,
+    pub title: &'a str,
+    pub hint: Option<&'a str>,
+    pub action: Option<&'a str>,
+}
+
+/// Центрированная заглушка списка: знак в круге, заголовок, подсказка и
+/// необязательное действие. `height` — высота вьюпорта списка: заглушка
+/// центрируется по ней, а не по растущему содержимому `ScrollArea`.
+/// Возвращает true, если действие нажато.
+pub(crate) fn empty_state(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    state: EmptyState<'_>,
+    height: f32,
+) -> bool {
+    let EmptyState {
+        mark,
+        title,
+        hint,
+        action,
+    } = state;
+    let height = height.max(120.0);
+    let width = ui.available_width();
+    let block = 96.0 + hint.map_or(0.0, |_| 34.0) + action.map_or(0.0, |_| 42.0);
+    let top = ((height - block) * 0.34).clamp(6.0, 180.0);
+    let mut clicked = false;
+    ui.allocate_ui_with_layout(
+        Vec2::new(width, height),
+        egui::Layout::top_down(egui::Align::Center),
+        |ui| {
+            ui.add_space(top);
+            ui.set_max_width((width - 36.0).max(120.0));
+            ui.vertical_centered(|ui| {
+                let (mark_rect, _) =
+                    ui.allocate_exact_size(Vec2::splat(52.0), egui::Sense::hover());
+                if ui.is_rect_visible(mark_rect) {
+                    let center = mark_rect.center();
+                    ui.painter().circle_filled(center, 25.0, palette.chip_fill);
+                    ui.painter()
+                        .circle_stroke(center, 25.0, Stroke::new(1.0, palette.chip_stroke));
+                    let (icon, size) = match mark {
+                        EmptyMark::Globe => (icons::Icon::Globe, 22.0),
+                        EmptyMark::Search => (icons::Icon::Search, 21.0),
+                        EmptyMark::Star => (icons::Icon::Star, 22.0),
+                        EmptyMark::Clock => (icons::Icon::Clock, 22.0),
+                        EmptyMark::Filter => (icons::Icon::Funnel, 21.0),
+                    };
+                    icons::paint_icon(ui, icon, center, size, palette.accent);
+                }
+                ui.add_space(10.0);
+                ui.label(
+                    egui::RichText::new(title)
+                        .size(14.0)
+                        .strong()
+                        .color(palette.text),
+                );
+                if let Some(hint) = hint {
+                    ui.add_space(3.0);
+                    ui.add(
+                        egui::Label::new(egui::RichText::new(hint).size(11.5).color(palette.muted))
+                            .wrap()
+                            .halign(egui::Align::Center),
+                    );
+                }
+                if let Some(action) = action {
+                    ui.add_space(12.0);
+                    clicked = action_pill(ui, palette, action).clicked();
+                }
+            });
+        },
+    );
+    clicked
+}
+
+/// Accent-кнопка действия: pill-форма, светлеет при наведении.
+pub(crate) fn action_pill(ui: &mut egui::Ui, palette: &Palette, label: &str) -> egui::Response {
+    let font = egui::FontId::proportional(12.5);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), font.clone(), palette.text);
+    let (rect, response) = ui.allocate_exact_size(
+        Vec2::new(galley.size().x + 30.0, 30.0),
+        egui::Sense::click(),
+    );
+    if ui.is_rect_visible(rect) {
+        let (hover, _) = control_motion(
+            ui,
+            response.id,
+            response.hovered(),
+            response.is_pointer_button_down_on(),
+        );
+        let fill = lift(palette.accent, HOVER_LIFT * hover);
+        ui.painter().rect_filled(rect, PILL_RADIUS, fill);
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            label,
+            font,
+            contrast_color(fill),
+        );
+    }
+    focus_ring(ui, &response, rect, PILL_RADIUS);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+    response
+}
+
+/// Малошумная кнопка на всю ширину: подложка появляется только на hover.
+pub(crate) fn quiet_button(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    label: &str,
+    color: Color32,
+) -> egui::Response {
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 30.0), egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        let (hover, _) = control_motion(ui, response.id, response.hovered(), false);
+        if hover > 0.0 {
+            ui.painter()
+                .rect_filled(rect, 8.0, faded(palette.chip_fill, hover));
+        }
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            label,
+            egui::FontId::proportional(12.0),
+            color,
+        );
+    }
+    focus_ring(ui, &response, rect, 8.0);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+    response
+}
+
+/// Карточка ошибки списка с кнопкой повтора. Возвращает клик по Retry.
+pub(crate) fn error_card(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    title: &str,
+    detail: &str,
+    retry: &str,
+) -> bool {
+    let mut clicked = false;
+    egui::Frame::new()
+        .fill(faded(palette.error, 0.08))
+        .stroke(Stroke::new(1.0, faded(palette.error, 0.35)))
+        .corner_radius(12)
+        .inner_margin(egui::Margin::same(12))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                let (icon_rect, _) =
+                    ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::hover());
+                icons::paint_icon(
+                    ui,
+                    icons::Icon::Alert,
+                    icon_rect.center(),
+                    16.0,
+                    palette.error,
+                );
+                ui.label(
+                    egui::RichText::new(title)
+                        .size(13.0)
+                        .strong()
+                        .color(palette.error),
+                );
+            });
+            if !detail.is_empty() {
+                ui.add_space(3.0);
+                ui.add(
+                    egui::Label::new(egui::RichText::new(detail).size(11.0).color(palette.muted))
+                        .wrap(),
+                );
+            }
+            ui.add_space(10.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                clicked = action_pill(ui, palette, retry).clicked();
+            });
+        });
+    clicked
+}
+
+/// Костяк списка на время поиска: аватары и строки пульсируют одной фазой.
+/// `height` — высота вьюпорта; `label` уходит в accessibility вместо текста.
+pub(crate) fn skeleton_rows(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    compact: bool,
+    height: f32,
+    label: &str,
+    reduce: bool,
+) {
+    let row_height = if compact { 42.0 } else { 58.0 };
+    let count = ((height / row_height).floor() as usize).clamp(2, 8);
+    let time = ui.input(|input| input.time) as f32;
+    for index in 0..count {
+        let (rect, response) = ui.allocate_exact_size(
+            Vec2::new(ui.available_width(), row_height),
+            egui::Sense::hover(),
+        );
+        if index == 0 {
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, false, label));
+        }
+        if !ui.is_rect_visible(rect) {
+            continue;
+        }
+        let phase = if reduce {
+            0.0
+        } else {
+            (time * 2.4 + index as f32 * 0.45).sin().abs()
+        };
+        let bone = faded(palette.text, 0.05 + 0.05 * phase);
+        let avatar_radius = if compact { 13.0 } else { 18.0 };
+        let avatar_center = pos2(rect.left() + 6.0 + avatar_radius, rect.center().y);
+        ui.painter()
+            .circle_filled(avatar_center, avatar_radius, bone);
+        let text_left = avatar_center.x + avatar_radius + 10.0;
+        let name_y = rect.center().y - if compact { 4.0 } else { 7.0 };
+        let width = (rect.right() - text_left - 42.0).max(40.0);
+        ui.painter().rect_filled(
+            egui::Rect::from_min_size(pos2(text_left, name_y - 4.0), Vec2::new(width * 0.55, 8.0)),
+            4.0,
+            bone,
+        );
+        ui.painter().rect_filled(
+            egui::Rect::from_min_size(pos2(text_left, name_y + 7.0), Vec2::new(width * 0.32, 6.0)),
+            3.0,
+            bone,
+        );
+        ui.painter().rect_filled(
+            egui::Rect::from_center_size(
+                pos2(rect.right() - 16.0, rect.center().y),
+                Vec2::splat(9.0),
+            ),
+            3.0,
+            bone,
+        );
+    }
+    if !reduce {
+        ui.ctx().request_repaint_after(SKELETON_REPAINT);
+    }
 }
 
 /// Круглый аватар: favicon или инициал станции.

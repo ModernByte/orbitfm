@@ -14,22 +14,34 @@ use crate::session::LibraryTab;
 use crate::settings::Language;
 
 use super::animation;
+use super::icons;
 use super::images::FaviconCache;
 use super::mode_switch::genre_label;
 use super::palette::Palette;
 use super::station_filter::{self, CountryFilterState, GenreTag, StationSort};
 use super::station_row::{RowContext, station_row, station_tag_chips};
-use super::widgets::{Tab, TabIcon, chip, faded_group, search_field, tab_bar};
+use super::widgets::{
+    EmptyMark, EmptyState, chip, empty_state, error_card, faded_group, quiet_button, search_field,
+    segmented_tabs, skeleton_rows,
+};
 use super::{UiAction, single_line, truncate};
 
-/// Позиция панели в общем stagger входа Focus-стола: совпадает с индексом,
-/// под которым `app.rs` гасит каркас этого стекла.
-const SCENE_INDEX: usize = 1;
 /// Корень именованного перехода вкладок. `Id::unique` детерминирован, поэтому
 /// прогресс переживает кадры и не зависит от порядка аллокаций.
 const TAB_KEY: &str = "orbitfm_panel_tab";
 /// Число вкладок: столько ключей живёт в `PresenceStore`.
 const TAB_COUNT: usize = 3;
+/// Высота закреплённой кнопки «Очистить историю» вместе с отступом.
+const CLEAR_HISTORY_HEIGHT: f32 = 38.0;
+
+/// Оформление карточки списка. В Focus панель — самостоятельная карточка со
+/// своим заголовком; в выпадающей панели шапку рисует `hud::panel_header`, и
+/// список начинается сразу с вкладок (ADR-0033).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PanelChrome {
+    Full,
+    Embedded,
+}
 
 pub(crate) struct PanelState<'a> {
     pub tab: &'a mut LibraryTab,
@@ -45,6 +57,9 @@ pub(crate) struct PanelState<'a> {
     pub filter: &'a mut CountryFilterState,
     pub favicons: &'a mut FaviconCache,
     pub playing_uuid: Option<&'a str>,
+    /// Альфа содержимого: вход Focus-стола или появление выпадающей панели.
+    pub entry: f32,
+    pub chrome: PanelChrome,
     /// Разрешённый язык интерфейса (ADR-0030).
     pub language: Language,
 }
@@ -73,137 +88,60 @@ pub(crate) fn show(
 ) -> Vec<UiAction> {
     let mut actions = Vec::new();
 
-    let results: &[Station] = state.results;
-    let favorites: &[Station] = state.favorites;
-    let history: &[Station] = state.history;
-    let filter = &mut *state.filter;
-    let favicons = &mut *state.favicons;
-    let playing_uuid = state.playing_uuid;
-    let language = state.language;
+    let PanelState {
+        tab,
+        country,
+        genre,
+        markers_total,
+        results,
+        favorites,
+        history,
+        pending,
+        empty,
+        error,
+        filter,
+        favicons,
+        playing_uuid,
+        entry: shown,
+        chrome,
+        language,
+    } = state;
+    let embedded = chrome == PanelChrome::Embedded;
+    let reduce = motion.reduce;
     let text = i18n::catalog(language);
-    let tab = state.tab;
-    let shown = content_alpha(motion.scene, motion.panel);
 
     palette.panel(16).show(ui, |ui| {
         ui.set_min_size(ui.available_size());
         // Содержимое входит синхронно со стеклом панели и отдельно от неё не
-        // смещается: сдвиг каркаса делает `app.rs`, хиттестcontent остаётся на
+        // смещается: сдвиг каркаса делает `app.rs`, хиттест остаётся на
         // исходных прямоугольниках (ADR-0032 §7).
         faded_group(ui, shown, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(text.panel.stations).size(16.0).strong());
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .button("×")
-                        .on_hover_text(text.common.hide_station_list)
-                        .clicked()
-                    {
-                        actions.push(UiAction::TogglePanel);
-                    }
-                });
-            });
-
-            if let Some(country) = state.country {
-                let name = single_line(&country.name);
-                let name = if name.is_empty() {
-                    country.iso_a2.clone()
-                } else {
-                    name
-                };
-                let title = i18n::fill(text.panel.country_prefix, &[("name", &name)]);
-                ui.label(
-                    egui::RichText::new(title)
-                        .size(12.0)
-                        .color(palette.accent)
-                        .strong(),
+            if !embedded {
+                draw_header(
+                    ui,
+                    palette,
+                    country,
+                    genre,
+                    markers_total,
+                    language,
+                    &mut actions,
                 );
-            } else if let Some(genre) = state.genre {
-                // Известные теги подписывает `mode_switch`, здесь локализуется префикс.
-                let tag = genre_label(language, genre);
-                ui.label(
-                    egui::RichText::new(i18n::fill(text.panel.genre_prefix, &[("genre", &tag)]))
-                        .size(12.0)
-                        .color(palette.accent)
-                        .strong(),
-                );
-            }
-            if state.markers_total > 0 {
-                let count = state.markers_total.to_string();
-                ui.label(
-                    egui::RichText::new(i18n::fill(text.panel.on_map, &[("count", &count)]))
-                        .size(11.0)
-                        .color(palette.muted),
-                );
-            }
-            if state.pending {
-                ui.label(egui::RichText::new(text.panel.searching).color(palette.muted));
-            }
-            if let Some(error) = state.error {
-                ui.label(egui::RichText::new(error).color(palette.error));
-            } else if state.empty && !state.pending {
-                ui.label(egui::RichText::new(text.panel.no_stations).color(palette.muted));
             }
 
-            let has_library = !favorites.is_empty() || !history.is_empty();
-            if results.is_empty() && !has_library {
-                ui.add_space(12.0);
-                ui.label(
-                    egui::RichText::new(text.panel.intro)
-                        .size(12.0)
-                        .color(palette.muted),
-                );
-                return;
-            }
-
-            let context_mode = state.country.is_some() || state.genre.is_some();
-            let filtered = if context_mode {
+            let context_mode = country.is_some() || genre.is_some();
+            let filtered: Vec<&Station> = if context_mode {
                 station_filter::filtered_results(results, filter)
             } else {
                 results.iter().collect()
             };
-
-            ui.add_space(6.0);
-            let shown_count = filtered.len().to_string();
-            let total_count = results.len().to_string();
-            let results_label = if context_mode && filter.is_active() {
-                // «Results (3 of 10)» — два существующих поля каталога без новой строки.
-                let of = i18n::fill(
-                    text.panel.results_of,
-                    &[("count", &shown_count), ("total", &total_count)],
-                );
-                format!("{} ({})", text.panel.results, of)
-            } else {
-                i18n::fill(text.panel.results_count, &[("count", &shown_count)])
+            let total = match *tab {
+                LibraryTab::Results => results.len(),
+                LibraryTab::Favorites => favorites.len(),
+                LibraryTab::History => history.len(),
             };
-            let labels = [
-                results_label,
-                i18n::fill(
-                    text.panel.favorites_count,
-                    &[("count", &favorites.len().to_string())],
-                ),
-                i18n::fill(
-                    text.panel.history_count,
-                    &[("count", &history.len().to_string())],
-                ),
-            ];
-            let tabs = [
-                Tab {
-                    icon: TabIcon::Results,
-                    label: &labels[0],
-                },
-                Tab {
-                    icon: TabIcon::Star,
-                    label: &labels[1],
-                },
-                Tab {
-                    icon: TabIcon::Clock,
-                    label: &labels[2],
-                },
-            ];
-            // Прогресс вкладки = «эта вкладка открыта». Опрашиваем все три ключа
-            // ровно один раз за кадр (`PresenceStore` не переносит повторного опроса
-            // одного Id, ADR-0032 §5): тогда уходящая вкладка догорает до нуля и
-            // повторный возврат снова проигрывает вход, а не показывает список скачком.
+
+            // Вкладки видны всегда — даже на пустом списке: это карта разделов,
+            // а не заголовок содержимого. Счётчики переехали в подпись под ними.
             let selected_before = tab_index(*tab);
             let mut tab_progress = [0.0; TAB_COUNT];
             for (index, progress) in tab_progress.iter_mut().enumerate() {
@@ -212,16 +150,20 @@ pub(crate) fn show(
                     tab_id(index),
                     index == selected_before,
                     animation::TAB,
-                    motion.reduce,
+                    reduce,
                 ));
             }
-            // Индикатор и подпись открытой вкладки идут одним прогрессом: подчёркивание
-            // отрастает, пока список делает slide-in.
-            let indicator = tab_progress[selected_before];
-            if let Some(clicked) = tab_bar(ui, palette, &tabs, selected_before, indicator) {
+            let labels = [text.panel.results, text.panel.favorites, text.panel.history];
+            if let Some(clicked) = segmented_tabs(
+                ui,
+                palette,
+                "station_tabs",
+                &labels,
+                selected_before,
+                reduce,
+            ) {
                 *tab = tab_from_index(clicked);
             }
-            ui.separator();
 
             // Вкладка, выбранная этим кликом, начинает slide-in с нуля, а не
             // дозавершает переход соседней.
@@ -231,17 +173,39 @@ pub(crate) fn show(
             } else {
                 0.0
             };
+            let compact = filter.compact_rows;
+
+            if total > 0 {
+                ui.add_space(4.0);
+                draw_meta(
+                    ui,
+                    palette,
+                    *tab,
+                    total,
+                    filtered.len(),
+                    context_mode,
+                    filter,
+                    language,
+                );
+            }
+            ui.add_space(6.0);
 
             if context_mode && *tab == LibraryTab::Results && !results.is_empty() {
-                draw_local_filters(ui, palette, state.country, filter, language);
-                ui.add_space(4.0);
+                draw_local_filters(ui, palette, country, filter, language);
+                ui.add_space(6.0);
             }
 
-            let compact = filter.compact_rows;
+            let show_clear = *tab == LibraryTab::History && !history.is_empty();
+            let reserve = if show_clear {
+                CLEAR_HISTORY_HEIGHT
+            } else {
+                0.0
+            };
+            let viewport = (ui.available_height() - reserve).max(80.0);
             egui::ScrollArea::vertical()
                 .id_salt("station_panel_scroll")
                 .auto_shrink([false, false])
-                .max_height(ui.available_height())
+                .max_height(viewport)
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     // Slide относится только к отрисовке: скролл-область и её
@@ -249,137 +213,258 @@ pub(crate) fn show(
                     // прокрутку списка.
                     slide_body(ui, tab_offset(tab_progress), |ui| match *tab {
                         LibraryTab::Results => {
-                            if results.is_empty() {
-                                let message = if state.empty {
-                                    text.panel.no_stations
+                            if let Some(error) = error {
+                                ui.add_space(4.0);
+                                if error_card(
+                                    ui,
+                                    palette,
+                                    text.panel.search_failed,
+                                    error,
+                                    text.common.retry,
+                                ) {
+                                    actions.push(UiAction::RetrySearch);
+                                }
+                            } else if pending {
+                                skeleton_rows(
+                                    ui,
+                                    palette,
+                                    compact,
+                                    viewport,
+                                    text.panel.searching,
+                                    reduce,
+                                );
+                            } else if results.is_empty() {
+                                let state = if empty {
+                                    EmptyState {
+                                        mark: EmptyMark::Search,
+                                        title: text.panel.no_stations,
+                                        hint: Some(text.panel.intro),
+                                        action: None,
+                                    }
                                 } else {
-                                    text.panel.pick_country_or_genre
+                                    EmptyState {
+                                        mark: EmptyMark::Globe,
+                                        title: text.panel.pick_country_or_genre,
+                                        hint: Some(text.panel.intro),
+                                        action: None,
+                                    }
                                 };
-                                ui.label(egui::RichText::new(message).color(palette.muted));
+                                empty_state(ui, palette, state, viewport);
                             } else if filtered.is_empty() {
-                                ui.add_space(8.0);
-                                ui.label(
-                                    egui::RichText::new(text.panel.quiet_sector)
-                                        .size(13.0)
-                                        .color(palette.muted),
+                                let reset = empty_state(
+                                    ui,
+                                    palette,
+                                    EmptyState {
+                                        mark: EmptyMark::Filter,
+                                        title: text.panel.quiet_sector,
+                                        hint: Some(text.panel.no_filter_match),
+                                        action: Some(text.panel.reset_filters),
+                                    },
+                                    viewport,
                                 );
-                                ui.label(
-                                    egui::RichText::new(text.panel.no_filter_match)
-                                        .size(11.0)
-                                        .color(palette.muted),
-                                );
-                                if ui.button(text.panel.reset_filters).clicked() {
+                                if reset {
                                     filter.reset();
                                 }
-                            } else if context_mode {
-                                for (index, station) in filtered.iter().enumerate() {
-                                    let mut row = RowContext {
-                                        playing: playing_uuid == Some(&station.stationuuid),
-                                        compact,
-                                        favorites,
-                                        language,
-                                        favicons: &mut *favicons,
-                                        previous: index
-                                            .checked_sub(1)
-                                            .map(|item| filtered[item].stationuuid.as_str()),
-                                        next: filtered
-                                            .get(index + 1)
-                                            .map(|item| item.stationuuid.as_str()),
-                                    };
-                                    station_row(ui, palette, station, &mut row, &mut actions);
-                                    if !compact {
-                                        ui.horizontal(|ui| {
-                                            ui.add_space(46.0);
-                                            station_tag_chips(ui, palette, station, &mut actions);
-                                        });
-                                    }
-                                }
                             } else {
-                                for (index, station) in filtered.iter().enumerate() {
-                                    let mut row = RowContext {
-                                        playing: playing_uuid == Some(&station.stationuuid),
-                                        compact,
-                                        favorites,
-                                        language,
-                                        favicons: &mut *favicons,
-                                        previous: index
-                                            .checked_sub(1)
-                                            .map(|item| filtered[item].stationuuid.as_str()),
-                                        next: filtered
-                                            .get(index + 1)
-                                            .map(|item| item.stationuuid.as_str()),
-                                    };
-                                    station_row(ui, palette, station, &mut row, &mut actions);
-                                }
+                                draw_rows(
+                                    ui,
+                                    palette,
+                                    &filtered,
+                                    playing_uuid,
+                                    compact,
+                                    context_mode,
+                                    favorites,
+                                    language,
+                                    favicons,
+                                    &mut actions,
+                                );
                             }
                         }
                         LibraryTab::Favorites => {
                             if favorites.is_empty() {
-                                ui.label(
-                                    egui::RichText::new(text.panel.favorites_empty)
-                                        .color(palette.muted),
+                                empty_state(
+                                    ui,
+                                    palette,
+                                    EmptyState {
+                                        mark: EmptyMark::Star,
+                                        title: text.panel.favorites_empty,
+                                        hint: Some(text.capsule.favorite_hint),
+                                        action: None,
+                                    },
+                                    viewport,
                                 );
                             } else {
-                                for (index, station) in favorites.iter().enumerate() {
-                                    let mut row = RowContext {
-                                        playing: playing_uuid == Some(&station.stationuuid),
-                                        compact,
-                                        favorites,
-                                        language,
-                                        favicons: &mut *favicons,
-                                        previous: index
-                                            .checked_sub(1)
-                                            .map(|item| favorites[item].stationuuid.as_str()),
-                                        next: favorites
-                                            .get(index + 1)
-                                            .map(|item| item.stationuuid.as_str()),
-                                    };
-                                    station_row(ui, palette, station, &mut row, &mut actions);
-                                }
+                                let rows: Vec<&Station> = favorites.iter().collect();
+                                draw_rows(
+                                    ui,
+                                    palette,
+                                    &rows,
+                                    playing_uuid,
+                                    compact,
+                                    false,
+                                    favorites,
+                                    language,
+                                    favicons,
+                                    &mut actions,
+                                );
                             }
                         }
                         LibraryTab::History => {
                             if history.is_empty() {
-                                ui.label(
-                                    egui::RichText::new(text.panel.history_empty)
-                                        .color(palette.muted),
+                                empty_state(
+                                    ui,
+                                    palette,
+                                    EmptyState {
+                                        mark: EmptyMark::Clock,
+                                        title: text.panel.history_empty,
+                                        hint: None,
+                                        action: None,
+                                    },
+                                    viewport,
                                 );
                             } else {
-                                for (index, station) in history.iter().enumerate() {
-                                    let mut row = RowContext {
-                                        playing: playing_uuid == Some(&station.stationuuid),
-                                        compact,
-                                        favorites,
-                                        language,
-                                        favicons: &mut *favicons,
-                                        previous: index
-                                            .checked_sub(1)
-                                            .map(|item| history[item].stationuuid.as_str()),
-                                        next: history
-                                            .get(index + 1)
-                                            .map(|item| item.stationuuid.as_str()),
-                                    };
-                                    station_row(ui, palette, station, &mut row, &mut actions);
-                                }
-                                ui.add_space(6.0);
-                                if ui.button(text.panel.clear_history).clicked() {
-                                    actions.push(UiAction::ClearHistory);
-                                }
+                                let rows: Vec<&Station> = history.iter().collect();
+                                draw_rows(
+                                    ui,
+                                    palette,
+                                    &rows,
+                                    playing_uuid,
+                                    compact,
+                                    false,
+                                    favorites,
+                                    language,
+                                    favicons,
+                                    &mut actions,
+                                );
                             }
                         }
                     });
                 });
+
+            // Очистка истории закреплена под списком: длинная история не
+            // уводит действие за пределы прокрутки.
+            if show_clear {
+                ui.add_space(4.0);
+                if quiet_button(ui, palette, text.panel.clear_history, palette.error).clicked() {
+                    actions.push(UiAction::ClearHistory);
+                }
+            }
         });
     });
 
     actions
 }
 
-/// Альфа содержимого панели: вход стола по индексу [`SCENE_INDEX`] умножается на
-/// собственный прогресс стеклянной панели (`motion.panel`), ровно как это делает
-/// `app.rs` для каркаса.
-fn content_alpha(scene: f32, panel: f32) -> f32 {
-    animation::alpha(animation::stagger(SCENE_INDEX, scene) * panel)
+/// Шапка самостоятельной карточки Focus: заголовок, контекст и счётчик карты.
+fn draw_header(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    country: Option<&Country>,
+    genre: Option<&str>,
+    markers_total: usize,
+    language: Language,
+    actions: &mut Vec<UiAction>,
+) {
+    let text = i18n::catalog(language);
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(text.panel.stations)
+                .size(15.0)
+                .strong()
+                .color(palette.text),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if icons::close_button(ui, palette, text.common.hide_station_list).clicked() {
+                actions.push(UiAction::TogglePanel);
+            }
+        });
+    });
+
+    if let Some(country) = country {
+        let name = single_line(&country.name);
+        let name = if name.is_empty() {
+            country.iso_a2.clone()
+        } else {
+            name
+        };
+        let title = i18n::fill(text.panel.country_prefix, &[("name", &name)]);
+        ui.label(
+            egui::RichText::new(title)
+                .size(12.0)
+                .color(palette.accent)
+                .strong(),
+        );
+    } else if let Some(genre) = genre {
+        // Известные теги подписывает `mode_switch`, здесь локализуется префикс.
+        let tag = genre_label(language, genre);
+        ui.label(
+            egui::RichText::new(i18n::fill(text.panel.genre_prefix, &[("genre", &tag)]))
+                .size(12.0)
+                .color(palette.accent)
+                .strong(),
+        );
+    }
+    if markers_total > 0 {
+        let count = markers_total.to_string();
+        ui.label(
+            egui::RichText::new(i18n::fill(text.panel.on_map, &[("count", &count)]))
+                .size(11.0)
+                .color(palette.muted),
+        );
+    }
+}
+
+/// Подпись под вкладками: «N из M» при фильтрах, иначе число станций, плюс
+/// сортировка и плотность строк. Счётчики в самих вкладках больше не живут.
+#[allow(clippy::too_many_arguments)]
+fn draw_meta(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    tab: LibraryTab,
+    total: usize,
+    shown_count: usize,
+    context_mode: bool,
+    filter: &mut CountryFilterState,
+    language: Language,
+) {
+    let text = i18n::catalog(language);
+    let caption = if tab == LibraryTab::Results && context_mode && filter.is_active() {
+        i18n::fill(
+            text.panel.results_of,
+            &[
+                ("count", &shown_count.to_string()),
+                ("total", &total.to_string()),
+            ],
+        )
+    } else {
+        i18n::fill(text.panel.station_count, &[("count", &total.to_string())])
+    };
+    let sortable = tab == LibraryTab::Results && context_mode;
+
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(caption).size(11.0).color(palette.muted));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if icons::density_button(ui, palette, text.panel.compact, filter.compact_rows).clicked()
+            {
+                filter.compact_rows = !filter.compact_rows;
+            }
+            if sortable {
+                let response = icons::sort_button(ui, palette, text.panel.sort_by);
+                egui::Popup::menu(&response).show(|ui| {
+                    for sort in StationSort::ALL {
+                        let selected = filter.sort == sort;
+                        if ui
+                            .selectable_label(selected, sort.label(language))
+                            .clicked()
+                        {
+                            filter.sort = sort;
+                            ui.close();
+                        }
+                    }
+                });
+            }
+        });
+    });
 }
 
 /// Стабильный Id перехода вкладки: три вкладки — три ключа в `PresenceStore`.
@@ -423,7 +508,46 @@ fn slide_body<T>(ui: &mut egui::Ui, shift: f32, add: impl FnOnce(&mut egui::Ui) 
     result
 }
 
-/// Локальные фильтры выбранной страны: поиск, жанровые чипы, сортировка, плотность.
+/// Строки списка с соседями для навигации стрелками. `tag_chips` рисует
+/// жанровые чипы под станцией выбранной страны.
+#[allow(clippy::too_many_arguments)]
+fn draw_rows(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    stations: &[&Station],
+    playing_uuid: Option<&str>,
+    compact: bool,
+    tag_chips: bool,
+    favorites: &[Station],
+    language: Language,
+    favicons: &mut FaviconCache,
+    actions: &mut Vec<UiAction>,
+) {
+    for (index, station) in stations.iter().enumerate() {
+        let mut row = RowContext {
+            playing: playing_uuid == Some(&station.stationuuid),
+            compact,
+            favorites,
+            language,
+            favicons: &mut *favicons,
+            previous: index
+                .checked_sub(1)
+                .map(|item| stations[item].stationuuid.as_str()),
+            next: stations
+                .get(index + 1)
+                .map(|item| item.stationuuid.as_str()),
+        };
+        station_row(ui, palette, station, &mut row, actions);
+        if tag_chips && !compact {
+            ui.horizontal(|ui| {
+                ui.add_space(46.0);
+                station_tag_chips(ui, palette, station, actions);
+            });
+        }
+    }
+}
+
+/// Локальные фильтры выбранной страны: поиск и жанровые чипы одной строкой.
 fn draw_local_filters(
     ui: &mut egui::Ui,
     palette: &Palette,
@@ -449,38 +573,28 @@ fn draw_local_filters(
     );
     let _ = output;
 
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = 6.0;
-        let all_selected = filter.genre.is_none();
-        if chip(ui, palette, text.panel.all, all_selected).clicked() {
-            filter.genre = None;
-        }
-        for genre in GenreTag::ALL {
-            let selected = filter.genre == Some(genre);
-            if chip(ui, palette, genre.label(language), selected).clicked() {
-                filter.genre = if selected { None } else { Some(genre) };
-            }
-        }
-    });
-
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(text.panel.sort_by)
-                .size(11.0)
-                .color(palette.muted),
-        );
-        egui::ComboBox::from_id_salt("country_station_sort")
-            .selected_text(filter.sort.label(language))
-            .width(130.0)
-            .show_ui(ui, |ui| {
-                for sort in StationSort::ALL {
-                    ui.selectable_value(&mut filter.sort, sort, sort.label(language));
+    ui.add_space(4.0);
+    // Чипы всегда в одну строку: перенос ломал ритм панели, а длинный набор
+    // жанров прокручивается колесом внутри своей полосы.
+    egui::ScrollArea::horizontal()
+        .id_salt("orbitfm_country_filter_chips")
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                let all_selected = filter.genre.is_none();
+                if chip(ui, palette, text.panel.all, all_selected).clicked() {
+                    filter.genre = None;
+                }
+                for genre in GenreTag::ALL {
+                    let selected = filter.genre == Some(genre);
+                    if chip(ui, palette, genre.label(language), selected).clicked() {
+                        filter.genre = if selected { None } else { Some(genre) };
+                    }
                 }
             });
-        if chip(ui, palette, text.panel.compact, filter.compact_rows).clicked() {
-            filter.compact_rows = !filter.compact_rows;
-        }
-    });
+        });
 }
 
 #[cfg(test)]
@@ -497,5 +611,12 @@ mod tests {
             assert_eq!(tab_from_index(tab_index(tab)), tab);
         }
         assert_eq!(tab_from_index(7), LibraryTab::Results);
+    }
+
+    #[test]
+    fn tab_slide_starts_offset_and_settles_at_zero() {
+        assert_eq!(tab_offset(0.0), -animation::SLIDE_X);
+        assert_eq!(tab_offset(1.0), 0.0);
+        assert_eq!(tab_offset(f32::NAN), -animation::SLIDE_X);
     }
 }

@@ -292,7 +292,7 @@ fn draw_contents(
             } else {
                 palette.muted
             };
-            let star = star_button(ui, favorite, color, hint);
+            let star = star_button(ui, palette, favorite, color, hint);
             if !state.compact {
                 ui.vertical(|ui| {
                     ui.set_width(64.0);

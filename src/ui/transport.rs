@@ -16,11 +16,11 @@ use crate::settings::Language;
 use super::animation;
 use super::icons::{self, heart_button, next_button, prev_button, stop_button};
 use super::images::FaviconCache;
-use super::palette::Palette;
+use super::palette::{Palette, mix_colors};
 use super::station_row::row_place;
 use super::widgets::{
-    avatar, chip, circle_button, eq_bars_in, faded_group, focus_ring, live_badge, viz_bars,
-    volume_slider,
+    avatar, chip, circle_button, circle_button_sized, eq_bars_in, faded_group, focus_ring,
+    live_badge, viz_bars, volume_slider,
 };
 use super::{UiAction, playback_label, single_line, truncate};
 
@@ -167,7 +167,7 @@ pub(crate) fn show(
 
                     ui.add_space(12.0);
                     let has_station = current.is_some();
-                    if prev_button(ui, has_station, language).clicked() {
+                    if prev_button(ui, palette, has_station, language).clicked() {
                         actions.push(UiAction::PlayRelative(-1));
                     }
                     let hint = if playing {
@@ -178,11 +178,11 @@ pub(crate) fn show(
                     if circle_button(ui, palette, playing, playing || can_resume, hint).clicked() {
                         actions.push(UiAction::TogglePlayback);
                     }
-                    if next_button(ui, has_station, language).clicked() {
+                    if next_button(ui, palette, has_station, language).clicked() {
                         actions.push(UiAction::PlayRelative(1));
                     }
                     let stop_enabled = !matches!(playback, PlaybackState::Stopped);
-                    if stop_button(ui, stop_enabled, language).clicked() {
+                    if stop_button(ui, palette, stop_enabled, language).clicked() {
                         actions.push(UiAction::Stop);
                     }
                     if let Some(station) = current {
@@ -196,7 +196,7 @@ pub(crate) fn show(
                         } else {
                             text.common.add_favorite
                         };
-                        if heart_button(ui, favorite, color, hint).clicked() {
+                        if heart_button(ui, palette, favorite, color, hint).clicked() {
                             actions.push(UiAction::ToggleFavorite(station.clone()));
                         }
                     }
@@ -314,12 +314,14 @@ impl egui::Widget for RouletteButton<'_> {
             Sense::hover()
         };
         let (rect, response) = ui.allocate_exact_size(size, sense);
+        let (hover, _) = super::widgets::control_motion(
+            ui,
+            response.id,
+            self.enabled && response.hovered(),
+            false,
+        );
         if ui.is_rect_visible(rect) {
-            let fill = if response.hovered() && self.enabled {
-                self.palette.accent
-            } else {
-                self.palette.chip_fill
-            };
+            let fill = mix_colors(self.palette.chip_fill, self.palette.accent, hover);
             ui.painter().rect(
                 rect,
                 egui::CornerRadius::same(13),
@@ -332,16 +334,26 @@ impl egui::Widget for RouletteButton<'_> {
             } else {
                 pos2(rect.left() + 16.0, rect.center().y)
             };
-            icons::draw_dice(ui.painter(), dice_center, 8.0, color);
+            let text_color = mix_colors(
+                color,
+                super::widgets::contrast_color(self.palette.accent),
+                hover,
+            );
+            icons::paint_icon(ui, icons::Icon::Dice, dice_center, 16.0, text_color);
             if !label.is_empty() {
+                let painted = if hover > 0.01 {
+                    ui.painter().layout_no_wrap(
+                        label.to_owned(),
+                        egui::FontId::proportional(12.5),
+                        text_color,
+                    )
+                } else {
+                    galley.clone()
+                };
                 ui.painter().galley(
-                    pos2(rect.left() + 30.0, rect.center().y - galley.size().y * 0.5),
-                    galley,
-                    if response.hovered() && self.enabled {
-                        super::widgets::contrast_color(self.palette.accent)
-                    } else {
-                        color
-                    },
+                    pos2(rect.left() + 30.0, rect.center().y - painted.size().y * 0.5),
+                    painted,
+                    text_color,
                 );
             }
             focus_ring(ui, &response, rect, 13.0);
@@ -359,6 +371,151 @@ impl egui::Widget for RouletteButton<'_> {
             response
         }
     }
+}
+
+/// Состояние подвала выпадающей панели (ADR-0033): what's playing и контролы.
+pub(crate) struct PanelFooterState<'a> {
+    pub entry: f32,
+    pub playback: &'a PlaybackState,
+    pub current: Option<&'a Station>,
+    pub favorite: bool,
+    pub can_resume: bool,
+    pub favicons: &'a mut FaviconCache,
+    /// Разрешённый язык интерфейса (ADR-0030).
+    pub language: Language,
+}
+
+/// Подвал панели бар-виджета: одна строка без визуализатора и громкости.
+/// Громкость и оформление остаются в drawer'е, который открывается шестернёй
+/// в шапке.
+pub(crate) fn panel_footer(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    state: PanelFooterState<'_>,
+) -> Vec<UiAction> {
+    let mut actions = Vec::new();
+    let playing = matches!(
+        state.playback,
+        PlaybackState::Playing | PlaybackState::Buffering | PlaybackState::Reconnecting
+    );
+    let texture = state
+        .current
+        .and_then(|station| station.favicon.as_deref())
+        .and_then(|url| state.favicons.texture(url));
+    let current = state.current;
+    let playback = state.playback;
+    let favorite = state.favorite;
+    let can_resume = state.can_resume;
+    let language = state.language;
+    let text = i18n::catalog(language);
+
+    palette.panel(16).show(ui, |ui| {
+        ui.set_min_size(ui.available_size());
+        faded_group(ui, state.entry, |ui| {
+            let row = ui.available_rect_before_wrap();
+            let controls_width = 156.0_f32.min(row.width() * 0.55);
+            let left_rect = egui::Rect::from_min_max(
+                row.min,
+                pos2((row.right() - controls_width).max(row.left()), row.bottom()),
+            );
+            let right_rect = egui::Rect::from_min_max(
+                pos2((row.right() - controls_width).max(row.left()), row.top()),
+                row.max,
+            );
+
+            ui.scope_builder(
+                egui::UiBuilder::new()
+                    .max_rect(left_rect)
+                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                |ui| {
+                    avatar(
+                        ui,
+                        palette,
+                        texture,
+                        current.map(|station| station.name.as_str()).unwrap_or("?"),
+                        34.0,
+                    );
+                    let name_chars =
+                        (((ui.available_width() - 12.0) / 7.2).clamp(8.0, 26.0)) as usize;
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 1.0;
+                        let name = current
+                            .map(|station| single_line(&station.name))
+                            .filter(|name| !name.is_empty())
+                            .unwrap_or_else(|| text.common.nothing_playing.to_owned());
+                        ui.label(
+                            egui::RichText::new(truncate(&name, name_chars))
+                                .size(12.5)
+                                .strong()
+                                .color(if playing {
+                                    palette.accent
+                                } else {
+                                    palette.text
+                                }),
+                        );
+                        let place = current.map(row_place).unwrap_or_default();
+                        let status = playback_label(language, playback);
+                        let details = if place.is_empty() {
+                            status
+                        } else {
+                            format!("{status} · {place}")
+                        };
+                        ui.label(
+                            egui::RichText::new(truncate(&details, name_chars))
+                                .size(10.0)
+                                .color(palette.muted),
+                        );
+                    });
+                },
+            );
+
+            ui.scope_builder(
+                egui::UiBuilder::new()
+                    .max_rect(right_rect)
+                    .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                |ui| {
+                    if let Some(station) = current {
+                        let color = if favorite {
+                            palette.accent
+                        } else {
+                            palette.muted
+                        };
+                        let hint = if favorite {
+                            text.common.remove_favorite
+                        } else {
+                            text.common.add_favorite
+                        };
+                        if heart_button(ui, palette, favorite, color, hint).clicked() {
+                            actions.push(UiAction::ToggleFavorite(station.clone()));
+                        }
+                    }
+                    let stop_enabled = !matches!(playback, PlaybackState::Stopped);
+                    if stop_button(ui, palette, stop_enabled, language).clicked() {
+                        actions.push(UiAction::Stop);
+                    }
+                    let has_station = current.is_some();
+                    if next_button(ui, palette, has_station, language).clicked() {
+                        actions.push(UiAction::PlayRelative(1));
+                    }
+                    let hint = if playing {
+                        text.common.pause
+                    } else {
+                        text.common.resume
+                    };
+                    if circle_button_sized(ui, palette, 38.0, playing, playing || can_resume, hint)
+                        .clicked()
+                    {
+                        actions.push(UiAction::TogglePlayback);
+                    }
+                    if prev_button(ui, palette, has_station, language).clicked() {
+                        actions.push(UiAction::PlayRelative(-1));
+                    }
+                },
+            );
+        });
+    });
+
+    actions
 }
 
 fn now_playing_line(

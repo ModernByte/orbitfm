@@ -140,6 +140,22 @@ impl super::Session {
         );
     }
 
+    /// Повтор последнего запроса из карточки ошибки: контекст страны или жанра
+    /// важнее строки имени — именно он сформировал упавший запрос.
+    pub(crate) fn retry_search(&mut self) {
+        if let Some(country) = self.search.context.country.clone() {
+            self.start_country_search(country);
+            return;
+        }
+        if let Some(tag) = self.search.context.genre.clone() {
+            self.start_genre_search(tag);
+            return;
+        }
+        if self.search.error.is_some() {
+            self.start_search();
+        }
+    }
+
     pub(crate) fn start_country_search(&mut self, country: Country) {
         let iso_a2 = country.iso_a2.clone();
         self.search.context.activate_country(country);

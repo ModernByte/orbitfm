@@ -118,6 +118,8 @@ noctalia.runAsync("orbitfm toggle")
 
 ## Ссылки (официальные)
 
+- ADR-0033: выпадающая панель бар-виджета — командой `orbitfm panel`
+  (`docs/adr/0033-выпадающая-панель-бар-виджета.md`)
 - https://docs.noctalia.dev/noctalia/plugins/development/
 - https://docs.noctalia.dev/noctalia/plugins/development/manifest/
 - https://docs.noctalia.dev/noctalia/plugins/development/plugin-api/

@@ -120,6 +120,8 @@ impl<'a> OrbitApp<'a> {
     pub(crate) fn new(cc: &eframe::CreationContext<'_>, session: &'a mut Session) -> Self {
         let egui_ctx = cc.egui_ctx.clone();
         palette::configure_style(&egui_ctx, session.settings.settings());
+        // SVG-иконки: загрузчик ставится на каждый новый Context окна (ADR-0034).
+        egui_extras::install_image_loaders(&egui_ctx);
         install_emoji_font(&egui_ctx);
         session.wake.install({
             let ctx = egui_ctx.clone();
@@ -281,7 +283,7 @@ impl<'a> OrbitApp<'a> {
                 help: layout.help.is_some(),
                 legend: layout.legend.is_some(),
                 drawer: layout.settings.is_some(),
-                capsules: density == LayoutDensity::Compact,
+                capsules: matches!(density, LayoutDensity::Compact | LayoutDensity::Panel),
                 favorites: density == LayoutDensity::Compact && layout.capsule.is_some(),
                 listening: density == LayoutDensity::Minimal,
             },
@@ -414,6 +416,8 @@ impl<'a> OrbitApp<'a> {
 
                 if let Some(panel_rect) = layout.panel {
                     let panel_a = animation::alpha(panel_in * ui_motion.panel);
+                    let panel_entry =
+                        animation::alpha(animation::stagger(1, ui_motion.scene) * ui_motion.panel);
                     widgets::glass_panel(
                         ui.painter(),
                         panel_rect.translate(egui::vec2(-animation::slide_x(panel_a), 0.0)),
@@ -422,37 +426,34 @@ impl<'a> OrbitApp<'a> {
                         panel_a,
                     );
                     actions.extend(
-                        ui.scope_builder(
-                            egui::UiBuilder::new()
-                                .max_rect(panel_rect)
-                                .layout(egui::Layout::top_down(egui::Align::Min)),
-                            |ui| {
-                                station_panel::show(
-                                    ui,
-                                    palette,
-                                    &mut ui_motion,
-                                    station_panel::PanelState {
-                                        tab: &mut session.library_tab,
-                                        country: session.search.context.country.as_ref(),
-                                        genre: session.search.context.genre.as_deref(),
-                                        markers_total: frame.markers_total,
-                                        results: &session.search.results,
-                                        favorites: session.library.favorites(),
-                                        history: session.library.history(),
-                                        pending: session.search.pending,
-                                        empty: session.search.empty,
-                                        error: session.search.error.as_deref(),
-                                        filter: &mut session.country_filter,
-                                        favicons,
-                                        playing_uuid: session
-                                            .current_station
-                                            .as_ref()
-                                            .map(|station| station.stationuuid.as_str()),
-                                        language: frame.language,
-                                    },
-                                )
-                            },
-                        )
+                        ui.scope_builder(vertical(panel_rect), |ui| {
+                            station_panel::show(
+                                ui,
+                                palette,
+                                &mut ui_motion,
+                                station_panel::PanelState {
+                                    tab: &mut session.library_tab,
+                                    country: session.search.context.country.as_ref(),
+                                    genre: session.search.context.genre.as_deref(),
+                                    markers_total: frame.markers_total,
+                                    results: &session.search.results,
+                                    favorites: session.library.favorites(),
+                                    history: session.library.history(),
+                                    pending: session.search.pending,
+                                    empty: session.search.empty,
+                                    error: session.search.error.as_deref(),
+                                    filter: &mut session.country_filter,
+                                    favicons,
+                                    playing_uuid: session
+                                        .current_station
+                                        .as_ref()
+                                        .map(|station| station.stationuuid.as_str()),
+                                    entry: panel_entry,
+                                    chrome: station_panel::PanelChrome::Full,
+                                    language: frame.language,
+                                },
+                            )
+                        })
                         .inner,
                     );
                 }
@@ -606,6 +607,111 @@ impl<'a> OrbitApp<'a> {
                     );
                 }
             }
+            LayoutDensity::Panel => {
+                // Одна поверхность вместо трёх карточек (ADR-0033): стекло
+                // входит целиком, а шапка, список и подвал гаснут вместе с ним.
+                let panel_a = animation::alpha(ui_motion.capsules);
+                if let Some(surface) = layout.surface {
+                    widgets::glass_panel(
+                        ui.painter(),
+                        surface,
+                        palette,
+                        GLASS_RADIUS_MAJOR,
+                        panel_a,
+                    );
+                    let rule =
+                        egui::Stroke::new(1.0, widgets::faded(palette.card_stroke, panel_a * 0.8));
+                    if let Some(header) = layout.hud {
+                        ui.painter()
+                            .hline(header.x_range().shrink(12.0), header.bottom(), rule);
+                    }
+                    if let Some(footer) = layout.transport {
+                        ui.painter()
+                            .hline(footer.x_range().shrink(12.0), footer.top(), rule);
+                    }
+                }
+
+                if let Some(header_rect) = layout.hud {
+                    actions.extend(
+                        ui.scope_builder(vertical(header_rect), |ui| {
+                            hud::panel_header(
+                                ui,
+                                palette,
+                                hud::PanelHeaderState {
+                                    entry: panel_a,
+                                    query: &mut session.search.query,
+                                    country_query: &mut session.search.country_query,
+                                    genre_query: &mut session.search.genre_query,
+                                    mode: session.search.context.mode,
+                                    selected_genre: session.search.context.genre.as_deref(),
+                                    context_active: session.search.context.is_active(),
+                                    country: session.search.context.country.as_ref(),
+                                    genre: session.search.context.genre.as_deref(),
+                                    geo: &session.geo,
+                                    roulette_pending: session.search.roulette_pending,
+                                    language: frame.language,
+                                },
+                            )
+                        })
+                        .inner,
+                    );
+                }
+
+                if let Some(panel_rect) = layout.panel {
+                    actions.extend(
+                        ui.scope_builder(vertical(panel_rect), |ui| {
+                            station_panel::show(
+                                ui,
+                                palette,
+                                &mut ui_motion,
+                                station_panel::PanelState {
+                                    tab: &mut session.library_tab,
+                                    country: session.search.context.country.as_ref(),
+                                    genre: session.search.context.genre.as_deref(),
+                                    markers_total: frame.markers_total,
+                                    results: &session.search.results,
+                                    favorites: session.library.favorites(),
+                                    history: session.library.history(),
+                                    pending: session.search.pending,
+                                    empty: session.search.empty,
+                                    error: session.search.error.as_deref(),
+                                    filter: &mut session.country_filter,
+                                    favicons,
+                                    playing_uuid: session
+                                        .current_station
+                                        .as_ref()
+                                        .map(|station| station.stationuuid.as_str()),
+                                    entry: panel_a,
+                                    chrome: station_panel::PanelChrome::Embedded,
+                                    language: frame.language,
+                                },
+                            )
+                        })
+                        .inner,
+                    );
+                }
+
+                if let Some(footer_rect) = layout.transport {
+                    actions.extend(
+                        ui.scope_builder(vertical(footer_rect), |ui| {
+                            transport::panel_footer(
+                                ui,
+                                palette,
+                                transport::PanelFooterState {
+                                    entry: panel_a,
+                                    playback: &frame.playback,
+                                    current: session.current_station.as_ref(),
+                                    favorite: frame.current_favorite,
+                                    can_resume: frame.can_resume,
+                                    favicons,
+                                    language: frame.language,
+                                },
+                            )
+                        })
+                        .inner,
+                    );
+                }
+            }
         }
 
         actions.extend(draw_settings(ui, frame, &mut ui_motion, self.drawer_rect));
@@ -654,6 +760,7 @@ impl<'a> OrbitApp<'a> {
             UiAction::SwitchMode(mode) => self.session.switch_mode(mode),
             UiAction::SelectGenre(tag) => self.session.start_genre_search(tag),
             UiAction::RunSearch => self.session.start_search(),
+            UiAction::RetrySearch => self.session.retry_search(),
             UiAction::Roulette => self.session.start_roulette(),
             UiAction::ClearHistory => self.session.clear_history(),
             UiAction::SetTheme(theme) => {
@@ -1004,6 +1111,29 @@ impl eframe::App for OrbitApp<'_> {
             self.session.toggle_settings();
         }
 
+        // Поиск: `/` при свободном фокусе и Ctrl+F в любом месте. Клавишу
+        // забираем у TextEdit, иначе символ попадёт в поле вторым событием.
+        let unfocused = ctx.memory(|memory| memory.focused().is_none());
+        let focus_search = ctx.input_mut(|input| {
+            input.consume_key(egui::Modifiers::COMMAND, egui::Key::F)
+                || (unfocused && input.consume_key(egui::Modifiers::NONE, egui::Key::Slash))
+        });
+        if focus_search && !self.session.settings_open {
+            let id = search_field_id(self.session.search.context.mode, self.session.window_mode());
+            ctx.memory_mut(|memory| memory.request_focus(id));
+        }
+
+        // Space без фокуса — play/pause. На сфокусированной строке Space уже
+        // занят станцией (station_row), поэтому просим клавишу только когда
+        // фокус пуст и drawer настроек закрыт.
+        if !self.session.settings_open
+            && unfocused
+            && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Space))
+            && let Err(err) = self.session.toggle_playback()
+        {
+            self.error_toast(ctx, NoticeKey::PlaybackFailed, Some(err));
+        }
+
         if self.session.visualizer_enabled
             && matches!(
                 self.session.audio.state(),
@@ -1020,6 +1150,17 @@ impl eframe::App for OrbitApp<'_> {
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         [0.0, 0.0, 0.0, 0.0]
+    }
+}
+
+/// Id поля поиска текущего экрана: по нему Ctrl+F и `/` ставят фокус.
+fn search_field_id(mode: SearchMode, window: WindowMode) -> egui::Id {
+    if mode == SearchMode::Country {
+        egui::Id::unique("orbitfm_hud_country")
+    } else if window == WindowMode::Panel {
+        egui::Id::unique("orbitfm_panel_search")
+    } else {
+        egui::Id::unique("orbitfm_hud_search")
     }
 }
 
@@ -1089,5 +1230,21 @@ mod tests {
         assert!(!favicon_mime_allowed("image/x-icon"));
         assert!(!favicon_mime_allowed("text/html"));
         assert!(!favicon_mime_allowed(""));
+    }
+
+    #[test]
+    fn search_shortcut_targets_the_field_on_screen() {
+        assert_eq!(
+            search_field_id(SearchMode::Country, WindowMode::Focus),
+            egui::Id::unique("orbitfm_hud_country")
+        );
+        assert_eq!(
+            search_field_id(SearchMode::GlobalGenre, WindowMode::Panel),
+            egui::Id::unique("orbitfm_panel_search")
+        );
+        assert_eq!(
+            search_field_id(SearchMode::GlobalGenre, WindowMode::Focus),
+            egui::Id::unique("orbitfm_hud_search")
+        );
     }
 }

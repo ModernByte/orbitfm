@@ -261,6 +261,12 @@ country-режим выключены, `pulse` считается в `draw_layer
 передаётся только Listening; глобус от эфира не пульсирует. Focus-геометрия не
 меняется — это закреплено тестами `DeskLayout`.
 
+Четвёртый режим — `Panel` (ADR-0033): выпадающая поверхность бар-виджета без рамок
+и заголовка, плотность `Panel`, окно 400×640. Внутри — шапка с поиском и
+переключателем Country/Genre, список станций и подвал транспорта; громкость и
+оформление остаются в drawer'е. `Panel` не входит в `WindowMode::ALL` и
+открывается только плагином (`orbitfm panel`) или IPC.
+
 | Зона | Содержимое |
 |------|------------|
 | HUD | логотип, `Country/Genre`, поиск (у страны — popup подсказок), now-playing с favicon и LIVE, луна, шестерёнка, кнопка списка, `?`, `×` |
@@ -270,8 +276,12 @@ country-режим выключены, `pulse` считается в `draw_layer
 | Легенда | `Station density` градиент Low→High |
 | Drawer настроек | секции Appearance (тема, акцент, чекбокс визуализатора, число столбцов), Language, Audio (громкость), Motion (реактивность, стиль, reduce motion, перевороты), Window (режим, help, скрыть окно, выход), About; справа поверх scrim |
 
-Иконки рисуются через `Painter` в `ui/icons.rs` и кастомных виджетах `ui/widgets.rs`
-(треугольники, дуги из `Shape::line`, mesh) и не зависят от набора глифов шрифта.
+Иконки — SVG Lucide из `assets/icons/` (ADR-0034): `ui/icons.rs` перечисляет набор
+через `egui::include_image!`, перекрашивает белый штрих через `Image::tint` и
+рисует `Image::paint_at` в фиксированном размере; hover-подсветка анимирует только
+цвет и подложку. Загрузчик SVG ставится в `OrbitApp::new` через
+`egui_extras::install_image_loaders`. Иллюстрация мыши для help-карточки остаётся
+ручной (`icons::draw_mouse`), потому что ей нужны позы курсора.
 Фон стеклянных зон — `widgets::glass_panel` (восемь полос градиента, верхний блик,
 рамка) — рисуется до содержимого, потому что `egui::Frame` умеет только сплошную заливку.
 
@@ -307,7 +317,8 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
 загрузки настроек даёт `SettingsStore::ephemeral()` с темой System и акцентом Blue.
 
 `OrbitApp::new` вызывается на каждый прогон окна: применяет настройки оформления к
-`egui::Context` (`palette::configure_style`), ставит системный цветной emoji-шрифт
+`egui::Context` (`palette::configure_style`), ставит загрузчик SVG-иконок
+(`egui_extras::install_image_loaders`, ADR-0034), системный цветной emoji-шрифт
 (ADR-0017), создаёт `GlobeRenderer` из `cc.wgpu_render_state` и вставляет его в
 `render_state.renderer.write().callback_resources`, строит `VisualizerModel` по
 `Settings::viz_bars` и устанавливает `WakeHandle`:
@@ -336,6 +347,12 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
 6. `Escape` снимает самый верхний модальный слой: при открытом drawer —
    `session.close_settings()`, иначе при открытой карточке — `session.show_help = false`
    + `mark_help_seen`. `Ctrl+,` (он же `Cmd+,`) вызывает `session.toggle_settings()`.
+   `Ctrl+F` и `/` (когда фокус свободен) ставят фокус в поиск текущего экрана:
+   страна — `orbitfm_hud_country`, панель — `orbitfm_panel_search`, иначе
+   `orbitfm_hud_search`; клавиша забирается через `consume_key`, чтобы символ не
+   попал в поле. `Space` без фокуса и при закрытом drawer — play/pause
+   (`Session::toggle_playback`), на сфокусированной строке Space остаётся запуском
+   станции.
 7. Repaint-политика: `SPECTRUM_REPAINT` (≈33 мс) при включённом визуализаторе и
    `Playing`/`Buffering`. `draw_layers` добавляет кадры движения: 33 мс при
    `motion.intensity > 0.01`, иначе `MOTION_IDLE_REPAINT` (≈66 мс) — только если

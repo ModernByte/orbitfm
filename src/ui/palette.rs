@@ -27,7 +27,13 @@ pub(crate) fn configure_style(ctx: &egui::Context, settings: Settings) {
             egui::Theme::Light => egui::Visuals::light(),
         };
         visuals.panel_fill = egui::Color32::TRANSPARENT;
-        visuals.window_fill = egui::Color32::TRANSPARENT;
+        // Попапы и подсказки живут в `window_fill`: прозрачность центральной
+        // панели не должна оставлять меню сортировки без фона над глобусом.
+        visuals.window_fill = match theme {
+            egui::Theme::Dark => egui::Color32::from_rgba_unmultiplied(18, 23, 38, 246),
+            egui::Theme::Light => egui::Color32::from_rgba_unmultiplied(248, 250, 253, 246),
+        };
+        visuals.menu_corner_radius = egui::CornerRadius::same(12);
         visuals.selection.bg_fill = accent;
         visuals.selection.stroke = egui::Stroke::new(1.0, selection_text);
         visuals.hyperlink_color = match theme {

@@ -1,18 +1,109 @@
-//! Векторные иконки, не зависящие от шрифтов egui.
+//! SVG-иконки Lucide (ADR-0034): единый штрих, перекраска через tint и
+//! анимированная hover-подсветка. Иллюстрация мыши для help остаётся ручной:
+//! ей нужны позы курсора, которых нет в готовом наборе.
 
-use eframe::egui::{self, Color32, Pos2, Response, Sense, Shape, Stroke, Vec2, pos2};
+use eframe::egui::{self, Color32, Pos2, Rect, Response, Sense, Shape, Stroke, Vec2, pos2};
 
 use crate::i18n;
 use crate::settings::Language;
 
-use super::widgets::focus_ring;
+use super::palette::{Palette, mix_colors};
+use super::widgets::{control_motion, faded, focus_ring};
 
+/// Оптический размер глифа внутри кнопки.
+const GLYPH: f32 = 19.0;
+/// Квадратная иконочная кнопка шапок и панелей.
+const SIDE: f32 = 30.0;
+/// Кнопки капсул и строк: компактнее, но заметно крупнее прежних 22–24 px.
+const SMALL_SIDE: f32 = 28.0;
+
+/// Набор встроенных иконок. Файлы — `assets/icons/*.svg`, белый штрих
+/// перекрашивается `Image::tint` под палитру (ADR-0034).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Icon {
+    Search,
+    Settings,
+    Moon,
+    Panel,
+    Dice,
+    Close,
+    Star,
+    StarFilled,
+    Heart,
+    HeartFilled,
+    SkipBack,
+    SkipForward,
+    Stop,
+    Volume,
+    Expand,
+    Help,
+    Sort,
+    Rows,
+    RowsCompact,
+    Globe,
+    Clock,
+    Funnel,
+    Alert,
+}
+
+impl Icon {
+    fn source(self) -> egui::ImageSource<'static> {
+        match self {
+            Self::Search => egui::include_image!("../../assets/icons/search.svg"),
+            Self::Settings => egui::include_image!("../../assets/icons/settings.svg"),
+            Self::Moon => egui::include_image!("../../assets/icons/moon.svg"),
+            Self::Panel => egui::include_image!("../../assets/icons/panel-left.svg"),
+            Self::Dice => egui::include_image!("../../assets/icons/dice-5.svg"),
+            Self::Close => egui::include_image!("../../assets/icons/x.svg"),
+            Self::Star => egui::include_image!("../../assets/icons/star.svg"),
+            Self::StarFilled => egui::include_image!("../../assets/icons/star-filled.svg"),
+            Self::Heart => egui::include_image!("../../assets/icons/heart.svg"),
+            Self::HeartFilled => egui::include_image!("../../assets/icons/heart-filled.svg"),
+            Self::SkipBack => egui::include_image!("../../assets/icons/skip-back.svg"),
+            Self::SkipForward => egui::include_image!("../../assets/icons/skip-forward.svg"),
+            Self::Stop => egui::include_image!("../../assets/icons/square-filled.svg"),
+            Self::Volume => egui::include_image!("../../assets/icons/volume-2.svg"),
+            Self::Expand => egui::include_image!("../../assets/icons/maximize-2.svg"),
+            Self::Help => egui::include_image!("../../assets/icons/circle-help.svg"),
+            Self::Sort => egui::include_image!("../../assets/icons/arrow-up-down.svg"),
+            Self::Rows => egui::include_image!("../../assets/icons/rows-3.svg"),
+            Self::RowsCompact => egui::include_image!("../../assets/icons/rows-4.svg"),
+            Self::Globe => egui::include_image!("../../assets/icons/globe.svg"),
+            Self::Clock => egui::include_image!("../../assets/icons/clock.svg"),
+            Self::Funnel => egui::include_image!("../../assets/icons/funnel.svg"),
+            Self::Alert => egui::include_image!("../../assets/icons/circle-alert.svg"),
+        }
+    }
+}
+
+/// Рисует иконку по центру прямоугольника. Размер фиксирован вызывающим:
+/// загрузчик растеризует SVG ровно под физический размер и кэширует его
+/// (ADR-0034 §5), поэтому масштабировать глиф анимацией нельзя.
+pub(crate) fn paint_icon(ui: &egui::Ui, icon: Icon, center: Pos2, size: f32, color: Color32) {
+    let rect = Rect::from_center_size(center, Vec2::splat(size));
+    egui::Image::new(icon.source())
+        .tint(color)
+        .paint_at(ui, rect);
+}
+
+/// Цвет иконки: в покое базовый, на hover подмешивается акцент.
+fn icon_tint(base: Color32, accent: Color32, hover: f32) -> Color32 {
+    mix_colors(base, accent, 0.5 * hover)
+}
+
+/// Кнопка-иконка с fade-in подложкой и accent-ободком на hover.
+///
+/// Геометрия и hit-зона фиксированы: анимируются только альфы отрисовки
+/// (ADR-0032 §7). Закрытие получает базовый цвет и прогресс hover, чтобы
+/// заливные звёзды и сердца сохранили свой цвет.
 fn icon_button(
     ui: &mut egui::Ui,
+    palette: &Palette,
     size: Vec2,
     enabled: bool,
+    active: bool,
     hint: &str,
-    paint: impl FnOnce(&egui::Painter, egui::Rect, Color32),
+    paint: impl FnOnce(&egui::Ui, Rect, Color32, f32),
 ) -> Response {
     let sense = if enabled {
         Sense::click()
@@ -20,18 +111,32 @@ fn icon_button(
         Sense::hover()
     };
     let (rect, response) = ui.allocate_exact_size(size, sense);
-    if enabled && response.hovered() {
-        let visuals = ui.style().interact(&response);
-        ui.painter()
-            .rect_filled(rect, egui::CornerRadius::same(6), visuals.bg_fill);
+    let hovered = enabled && response.hovered();
+    let pressed = enabled && response.is_pointer_button_down_on();
+    let (hover, press) = control_motion(ui, response.id, hovered, pressed);
+    let radius = (size.x.min(size.y) * 0.34).clamp(7.0, 11.0);
+
+    if ui.is_rect_visible(rect) {
+        let persistent = if active { 0.14 } else { 0.0 };
+        let fill = 0.09 * hover + 0.07 * press + persistent;
+        if fill > 0.0 {
+            ui.painter()
+                .rect_filled(rect.shrink(1.0), radius, faded(palette.text, fill));
+        }
+        let rim = (if active { 0.30 } else { 0.0 } + 0.22 * hover).min(0.5);
+        if rim > 0.0 {
+            ui.painter().rect_stroke(
+                rect.shrink(1.0),
+                radius,
+                Stroke::new(1.0, faded(palette.accent, rim)),
+                egui::StrokeKind::Inside,
+            );
+        }
     }
-    let color = if enabled {
-        ui.visuals().text_color()
-    } else {
-        ui.visuals().weak_text_color()
-    };
-    paint(ui.painter(), rect, color);
-    focus_ring(ui, &response, rect, 6.0);
+
+    let base = if enabled { palette.text } else { palette.muted };
+    paint(ui, rect, base, if enabled { hover } else { 0.0 });
+    focus_ring(ui, &response, rect, radius);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, hint));
     if enabled {
         response.on_hover_text(hint)
@@ -40,50 +145,317 @@ fn icon_button(
     }
 }
 
-pub(crate) fn star_button(ui: &mut egui::Ui, filled: bool, color: Color32, hint: &str) -> Response {
+pub(crate) fn star_button(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    filled: bool,
+    color: Color32,
+    hint: &str,
+) -> Response {
     icon_button(
         ui,
-        Vec2::splat(20.0),
+        palette,
+        Vec2::splat(SMALL_SIDE),
         true,
+        filled,
         hint,
-        move |painter, rect, _| {
-            let points = star_points(rect.center(), 7.0, 3.0);
-            if filled {
-                painter.add(filled_polygon(&points, color));
-            } else {
-                painter.add(Shape::closed_line(points, Stroke::new(1.2, color)));
-            }
+        move |ui, rect, base, hover| {
+            let tint = icon_tint(if filled { color } else { base }, palette.accent, hover);
+            let icon = if filled { Icon::StarFilled } else { Icon::Star };
+            paint_icon(ui, icon, rect.center(), 18.0, tint);
         },
     )
 }
 
-pub(crate) fn stop_button(ui: &mut egui::Ui, enabled: bool, language: Language) -> Response {
+pub(crate) fn heart_button(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    filled: bool,
+    color: Color32,
+    hint: &str,
+) -> Response {
     icon_button(
         ui,
-        Vec2::new(28.0, 24.0),
+        palette,
+        Vec2::splat(SMALL_SIDE),
+        true,
+        filled,
+        hint,
+        move |ui, rect, base, hover| {
+            let tint = icon_tint(if filled { color } else { base }, palette.accent, hover);
+            let icon = if filled {
+                Icon::HeartFilled
+            } else {
+                Icon::Heart
+            };
+            paint_icon(ui, icon, rect.center(), 18.0, tint);
+        },
+    )
+}
+
+pub(crate) fn stop_button(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    enabled: bool,
+    language: Language,
+) -> Response {
+    icon_button(
+        ui,
+        palette,
+        Vec2::new(32.0, SMALL_SIDE),
         enabled,
+        false,
         i18n::catalog(language).common.stop,
-        |painter, rect, color| {
-            painter.rect_filled(
-                egui::Rect::from_center_size(rect.center(), Vec2::splat(9.0)),
-                egui::CornerRadius::same(1),
-                color,
+        |ui, rect, base, hover| {
+            let tint = icon_tint(base, palette.accent, hover);
+            paint_icon(ui, Icon::Stop, rect.center(), 16.0, tint);
+        },
+    )
+}
+
+pub(crate) fn prev_button(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    enabled: bool,
+    language: Language,
+) -> Response {
+    icon_button(
+        ui,
+        palette,
+        Vec2::new(32.0, SMALL_SIDE),
+        enabled,
+        false,
+        i18n::catalog(language).common.previous_station,
+        |ui, rect, base, hover| {
+            let tint = icon_tint(base, palette.accent, hover);
+            paint_icon(ui, Icon::SkipBack, rect.center(), 20.0, tint);
+        },
+    )
+}
+
+pub(crate) fn next_button(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    enabled: bool,
+    language: Language,
+) -> Response {
+    icon_button(
+        ui,
+        palette,
+        Vec2::new(32.0, SMALL_SIDE),
+        enabled,
+        false,
+        i18n::catalog(language).common.next_station,
+        |ui, rect, base, hover| {
+            let tint = icon_tint(base, palette.accent, hover);
+            paint_icon(ui, Icon::SkipForward, rect.center(), 20.0, tint);
+        },
+    )
+}
+
+pub(crate) fn gear_button(ui: &mut egui::Ui, palette: &Palette, hint: &str) -> Response {
+    icon_button(
+        ui,
+        palette,
+        Vec2::splat(SIDE),
+        true,
+        false,
+        hint,
+        |ui, rect, base, hover| {
+            paint_icon(
+                ui,
+                Icon::Settings,
+                rect.center(),
+                GLYPH,
+                icon_tint(base, palette.accent, hover),
             );
         },
     )
 }
 
-fn star_points(center: Pos2, outer: f32, inner: f32) -> Vec<Pos2> {
-    (0..10)
-        .map(|index| {
-            let radius = if index % 2 == 0 { outer } else { inner };
-            let angle = -std::f32::consts::FRAC_PI_2 + index as f32 * std::f32::consts::PI / 5.0;
-            pos2(
-                center.x + radius * angle.cos(),
-                center.y + radius * angle.sin(),
-            )
-        })
-        .collect()
+pub(crate) fn moon_button(ui: &mut egui::Ui, palette: &Palette, hint: &str) -> Response {
+    icon_button(
+        ui,
+        palette,
+        Vec2::splat(SIDE),
+        true,
+        false,
+        hint,
+        |ui, rect, base, hover| {
+            paint_icon(
+                ui,
+                Icon::Moon,
+                rect.center(),
+                GLYPH,
+                icon_tint(base, palette.accent, hover),
+            );
+        },
+    )
+}
+
+/// Кнопка раскрытия/сворачивания панели списка.
+pub(crate) fn panel_button(ui: &mut egui::Ui, palette: &Palette, hint: &str) -> Response {
+    icon_button(
+        ui,
+        palette,
+        Vec2::splat(SIDE),
+        true,
+        false,
+        hint,
+        |ui, rect, base, hover| {
+            paint_icon(
+                ui,
+                Icon::Panel,
+                rect.center(),
+                GLYPH,
+                icon_tint(base, palette.accent, hover),
+            );
+        },
+    )
+}
+
+/// Кнопка рулетки: кубик без подписи для шапки выпадающей панели.
+pub(crate) fn roulette_button(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    enabled: bool,
+    hint: &str,
+) -> Response {
+    icon_button(
+        ui,
+        palette,
+        Vec2::splat(SIDE),
+        enabled,
+        false,
+        hint,
+        |ui, rect, base, hover| {
+            paint_icon(
+                ui,
+                Icon::Dice,
+                rect.center(),
+                GLYPH,
+                icon_tint(base, palette.accent, hover),
+            );
+        },
+    )
+}
+
+/// Кнопка скрытия окна (×). По смыслу не выход: процесс и поток остаются живыми.
+pub(crate) fn close_button(ui: &mut egui::Ui, palette: &Palette, hint: &str) -> Response {
+    icon_button(
+        ui,
+        palette,
+        Vec2::splat(SIDE),
+        true,
+        false,
+        hint,
+        |ui, rect, base, hover| {
+            paint_icon(
+                ui,
+                Icon::Close,
+                rect.center(),
+                GLYPH,
+                icon_tint(base, palette.accent, hover),
+            );
+        },
+    )
+}
+
+/// Кнопка сортировки списка: две стрелки вверх/вниз.
+pub(crate) fn sort_button(ui: &mut egui::Ui, palette: &Palette, hint: &str) -> Response {
+    icon_button(
+        ui,
+        palette,
+        Vec2::splat(SIDE),
+        true,
+        false,
+        hint,
+        |ui, rect, base, hover| {
+            paint_icon(
+                ui,
+                Icon::Sort,
+                rect.center(),
+                GLYPH,
+                icon_tint(base, palette.accent, hover),
+            );
+        },
+    )
+}
+
+/// Переключатель плотности строк: три линии в покое, четыре в компактном режиме.
+pub(crate) fn density_button(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    hint: &str,
+    compact: bool,
+) -> Response {
+    icon_button(
+        ui,
+        palette,
+        Vec2::splat(SIDE),
+        true,
+        compact,
+        hint,
+        move |ui, rect, base, hover| {
+            let tint = if compact {
+                mix_colors(palette.accent, base, 0.15)
+            } else {
+                icon_tint(base, palette.accent, hover)
+            };
+            let icon = if compact {
+                Icon::RowsCompact
+            } else {
+                Icon::Rows
+            };
+            paint_icon(ui, icon, rect.center(), GLYPH, tint);
+        },
+    )
+}
+
+/// Возврат из капсулы в полный Focus: четыре угла, разведённые наружу.
+pub(crate) fn expand_button(ui: &mut egui::Ui, palette: &Palette, hint: &str) -> Response {
+    icon_button(
+        ui,
+        palette,
+        Vec2::splat(SMALL_SIDE),
+        true,
+        false,
+        hint,
+        |ui, rect, base, hover| {
+            paint_icon(
+                ui,
+                Icon::Expand,
+                rect.center(),
+                18.0,
+                icon_tint(base, palette.accent, hover),
+            );
+        },
+    )
+}
+
+/// Кнопка карточки управления (знак «?»).
+pub(crate) fn help_button(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    hint: &str,
+    active: bool,
+) -> Response {
+    icon_button(
+        ui,
+        palette,
+        Vec2::splat(SIDE),
+        true,
+        active,
+        hint,
+        move |ui, rect, base, hover| {
+            let tint = if active {
+                palette.accent
+            } else {
+                icon_tint(base, palette.accent, hover)
+            };
+            paint_icon(ui, Icon::Help, rect.center(), GLYPH, tint);
+        },
+    )
 }
 
 /// Поза мыши для карточки подсказок (эскиз, левая панель).
@@ -95,164 +467,6 @@ pub(crate) enum MousePose {
     Click,
     /// Колесо.
     Wheel,
-}
-
-pub(crate) fn gear_button(ui: &mut egui::Ui, hint: &str) -> Response {
-    icon_button(ui, Vec2::splat(24.0), true, hint, |painter, rect, color| {
-        draw_gear(painter, rect.center(), 8.0, color);
-    })
-}
-
-pub(crate) fn moon_button(ui: &mut egui::Ui, hint: &str) -> Response {
-    icon_button(ui, Vec2::splat(24.0), true, hint, |painter, rect, color| {
-        draw_moon(painter, rect.center(), 8.0, color);
-    })
-}
-
-pub(crate) fn heart_button(
-    ui: &mut egui::Ui,
-    filled: bool,
-    color: Color32,
-    hint: &str,
-) -> Response {
-    icon_button(
-        ui,
-        Vec2::splat(22.0),
-        true,
-        hint,
-        move |painter, rect, _| {
-            draw_heart(painter, rect.center(), 8.0, color, filled);
-        },
-    )
-}
-
-pub(crate) fn prev_button(ui: &mut egui::Ui, enabled: bool, language: Language) -> Response {
-    icon_button(
-        ui,
-        Vec2::new(26.0, 24.0),
-        enabled,
-        i18n::catalog(language).common.previous_station,
-        |painter, rect, color| {
-            draw_skip(painter, rect.center(), 7.0, color, true);
-        },
-    )
-}
-
-pub(crate) fn next_button(ui: &mut egui::Ui, enabled: bool, language: Language) -> Response {
-    icon_button(
-        ui,
-        Vec2::new(26.0, 24.0),
-        enabled,
-        i18n::catalog(language).common.next_station,
-        |painter, rect, color| {
-            draw_skip(painter, rect.center(), 7.0, color, false);
-        },
-    )
-}
-
-/// Кнопка раскрытия/сворачивания панели списка (иконка «список»).
-pub(crate) fn panel_button(ui: &mut egui::Ui, hint: &str) -> Response {
-    icon_button(ui, Vec2::splat(24.0), true, hint, |painter, rect, color| {
-        draw_list_icon(painter, rect, color);
-    })
-}
-
-/// Кнопка скрытия окна (×). По смыслу не выход: процесс и поток остаются живыми.
-pub(crate) fn close_button(ui: &mut egui::Ui, hint: &str) -> Response {
-    icon_button(ui, Vec2::splat(24.0), true, hint, |painter, rect, color| {
-        let arm = rect.width() * 0.22;
-        let center = rect.center();
-        let stroke = Stroke::new(1.7, color);
-        painter.line_segment(
-            [center - Vec2::splat(arm), center + Vec2::splat(arm)],
-            stroke,
-        );
-        painter.line_segment(
-            [
-                pos2(center.x + arm, center.y - arm),
-                pos2(center.x - arm, center.y + arm),
-            ],
-            stroke,
-        );
-    })
-}
-
-/// Возврат из капсулы в полный Focus: четыре угла, разведённые наружу.
-pub(crate) fn expand_button(ui: &mut egui::Ui, hint: &str) -> Response {
-    icon_button(ui, Vec2::splat(22.0), true, hint, |painter, rect, color| {
-        let center = rect.center();
-        let arm = 4.5;
-        let stroke = Stroke::new(1.4, color);
-        for (dx, dy) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
-            let corner = center + Vec2::new(dx * arm, dy * arm);
-            painter.line_segment([corner, corner - Vec2::new(dx * 3.0, 0.0)], stroke);
-            painter.line_segment([corner, corner - Vec2::new(0.0, dy * 3.0)], stroke);
-        }
-    })
-}
-
-/// Кнопка карточки управления (знак «?»).
-pub(crate) fn help_button(ui: &mut egui::Ui, hint: &str, active: bool) -> Response {
-    icon_button(
-        ui,
-        Vec2::splat(24.0),
-        true,
-        hint,
-        move |painter, rect, color| {
-            if active {
-                painter.rect_filled(
-                    rect,
-                    egui::CornerRadius::same(6),
-                    color.gamma_multiply(0.18),
-                );
-            }
-            painter.text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                "?",
-                egui::FontId::proportional(14.0),
-                color,
-            );
-        },
-    )
-}
-
-pub(crate) fn draw_search(painter: &egui::Painter, center: Pos2, radius: f32, color: Color32) {
-    let circle = center - Vec2::splat(radius * 0.3);
-    painter.circle_stroke(circle, radius, Stroke::new(1.6, color));
-    let offset = radius * 0.72;
-    painter.line_segment(
-        [
-            circle + Vec2::new(offset, offset),
-            center + Vec2::splat(radius * 0.95),
-        ],
-        Stroke::new(1.6, color),
-    );
-}
-
-pub(crate) fn draw_speaker(painter: &egui::Painter, center: Pos2, size: f32, color: Color32) {
-    let s = size / 8.0;
-    painter.add(Shape::convex_polygon(
-        vec![
-            pos2(center.x - 3.0 * s, center.y - 1.5 * s),
-            pos2(center.x - 1.2 * s, center.y - 1.5 * s),
-            pos2(center.x + 1.0 * s, center.y - 3.4 * s),
-            pos2(center.x + 1.0 * s, center.y + 3.4 * s),
-            pos2(center.x - 1.2 * s, center.y + 1.5 * s),
-            pos2(center.x - 3.0 * s, center.y + 1.5 * s),
-        ],
-        color,
-        Stroke::NONE,
-    ));
-    painter.add(Shape::line(
-        arc_points(
-            Pos2::new(center.x + 1.0 * s, center.y),
-            2.6 * s,
-            -0.62,
-            0.62,
-        ),
-        Stroke::new(1.4, color),
-    ));
 }
 
 /// Точки дуги окружности от `from` до `to` (рад), ~2 точки на 10°.
@@ -267,173 +481,6 @@ pub(crate) fn arc_points(center: Pos2, radius: f32, from: f32, to: f32) -> Vec<P
             )
         })
         .collect()
-}
-
-pub(crate) fn draw_gear(painter: &egui::Painter, center: Pos2, radius: f32, color: Color32) {
-    for tooth in 0..8 {
-        let angle = tooth as f32 * std::f32::consts::FRAC_PI_4;
-        let dir = Vec2::new(angle.cos(), angle.sin());
-        let from = center + dir * (radius * 0.62);
-        let to = center + dir * radius;
-        painter.line_segment([from, to], Stroke::new(2.4, color));
-    }
-    painter.circle_stroke(center, radius * 0.52, Stroke::new(1.6, color));
-}
-
-pub(crate) fn draw_moon(painter: &egui::Painter, center: Pos2, radius: f32, color: Color32) {
-    // Полумесяц — лента между внешней дугой и дугой «укуса»: обе дуги
-    // непрерывны и имеют общие концы, поэтому strip-триангуляция корректна
-    // для невыпуклой формы.
-    let bite = center + Vec2::new(radius * 0.5, -radius * 0.3);
-    let bite_radius = radius * 0.9;
-    const SAMPLES: usize = 96;
-    let mut outer: Vec<Pos2> = Vec::with_capacity(SAMPLES);
-    let mut inner: Vec<Pos2> = Vec::with_capacity(SAMPLES);
-    for sample in 0..SAMPLES {
-        let angle = sample as f32 * std::f32::consts::TAU / SAMPLES as f32;
-        let dir = Vec2::new(angle.cos(), angle.sin());
-        let point = center + dir * radius;
-        if (point - bite).length_sq() > bite_radius * bite_radius {
-            outer.push(point);
-        }
-        let point = bite + dir * bite_radius;
-        if (point - center).length_sq() < radius * radius {
-            inner.push(point);
-        }
-    }
-    if outer.is_empty() || inner.is_empty() {
-        painter.circle_stroke(center, radius, Stroke::new(1.5, color));
-        return;
-    }
-    inner.reverse();
-    let rows = outer.len().min(inner.len());
-    let mut mesh = egui::Mesh::default();
-    for row in 0..rows {
-        mesh.vertices.push(egui::epaint::Vertex {
-            pos: outer[row],
-            uv: pos2(0.0, 0.0),
-            color,
-        });
-        mesh.vertices.push(egui::epaint::Vertex {
-            pos: inner[row.min(inner.len() - 1)],
-            uv: pos2(0.0, 0.0),
-            color,
-        });
-    }
-    for row in 0..rows - 1 {
-        let base = (row * 2) as u32;
-        mesh.add_triangle(base, base + 1, base + 2);
-        mesh.add_triangle(base + 1, base + 3, base + 2);
-    }
-    painter.add(Shape::from(mesh));
-}
-
-pub(crate) fn draw_dice(painter: &egui::Painter, center: Pos2, size: f32, color: Color32) {
-    let rect = egui::Rect::from_center_size(center, Vec2::splat(size * 2.0));
-    painter.rect_stroke(
-        rect,
-        egui::CornerRadius::same(3),
-        Stroke::new(1.5, color),
-        egui::StrokeKind::Middle,
-    );
-    let dot = size * 0.55;
-    for (dx, dy) in [(-1.0, -1.0), (0.0, 0.0), (1.0, 1.0)] {
-        painter.circle_filled(center + Vec2::new(dx * dot, dy * dot), size * 0.16, color);
-    }
-}
-
-pub(crate) fn draw_heart(
-    painter: &egui::Painter,
-    center: Pos2,
-    size: f32,
-    color: Color32,
-    filled: bool,
-) {
-    let s = size / 8.0;
-    let lobe = 3.8 * s;
-    let left = Pos2::new(center.x - 3.8 * s, center.y - 3.4 * s);
-    let right = Pos2::new(center.x + 3.8 * s, center.y - 3.4 * s);
-    let bottom = pos2(center.x, center.y + 6.2 * s);
-    if filled {
-        // Сердце невыпукло: две доли + нижний треугольник.
-        painter.circle_filled(left, lobe, color);
-        painter.circle_filled(right, lobe, color);
-        painter.add(Shape::convex_polygon(
-            vec![
-                pos2(left.x - lobe * 0.72, left.y + lobe * 0.55),
-                pos2(right.x + lobe * 0.72, right.y + lobe * 0.55),
-                bottom,
-            ],
-            color,
-            Stroke::NONE,
-        ));
-    } else {
-        painter.add(Shape::closed_line(
-            vec![
-                bottom,
-                pos2(left.x - lobe * 0.72, left.y + lobe * 0.55),
-                left + Vec2::new(-lobe * 0.28, -lobe * 0.55),
-                pos2(center.x, center.y - 2.2 * s),
-                right + Vec2::new(lobe * 0.28, -lobe * 0.55),
-                pos2(right.x + lobe * 0.72, right.y + lobe * 0.55),
-            ],
-            Stroke::new(1.5, color),
-        ));
-    }
-}
-
-pub(crate) fn draw_skip(
-    painter: &egui::Painter,
-    center: Pos2,
-    size: f32,
-    color: Color32,
-    backward: bool,
-) {
-    let mirror = if backward { -1.0 } else { 1.0 };
-    let tip = center + Vec2::new(mirror * size * 0.8, 0.0);
-    let base_x = center - Vec2::new(mirror * size * 0.6, 0.0);
-    painter.add(Shape::convex_polygon(
-        vec![
-            pos2(base_x.x, base_x.y - size * 0.7),
-            pos2(base_x.x, base_x.y + size * 0.7),
-            pos2(tip.x, tip.y),
-        ],
-        color,
-        Stroke::NONE,
-    ));
-    let bar_x = center.x - mirror * size;
-    painter.rect_filled(
-        egui::Rect::from_center_size(
-            Pos2::new(bar_x, center.y),
-            Vec2::new(size * 0.28, size * 1.4),
-        ),
-        1.0,
-        color,
-    );
-}
-
-pub(crate) fn draw_clock(painter: &egui::Painter, center: Pos2, radius: f32, color: Color32) {
-    painter.circle_stroke(center, radius, Stroke::new(1.5, color));
-    painter.line_segment(
-        [center, center + Vec2::new(0.0, -radius * 0.6)],
-        Stroke::new(1.5, color),
-    );
-    painter.line_segment(
-        [center, center + Vec2::new(radius * 0.5, 0.0)],
-        Stroke::new(1.5, color),
-    );
-}
-
-pub(crate) fn draw_list_icon(painter: &egui::Painter, rect: egui::Rect, color: Color32) {
-    let rows = 3;
-    for row in 0..rows {
-        let y = rect.top() + (row as f32 + 0.5) * rect.height() / rows as f32;
-        painter.circle_filled(pos2(rect.left() + 2.0, y), 1.4, color);
-        painter.line_segment(
-            [pos2(rect.left() + 6.0, y), pos2(rect.right(), y)],
-            Stroke::new(1.5, color),
-        );
-    }
 }
 
 pub(crate) fn draw_mouse(
@@ -493,44 +540,51 @@ pub(crate) fn draw_mouse(
     }
 }
 
-fn filled_polygon(points: &[Pos2], color: Color32) -> Shape {
-    let mut mesh = egui::Mesh::default();
-    let center = points
-        .iter()
-        .fold(Pos2::ZERO, |acc, point| acc + point.to_vec2())
-        / points.len() as f32;
-    mesh.colored_vertex(center, color);
-    for point in points {
-        mesh.colored_vertex(*point, color);
-    }
-    for index in 0..points.len() {
-        let next = (index + 1) % points.len();
-        mesh.add_triangle(0, index as u32 + 1, next as u32 + 1);
-    }
-    Shape::from(mesh)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn star_has_ten_alternating_points() {
-        let points = star_points(pos2(10.0, 10.0), 8.0, 3.0);
-        assert_eq!(points.len(), 10);
-        let outer = (points[0].to_vec2() - Vec2::new(10.0, 10.0)).length();
-        let inner = (points[1].to_vec2() - Vec2::new(10.0, 10.0)).length();
-        assert!((outer - 8.0).abs() < 0.01);
-        assert!((inner - 3.0).abs() < 0.01);
+    fn every_icon_points_to_an_svg_asset() {
+        for icon in [
+            Icon::Search,
+            Icon::Settings,
+            Icon::Moon,
+            Icon::Panel,
+            Icon::Dice,
+            Icon::Close,
+            Icon::Star,
+            Icon::StarFilled,
+            Icon::Heart,
+            Icon::HeartFilled,
+            Icon::SkipBack,
+            Icon::SkipForward,
+            Icon::Stop,
+            Icon::Volume,
+            Icon::Expand,
+            Icon::Help,
+            Icon::Sort,
+            Icon::Rows,
+            Icon::RowsCompact,
+            Icon::Globe,
+            Icon::Clock,
+            Icon::Funnel,
+            Icon::Alert,
+        ] {
+            let uri = icon.source().uri().map(str::to_owned);
+            assert!(
+                uri.as_deref().is_some_and(|uri| uri.ends_with(".svg")),
+                "{icon:?}: загрузчик SVG выбирает файл по расширению, получено {uri:?}"
+            );
+        }
     }
 
     #[test]
-    fn filled_polygon_is_a_triangle_fan() {
-        let points = star_points(pos2(10.0, 10.0), 8.0, 3.0);
-        let Shape::Mesh(mesh) = filled_polygon(&points, Color32::WHITE) else {
-            panic!("ожидался mesh");
-        };
-        assert_eq!(mesh.vertices.len(), 11);
-        assert_eq!(mesh.indices.len(), 30);
+    fn hover_tint_reaches_accent_only_at_full_progress() {
+        let base = Color32::from_rgb(100, 100, 100);
+        let accent = Color32::from_rgb(220, 60, 40);
+        assert_eq!(icon_tint(base, accent, 0.0), base);
+        let halfway = icon_tint(base, accent, 1.0);
+        assert!(halfway.r() > base.r() && halfway.r() < accent.r());
     }
 }

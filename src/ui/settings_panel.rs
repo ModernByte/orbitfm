@@ -78,7 +78,7 @@ pub(crate) fn show(
                             .color(faded(palette.text, header)),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if close_button(ui, text.common.close).clicked() {
+                        if close_button(ui, palette, text.common.close).clicked() {
                             actions.push(UiAction::CloseSettings);
                         }
                     });
@@ -405,6 +405,9 @@ fn mode_label(labels: &crate::i18n::LabelText, mode: WindowMode) -> &'static str
         WindowMode::Focus => labels.mode_focus,
         WindowMode::Overlay => labels.mode_overlay,
         WindowMode::Listening => labels.mode_listening,
+        // Panel не входит в `WindowMode::ALL`: переключатель раскладок его
+        // не предлагает, и эта ветка нужна только для полноты match.
+        WindowMode::Panel => labels.mode_focus,
     }
 }
 

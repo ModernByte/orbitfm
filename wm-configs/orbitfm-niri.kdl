@@ -34,3 +34,17 @@ window-rule {
     default-floating-position x=310 y=48 relative-to="top-right"
     draw-border-with-background false
 }
+
+// Выпадающая панель бар-виджета (ADR-0033): без рамки, тени и кольца фокуса,
+// чтобы читалась как продолжение бара, а не как отдельное окно.
+window-rule {
+    match app-id="org.modernbyte.OrbitFM" title=r"^OrbitFM · Panel$"
+    open-floating true
+    default-column-width { fixed 400; }
+    default-window-height { fixed 640; }
+    default-floating-position x=310 y=48 relative-to="top-right"
+    draw-border-with-background false
+    focus-ring { off; }
+    border { off; }
+    shadow { off; }
+}

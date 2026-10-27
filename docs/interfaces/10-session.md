@@ -313,8 +313,9 @@ Core к инфраструктуре (ADR-0021 п. 5).
 | `Toggle` | `toggle()` | `ok` |
 | `Show` | `show()` | `ok` |
 | `Hide` | `hide()` (закрытое окно не запрашивает ничего) | `ok` |
+| `Panel` | `toggle_panel_dropdown()` — панель виджета (ADR-0033) | `ok` |
 | `Status` | `status_text()` | см. § 6 |
-| `ModeQuery` | `window_mode()` | `mode <focus\|overlay\|listening>`, без побочных эффектов |
+| `ModeQuery` | `window_mode()` | `mode <focus\|overlay\|listening\|panel>`, без побочных эффектов |
 | `SetMode { mode }` | `set_window_mode(mode.into())` — из `WindowModeArg` (ADR-0021 п. 5) | `ok` |
 | `Quit` | `quit()` | `ok` |
 | `Play { station_uuid }` | `resolve_station` → `start_station` | `ok`, иначе `error <ошибка>` |
@@ -354,7 +355,7 @@ stationuuid <stationuuid>
 name <имя в одну строку>
 volume <0.00…1.00, два знака>
 window <visible|hidden>
-mode <focus|overlay|listening>
+mode <focus|overlay|listening|panel>
 ```
 
 - строки `stationuuid` и `name` добавляются, только пока состояние не
