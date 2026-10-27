@@ -120,6 +120,8 @@ Listening — `Off`. `motion_reactivity()`, `analysis_needed()` и `sync_analysi
 | `playback.rs` | Аудио-события, запуск/остановка, громкость commit-on-release, избранное, история, очередь `prev`/`next`, витрина MPRIS | `Session::{process_audio_events, apply_audio_event, resolve_station, start_station, spawn_click, toggle_favorite, clear_history, focus_country, set_volume, preview_volume, commit_volume, flush_pending_volume, set_audio_paused, resume_playback, toggle_playback, stop_playback, process_media_commands, execute_media_command, visible_queue, visible_queue_len, play_relative, sync_media}` |
 | `search.rs` | Поиск по имени/стране/жанру с поколениями ответов и рулетка | `SearchMode`, `SearchContext`, `SearchState`, `SearchResponse`, `STATION_LOOKUP_TIMEOUT`, `Session::{start_search, start_country_search, start_genre_search, switch_mode, poll_search, start_roulette, poll_roulette, apply_roulette}` |
 | `markers.rs` | Агрегация станций с координатами в маркеры глобуса | `GlobeMarker`, `build_markers` (+ `#[cfg(test)] sample_station`, `geo_station`) |
+| `heat.rs` | Метрики тепловой карты стран (ADR-0035): нормировка в `0,15..=1` по выборке станций и по глобальным счётчикам | `CountryMetric` (+ `ALL`/`is_on`), `intensities`, `densities` |
+| `world.rs` | Глобальный снимок Radio Browser для карты: счётчики стран и мировой топ, загруженные одним фоном на старт (ADR-0035) | `WorldBaseline` (+ `counts`/`sample`/`revision`), `Session::{start_world, poll_world}` |
 | `tray.rs` | Трей: публикация снимка и исполнение `TrayCommand` тем же dispatch | `Session::{sync_tray, process_tray_commands, execute_tray_command}` (приватные `nudge_volume`, `tray_snapshot`) |
 | `park.rs` | Простой без окна: `select!` по IPC, MPRIS, трею, аудио и ответу рулетки | `ParkOutcome`, `Session::park` (приватные `Parked`, `wait_on`, `media_recv`, `tray_recv`, `roulette_recv`) |
 
@@ -316,9 +318,16 @@ MPRIS `Next`/`Previous`.
 
 ```
 process_audio_events → process_commands → process_media_commands
-→ process_tray_commands → poll_search → poll_roulette
-→ sync_media → sync_tray → spectrum_enabled = audio.spectrum_enabled()
+→ process_tray_commands → poll_search → poll_roulette → poll_world
+→ start_world → sync_media → sync_tray
+→ spectrum_enabled = audio.spectrum_enabled()
 ```
+
+Снимок мира (`world.rs`, ADR-0035) запрашивается один раз за сессию:
+`Session::new` вызывает `start_world` сразу после построения ядра, а каждый
+`tick()` забирает ответ и повторяет попытку, если данных нет (не больше трёх).
+Запрос не блокирует окно и не участвует в поиске: без него карта остаётся без
+заливки, остальной интерфейс работает.
 
 `tick()` ничего не рисует и не трогает `egui`: ответы IPC отправляются внутри
 `process_commands`, а намерения окна забирает `take_intent()` в `OrbitApp::logic`.

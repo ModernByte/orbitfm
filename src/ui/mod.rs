@@ -5,6 +5,7 @@
 
 pub(crate) mod animation;
 pub(crate) mod capsule;
+pub(crate) mod country_map;
 pub(crate) mod globe_view;
 pub(crate) mod hud;
 pub(crate) mod icons;

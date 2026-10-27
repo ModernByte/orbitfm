@@ -17,6 +17,12 @@ pub(crate) const USER_AGENT: &str = "OrbitFM/1.0 (ModernByte; Linux; Rust)";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const STATION_CACHE_CAPACITY: usize = 512;
 const RANDOM_ATTEMPTS: usize = 3;
+/// Станций в пачке рулетки: сервер режет выборку сам, клиент добирает
+/// разнообразие из пачки.
+const ROULETTE_BATCH: u32 = 24;
+/// Верхняя граница случайного `offset`: каждый цикл рулетки — новый URL, ответ
+/// серверного кэша не переиспользуется.
+const ROULETTE_OFFSET_SPAN: u32 = 500;
 
 /// Параметры поиска станций.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -66,6 +72,19 @@ pub struct Station {
     pub geo_lat: Option<f64>,
     #[serde(default)]
     pub geo_long: Option<f64>,
+}
+
+/// Сколько стран просит `/json/countrycodes`: в базе их ~250, запас на вырост.
+const COUNTRY_CODES_LIMIT: u32 = 1000;
+
+/// Станции в стране по данным Radio Browser (карта плотности, ADR-0035).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CountryCount {
+    /// ISO 3166-1 alpha-2 в нижнем регистре.
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub stationcount: u32,
 }
 
 /// Ошибки клиента Radio Browser.
@@ -127,21 +146,57 @@ impl RadioBrowserClient {
         Ok(stations)
     }
 
+    /// Счётчики станций по странам: вся база одним маленьким запросом
+    /// (ADR-0035). Поле `name` этого endpoint'а содержит ISO-код, а не
+    /// название страны — особенность формата Radio Browser.
+    pub async fn country_counts(&self) -> Result<Vec<CountryCount>, RadioError> {
+        let query = vec![("limit", COUNTRY_CODES_LIMIT.to_string())];
+        self.get_json("/json/countrycodes", &query).await
+    }
+
+    /// Топ станций по числу прослушиваний — снимок мировой сцены для карты
+    /// стран, когда в панели нет своей выборки.
+    pub async fn top_stations(&self, limit: u32) -> Result<Vec<Station>, RadioError> {
+        let query = vec![
+            ("hidebroken", "true".to_owned()),
+            ("order", "clickcount".to_owned()),
+            ("reverse", "true".to_owned()),
+            ("limit", limit.to_string()),
+        ];
+        let stations: Vec<Station> = self.get_json("/json/stations/search", &query).await?;
+        let stations: Vec<Station> = stations
+            .into_iter()
+            .filter(|station| !station.url_resolved.trim().is_empty())
+            .collect();
+        self.remember(&stations);
+        Ok(stations)
+    }
+
     /// Случайная станция с известными координатами для Roulette.
     ///
-    /// Radio Browser иногда отдаёт станции без потока или координат даже при
-    /// `has_geo_info=true`, поэтому делается до трёх попыток.
-    pub async fn random_station(&self) -> Result<Station, RadioError> {
-        let query = random_query();
+    /// Серверный `order=random` не годится как единственный источник
+    /// случайности: Radio Browser кэширует ответ по URL, и при `limit=1` каждый
+    /// цикл возвращалась одна и та же станция. Поэтому берётся пачка с разным
+    /// `offset` (кэш промахивается), а выбор из неё и исключение текущей и
+    /// недавних станций делает клиент.
+    pub async fn random_station(&self, exclude: &[String]) -> Result<Station, RadioError> {
         for attempt in 0..RANDOM_ATTEMPTS {
+            let query = random_query(random_below(ROULETTE_OFFSET_SPAN));
             let stations: Vec<Station> = self.get_json("/json/stations/search", &query).await?;
-            if let Some(station) = stations.into_iter().find(is_roulette_candidate) {
+            let candidates: Vec<Station> = stations
+                .into_iter()
+                .filter(is_roulette_candidate)
+                .filter(|station| !exclude.contains(&station.stationuuid))
+                .collect();
+            if !candidates.is_empty() {
+                let index = random_below(candidates.len() as u32) as usize;
+                let station = candidates.into_iter().nth(index).expect("индекс из len");
                 self.remember(std::slice::from_ref(&station));
                 return Ok(station);
             }
             tracing::debug!(
                 attempt,
-                "Roulette: станция без потока или координат, повтор"
+                "Roulette: в пачке нет станции с потоком и координатами, повтор"
             );
         }
         Err(RadioError::NotFound)
@@ -368,13 +423,32 @@ fn search_query(params: &SearchParams) -> Vec<(&'static str, String)> {
     query
 }
 
-fn random_query() -> Vec<(&'static str, String)> {
+fn random_query(offset: u32) -> Vec<(&'static str, String)> {
     vec![
         ("hidebroken", "true".to_owned()),
         ("order", "random".to_owned()),
-        ("limit", "1".to_owned()),
+        ("limit", ROULETTE_BATCH.to_string()),
+        ("offset", offset.to_string()),
         ("has_geo_info", "true".to_owned()),
     ]
+}
+
+/// Число из `[0, bound)` без внешних crate'ов: splitmix64 поверх наносекунд и
+/// счётчика, чтобы два вызова в одну наносекунду не совпали.
+fn random_below(bound: u32) -> u32 {
+    if bound == 0 {
+        return 0;
+    }
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let ticks = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos() as u64);
+    let mut x = ticks
+        ^ (COUNTER.fetch_add(1, Ordering::Relaxed) as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    x ^= x >> 31;
+    (x % u64::from(bound)) as u32
 }
 
 fn is_roulette_candidate(station: &Station) -> bool {
@@ -490,6 +564,17 @@ mod tests {
     }
 
     #[test]
+    fn country_count_reads_iso_code_and_total() {
+        let rows: Vec<CountryCount> = serde_json::from_str(
+            r#"[{"name":"de","stationcount":4249},{"name":"tv","stationcount":1}]"#,
+        )
+        .expect("фикстура countrycodes");
+
+        assert_eq!(rows[0].name, "de");
+        assert_eq!(rows[0].stationcount, 4249);
+    }
+
+    #[test]
     fn station_parses_geo_coordinates() {
         let json = r#"[{
             "stationuuid": "c685c086-b716-4edd-b313-d4a7baf1084c",
@@ -562,14 +647,29 @@ mod tests {
     }
 
     #[test]
-    fn random_query_requests_single_station_with_geo() {
-        let query = random_query();
+    fn random_query_takes_a_batch_with_an_offset() {
+        let query = random_query(137);
 
         assert!(query.contains(&("order", "random".to_owned())));
-        assert!(query.contains(&("limit", "1".to_owned())));
+        assert!(query.contains(&("limit", ROULETTE_BATCH.to_string())));
+        assert!(query.contains(&("offset", "137".to_owned())));
         assert!(query.contains(&("has_geo_info", "true".to_owned())));
         assert!(query.contains(&("hidebroken", "true".to_owned())));
         assert!(!query.iter().any(|(key, _)| *key == "reverse"));
+    }
+
+    #[test]
+    fn random_below_stays_inside_the_bound_and_varies() {
+        for _ in 0..64 {
+            assert!(random_below(7) < 7);
+        }
+        assert_eq!(random_below(0), 0);
+
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..64 {
+            seen.insert(random_below(ROULETTE_OFFSET_SPAN));
+        }
+        assert!(seen.len() > 1, "последовательность вырождена в константу");
     }
 
     #[test]
@@ -649,7 +749,7 @@ mod tests {
         assert_eq!(station.stationuuid, stations[0].stationuuid);
 
         let random = client
-            .random_station()
+            .random_station(&[])
             .await
             .expect("Roulette не вернула станцию");
         assert!(!random.url_resolved.trim().is_empty());

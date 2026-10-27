@@ -92,6 +92,12 @@ pub(crate) struct SearchState {
     pub(crate) error: Option<String>,
     pub(crate) roulette_pending: bool,
     pub(crate) roulette_rx: Option<mpsc::UnboundedReceiver<Result<Station, RadioError>>>,
+    /// Клик по пустому месту глобуса снял выделение страны, но список станций
+    /// остаётся: контекст поиска не трогаем, гаснет только подсветка.
+    pub(crate) highlight_hidden: bool,
+    /// Номер изменения выборки: тепловая карта стран пересобирается по нему,
+    /// а не по указателю `Vec`, который может переиспользоваться.
+    pub(crate) revision: u64,
 }
 
 /// Две выборки одного запроса: обычная и только со станциями, у которых есть координаты.
@@ -159,10 +165,19 @@ impl super::Session {
     pub(crate) fn start_country_search(&mut self, country: Country) {
         let iso_a2 = country.iso_a2.clone();
         self.search.context.activate_country(country);
+        self.search.highlight_hidden = false;
         self.country_filter.reset();
         let limit = COUNTRY_RESULT_LIMIT;
         self.begin_search(country_search_params(&iso_a2), limit);
         self.search.country_query.clear();
+    }
+
+    /// Снимает подсветку выбранной страны по клику мимо: контекст поиска и
+    /// список станций остаются до выбора другой страны.
+    pub(crate) fn hide_country_highlight(&mut self) {
+        if self.search.context.country.is_some() {
+            self.search.highlight_hidden = true;
+        }
     }
 
     pub(crate) fn start_genre_search(&mut self, tag: String) {
@@ -193,6 +208,8 @@ impl super::Session {
         self.invalidate_search();
         self.search.results.clear();
         self.markers.clear();
+        self.search.revision = self.search.revision.wrapping_add(1);
+        self.search.highlight_hidden = false;
         self.country_filter.reset();
         self.library_tab = LibraryTab::Results;
     }
@@ -216,6 +233,7 @@ impl super::Session {
         self.search.error = None;
         self.search.results.clear();
         self.markers.clear();
+        self.search.revision = self.search.revision.wrapping_add(1);
         self.library_tab = LibraryTab::Results;
 
         let mut geo_params = params.clone();
@@ -267,12 +285,14 @@ impl super::Session {
                     self.search.empty = outcome.stations.is_empty();
                     self.search.results = outcome.stations;
                     self.markers = build_markers(outcome.geo_stations);
+                    self.search.revision = self.search.revision.wrapping_add(1);
                     self.search.pending = false;
                     self.search.rx = None;
                 }
                 Err(err) => {
                     self.search.error = Some(err.to_string());
                     self.markers.clear();
+                    self.search.revision = self.search.revision.wrapping_add(1);
                     self.search.pending = false;
                     self.search.rx = None;
                 }
@@ -296,12 +316,30 @@ impl super::Session {
         let (sender, receiver) = mpsc::unbounded_channel();
         self.search.roulette_rx = Some(receiver);
         let radio = self.radio.clone();
+        let exclude = self.roulette_exclusions();
         let waker = self.wake.waker();
         self.runtime.spawn(async move {
-            let result = radio.random_station().await;
+            let result = radio.random_station(&exclude).await;
             let _ = sender.send(result);
             waker();
         });
+    }
+
+    /// UUID, которые рулетка не должна выдать: текущий эфир и недавняя история.
+    /// Без этого кубик «крутится», а станция остаётся прежней.
+    fn roulette_exclusions(&self) -> Vec<String> {
+        const RECENT: usize = 12;
+        let mut exclude: Vec<String> = self
+            .library
+            .history()
+            .iter()
+            .take(RECENT)
+            .map(|station| station.stationuuid.clone())
+            .collect();
+        if let Some(station) = &self.current_station {
+            exclude.push(station.stationuuid.clone());
+        }
+        exclude
     }
 
     pub(crate) fn poll_roulette(&mut self) {

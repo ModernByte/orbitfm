@@ -33,7 +33,10 @@ impl RadioBrowserClient {
     pub async fn search(&self, params: SearchParams) -> Result<Vec<Station>, RadioError>;
 
     /// Случайная станция с координатами для Roulette (до трёх попыток).
-    pub async fn random_station(&self) -> Result<Station, RadioError>;
+    /// `exclude` — UUID, которые нельзя выдавать (текущий эфир и недавняя
+    /// история): сервер кэширует ответ по URL, поэтому случайность
+    /// обеспечивает клиент.
+    pub async fn random_station(&self, exclude: &[String]) -> Result<Station, RadioError>;
 
     pub async fn get_station(&self, station_uuid: &str) -> Result<Station, RadioError>;
 
@@ -108,7 +111,7 @@ pub struct Station {
 | Метод | Эндпоинт | Назначение |
 |-------|----------|------------|
 | GET | `/json/stations/search` | Поиск; `hidebroken`, `order=votes`, `reverse=true`, фильтры `name`, `countrycode`, `tag`, `language`, `has_geo_info`, `limit`, `offset` |
-| GET | `/json/stations/search` (Roulette) | `order=random&limit=1&has_geo_info=true&hidebroken=true`, без `reverse`; до трёх попыток при невалидной станции |
+| GET | `/json/stations/search` (Roulette) | `order=random&limit=24&offset=<0..499>&has_geo_info=true&hidebroken=true`, без `reverse`; выбор станции и исключения — на клиенте, до трёх попыток |
 | GET | `/json/stations/byuuid/<uuid>` | Станция по UUID |
 | GET | `/json/url/<uuid>` | Click-tracking при старте воспроизведения |
 
@@ -117,9 +120,14 @@ pub struct Station {
 `has_geo_info=true` включается только при `SearchParams::has_geo_info`. Валидацию
 координат и группировку маркеров выполняет Application Core (ADR-0012).
 
-`random_station` сам проверяет станцию для Roulette: непустой `url_resolved`, конечные
-координаты в допустимых диапазонах и не `(0, 0)`. Если Radio Browser вернул неподходящую
-станцию, запрос повторяется (до трёх раз), затем возвращается `NotFound`.
+`random_station` берёт пачку из 24 станций со случайным `offset` в `0..499`:
+кэш Radio Browser отвечает по URL, и при `limit=1` каждый цикл возвращалась
+одна и та же станция. Из пачки отбираются станции с непустым `url_resolved`,
+конечными координатами в допустимых диапазонах и не `(0, 0)`, не входящие в
+`exclude`; одна выбирается случайно (splitmix64 без внешнего crate'а). Если
+подходящих нет, запрос повторяется с новым `offset` (до трёх раз), затем
+возвращается `NotFound`. Случайность и исключения — клиентские: серверный
+`order=random` остаётся только способом получить разнообразную пачку.
 
 ## 7. Кэш и валидация
 
@@ -140,8 +148,10 @@ pub struct Station {
 - разбор `geo_lat`/`geo_long`, включая `null`;
 - разбор `votes`/`country`/`state` и значения по умолчанию для старого JSON;
 - построение query без пустых фильтров и с `has_geo_info=true`;
-- query Roulette: `order=random`, `limit=1`, `has_geo_info`, без `reverse`;
+- query Roulette: `order=random`, `limit=24`, случайный `offset`, `has_geo_info`, без `reverse`;
 - отбор станции Roulette по URL и координатам (включая `(0, 0)` и NaN);
+- исключение текущей и недавних станций из пачки;
+- `random_below` не выходит за границу и не вырождается в константу;
 - валидация UUID (включая попытку path traversal);
 - попадание в кэш по UUID;
 - ротация пула сохраняет все серверы;

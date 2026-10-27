@@ -16,11 +16,13 @@ use crate::render::{
     BandTargets, GlobeRenderer, MotionMixer, SpectrumOverlay, SpectrumTarget, VisualizerModel,
 };
 use crate::services::USER_AGENT;
+use crate::session::heat::CountryMetric;
 use crate::session::search::SearchMode;
 use crate::session::{Notice, NoticeKey, Session, StationStartError, UiIntent, WindowMode};
 use crate::settings::{Language, MotionReactivity, MotionStyle, Settings};
 use crate::ui::UiAction;
 use crate::ui::animation::{self, FrameMotion, Transitions, ZoneFlags};
+use crate::ui::country_map::{CountryHeatCache, HeatScope, HeatSource};
 use crate::ui::globe_view::{self, CalloutState, GlobeState};
 use crate::ui::images::{FaviconCache, MAX_FAVICON_BYTES, decode_favicon};
 use crate::ui::layout::{DeskLayout, LayoutDensity};
@@ -105,6 +107,8 @@ pub(crate) struct OrbitApp<'a> {
     orbit_ring: OrbitRing,
     /// Callout выбранной/наведённой страны с fade-переходами.
     callout: CalloutState,
+    /// Callout активной станции: отдельная плашка с обходом страны.
+    station_callout: CalloutState,
     visualizer: VisualizerModel,
     favicons: FaviconCache,
     http: reqwest::Client,
@@ -114,6 +118,10 @@ pub(crate) struct OrbitApp<'a> {
     /// Прямоугольник drawer'а с последнего открытого кадра: нужен, чтобы
     /// панель гасла по месту, а не исчезала скачком (ADR-0032).
     drawer_rect: Option<egui::Rect>,
+    /// Режим тепловой карты стран из легенды Focus-стола.
+    country_metric: CountryMetric,
+    /// Текстура карты: пересобирается на смену выборки или режима.
+    country_heat: CountryHeatCache,
 }
 
 impl<'a> OrbitApp<'a> {
@@ -151,6 +159,7 @@ impl<'a> OrbitApp<'a> {
             motion: MotionMixer::default(),
             orbit_ring: OrbitRing::default(),
             callout: CalloutState::default(),
+            station_callout: CalloutState::default(),
             visualizer,
             favicons: FaviconCache::new(),
             http: reqwest::Client::builder()
@@ -162,6 +171,8 @@ impl<'a> OrbitApp<'a> {
             toast: Toast::default(),
             transitions: Transitions::new(),
             drawer_rect: None,
+            country_metric: CountryMetric::default(),
+            country_heat: CountryHeatCache::default(),
         }
     }
 
@@ -228,7 +239,13 @@ impl<'a> OrbitApp<'a> {
     fn draw(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         let viewport = ui.available_rect_before_wrap();
-        let frame = Frame::capture(&ctx, self.session, &mut self.visualizer, viewport);
+        let frame = Frame::capture(
+            &ctx,
+            self.session,
+            &mut self.visualizer,
+            viewport,
+            self.country_metric,
+        );
         let mut actions = Vec::new();
 
         egui::CentralPanel::default()
@@ -265,10 +282,43 @@ impl<'a> OrbitApp<'a> {
         let motion_mixer = &mut self.motion;
         let orbit_ring = &mut self.orbit_ring;
         let callout = &mut self.callout;
+        let station_callout = &mut self.station_callout;
         let visualizer = &self.visualizer;
         let palette = &frame.palette;
         let layout = frame.layout;
         let density = layout.density;
+
+        // Тепловая карта стран живёт только на большом глобусе Focus: в
+        // капсулах она не читается и лишний раз не растеризуется.
+        let mut heat_scope = HeatScope::Sample;
+        if density == LayoutDensity::Full {
+            let metric = frame.country_metric;
+            // «Плотность» берётся из счётчиков всей базы, поэтому карта
+            // закрашена до всякого выбора; остальные метрики считаются по
+            // выборке панели, а без неё — по мировому топу.
+            let source = if metric == CountryMetric::Density && !session.world.counts().is_empty() {
+                heat_scope = HeatScope::Global;
+                HeatSource::Counts(session.world.counts())
+            } else {
+                let stations = if session.search.results.is_empty() {
+                    heat_scope = HeatScope::Top;
+                    session.world.sample()
+                } else {
+                    &session.search.results
+                };
+                HeatSource::Stations(stations)
+            };
+            self.country_heat.ensure(
+                &session.geo,
+                source,
+                session.search.revision,
+                session.world.revision(),
+                metric,
+            );
+        }
+        let country_heat = (density == LayoutDensity::Full)
+            .then(|| self.country_heat.frame().cloned())
+            .flatten();
 
         // Прогрессы переходов считаются один раз на кадр (ADR-0032): зоны
         // читают готовые значения, а каркас стеклянных зон гаснет здесь.
@@ -343,12 +393,14 @@ impl<'a> OrbitApp<'a> {
                             motion: &motion,
                             ready: self.globe_ready,
                             markers: &session.markers,
-                            current_uuid: session
-                                .current_station
-                                .as_ref()
-                                .map(|station| station.stationuuid.as_str()),
+                            current_station: session.current_station.as_ref(),
                             geo: &session.geo,
-                            selected_country: session.search.context.country.as_ref(),
+                            selected_country: session
+                                .search
+                                .context
+                                .country
+                                .as_ref()
+                                .filter(|_| !session.search.highlight_hidden),
                             country_enabled,
                             backdrop: density == LayoutDensity::Full,
                             ring: &*orbit_ring,
@@ -356,18 +408,28 @@ impl<'a> OrbitApp<'a> {
                             allow_flips: frame.settings.allow_flips
                                 && density == LayoutDensity::Full
                                 && frame.motion_reactivity.is_enabled(),
-                            callout,
+                            auto_spin: !frame.motion_reactivity.is_enabled()
+                                && !frame.settings.reduce_motion,
+                            heat: country_heat.as_ref(),
+                            country_callout: callout,
+                            station_callout,
                             reduce_motion: ui_motion.reduce,
                         },
                     )
                 })
                 .inner;
             actions.extend(globe.actions);
-            if country_enabled
-                && let Some((x, y, z)) = globe.clicked_point
-                && let Some(country) = session.geo.country_at_sphere_point(x, y, z)
-            {
-                actions.push(UiAction::SelectCountry(country.clone()));
+            // Клик мимо маркера и страны гасит только подсветку глобуса: список
+            // станций выбранной страны в панели остаётся (до выбора другой).
+            if country_enabled && globe.clicked_empty {
+                let country = globe
+                    .clicked_point
+                    .and_then(|(x, y, z)| session.geo.country_at_sphere_point(x, y, z))
+                    .cloned();
+                match country {
+                    Some(country) => actions.push(UiAction::SelectCountry(country)),
+                    None => session.hide_country_highlight(),
+                }
             }
         }
 
@@ -513,7 +575,14 @@ impl<'a> OrbitApp<'a> {
                         legend_a,
                     );
                     ui.scope_builder(vertical(legend_rect), |ui| {
-                        overlays::density_legend(ui, palette, frame.language, legend_a);
+                        overlays::country_legend(
+                            ui,
+                            palette,
+                            frame.language,
+                            legend_a,
+                            &mut self.country_metric,
+                            heat_scope,
+                        );
                     });
                 }
             }
@@ -885,6 +954,8 @@ struct Frame {
     show_help: bool,
     /// Всё окно: по нему рисуется затемнение под drawer.
     viewport: egui::Rect,
+    /// Тепловая карта стран: режим, выбранный в легенде.
+    country_metric: CountryMetric,
 }
 
 impl Frame {
@@ -893,6 +964,7 @@ impl Frame {
         session: &mut Session,
         visualizer: &mut VisualizerModel,
         viewport: egui::Rect,
+        country_metric: CountryMetric,
     ) -> Self {
         let settings = session.settings.settings();
         let playback = session.audio.state();
@@ -947,6 +1019,7 @@ impl Frame {
             ),
             playback,
             spectrum_target,
+            country_metric,
         }
     }
 }

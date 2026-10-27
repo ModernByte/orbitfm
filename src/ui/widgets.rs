@@ -567,18 +567,9 @@ pub(crate) struct SliderResponse {
     pub(crate) committed: bool,
 }
 
-/// Громкость: динамик + тонкий accent-трек с круглой ручкой.
-pub(crate) fn volume_slider(
-    ui: &mut egui::Ui,
-    palette: &Palette,
-    volume: &mut f64,
-    language: Language,
-) -> SliderResponse {
-    volume_slider_width(ui, palette, volume, 126.0, language)
-}
-
-/// Та же громкость в заданной ширине: капсуле Overlay нужен короткий трек.
-/// Стрелки шагают на 5 %, Home/End — в крайние положения.
+/// Громкость: динамик + тонкий accent-трек с круглой ручкой в заданной ширине:
+/// капсуле Overlay нужен короткий трек, transport резервирует место под
+/// визуализатор. Стрелки шагают на 5 %, Home/End — в крайние положения.
 pub(crate) fn volume_slider_width(
     ui: &mut egui::Ui,
     palette: &Palette,

@@ -30,7 +30,9 @@ impl GlobeCamera {
     /// и перевороты по вводу за кадр. `dt` — сглаженный интервал физики;
     /// `elapsed` — фактический интервал кадра для отсчёта простоя (после сна
     /// окна `stable_dt` остаётся малым). `motion` задаёт `yaw_sway` и `pulse`;
-    /// `allow_flips` приходит из Core с учётом режима окна и Reduce motion.
+    /// `allow_flips` приходит из Core с учётом режима окна и Reduce motion;
+    /// `auto_spin` разрешает вращение в простое (Core включает его только при
+    /// выключенной реактивности).
     pub fn advance(
         &mut self,
         dt: f32,
@@ -38,6 +40,7 @@ impl GlobeCamera {
         input: &GlobeInput,
         motion: &GlobeMotion,
         allow_flips: bool,
+        auto_spin: bool,
     );
 
     /// Плавно переводит камеру к точке `(lat, lon)` за `duration`.
@@ -57,6 +60,11 @@ impl GlobeCamera {
 
     /// Приоритет пользователя: 0 — камера свободна, 1 — ей управляют.
     pub fn camera_priority(&self) -> f32;
+
+    /// Сглаженный покой под курсором: 0 — курсора нет, 1 — полностью спокойно.
+    /// Растёт/гаснет с τ 0,3 с; гасит авто-вращение, sway и (через
+    /// `GlobeMotion::with_calm`) squash, рябь и flash.
+    pub fn hover_calm(&self) -> f32;
 
     /// Идёт ли медленное авто-вращение после 4 с без взаимодействия.
     pub fn is_idle_spinning(&self) -> bool;
@@ -100,8 +108,16 @@ impl GlobeRenderer {
         target_format: wgpu::TextureFormat,
     ) -> Self;
 
-    /// Записывает униформ-данные камеры в GPU-буфер.
-    pub fn prepare(&self, queue: &wgpu::Queue, uniform: &CameraUniform);
+    /// Записывает униформ-данные камеры в GPU-буфер и, если кадр карты стран
+    /// сменился по `Arc`, загружает текстуру 2048×1024 в GPU. `device` нужен
+    /// для ленивой загрузки LOD-текстуры Земли.
+    pub fn prepare(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        uniform: &CameraUniform,
+        heat: Option<&std::sync::Arc<HeatFrame>>,
+    );
 
     /// Рисует сферу в текущий render pass.
     pub fn paint(&self, render_pass: &mut wgpu::RenderPass<'_>);
@@ -109,12 +125,36 @@ impl GlobeRenderer {
 
 /// Добавляет paint callback глобуса в painter. `motion` задаёт squash,
 /// рябь и flash текущего кадра; roll уже входит в `view_proj` камеры.
+/// `heat` — готовая текстура стран; `None` — карта выключена.
 pub fn paint_globe(
     painter: &egui::Painter,
     rect: egui::Rect,
     camera: &GlobeCamera,
     motion: &GlobeMotion,
+    heat: Option<&std::sync::Arc<HeatFrame>>,
 );
+
+/// Тепловая карта стран: равнопромежуточная текстура, премноженный
+/// линейный RGBA. Собирается на CPU и грузится в GPU только при смене `Arc`.
+pub(crate) const HEAT_SIZE: [u32; 2] = [2048, 1024];
+
+pub(crate) struct CountryColor {
+    pub color: egui::Color32,
+    pub alpha: f32,
+}
+
+pub(crate) struct HeatFrame {
+    pub size: [u32; 2],
+    pub pixels: Vec<u8>,
+}
+
+/// Заливает контуры стран по ISO-коду; `None`, если ни одна страна не
+/// покрашена. Even-odd scanline: дырки и антимеридиан обрабатываются.
+pub(crate) fn build_heat_map(
+    geo: &GeoService,
+    colors: &std::collections::HashMap<String, CountryColor>,
+    size: [u32; 2],
+) -> Option<HeatFrame>;
 
 /// Стиль страны: заливка и линия контура.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -228,6 +268,9 @@ impl GlobeMotion {
     pub fn uniform2_values(&self) -> [f32; 4];
     /// Ослабляет squash и ripple до 35 % при полном приоритете камеры.
     pub fn with_camera_priority(self, priority: f32) -> Self;
+    /// Плавно гасит squash, рябь, sway, flash и pulse коэффициентом
+    /// `1 − calm`; `calm = 1` — планета неподвижна под курсором.
+    pub fn with_calm(self, calm: f32) -> Self;
 }
 
 /// Spring-squash, огибающие, onset/beat, стили и idle-дыхание;
@@ -292,10 +335,11 @@ impl SpectrumOverlay {
 }
 ```
 
-`CameraUniform` — внутренний тип (`pub(crate)`) размером 128 байт, содержащий
+`CameraUniform` — внутренний тип (`pub(crate)`) размером 144 байта, содержащий
 `view_proj`, `light_direction`, позицию камеры `camera_position`, `motion`
-(`scale_y−1`, `scale_xz−1`, амплитуда ряби, фаза) и `motion2` (`flash`,
-`style_id`, `beat_phase`, `time`). `motion2.y` — числовой id стиля из
+(`scale_y−1`, `scale_xz−1`, амплитуда ряби, фаза), `motion2` (`flash`,
+`style_id`, `beat_phase`, `time`) и `heat` (x — сила карты стран 0/1,
+остальные компоненты зарезервированы). `motion2.y` — числовой id стиля из
 `MotionStyle::id`; рендерер его не интерпретирует, но поле живёт в uniform для
 будущих шейдерных эффектов и отладки. `GlobeCallback`
 реализует `egui_wgpu::CallbackTrait` и не входит в публичный экспорт: снаружи
@@ -310,11 +354,18 @@ impl SpectrumOverlay {
 - `GlobeCamera::fly_to` запускает анимацию по кратчайшей дуге; прогресс сглаживается
   smoothstep, минимальная длительность — 50 мс. Целевой `pitch` ограничен ±85°.
   Перетаскивание сбрасывает анимацию; `is_animating` учитывает и доворот, и инерцию.
-- После 4 с без перетаскивания, прокрутки и клика камера начинает авто-вращение:
-  разгон 2 с до 0,006 рад/с, `yaw` уменьшается, поэтому континенты уходят на
-  восток. Доворот `fly_to` и любое взаимодействие сбрасывают отсчёт. Наведение
-  курсора простоем не считается. `idle_countdown` возвращает остаток паузы,
-  `is_idle_spinning` — факт вращения.
+- После 4 с без перетаскивания, прокрутки и клика камера, если Core передал
+  `auto_spin`, начинает авто-вращение: разгон 1,5 с до 0,055 рад/с, `yaw`
+  уменьшается, поэтому континенты уходят на восток. Core включает `auto_spin`
+  только при выключенной реактивности (ADR-0023, развитие 2026-10-27).
+  Доворот `fly_to` и любое взаимодействие сбрасывают отсчёт.
+  `idle_countdown` возвращает остаток паузы, `is_idle_spinning` — факт
+  вращения.
+- Наведение на глобус не сбрасывает простой, но плавно останавливает
+  движение: `hover` идёт к 1/0 с τ 0,3 с; он гасит авто-вращение (множитель
+  `1 − hover`), музыкальный sway и через `GlobeMotion::with_calm` — squash,
+  рябь и flash. `is_animating` считает незавершённый hover-переход поводом
+  для кадров, поэтому остановка и возврат дорисовываются без рывка.
 - Музыкальный sway входит в `eye()` как добавка `yaw_sway·(1 − priority)`.
   Приоритет сглаживается с τ 80 мс: drag/zoom/клик/`fly_to` за 150–250 мс
   выводят его к 1, после отпускания — обратно к 0. Squash и ripple при полном
@@ -337,7 +388,8 @@ impl SpectrumOverlay {
   стран и якоря callout.
 - `GlobeDeform` — общий источник геометрии: маркеры, кольца стран и hit-test
   переводятся тем же `to_world`/`to_unit`, что и вершины меша. Рябь в hit-test
-  не входит: при амплитуде ≤0,4 % расхождение меньше пикселя.
+  не входит: при амплитуде до 1,8 % радиуса это единицы пикселей на сильном
+  зуме — граница принята осознанно.
 - `MotionMixer::update` — чистая модель без egui/wgpu: асимметричные огибающие
   Bass/High (атака 30 мс, спад 220 мс), onset/beat, выбор стиля, spring-squash,
   idle-дыхание и возврат после Stop с `RELEASE_TAU = 0,10 с`. Пружина стремится к

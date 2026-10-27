@@ -1,15 +1,22 @@
 //! GPU-ресурсы глобуса: UV-сфера, текстура Земли и wgpu-пайплайн.
 
+use std::sync::Arc;
+
 use eframe::egui::{self, epaint::PaintCallbackInfo};
 use egui_wgpu::{CallbackResources, CallbackTrait, ScreenDescriptor, wgpu};
 use wgpu::util::DeviceExt;
 
 use super::GlobeCamera;
 use super::camera::CameraUniform;
+use super::heatmap::{HEAT_SIZE, HeatFrame};
 use super::motion::GlobeMotion;
 
 const GLOBE_SHADER: &str = include_str!("globe.wgsl");
 const EARTH_TEXTURE: &[u8] = include_bytes!("../../assets/textures/earth.jpg");
+/// Версия повышенного разрешения: грузится на GPU только при приближении.
+const EARTH_TEXTURE_HI: &[u8] = include_bytes!("../../assets/textures/earth@2x.jpg");
+/// Ближе этой дистанции (радиус сферы = 1) включается детальная текстура.
+const LOD_NEAR_DISTANCE: f32 = 2.6;
 
 const SPHERE_SEGMENTS: u32 = 64;
 const SPHERE_STACKS: u32 = 32;
@@ -24,7 +31,17 @@ pub struct GlobeRenderer {
     index_buffer: wgpu::Buffer,
     index_count: u32,
     uniform_buffer: wgpu::Buffer,
+    texture_layout: wgpu::BindGroupLayout,
+    sampler: wgpu::Sampler,
     bind_group: wgpu::BindGroup,
+    /// Детальная текстура создаётся при первом приближении и живёт дальше.
+    near_bind_group: Option<wgpu::BindGroup>,
+    near_active: bool,
+    /// Тепловая карта стран: текстура фиксированного размера, содержимое
+    /// обновляется только при смене выборки или режима.
+    heat_texture: wgpu::Texture,
+    heat_view: wgpu::TextureView,
+    uploaded_heat: Option<Arc<HeatFrame>>,
 }
 
 impl GlobeRenderer {
@@ -58,7 +75,7 @@ impl GlobeRenderer {
             mapped_at_creation: false,
         });
 
-        let texture = earth_texture(device, queue);
+        let texture = earth_texture(device, queue, EARTH_TEXTURE, "earth texture");
         let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("earth sampler"),
@@ -75,7 +92,23 @@ impl GlobeRenderer {
             border_color: None,
         });
 
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let heat_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("country heat"),
+            size: wgpu::Extent3d {
+                width: HEAT_SIZE[0],
+                height: HEAT_SIZE[1],
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let heat_view = heat_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let texture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("globe bind group layout"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
@@ -104,31 +137,31 @@ impl GlobeRenderer {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("globe bind group"),
-            layout: &bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniform_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&texture_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-            ],
-        });
+        let bind_group = earth_bind_group(
+            device,
+            &texture_layout,
+            &uniform_buffer,
+            &texture_view,
+            &sampler,
+            &heat_view,
+        );
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("globe pipeline layout"),
-            bind_group_layouts: &[Some(&bind_group_layout)],
+            bind_group_layouts: &[Some(&texture_layout)],
             immediate_size: 0,
         });
 
@@ -172,19 +205,85 @@ impl GlobeRenderer {
             index_buffer,
             index_count: indices.len() as u32,
             uniform_buffer,
+            texture_layout,
+            sampler,
             bind_group,
+            near_bind_group: None,
+            near_active: false,
+            heat_texture,
+            heat_view,
+            uploaded_heat: None,
         }
     }
 
-    /// Загружает униформ-данные камеры в GPU-буфер.
-    pub fn prepare(&self, queue: &wgpu::Queue, uniform: &CameraUniform) {
+    /// Загружает униформ-данные камеры и при приближении один раз создаёт
+    /// детальную текстуру; дальше кадры только выбирают нужный bind group.
+    pub fn prepare(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        uniform: &CameraUniform,
+        heat: Option<&Arc<HeatFrame>>,
+    ) {
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(uniform));
+
+        if let Some(frame) = heat
+            && !self
+                .uploaded_heat
+                .as_ref()
+                .is_some_and(|uploaded| Arc::ptr_eq(uploaded, frame))
+        {
+            debug_assert_eq!(
+                frame.size, HEAT_SIZE,
+                "текстура карты фиксированного размера"
+            );
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.heat_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &frame.pixels,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(4 * frame.size[0]),
+                    rows_per_image: Some(frame.size[1]),
+                },
+                wgpu::Extent3d {
+                    width: frame.size[0],
+                    height: frame.size[1],
+                    depth_or_array_layers: 1,
+                },
+            );
+            self.uploaded_heat = Some(Arc::clone(frame));
+        }
+
+        let eye = glam::Vec3::from_slice(&uniform.camera_position[..3]);
+        let near = eye.length() <= LOD_NEAR_DISTANCE;
+        if near && self.near_bind_group.is_none() {
+            let texture = earth_texture(device, queue, EARTH_TEXTURE_HI, "earth texture hi");
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            self.near_bind_group = Some(earth_bind_group(
+                device,
+                &self.texture_layout,
+                &self.uniform_buffer,
+                &view,
+                &self.sampler,
+                &self.heat_view,
+            ));
+        }
+        self.near_active = near && self.near_bind_group.is_some();
     }
 
     /// Рисует сферу в текущий render pass.
     pub fn paint(&self, render_pass: &mut wgpu::RenderPass<'_>) {
         render_pass.set_pipeline(&self.pipeline);
-        render_pass.set_bind_group(0, &self.bind_group, &[]);
+        let bind_group = match &self.near_bind_group {
+            Some(near) if self.near_active => near,
+            _ => &self.bind_group,
+        };
+        render_pass.set_bind_group(0, bind_group, &[]);
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
         render_pass.draw_indexed(0..self.index_count, 0, 0..1);
@@ -194,13 +293,22 @@ impl GlobeRenderer {
 /// Кадровый callback для egui-wgpu.
 pub struct GlobeCallback {
     uniform: CameraUniform,
+    heat: Option<Arc<HeatFrame>>,
 }
 
 impl GlobeCallback {
     /// Снимает текущее состояние камеры и движения для отрисовки кадра.
-    pub fn new(camera: &GlobeCamera, aspect: f32, motion: &GlobeMotion) -> Self {
+    pub fn new(
+        camera: &GlobeCamera,
+        aspect: f32,
+        motion: &GlobeMotion,
+        heat: Option<&Arc<HeatFrame>>,
+    ) -> Self {
+        let mut uniform = camera.uniform_with_motion(aspect, motion);
+        uniform.heat[0] = if heat.is_some() { 1.0 } else { 0.0 };
         Self {
-            uniform: camera.uniform_with_motion(aspect, motion),
+            uniform,
+            heat: heat.cloned(),
         }
     }
 }
@@ -208,14 +316,14 @@ impl GlobeCallback {
 impl CallbackTrait for GlobeCallback {
     fn prepare(
         &self,
-        _device: &wgpu::Device,
+        device: &wgpu::Device,
         queue: &wgpu::Queue,
         _screen_descriptor: &ScreenDescriptor,
         _egui_encoder: &mut wgpu::CommandEncoder,
         callback_resources: &mut CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
-        if let Some(renderer) = callback_resources.get::<GlobeRenderer>() {
-            renderer.prepare(queue, &self.uniform);
+        if let Some(renderer) = callback_resources.get_mut::<GlobeRenderer>() {
+            renderer.prepare(device, queue, &self.uniform, self.heat.as_ref());
         }
         Vec::new()
     }
@@ -238,13 +346,19 @@ pub fn paint_globe(
     rect: egui::Rect,
     camera: &GlobeCamera,
     motion: &GlobeMotion,
+    heat: Option<&Arc<HeatFrame>>,
 ) {
-    let callback = GlobeCallback::new(camera, rect.aspect_ratio(), motion);
+    let callback = GlobeCallback::new(camera, rect.aspect_ratio(), motion, heat);
     painter.add(egui_wgpu::Callback::new_paint_callback(rect, callback));
 }
 
-fn earth_texture(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Texture {
-    let image = image::load_from_memory(EARTH_TEXTURE)
+fn earth_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    bytes: &[u8],
+    label: &str,
+) -> wgpu::Texture {
+    let image = image::load_from_memory(bytes)
         .expect("встроенная текстура Земли должна декодироваться")
         .to_rgba8();
     let (width, height) = image.dimensions();
@@ -255,7 +369,7 @@ fn earth_texture(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Texture {
     };
 
     let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("earth texture"),
+        label: Some(label),
         size,
         mip_level_count: 1,
         sample_count: 1,
@@ -282,6 +396,38 @@ fn earth_texture(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Texture {
     );
 
     texture
+}
+
+fn earth_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    uniform_buffer: &wgpu::Buffer,
+    texture_view: &wgpu::TextureView,
+    sampler: &wgpu::Sampler,
+    heat_view: &wgpu::TextureView,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("globe bind group"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(texture_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::TextureView(heat_view),
+            },
+        ],
+    })
 }
 
 #[repr(C)]

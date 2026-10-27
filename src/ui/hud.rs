@@ -327,10 +327,24 @@ fn country_search(
     );
     let query = country_query.clone();
     let suggestions = geo.search_countries(&query, COUNTRY_SUGGESTIONS);
-    let show_popup = (output.response.has_focus() || output.enter) && !query.trim().is_empty();
+    // Стабильный id попапа: у якоря поля id меняется между «в фокусе» и «не в
+    // фокусе», и попап терял собственную память на кадре отпускания кнопки.
+    let popup_id = egui::Id::unique("orbitfm_hud_country_popup");
+    // TextEdit отдаёт фокус на клике, то есть уже на кадре отпускания, — без
+    // этой проверки попап исчезал раньше, чем кнопка подсказки получала клик.
+    let pointer_over_popup = ui
+        .ctx()
+        .pointer_hover_pos()
+        .zip(ui.ctx().read_response(popup_id))
+        .is_some_and(|(pointer, popup)| popup.rect.contains(pointer));
+    let escape = ui.ctx().input(|input| input.key_pressed(egui::Key::Escape));
+    let show_popup = (output.response.has_focus() || output.enter || pointer_over_popup)
+        && !query.trim().is_empty()
+        && !escape;
 
     if show_popup && !suggestions.is_empty() {
         egui::Popup::from_response(&output.response)
+            .id(popup_id)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show(|ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {

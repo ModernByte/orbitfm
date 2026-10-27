@@ -17,6 +17,14 @@ pub struct SearchParams {
     pub has_geo_info: bool,
 }
 
+/// Число станций страны (`/json/countrycodes`): поле `name` формата
+/// Radio Browser содержит ISO-код, а не название.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CountryCount {
+    pub name: String,
+    pub stationcount: u32,
+}
+
 /// Станция (минимальный набор полей)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Station {
@@ -75,7 +83,15 @@ impl RadioBrowserClient {
     pub async fn search(&self, params: SearchParams) -> Result<Vec<Station>, RadioError>;
 
     /// Случайная станция с координатами для Roulette (до трёх попыток).
-    pub async fn random_station(&self) -> Result<Station, RadioError>;
+    /// `exclude` — UUID, которые нельзя выдавать (текущий эфир и недавняя
+    /// история).
+    pub async fn random_station(&self, exclude: &[String]) -> Result<Station, RadioError>;
+
+    /// Число станций каждой страны — карта плотности (ADR-0035).
+    pub async fn country_counts(&self) -> Result<Vec<CountryCount>, RadioError>;
+
+    /// Топ станций по числу прослушиваний — мировой снимок для карты стран.
+    pub async fn top_stations(&self, limit: u32) -> Result<Vec<Station>, RadioError>;
 
     /// Получить станцию по UUID (сначала из кэша).
     pub async fn get_station(&self, station_uuid: &str) -> Result<Station, RadioError>;
@@ -103,10 +119,13 @@ impl RadioBrowserClient {
 - При `has_geo_info = true` добавляется фильтр `has_geo_info=true`; клиент не проверяет
   координаты — это делает вызывающая сторона (`geo_lat`/`geo_long` могут быть `null`).
 - `random_station` запрашивает `/json/stations/search` с
-  `order=random&limit=1&has_geo_info=true&hidebroken=true` и не передаёт `reverse`.
-  Станция принимается только с непустым `url_resolved` и валидными координатами
-  (конечные, в диапазонах, не `(0, 0)`); иначе выполняется до трёх попыток, после
-  чего возвращается `NotFound`. Найденная станция попадает в кэш.
+  `order=random&limit=24&offset=<случайный 0..499>&has_geo_info=true&hidebroken=true`
+  и не передаёт `reverse`. Пачка фильтруется по непустому `url_resolved`,
+  валидным координатам (конечные, в диапазонах, не `(0, 0)`) и отсутствию в
+  `exclude`; одна станция выбирается случайно на клиенте. Если подходящих нет,
+  выполняется до трёх попыток с новым `offset`, после чего возвращается
+  `NotFound`. Найденная станция попадает в кэш. Разные `offset` обходят кэш
+  Radio Browser, который иначе отдаёт один и тот же ответ на один URL.
 - `get_station` проверяет формат UUID (`InvalidUuid`) и сначала ищет станцию в кэше;
   при промахе запрашивает `/json/stations/byuuid/<uuid>` и возвращает `NotFound` для
   пустого ответа.

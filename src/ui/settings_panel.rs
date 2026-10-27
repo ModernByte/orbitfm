@@ -230,6 +230,7 @@ pub(crate) fn show(
                                 }
                             },
                         );
+                        hint(ui, palette, strings.motion_spin_hint, accessibility);
                         choice_row(
                             ui,
                             palette,

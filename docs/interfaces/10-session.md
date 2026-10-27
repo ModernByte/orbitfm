@@ -436,7 +436,9 @@ mode <focus|overlay|listening|panel>
 - `SearchState`, `SearchResponse`, `SearchOutcome` (`src/session/search.rs`) —
   внутреннее состояние поиска; наружу идут только поля `Session::search`,
   читаемые UI (`query`, `country_query`, `genre_query`, `context`, `results`,
-  `pending`, `empty`, `error`, `roulette_pending`);
+  `pending`, `empty`, `error`, `roulette_pending`, `revision`,
+  `highlight_hidden`). `Session::hide_country_highlight` — единственный способ
+  снять подсветку, не трогая выборку;
 - `Parked`, `wait_on`, `media_recv`, `tray_recv`, `roulette_recv`,
   `format_status`, `analysis_required`, `mpris_artist`, `station_geo`,
   `station_popularity`, `country_search_params`, `roulette_label`,

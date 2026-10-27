@@ -8,6 +8,7 @@
 //! трей продолжают работать.
 
 pub(crate) mod commands;
+pub(crate) mod heat;
 pub(crate) mod markers;
 pub(crate) mod notice;
 pub(crate) mod park;
@@ -15,6 +16,7 @@ pub(crate) mod playback;
 pub(crate) mod search;
 pub(crate) mod tray;
 pub(crate) mod window;
+pub(crate) mod world;
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -39,6 +41,7 @@ pub(crate) use park::ParkOutcome;
 pub(crate) use playback::StationStartError;
 use search::SearchState;
 pub(crate) use window::{UiIntent, WINDOW_TITLE, WindowMode, WindowState};
+use world::WorldBaseline;
 
 /// Вкладка панели библиотеки: какой список сейчас видимый.
 ///
@@ -128,6 +131,9 @@ pub(crate) struct Session {
     pub(crate) current_station: Option<Station>,
     pub(crate) search: SearchState,
     pub(crate) markers: Vec<GlobeMarker>,
+    /// Глобальный снимок Radio Browser: счётчики стран и мировой топ для
+    /// тепловой карты (ADR-0035).
+    pub(crate) world: WorldBaseline,
     pub(crate) library_tab: LibraryTab,
     pub(crate) country_filter: CountryFilterState,
     pub(crate) panel_open: bool,
@@ -169,7 +175,7 @@ impl Session {
         let spectrum_enabled = audio.spectrum_enabled();
         let language = stored.language.resolve();
         let show_help = !stored.help_seen;
-        Self {
+        let mut session = Self {
             audio,
             audio_events,
             commands,
@@ -189,6 +195,7 @@ impl Session {
             current_station: None,
             search: SearchState::default(),
             markers: Vec::new(),
+            world: WorldBaseline::default(),
             library_tab: LibraryTab::default(),
             country_filter: CountryFilterState::default(),
             panel_open: true,
@@ -198,7 +205,11 @@ impl Session {
             window: WindowState::shown(),
             notices: VecDeque::new(),
             tray_snapshot: None,
-        }
+        };
+        // Снимок мира уходит в фон сразу: карта стран должна закраситься до
+        // первого выбора в панели.
+        session.start_world();
+        session
     }
 
     /// Один кадр фонового обслуживания: вызывается UI-циклом при открытом окне.
@@ -209,6 +220,8 @@ impl Session {
         self.process_tray_commands();
         self.poll_search();
         self.poll_roulette();
+        self.poll_world();
+        self.start_world();
         self.sync_media();
         self.sync_tray();
         self.spectrum_enabled = self.audio.spectrum_enabled();

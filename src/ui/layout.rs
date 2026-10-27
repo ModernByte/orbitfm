@@ -15,7 +15,8 @@ pub(crate) const PANEL_WIDTH: f32 = 312.0;
 /// Правый drawer настроек (ADR-0031): фиксированная ширина, clamp по viewport.
 pub(crate) const SETTINGS_WIDTH: f32 = 340.0;
 pub(crate) const HELP_SIZE: (f32, f32) = (216.0, 108.0);
-pub(crate) const LEGEND_SIZE: (f32, f32) = (190.0, 58.0);
+/// Легенда карты стран: выбор метрики + градиент Low → High.
+pub(crate) const LEGEND_SIZE: (f32, f32) = (216.0, 100.0);
 /// Нижняя зона капсулы Overlay с избранными станциями.
 const CAPSULE_HEIGHT: (f32, f32) = (0.40, 300.0);
 /// Поля выпадающей панели: стекло не касается кромки окна, чтобы скругления

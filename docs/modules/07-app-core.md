@@ -200,11 +200,11 @@ src/ui/
 ├── station_row.rs    # единая строка списка: favicon-аватар, имя, город, теги, битрейт,
 │                     # звезда; фокус, ↑/↓ по видимому списку, Space/Enter
 ├── transport.rs      # нижний transport: now-playing, prev/next, play/pause, stop, heart,
-│                     # Radio Roulette, codec/kbps, громкость, столбцы визуализатора и чип
+│                     # Radio Roulette, codec/kbps, громкость и мини-спектр
 ├── settings_panel.rs # drawer настроек: Appearance/Language/Audio/Motion/Window/About (ADR-0031)
-├── overlays.rs       # help-карточка управления и легенда «Station density»
-├── globe_view.rs     # ввод камеры, проекция и вид маркеров, heatmap стран, country callout,
-│                     # звёздное небо, статичный Fresnel-обод
+├── overlays.rs       # help-карточка управления и легенда карты стран с выбором метрики
+├── globe_view.rs     # ввод камеры, проекция и вид маркеров, тепловая карта, гашение
+│                     # движения под курсором, каналы callout страны и станции, звёздное небо
 ├── orbit_ring.rs     # орбитальное аудиокольцо Focus: корона, аврора, комета, искры (ADR-0029)
 ├── toast.rs          # стек до трёх сообщений на 3 секунды (ADR-0032)
 └── icons.rs          # векторные иконки: star, heart, dice, gear, moon, speaker, mouse, skip
@@ -271,9 +271,9 @@ country-режим выключены, `pulse` считается в `draw_layer
 |------|------------|
 | HUD | логотип, `Country/Genre`, поиск (у страны — popup подсказок), now-playing с favicon и LIVE, луна, шестерёнка, кнопка списка, `?`, `×` |
 | Панель | `Results / Favorites / History` с иконками, локальные фильтры (поле, чипы, `Sort by`, `Compact`), строки станций |
-| Transport | favicon 44 px, имя/город/`Now Playing: теги`, `⏮ play ⏭`, stop, heart, `Radio Roulette`, `CODEC kbps`, мини-спектр, чип `Visualizer` |
+| Transport | favicon 44 px, имя/город/`Now Playing: теги`; группа контролов (`⏮ play ⏭`, stop, heart, `Radio Roulette`) — по центру строки; справа громкость и мини-спектр, у них остаток ширины; зоны текста, контролов и правой группы не пересекаются и клиппятся |
 | Help-карточка | мыши-пиктограммы: Right-drag — orbit, Left click — country/station, Scroll — zoom |
-| Легенда | `Station density` градиент Low→High |
+| Легенда | выбор карты стран (`ComboBox`: Off, плотность, жанры, качество, тип, рейтинг), градиент Low→High и подпись источника заливки |
 | Drawer настроек | секции Appearance (тема, акцент, чекбокс визуализатора, число столбцов), Language, Audio (громкость), Motion (реактивность, стиль, reduce motion, перевороты), Window (режим, help, скрыть окно, выход), About; справа поверх scrim |
 
 Иконки — SVG Lucide из `assets/icons/` (ADR-0034): `ui/icons.rs` перечисляет набор
@@ -381,13 +381,15 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
 1. ПКМ + drag → `GlobeInput::drag_delta`; колесо при наведении → `scroll_delta`;
    ЛКМ → `primary_clicked`. Ввод под плавающими зонами отсекается
    `DeskLayout::blocks_point`.
-2. `GlobeCamera::advance(stable_dt, elapsed, &input, &motion, allow_flips)`
-   обновляет ориентацию, инерцию, зум, музыкальный sway и перевороты.
-   `allow_flips` вычисляется здесь: настройка `allow_flips` ∧ `Full` ∧
-   эффективная реактивность включена; `OrbitRing::paint` рисует кольцо до
-   `paint_globe`, поэтому сфера перекрывает его внутреннюю часть (ADR-0029).
-   `GlobeState.motion` пришёл из `MotionMixer`; `globe_view` один раз за кадр
-   получает `GlobeMotion` с ослабленной при взаимодействии геометрией и
+2. `GlobeCamera::advance(stable_dt, elapsed, &input, &motion, allow_flips, auto_spin)`
+   обновляет ориентацию, инерцию, зум, музыкальный sway, покой под курсором и
+   перевороты. `allow_flips` вычисляется здесь: настройка `allow_flips` ∧ `Full` ∧
+   эффективная реактивность включена; `auto_spin` — `!реактивность.is_enabled()`
+   ∧ `!reduce_motion` (вращение в простое только без музыки).
+   `OrbitRing::paint` рисует кольцо до `paint_globe`, поэтому сфера перекрывает
+   его внутреннюю часть (ADR-0029). `GlobeState.motion` пришёл из `MotionMixer`;
+   `globe_view` один раз за кадр получает `GlobeMotion` с ослабленной при
+   взаимодействии геометрией, гасит её `with_calm(camera.hover_calm())` и
    передаёт `deform` шейдеру, странам, маркерам, callout и hit-test.
 3. Hover страны (только в режиме «Страна»):
    `screen_to_sphere_deformed(hover_pos, viewport, &deform)` →
@@ -398,10 +400,13 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
    маркером, `Grabbing` — при вращении.
 4. При клике сначала проверяется ближайший маркер в радиусе 10 px: он приоритетнее
    выбора страны и возвращает `UiAction::Play`.
-5. Если маркера нет и режим — «Страна», `screen_to_sphere_deformed` даёт точку
-   единичной сферы; `OrbitApp::draw_layers` передаёт её в
+5. Если маркера нет и режим — «Страна», `draw_layers` берёт точку
+   единичной сферы (`clicked_point`) и передаёт её в
    `GeoService::country_at_sphere_point`
-   (`session.geo`) и при попадании создаёт `UiAction::SelectCountry`. Тот же путь
+   (`session.geo`). Попадание создаёт `UiAction::SelectCountry`; клик по
+   океану или территории без валидного ISO-кода вызывает
+   `Session::hide_country_highlight`: подсветка гаснет, но список станций и
+   контекст поиска остаются до выбора другой страны. Тот же путь
    используется для выбора из HUD. В режиме «Жанр» проверка страны отключена
    (`country_enabled = false`), поэтому клик по суше не меняет контекст.
 6. `apply_action` передаёт решение ядру: `Session::focus_country` (Core) —
@@ -417,19 +422,23 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
    `paint_country_highlights` и `paint_markers` рисуют egui-оверлей с той же
    деформацией; repaint
    запрашивается, пока камера `is_animating` или на сфере виден играющий маркер.
-8. Country callout (ТЗ §1): активная карточка — выбранная страна (`alpha → 1.0`),
-   иначе наведённая (`alpha → 0.85`), в режиме «Жанр» — `None`. `update_callout`
-   ведёт две карточки в `CalloutState` (уходящая догорает до `CALLOUT_EPSILON`),
-   экспоненциально с постоянной `CALLOUT_FADE_SECONDS = 0.15` с
-   `stable_dt`; при недосчитанной альфе запрашивается repaint через 16 мс.
-   `paint_country_callout` берёт якорь `country_shape(iso).focus_point()`,
-   проецирует его `project_on_sphere` (страна на задней полусфере карточку не
-   даёт), рисует leader line 1 px с `accent` при α 0.75, пин `live` с кольцом и
-   стеклянную карточку: флаг `flag_emoji(iso)`, название 13.5 px, подзаголовок
-   «{N} stations» (N — `GlobeMarker.count` по ISO, честный ноль), скругление
-   11 px, slide `(1 − alpha) · 6 px` от якоря. Карточка ставится над якорем и
-   переворачивается под него, если сверху не хватает места, и клампится в зону
-   между `layout.hud`, `layout.transport` и панелью станций.
+8. Callout — два независимых канала. `GlobeState` получает
+   `country_callout` и `station_callout`; оба ведёт `update_callout`
+   (уходящая карточка догорает до `CALLOUT_EPSILON`, `CALLOUT_FADE_SECONDS =
+   0.15 с`, при недосчитанной альфе — repaint через 16 мс).
+   - Страна: активная карточка — выбранная страна (`alpha → 1.0`), иначе
+     наведённая (`alpha → 0.85`), в режиме «Жанр» — `None`. Якорь —
+     `country_shape(iso).focus_point()`, карточка: `flag_emoji(iso)`, название
+     13.5 px, «{N} stations» (`GlobeMarker.count` по ISO), пин `live` и
+     стеклянная подложка.
+   - Станция: карточка активного эфира (`current_station`), якорь — её
+     координаты; заголовок — имя (до 32 символов), подпись — «место · kbps ·
+     кодек». Плашка живёт, пока станция играет, и гаснет при Stop.
+   - `paint_callout_channel` возвращает прямоугольник видимой карточки;
+     второй канал получает его как `avoid` и переворачивает/сдвигает свою
+     карточку, поэтому страна и станция **никогда не перекрываются**. Обе
+     клампятся в зону между `layout.hud`, `layout.transport` и панелью
+     станций.
 
 Клик по океану или территории без валидного ISO-кода ничего не меняет. При
 `globe_ready = false` вместо глобуса рисуется заглушка `3D globe unavailable`, ввод
@@ -438,14 +447,14 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
 ## 7. Аудиовизуализатор и кольцо Listening
 
 - В правой части transport — cava-столбцы `viz_bars` (огибающая из шести агрегатов,
-  не бинный FFT — ADR-0010, ADR-0022) и чип `Visualizer`. Спектр-фильтр включён
-  при старте, поэтому столбцы оживают сразу с эфиром.
-- Чип вызывает `UiAction::ToggleSpectrum` → `Session::set_visualizer_enabled`, ядро делает
+  не бинный FFT — ADR-0010, ADR-0022). Отдельного чипа `Visualizer` на панели
+  больше нет: включение и число столбцов живут в drawer'е (Appearance).
+  Спектр-фильтр включён при старте, поэтому столбцы оживают сразу с эфиром.
+- Чекбокс вызывает `UiAction::ToggleSpectrum` → `Session::set_visualizer_enabled`, ядро делает
   `runtime.block_on(AudioEngine::set_spectrum_enabled)` только если меняется
   потребность в анализе; ошибка показывается тостом и не
-  прерывает воспроизведение. Состояние чипа сохраняется в настройках
-  (`Settings::visualizer_enabled`, ADR-0031) и восстанавливается при старте; тот же
-  чекбокс есть в drawer (секция Appearance).
+  прерывает воспроизведение. Состояние сохраняется в настройках
+  (`Settings::visualizer_enabled`, ADR-0031) и восстанавливается при старте.
 - `Session::tick()` каждый кадр синхронизирует `spectrum_enabled` с движком, а
   `Frame::capture` преобразует `AudioEngine::spectrum()` в `SpectrumTarget` (включая
   `bands: Option<BandTargets>`): он питает `SpectrumOverlay` (кольцо
@@ -486,7 +495,9 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
   авто-вращения окно будится к концу 4-секундной паузы.
 - Камера получает `stable_dt` для физики и `unstable_dt` для отсчёта простоя:
   после сна окна `stable_dt` остаётся малым. Через 4 с без взаимодействия глобус
-  начинает медленно вращаться (0,006 рад/с) — подробности в ADR-0023.
+  начинает вращаться со скоростью 0,055 рад/с, но только при выключенной
+  реактивности и без Reduce motion; наведение плавно останавливает движение
+  (τ 0,3 с) — подробности в ADR-0023 и ADR-0028.
 - IPC-команды для визуализатора нет: управление доступно только из GUI. Полосы
   спектра по бинам по-прежнему не поддерживаются (ADR-0010, ADR-0022).
 - При закрытом окне визуализатор не обновляется: он живёт кадрами прогона, а при
@@ -525,6 +536,14 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
 - Каждый запуск поиска увеличивает `search.generation`; `SearchResponse` несёт
   номер поколения, `Session::poll_search` отбрасывает ответы прошлого режима/жанра и не
   возвращает устаревшие маркеры.
+- `search.revision` — отдельный счётчик изменений выборки (старт, успех, ошибка,
+  смена режима). Вместе с `WorldBaseline::revision` он входит в ключ
+  `ui::country_map::CountryHeatCache`: тепловая карта стран пересобирается при
+  смене выборки, прихода снимка мира или смены метрики; `generation` для этого
+  не годится, потому что не меняется при завершении запроса.
+- `search.highlight_hidden` — клик мимо стран на глобусе снимает только
+  подсветку: контекст страны и список станций остаются, а следующий выбор
+  страны или поиск сбрасывает флаг.
 - HUD «Страна» вызывает `GeoService::search_countries` (до 6 подсказок) при каждом
   изменении запроса; Enter выбирает первую, клик — выбранную. Оба пути создают
   `UiAction::SelectCountry`, `Session::start_country_search` очищает `country_query` и
@@ -549,8 +568,11 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
 
 - Кнопка `Radio Roulette` в transport вызывает `Session::start_roulette`; пока
   `search.roulette_pending`, повторные нажатия игнорируются, кнопка заблокирована.
-- `RadioBrowserClient::random_station` выполняется в tokio-задаче (до трёх попыток,
-  станция обязана иметь поток и координаты); результат приходит через `mpsc` и будит GUI.
+- `RadioBrowserClient::random_station(&exclude)` выполняется в tokio-задаче:
+  пачка из 24 станций со случайным `offset`, фильтр по потоку/координатам и
+  исключение текущего эфира и 12 последних записей истории; результат приходит
+  через `mpsc` и будит GUI. Поэтому повторные нажатия дают разные станции даже
+  при серверном кэше Radio Browser.
 - `Session::poll_roulette` запускает станцию, при успехе перелетает камерой за 900 мс
   (`ROULETTE_FLY_MS`) к её координатам и отдаёт `Notice::Info(NoticeKey::RouletteStarted
   { station })`: метка `«имя — страна»` (`roulette_label`) подставляется в строку
@@ -686,8 +708,11 @@ root-вьюпорта, а не невидимое окно. `ViewportCommand::Ca
 
 ## 13. Текущие ограничения
 
-- Heatmap считает только загруженные станции выбранной/наведённой страны; глобального
-  aggregate по всем странам нет (отдельное решение, ADR-0015)
+- Тепловая карта стран (ADR-0035): плотность считается по глобальным счётчикам
+  `/json/countrycodes`, а жанры, качество, тип и рейтинг — по выборке панели или
+  по мировому топу из 1000 станций, когда выборки нет. Страны без популярных
+  станций в этих четырёх режимах не окрашены; источник подписан в легенде
+- Снимок мира не кэшируется на диск: ≈1,1 МБ на запуск при включённой карте
 - Roulette доступна только из GUI и всегда запускает воспроизведение; «только
   показать станцию без эфира» не поддерживается
 - Hover страны вычисляется raycast-ом каждый кадр без кэша последней точки

@@ -14,9 +14,12 @@ const MARKER_GLOW_ALPHA: u8 = 34;
 const HOVER_RING_GAP: f32 = 3.5;
 const HOVER_RING_WIDTH: f32 = 1.5;
 const PULSE_PERIOD_SECONDS: f32 = 1.4;
-const PULSE_RING_SPAN: f32 = 3.5;
-const PULSE_RING_WIDTH: f32 = 1.5;
-const PULSE_RING_ALPHA: f32 = 150.0;
+const PULSE_RING_SPAN: f32 = 7.0;
+const PULSE_RING_WIDTH: f32 = 1.8;
+const PULSE_RING_ALPHA: f32 = 190.0;
+/// Дышащее гало активной станции: видно издалека и на светлой суше.
+const PULSE_GLOW_RADIUS: f32 = 7.5;
+const PULSE_GLOW_ALPHA: f32 = 52.0;
 const LABEL_TITLE_COLOR: Color32 = Color32::WHITE;
 const LABEL_DETAIL_COLOR: Color32 = Color32::from_rgb(199, 210, 228);
 
@@ -77,29 +80,58 @@ pub fn paint_markers(
     color: Color32,
     time: f64,
 ) {
-    for (index, marker) in markers.iter().enumerate() {
-        let hovered_here = hovered == Some(index);
-        let fill = if hovered_here {
-            lighten(color, 0.28)
-        } else {
-            color
-        };
+    // Активная станция рисуется последней: её гало и кольца не должны
+    // прятаться под соседними маркерами.
+    for playing_pass in [false, true] {
+        for (index, marker) in markers.iter().enumerate() {
+            if marker.playing != playing_pass {
+                continue;
+            }
+            paint_marker(painter, marker, hovered == Some(index), color, time);
+        }
+    }
+
+    if let Some(label) = hovered_label
+        && let Some(marker) = hovered.and_then(|index| markers.get(index))
+    {
+        paint_label(painter, bounds, marker.pos, label, color);
+    }
+}
+
+fn paint_marker(
+    painter: &Painter,
+    marker: &MarkerVisual,
+    hovered: bool,
+    color: Color32,
+    time: f64,
+) {
+    let fill = if hovered { lighten(color, 0.28) } else { color };
+    painter.circle_filled(
+        marker.pos,
+        MARKER_RADIUS + MARKER_GLOW_RADIUS,
+        Color32::from_rgba_unmultiplied(fill.r(), fill.g(), fill.b(), MARKER_GLOW_ALPHA),
+    );
+    painter.circle_filled(marker.pos, MARKER_RADIUS, fill);
+    painter.circle_stroke(
+        marker.pos,
+        MARKER_RADIUS,
+        Stroke::new(1.0, Color32::from_white_alpha(190)),
+    );
+
+    if marker.playing {
+        // Гало дышит в такт кольцам, а сами кольца идут в противофазе:
+        // непрерывный расходящийся пульс вместо одиночного всплеска.
+        let phase = pulse_fraction(time);
+        let glow = (PULSE_GLOW_ALPHA * (1.0 - 0.55 * phase)).round() as u8;
         painter.circle_filled(
             marker.pos,
-            MARKER_RADIUS + MARKER_GLOW_RADIUS,
-            Color32::from_rgba_unmultiplied(fill.r(), fill.g(), fill.b(), MARKER_GLOW_ALPHA),
+            PULSE_GLOW_RADIUS + 1.5 * phase,
+            Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), glow),
         );
-        painter.circle_filled(marker.pos, MARKER_RADIUS, fill);
-        painter.circle_stroke(
-            marker.pos,
-            MARKER_RADIUS,
-            Stroke::new(1.0, Color32::from_white_alpha(190)),
-        );
-
-        if marker.playing {
-            let phase = pulse_fraction(time);
-            let radius = MARKER_RADIUS + 1.0 + PULSE_RING_SPAN * phase;
-            let alpha = (PULSE_RING_ALPHA * (1.0 - phase)).round() as u8;
+        for offset in [0.0, 0.5] {
+            let ring_phase = (phase + offset).fract();
+            let radius = MARKER_RADIUS + 1.0 + PULSE_RING_SPAN * ring_phase;
+            let alpha = (PULSE_RING_ALPHA * (1.0 - ring_phase)).round() as u8;
             painter.circle_stroke(
                 marker.pos,
                 radius,
@@ -109,20 +141,14 @@ pub fn paint_markers(
                 ),
             );
         }
-
-        if hovered_here {
-            painter.circle_stroke(
-                marker.pos,
-                MARKER_RADIUS + HOVER_RING_GAP,
-                Stroke::new(HOVER_RING_WIDTH, Color32::from_white_alpha(220)),
-            );
-        }
     }
 
-    if let Some(label) = hovered_label
-        && let Some(marker) = hovered.and_then(|index| markers.get(index))
-    {
-        paint_label(painter, bounds, marker.pos, label, color);
+    if hovered {
+        painter.circle_stroke(
+            marker.pos,
+            MARKER_RADIUS + HOVER_RING_GAP,
+            Stroke::new(HOVER_RING_WIDTH, Color32::from_white_alpha(220)),
+        );
     }
 }
 

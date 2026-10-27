@@ -178,6 +178,15 @@ impl GeoService {
         Some(&self.countries[index].shape)
     }
 
+    /// Все страны датасета с контурами: источник тепловой карты глобуса.
+    ///
+    /// Порядок — порядок загрузки GeoJSON; дубликаты ISO уже отброшены.
+    pub fn countries(&self) -> impl Iterator<Item = (&Country, &CountryShape)> {
+        self.countries
+            .iter()
+            .map(|entry| (&entry.country, &entry.shape))
+    }
+
     fn parse(raw: &str) -> Result<Self, GeoError> {
         let collection: geojson::FeatureCollection = raw
             .parse()
@@ -454,6 +463,24 @@ mod tests {
             "кольца должны содержать валидные координаты"
         );
         assert!(service.country_shape("XX").is_none());
+    }
+
+    #[test]
+    fn iterates_all_countries_with_shapes() {
+        let service = service();
+        let countries: Vec<_> = service.countries().collect();
+
+        assert!(countries.len() >= 150, "датасет Natural Earth 110m");
+        assert!(
+            countries
+                .iter()
+                .any(|(country, shape)| country.iso_a2 == "DE" && !shape.rings.is_empty())
+        );
+        assert!(
+            countries
+                .iter()
+                .all(|(country, shape)| !country.name.is_empty() && !shape.rings.is_empty())
+        );
     }
 
     #[test]

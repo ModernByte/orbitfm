@@ -19,8 +19,8 @@ use super::images::FaviconCache;
 use super::palette::{Palette, mix_colors};
 use super::station_row::row_place;
 use super::widgets::{
-    avatar, chip, circle_button, circle_button_sized, eq_bars_in, faded_group, focus_ring,
-    live_badge, viz_bars, volume_slider,
+    avatar, circle_button, circle_button_sized, faded_group, focus_ring, viz_bars,
+    volume_slider_width,
 };
 use super::{UiAction, playback_label, single_line, truncate};
 
@@ -31,14 +31,34 @@ const SCENE_INDEX: usize = 3;
 /// Ширина поля визуализатора, px (ТЗ: 40–56 px по высоте; cava-стилю нужна
 /// ширина, чтобы столбцы не слипались).
 const VIZ_SIZE: (f32, f32) = (156.0, 46.0);
-/// Правой группе (визуализатор + чип + громкость) нужно столько места.
-const RIGHT_GROUP_WIDTH: f32 = 410.0;
+/// Правой группе (визуализатор + громкость) нужно столько места. Это верхняя
+/// граница: контролы центрированы по строке, поэтому группа берёт остаток
+/// ширины справа от них. Чип визуализатора живёт в настройках, и полоса с
+/// громкостью делят группу вдвоём.
+const RIGHT_GROUP_WIDTH: f32 = 320.0;
 /// Окно уже — просим компактный чип рулетки (кубик без подписи).
 const COMPACT_ROW_WIDTH: f32 = 1100.0;
-/// Запас левой группы под контролы: LIVE, эквалайзер, пять кнопок и рулетка.
-const LEFT_CONTROLS_WIDTH: (f32, f32) = (320.0, 430.0);
+/// Запас под контролы: пять кнопок, избранное и рулетка. Верхняя граница —
+/// когда эфир идёт (кнопка-сердечко добавляется к ряду), нижняя — пауза или
+/// остановка без неё. Бюджет всегда не меньше фактической ширины кнопок, иначе
+/// ряд полез бы на подпись станции.
+const CONTROLS_WIDTH: (f32, f32) = (338.0, 418.0);
+const CONTROLS_WIDTH_IDLE: (f32, f32) = (306.0, 386.0);
+/// Трек громкости и полоса делят правую группу: когда места после центрированных
+/// контролов не хватает, сжимаем полосу, а не слайдер. `VIZ_MIN_WIDTH` — ниже
+/// неё столбцы сливаются в кашу.
+const VOLUME_TRACK_WIDTH: f32 = 126.0;
+const VIZ_MIN_WIDTH: f32 = 96.0;
+/// Минимумы по бокам от контролов: подпись станции слева и полоса с громкостью
+/// справа должны оставаться целыми даже в узком окне — они и ограничивают
+/// центрирование.
+const INFO_MIN_WIDTH: f32 = 140.0;
+const RIGHT_GROUP_MIN_WIDTH: f32 = 240.0;
 /// Средняя ширина глифа в подписи 13.5 px — грубая оценка для обрезки по размеру.
 const NAME_CHAR_WIDTH: f32 = 7.2;
+/// То же для строк 10.5 px: без обрезки они переносились на вторую строку и
+/// выходили за нижний край панели.
+const SUB_CHAR_WIDTH: f32 = 5.9;
 /// Сколько места нужно строке параметров эфира, чтобы не толкаться с контролами.
 const SUMMARY_MIN_WIDTH: f32 = 150.0;
 /// Зазор между левой и правой группами transport.
@@ -93,22 +113,71 @@ pub(crate) fn show(
         // `app.rs`: гасим группой, чтобы иконки и слайдер брали прозрачность из
         // `visuals` (ADR-0032 §7 — смещений и пересчёта аллокаций нет).
         faded_group(ui, shown, |ui| {
-            // Левая и правая группы получают непересекающиеся прямоугольники: в одной
-            // строке длинное название станции иначе выезжает на громкость и
-            // визуализатор, а высокий слот уползает за нижний край панели.
+            // Строка делится на три непересекающиеся зоны: подпись станции,
+            // контролы по центру и правая группа. В одной строке длинное название
+            // станции иначе выезжает на громкость и визуализатор, а высокий слот
+            // уползает за нижний край панели.
             let row = ui.available_rect_before_wrap();
             let compact = row.width() < COMPACT_ROW_WIDTH;
-            let right_width = RIGHT_GROUP_WIDTH.min(row.width() * 0.45);
+
+            // Контролы — опора панели, поэтому ставим их на осевую строки, а не
+            // прижимаем к правой группе. Ограничители не дают кнопкам сожрать
+            // подпись станции слева и полосу с громкостью справа: в узком окне
+            // центр уезжает ровно на столько, чтобы минимумы остались целыми.
+            let reserve = if playing {
+                CONTROLS_WIDTH
+            } else {
+                CONTROLS_WIDTH_IDLE
+            };
+            // Точная ширина группы известна только после раскладки: подпись
+            // рулетки зависит от языка, сердечко — от эфира. Берём её из
+            // прошлого кадра (ключ по форме ряда, чтобы смена языка не оставила
+            // группу на осевой чужой ширины), а бюджет — страховка первого кадра.
+            let controls_key = egui::Id::unique((
+                "transport-controls-width",
+                playing,
+                current.is_some(),
+                compact,
+                language,
+            ));
+            let measured = ui.ctx().data(|d| d.get_temp::<f32>(controls_key));
+            // Первый кадр новой формы ряда рисуется на бюджете и центрируется
+            // уже по замеру — просим ещё один кадр, иначе без внешнего события
+            // (например, на паузе) группа так и останется сдвинутой.
+            let settle = measured.is_none();
+            let controls_width = measured
+                .unwrap_or(if compact { reserve.0 } else { reserve.1 })
+                .min((row.width() - ROW_GAP * 2.0).max(VOLUME_TRACK_WIDTH));
+            let center_min = row.left() + INFO_MIN_WIDTH + ROW_GAP + controls_width * 0.5;
+            let center_max = (row.right() - RIGHT_GROUP_MIN_WIDTH - ROW_GAP - controls_width * 0.5)
+                .max(center_min);
+            let center = row.center().x.clamp(center_min, center_max);
+            let controls_rect = egui::Rect::from_min_max(
+                pos2(center - controls_width * 0.5, row.top()),
+                pos2(center + controls_width * 0.5, row.bottom()),
+            );
+            // Правая группа занимает остаток: фиксированный бюджет только верхняя
+            // граница, иначе в узком окне она наедет на центрированные кнопки.
+            // Ограничитель центра выше гарантирует, что остатка хватает минимуму
+            // группы, а полоса визуализатора ужимается вслед за шириной.
+            let right_width =
+                RIGHT_GROUP_WIDTH.min((row.right() - controls_rect.right() - ROW_GAP).max(0.0));
             let right_rect =
                 egui::Rect::from_min_max(pos2(row.right() - right_width, row.top()), row.max);
-            let left_rect =
-                egui::Rect::from_min_max(row.min, pos2(right_rect.left() - ROW_GAP, row.bottom()));
+            let info_rect = egui::Rect::from_min_max(
+                row.min,
+                pos2(
+                    (controls_rect.left() - ROW_GAP * 0.5).max(row.left()),
+                    row.bottom(),
+                ),
+            );
 
             ui.scope_builder(
                 egui::UiBuilder::new()
-                    .max_rect(left_rect)
+                    .max_rect(info_rect)
                     .layout(egui::Layout::left_to_right(egui::Align::Center)),
                 |ui| {
+                    ui.set_clip_rect(info_rect.intersect(ui.clip_rect()));
                     avatar(
                         ui,
                         palette,
@@ -116,56 +185,65 @@ pub(crate) fn show(
                         current.map(|station| station.name.as_str()).unwrap_or("?"),
                         44.0,
                     );
-                    // Подпись режем по остатку ширины, с запасом на контролы справа от неё.
-                    let controls = if compact {
-                        LEFT_CONTROLS_WIDTH.0
-                    } else {
-                        LEFT_CONTROLS_WIDTH.1
-                    };
-                    let name_chars = (((ui.available_width() - controls) / NAME_CHAR_WIDTH)
-                        .clamp(10.0, 36.0)) as usize;
+                    // Подпись режем по остатку своей зоны: контролы уже вынесены
+                    // в отдельный прямоугольник и места у текста не отнимают.
+                    let name_chars = (((ui.available_width() - 8.0) / NAME_CHAR_WIDTH)
+                        .clamp(8.0, 40.0)) as usize;
+                    let sub_chars =
+                        (((ui.available_width() - 8.0) / SUB_CHAR_WIDTH).clamp(8.0, 52.0)) as usize;
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 1.0;
                         let name = current
                             .map(|station| single_line(&station.name))
                             .filter(|name| !name.is_empty())
                             .unwrap_or_else(|| text.common.nothing_playing.to_owned());
-                        ui.label(
-                            egui::RichText::new(truncate(&name, name_chars))
-                                .size(13.5)
-                                .strong()
-                                .color(if playing {
-                                    palette.accent
-                                } else {
-                                    palette.text
-                                }),
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(truncate(&name, name_chars))
+                                    .size(13.5)
+                                    .strong()
+                                    .color(if playing {
+                                        palette.accent
+                                    } else {
+                                        palette.text
+                                    }),
+                            )
+                            .wrap_mode(egui::TextWrapMode::Truncate),
                         );
                         let place = current.map(row_place).unwrap_or_default();
                         if !place.is_empty() {
-                            ui.label(
-                                egui::RichText::new(truncate(&place, name_chars))
-                                    .size(10.5)
-                                    .color(palette.muted),
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(truncate(&place, sub_chars))
+                                        .size(10.5)
+                                        .color(palette.muted),
+                                )
+                                .wrap_mode(egui::TextWrapMode::Truncate),
                             );
                         }
-                        ui.label(
-                            egui::RichText::new(now_playing_line(
-                                language, current, playback, playing,
-                            ))
-                            .size(10.5)
-                            .color(palette.muted),
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(now_playing_line(
+                                    language, current, playback, playing,
+                                ))
+                                .size(10.5)
+                                .color(palette.muted),
+                            )
+                            .wrap_mode(egui::TextWrapMode::Truncate),
                         );
                     });
+                },
+            );
 
-                    ui.add_space(20.0);
-                    live_badge(ui, palette, playing, language);
-                    if playing {
-                        let (bars, _) =
-                            ui.allocate_exact_size(Vec2::new(26.0, 18.0), Sense::hover());
-                        eq_bars_in(ui, palette, bars, 5, true);
-                    }
-
-                    ui.add_space(12.0);
+            ui.scope_builder(
+                egui::UiBuilder::new()
+                    .max_rect(controls_rect)
+                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                |ui| {
+                    ui.set_clip_rect(controls_rect.intersect(ui.clip_rect()));
+                    // Бейдж LIVE и мини-эквалайзер из строки убраны: эфир
+                    // показан карточкой станции на глобусе и чипом в HUD, а
+                    // здесь они только отнимали место у контролов.
                     let has_station = current.is_some();
                     if prev_button(ui, palette, has_station, language).clicked() {
                         actions.push(UiAction::PlayRelative(-1));
@@ -212,6 +290,13 @@ pub(crate) fn show(
                     {
                         actions.push(UiAction::Roulette);
                     }
+                    // Замер для следующего кадра: ряд занимает ровно столько,
+                    // сколько отрисовалось, и в следующий раз встанет в центр.
+                    let measured = ui.min_rect().width();
+                    ui.ctx().data_mut(|d| d.insert_temp(controls_key, measured));
+                    if settle {
+                        ui.ctx().request_repaint();
+                    }
                 },
             );
 
@@ -220,30 +305,37 @@ pub(crate) fn show(
                     .max_rect(right_rect)
                     .layout(egui::Layout::right_to_left(egui::Align::Center)),
                 |ui| {
+                    ui.set_clip_rect(right_rect.intersect(ui.clip_rect()));
                     // Полосу выделяем на всю высоту строки и центрируем столбцы сами:
                     // в right-to-left ряду `available_height()` считает слот от верха
                     // строки, и высокий виджет уезжает за нижний край панели.
-                    let viz_width = VIZ_SIZE.0.min(right_width);
-                    let (slot, _) = ui.allocate_exact_size(
-                        Vec2::new(viz_width, right_rect.height()),
-                        Sense::hover(),
-                    );
-                    let rect = egui::Rect::from_center_size(
-                        pos2(slot.center().x, right_rect.center().y),
-                        Vec2::new(viz_width, VIZ_SIZE.1.min(right_rect.height())),
-                    );
-                    viz_bars(ui, palette, rect, visualizer.levels(), visualizer.peaks());
-                    if spectrum_enabled && playing {
-                        ui.ctx()
-                            .request_repaint_after(std::time::Duration::from_millis(33));
+                    // Выключенный в настройках визуализатор не рисуем вовсе — место
+                    // достаётся громкости и параметрам эфира.
+                    if spectrum_enabled {
+                        // Полосу ужимаем по остатку после громкости: контролы
+                        // центрированы, и правой группе достаётся меньше бюджета,
+                        // чем в широком окне.
+                        let viz_width = VIZ_SIZE.0.min(
+                            (right_width - VOLUME_TRACK_WIDTH - ui.spacing().item_spacing.x)
+                                .max(VIZ_MIN_WIDTH),
+                        );
+                        let (slot, _) = ui.allocate_exact_size(
+                            Vec2::new(viz_width, right_rect.height()),
+                            Sense::hover(),
+                        );
+                        let rect = egui::Rect::from_center_size(
+                            pos2(slot.center().x, right_rect.center().y),
+                            Vec2::new(viz_width, VIZ_SIZE.1.min(right_rect.height())),
+                        );
+                        viz_bars(ui, palette, rect, visualizer.levels(), visualizer.peaks());
+                        if playing {
+                            ui.ctx()
+                                .request_repaint_after(std::time::Duration::from_millis(33));
+                        }
                     }
 
-                    let mut enabled = spectrum_enabled;
-                    if chip(ui, palette, text.transport.visualizer, enabled).clicked() {
-                        enabled = !enabled;
-                        actions.push(UiAction::ToggleSpectrum(enabled));
-                    }
-                    let slider = volume_slider(ui, palette, &mut volume, language);
+                    let slider =
+                        volume_slider_width(ui, palette, &mut volume, VOLUME_TRACK_WIDTH, language);
                     if slider.changed && !slider.committed {
                         actions.push(UiAction::PreviewVolume(volume));
                     }
@@ -659,7 +751,6 @@ mod tests {
                 text.transport.radio_roulette,
                 text.transport.rolling,
                 text.transport.random_station,
-                text.transport.visualizer,
                 text.transport.now_playing,
                 text.transport.now_playing_tags,
                 text.transport.no_station,

@@ -20,19 +20,25 @@ const MAX_DISTANCE: f32 = 6.0;
 const ZOOM_SENSITIVITY: f32 = 0.002;
 
 const DRAG_SENSITIVITY: f32 = 0.006;
-const INERTIA_DAMPING: f32 = 6.0;
-const INERTIA_STOP: f32 = 0.01;
+/// Затухание броска: τ ≈ 0.67 с, вращение живёт несколько секунд.
+const INERTIA_DAMPING: f32 = 1.5;
+const INERTIA_STOP: f32 = 0.004;
+/// Потолок угловой скорости после резкого броска, рад/с.
+const MAX_YAW_VELOCITY: f32 = 8.0;
+const MAX_PITCH_VELOCITY: f32 = 5.0;
 const MAX_PITCH: f32 = 85.0 * std::f32::consts::PI / 180.0;
 const MIN_FLY_DURATION: f32 = 0.05;
 
 /// Простой до старта авто-вращения, с.
 const IDLE_SPIN_DELAY: f32 = 4.0;
 /// Выход на полную скорость авто-вращения, с.
-const IDLE_SPIN_RAMP: f32 = 2.0;
-/// Скорость авто-вращения, рад/с: полный оборот примерно за 17 минут.
+const IDLE_SPIN_RAMP: f32 = 1.5;
+/// Скорость авто-вращения, рад/с: полный оборот примерно за 2 минуты.
 /// Земля в действительности делает оборот за сутки, но такое движение
-/// глазом не различить; здесь темп замедлен, но заметен.
-const IDLE_SPIN_RATE: f32 = 0.006;
+/// глазом не различить; здесь темп ускорен, чтобы вращение читалось.
+const IDLE_SPIN_RATE: f32 = 0.055;
+/// Плавное затухание авто-движения, когда курсор над глобусом, с.
+const HOVER_TAU: f32 = 0.3;
 
 /// Плавный доворот камеры к стране; отменяется перетаскиванием.
 #[derive(Debug, Clone, Copy)]
@@ -74,6 +80,8 @@ pub(crate) struct CameraUniform {
     pub motion: [f32; 4],
     /// x = flash, y = style_id, z = beat_phase, w = time.
     pub motion2: [f32; 4],
+    /// x = сила тепловой карты стран (0 — выключена).
+    pub heat: [f32; 4],
 }
 
 /// Орбитальная камера вокруг глобуса радиусом 1.
@@ -97,6 +105,12 @@ pub struct GlobeCamera {
     flip_cooldown: f32,
     flip_direction: f32,
     last_pulse: f32,
+    /// 0 — курсор вне глобуса, 1 — над ним; сглажено, чтобы авто-движение
+    /// замирало плавно (ТЗ §1.3).
+    hover: f32,
+    /// Разрешено ли авто-вращение: включается, когда аудио-реактивность
+    /// выключена (ADR-0028, обновление Этапа 10).
+    auto_spin: bool,
 }
 
 impl Default for GlobeCamera {
@@ -116,6 +130,8 @@ impl Default for GlobeCamera {
             flip_cooldown: 0.0,
             flip_direction: 1.0,
             last_pulse: 0.0,
+            hover: 0.0,
+            auto_spin: true,
         }
     }
 }
@@ -143,17 +159,19 @@ impl GlobeCamera {
     }
 
     /// Обновляет камеру по вводу за кадр (в тестах фактический интервал
-    /// совпадает со сглаженным).
+    /// совпадает со сглаженным). Тестовый путь не ограничивает авто-вращение.
     #[cfg(test)]
     pub fn update(&mut self, dt: f32, input: &GlobeInput) {
-        self.advance(dt, dt, input, &GlobeMotion::default(), false);
+        self.advance(dt, dt, input, &GlobeMotion::default(), false, true);
     }
 
     /// То же, но с реальным временем кадра: после сна приложения `stable_dt`
     /// остаётся маленьким, а простой нужно считать по фактическому интервалу.
     ///
     /// `motion` задаёт музыкальную качку и импульс onset; `allow_flips`
-    /// приходит из Core с учётом режима окна и Reduce motion.
+    /// приходит из Core с учётом режима окна и Reduce motion, `auto_spin` —
+    /// режим вращения, когда аудио-реактивность выключена.
+    #[allow(clippy::too_many_arguments)]
     pub fn advance(
         &mut self,
         dt: f32,
@@ -161,12 +179,26 @@ impl GlobeCamera {
         input: &GlobeInput,
         motion: &GlobeMotion,
         allow_flips: bool,
+        auto_spin: bool,
     ) {
         let dt = dt.clamp(0.001, 0.05);
         let elapsed = elapsed.clamp(0.0, 60.0);
+        self.auto_spin = auto_spin;
         let interacting = input.drag_delta != Vec2::ZERO
             || input.scroll_delta != 0.0
             || input.primary_clicked.is_some();
+
+        self.hover = approach(
+            self.hover,
+            if input.hovered { 1.0 } else { 0.0 },
+            dt,
+            HOVER_TAU,
+        );
+        if input.hovered && self.hover > 0.995 {
+            self.hover = 1.0;
+        } else if !input.hovered && self.hover < 0.005 {
+            self.hover = 0.0;
+        }
 
         if interacting || self.fly.is_some() {
             self.idle = 0.0;
@@ -196,8 +228,8 @@ impl GlobeCamera {
 
             self.yaw += yaw_delta;
             self.pitch += pitch_delta;
-            self.yaw_velocity = yaw_delta / dt;
-            self.pitch_velocity = pitch_delta / dt;
+            self.yaw_velocity = (yaw_delta / dt).clamp(-MAX_YAW_VELOCITY, MAX_YAW_VELOCITY);
+            self.pitch_velocity = (pitch_delta / dt).clamp(-MAX_PITCH_VELOCITY, MAX_PITCH_VELOCITY);
         } else {
             self.yaw += self.yaw_velocity * dt;
             self.pitch += self.pitch_velocity * dt;
@@ -226,11 +258,17 @@ impl GlobeCamera {
             self.distance = (self.distance * scale).clamp(MIN_DISTANCE, MAX_DISTANCE);
         }
 
-        if self.fly.is_none() && !interacting && self.idle >= IDLE_SPIN_DELAY {
+        if auto_spin
+            && self.hover < 1.0
+            && self.fly.is_none()
+            && !interacting
+            && self.idle >= IDLE_SPIN_DELAY
+        {
             let ramp = ((self.idle - IDLE_SPIN_DELAY) / IDLE_SPIN_RAMP).clamp(0.0, 1.0);
             // Земля вращается с запада на восток: камера смещается на запад,
             // континенты уходят вправо — как при реальном вращении.
-            self.yaw = (self.yaw - IDLE_SPIN_RATE * ramp * dt).rem_euclid(std::f32::consts::TAU);
+            let gain = ramp * (1.0 - self.hover);
+            self.yaw = (self.yaw - IDLE_SPIN_RATE * gain * dt).rem_euclid(std::f32::consts::TAU);
         }
 
         let priority_target = if interacting || self.fly.is_some() {
@@ -239,7 +277,7 @@ impl GlobeCamera {
             0.0
         };
         self.priority = approach(self.priority, priority_target, dt, CAMERA_PRIORITY_TAU);
-        self.sway = motion.yaw_sway * (1.0 - self.priority);
+        self.sway = motion.yaw_sway * (1.0 - self.priority) * (1.0 - self.hover);
         self.advance_flip(dt, motion.pulse, allow_flips, interacting);
     }
 
@@ -247,7 +285,7 @@ impl GlobeCamera {
     /// при простое и свободной камере (ADR-0028).
     fn advance_flip(&mut self, dt: f32, pulse: f32, allow_flips: bool, interacting: bool) {
         self.flip_cooldown = (self.flip_cooldown - dt).max(0.0);
-        let blocked = interacting || self.fly.is_some() || self.priority > 0.5;
+        let blocked = interacting || self.fly.is_some() || self.priority > 0.5 || self.hover > 0.6;
         let strong_onset = pulse >= FLIP_PULSE && self.last_pulse < FLIP_PULSE;
         self.last_pulse = pulse;
 
@@ -293,13 +331,19 @@ impl GlobeCamera {
     }
 
     /// Идёт ли движение, требующее перерисовки: доворот, инерция,
-    /// авто-вращение в простое или переворот.
+    /// авто-вращение в простое, переворот или затухание под курсором.
     pub fn is_animating(&self) -> bool {
         self.fly.is_some()
             || self.yaw_velocity != 0.0
             || self.pitch_velocity != 0.0
             || self.is_idle_spinning()
             || self.is_flipping()
+            || (self.hover > 0.0 && self.hover < 1.0)
+    }
+
+    /// 0 — курсор вне глобуса, 1 — над ним; сглаженный сигнал покоя.
+    pub fn hover_calm(&self) -> f32 {
+        self.hover
     }
 
     /// Идёт ли переворот или его остаточный roll.
@@ -317,19 +361,20 @@ impl GlobeCamera {
         self.priority
     }
 
-    /// Сколько секунд осталось до авто-вращения. `None`, если доворот уже
-    /// идёт или вращение началось.
+    /// Сколько секунд осталось до авто-вращения. `None`, если режим вращения
+    /// выключен, доворот уже идёт или вращение началось.
     pub fn idle_countdown(&self) -> Option<f32> {
-        if self.fly.is_some() || self.is_idle_spinning() {
+        if !self.auto_spin || self.fly.is_some() || self.idle >= IDLE_SPIN_DELAY {
             None
         } else {
-            Some((IDLE_SPIN_DELAY - self.idle).max(0.0))
+            Some(IDLE_SPIN_DELAY - self.idle)
         }
     }
 
-    /// Идёт ли медленное авто-вращение в простое.
+    /// Идёт ли авто-вращение в простое: включённый режим, пауза после
+    /// взаимодействия и курсор вне глобуса.
     pub fn is_idle_spinning(&self) -> bool {
-        self.fly.is_none() && self.idle >= IDLE_SPIN_DELAY
+        self.auto_spin && self.fly.is_none() && self.idle >= IDLE_SPIN_DELAY && self.hover < 1.0
     }
 
     /// Позиция камеры в мировых координатах.
@@ -443,6 +488,7 @@ impl GlobeCamera {
             camera_position: [eye.x, eye.y, eye.z, 0.0],
             motion: motion.uniform_values(),
             motion2: motion.uniform2_values(),
+            heat: [0.0; 4],
         }
     }
 }
@@ -702,7 +748,7 @@ mod tests {
     }
 
     #[test]
-    fn idle_spin_stays_very_slow() {
+    fn idle_spin_is_visible_and_steady() {
         let mut camera = GlobeCamera::default();
         for _ in 0..100 {
             camera.update(0.05, &GlobeInput::default());
@@ -714,8 +760,123 @@ mod tests {
         let delta = shortest_delta(start, camera.yaw).abs();
         assert!(camera.yaw.is_finite());
         assert!(
-            (0.02..0.09).contains(&delta),
-            "за 10 секунд примерно 0.06 рад, получено {delta}"
+            (0.48..0.62).contains(&delta),
+            "за 10 секунд примерно 0.55 рад, получено {delta}"
+        );
+    }
+
+    #[test]
+    fn rotation_requires_the_audio_motion_to_be_off() {
+        let quiet = GlobeMotion::default();
+        let mut spinning = GlobeCamera::default();
+        for _ in 0..120 {
+            spinning.advance(0.05, 0.05, &GlobeInput::default(), &quiet, false, true);
+        }
+        assert!(spinning.is_idle_spinning());
+        let start = spinning.yaw;
+        for _ in 0..40 {
+            spinning.advance(0.05, 0.05, &GlobeInput::default(), &quiet, false, true);
+        }
+        assert!(
+            shortest_delta(start, spinning.yaw).abs() > 0.03,
+            "в режиме вращения глобус заметно движется"
+        );
+
+        let mut still = GlobeCamera::default();
+        for _ in 0..120 {
+            still.advance(0.05, 0.05, &GlobeInput::default(), &quiet, false, false);
+        }
+        assert_eq!(still.yaw, 0.0, "при реактивности авто-вращения нет");
+        assert!(!still.is_idle_spinning());
+        assert_eq!(still.idle_countdown(), None);
+    }
+
+    #[test]
+    fn hover_calms_spin_and_music_without_a_jump() {
+        let motion = GlobeMotion {
+            yaw_sway: 0.2,
+            ..GlobeMotion::default()
+        };
+        let hover = GlobeInput {
+            hovered: true,
+            ..GlobeInput::default()
+        };
+        let mut camera = GlobeCamera::default();
+        for _ in 0..120 {
+            camera.advance(0.05, 0.05, &GlobeInput::default(), &motion, false, true);
+        }
+        assert!(camera.is_idle_spinning());
+
+        camera.advance(0.05, 0.05, &hover, &motion, false, true);
+        assert!(
+            camera.hover_calm() > 0.0 && camera.hover_calm() < 1.0,
+            "покой наступает плавно: {}",
+            camera.hover_calm()
+        );
+
+        for _ in 0..40 {
+            camera.advance(0.05, 0.05, &hover, &motion, false, true);
+        }
+        assert_eq!(camera.hover_calm(), 1.0);
+        assert!(!camera.is_idle_spinning());
+        assert!(camera.sway.abs() < 1e-6, "качка под курсором не видна");
+
+        let yaw = camera.yaw;
+        for _ in 0..20 {
+            camera.advance(0.05, 0.05, &hover, &motion, false, true);
+        }
+        assert_eq!(camera.yaw, yaw, "под курсором глобус не вращается");
+
+        for _ in 0..40 {
+            camera.advance(0.05, 0.05, &GlobeInput::default(), &motion, false, true);
+        }
+        assert_eq!(camera.hover_calm(), 0.0);
+        assert!((camera.sway - 0.2).abs() < 1e-6, "качка возвращается");
+        assert!(camera.is_idle_spinning());
+    }
+
+    #[test]
+    fn hover_blocks_flips() {
+        let strong = GlobeMotion {
+            pulse: 0.9,
+            ..GlobeMotion::default()
+        };
+        let quiet = GlobeMotion::default();
+        let hover = GlobeInput {
+            hovered: true,
+            ..GlobeInput::default()
+        };
+        let mut camera = GlobeCamera::default();
+        for _ in 0..55 {
+            camera.advance(0.05, 0.05, &hover, &quiet, true, false);
+        }
+        camera.advance(0.05, 0.05, &hover, &strong, true, false);
+        assert!(!camera.is_flipping(), "курсор над глобусом отменяет roll");
+    }
+
+    #[test]
+    fn fling_keeps_momentum_for_several_seconds() {
+        let mut camera = GlobeCamera::default();
+        let drag = GlobeInput {
+            drag_delta: Vec2::new(30.0, 0.0),
+            ..GlobeInput::default()
+        };
+        camera.advance(0.05, 0.05, &drag, &GlobeMotion::default(), false, false);
+        let start = camera.yaw;
+        for _ in 0..60 {
+            camera.advance(
+                0.05,
+                0.05,
+                &GlobeInput::default(),
+                &GlobeMotion::default(),
+                false,
+                false,
+            );
+        }
+        let glide = shortest_delta(start, camera.yaw).abs();
+        assert!(
+            glide > 0.6,
+            "бросок должен катить глобус несколько секунд, получено {glide}"
         );
     }
 
@@ -749,6 +910,7 @@ mod tests {
             &GlobeInput::default(),
             &GlobeMotion::default(),
             false,
+            true,
         );
 
         assert!(camera.is_idle_spinning());
@@ -817,7 +979,7 @@ mod tests {
 
     #[test]
     fn uniform_keeps_motion_in_pod_layout() {
-        assert_eq!(std::mem::size_of::<CameraUniform>(), 128);
+        assert_eq!(std::mem::size_of::<CameraUniform>(), 144);
         assert_eq!(std::mem::size_of::<CameraUniform>() % 16, 0);
         assert_eq!(std::mem::align_of::<CameraUniform>(), 4);
 
@@ -864,7 +1026,7 @@ mod tests {
             yaw_sway: 0.12,
             ..GlobeMotion::default()
         };
-        camera.advance(0.05, 0.05, &GlobeInput::default(), &motion, false);
+        camera.advance(0.05, 0.05, &GlobeInput::default(), &motion, false, false);
 
         assert!((camera.sway - 0.12).abs() < 1e-6);
         let eye = camera.eye();
@@ -875,13 +1037,13 @@ mod tests {
             ..GlobeInput::default()
         };
         for _ in 0..10 {
-            camera.advance(0.05, 0.05, &drag, &motion, false);
+            camera.advance(0.05, 0.05, &drag, &motion, false, false);
         }
         assert!(camera.camera_priority() > 0.95);
         assert!(camera.sway.abs() < 0.01, "sway: {}", camera.sway);
 
         for _ in 0..10 {
-            camera.advance(0.05, 0.05, &GlobeInput::default(), &motion, false);
+            camera.advance(0.05, 0.05, &GlobeInput::default(), &motion, false, false);
         }
         assert!(camera.camera_priority() < 0.05);
         assert!(
@@ -900,14 +1062,14 @@ mod tests {
         let quiet = GlobeMotion::default();
 
         let mut fresh = GlobeCamera::default();
-        fresh.advance(0.05, 0.05, &GlobeInput::default(), &strong, true);
+        fresh.advance(0.05, 0.05, &GlobeInput::default(), &strong, true, false);
         assert!(!fresh.is_flipping(), "без простоя переворот запрещён");
 
         let mut denied = GlobeCamera::default();
         for _ in 0..55 {
-            denied.advance(0.05, 0.05, &GlobeInput::default(), &quiet, true);
+            denied.advance(0.05, 0.05, &GlobeInput::default(), &quiet, true, false);
         }
-        denied.advance(0.05, 0.05, &GlobeInput::default(), &strong, false);
+        denied.advance(0.05, 0.05, &GlobeInput::default(), &strong, false, false);
         assert!(!denied.is_flipping(), "allow_flips = false запрещает roll");
 
         let mut tilted = GlobeCamera {
@@ -915,16 +1077,16 @@ mod tests {
             ..GlobeCamera::default()
         };
         for _ in 0..55 {
-            tilted.advance(0.05, 0.05, &GlobeInput::default(), &quiet, true);
+            tilted.advance(0.05, 0.05, &GlobeInput::default(), &quiet, true, false);
         }
-        tilted.advance(0.05, 0.05, &GlobeInput::default(), &strong, true);
+        tilted.advance(0.05, 0.05, &GlobeInput::default(), &strong, true, false);
         assert!(!tilted.is_flipping(), "у края pitch переворот запрещён");
 
         let mut camera = GlobeCamera::default();
         for _ in 0..55 {
-            camera.advance(0.05, 0.05, &GlobeInput::default(), &quiet, true);
+            camera.advance(0.05, 0.05, &GlobeInput::default(), &quiet, true, false);
         }
-        camera.advance(0.05, 0.05, &GlobeInput::default(), &strong, true);
+        camera.advance(0.05, 0.05, &GlobeInput::default(), &strong, true, false);
         assert!(camera.is_flipping(), "сильный onset после простоя");
     }
 
@@ -937,23 +1099,23 @@ mod tests {
         let quiet = GlobeMotion::default();
         let mut camera = GlobeCamera::default();
         for _ in 0..55 {
-            camera.advance(0.05, 0.05, &GlobeInput::default(), &quiet, true);
+            camera.advance(0.05, 0.05, &GlobeInput::default(), &quiet, true, false);
         }
-        camera.advance(0.05, 0.05, &GlobeInput::default(), &strong, true);
+        camera.advance(0.05, 0.05, &GlobeInput::default(), &strong, true, false);
 
         for _ in 0..4 {
-            camera.advance(0.05, 0.05, &GlobeInput::default(), &quiet, true);
+            camera.advance(0.05, 0.05, &GlobeInput::default(), &quiet, true, false);
         }
         assert!(camera.roll().abs() > 0.1, "roll: {}", camera.roll());
 
         for _ in 0..20 {
-            camera.advance(0.05, 0.05, &GlobeInput::default(), &quiet, true);
+            camera.advance(0.05, 0.05, &GlobeInput::default(), &quiet, true, false);
         }
         assert!(!camera.is_flipping());
         assert_eq!(camera.roll(), 0.0);
         assert!(camera.flip_cooldown > 11.0);
 
-        camera.advance(0.05, 0.05, &GlobeInput::default(), &strong, true);
+        camera.advance(0.05, 0.05, &GlobeInput::default(), &strong, true, false);
         assert!(
             !camera.is_flipping(),
             "в кулдауне новый переворот не начинается"
@@ -969,11 +1131,11 @@ mod tests {
         let quiet = GlobeMotion::default();
         let mut camera = GlobeCamera::default();
         for _ in 0..55 {
-            camera.advance(0.05, 0.05, &GlobeInput::default(), &quiet, true);
+            camera.advance(0.05, 0.05, &GlobeInput::default(), &quiet, true, false);
         }
-        camera.advance(0.05, 0.05, &GlobeInput::default(), &strong, true);
+        camera.advance(0.05, 0.05, &GlobeInput::default(), &strong, true, false);
         for _ in 0..2 {
-            camera.advance(0.05, 0.05, &GlobeInput::default(), &quiet, true);
+            camera.advance(0.05, 0.05, &GlobeInput::default(), &quiet, true, false);
         }
         assert!(camera.roll() != 0.0);
 
@@ -981,11 +1143,11 @@ mod tests {
             drag_delta: Vec2::new(2.0, 0.0),
             ..GlobeInput::default()
         };
-        camera.advance(0.05, 0.05, &drag, &quiet, true);
+        camera.advance(0.05, 0.05, &drag, &quiet, true, false);
         assert!(camera.flip.is_none(), "drag отменяет переворот");
 
         for _ in 0..20 {
-            camera.advance(0.05, 0.05, &GlobeInput::default(), &quiet, true);
+            camera.advance(0.05, 0.05, &GlobeInput::default(), &quiet, true, false);
         }
         assert_eq!(camera.roll(), 0.0);
         assert!(!camera.is_flipping());

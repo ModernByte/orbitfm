@@ -143,7 +143,7 @@ impl GlobeDeform {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GlobeMotion {
     pub deform: GlobeDeform,
-    /// Амплитуда радиальной ряби, 0..=0.004.
+    /// Амплитуда радиальной ряби, 0..=0.018.
     pub ripple: f32,
     pub ripple_phase: f32,
     /// Музыкальная добавка к yaw, рад; камера решает, применять ли её.
@@ -216,6 +216,20 @@ impl GlobeMotion {
             ..self
         }
     }
+
+    /// Плавно успокаивает всё движение, пока курсор над глобусом: при
+    /// `calm = 1` планета неподвижна и её можно рассмотреть (ТЗ §1.3).
+    pub fn with_calm(self, calm: f32) -> Self {
+        let factor = 1.0 - calm.clamp(0.0, 1.0);
+        Self {
+            deform: GlobeDeform::new(1.0 + (self.deform.scale_y() - 1.0) * factor),
+            ripple: self.ripple * factor,
+            yaw_sway: self.yaw_sway * factor,
+            flash: self.flash * factor,
+            pulse: self.pulse * factor,
+            ..self
+        }
+    }
 }
 
 /// Параметры характера движения; Auto смешивает их кроссфейдом.
@@ -249,7 +263,7 @@ impl StyleParams {
     };
     const GROOVE_SWAY: Self = Self {
         squash: 0.65,
-        sway: 0.015,
+        sway: 0.05,
         ripple: 0.55,
         flash: 0.0,
         beat: 0.15,
@@ -260,14 +274,14 @@ impl StyleParams {
         squash: 1.25,
         sway: 0.0,
         ripple: 0.50,
-        flash: 0.10,
+        flash: 0.15,
         beat: 0.35,
         drift: 0.0,
         twitch: 0.15,
     };
     const AMBIENT_DRIFT: Self = Self {
         squash: 0.45,
-        sway: 0.006,
+        sway: 0.02,
         ripple: 0.70,
         flash: 0.0,
         beat: 0.0,
@@ -278,16 +292,16 @@ impl StyleParams {
         squash: 0.50,
         sway: 0.0,
         ripple: 1.0,
-        flash: 0.05,
+        flash: 0.09,
         beat: 0.10,
         drift: 0.0,
         twitch: 1.8,
     };
     const BEAT_MARCH: Self = Self {
         squash: 0.80,
-        sway: 0.008,
+        sway: 0.03,
         ripple: 0.45,
-        flash: 0.04,
+        flash: 0.08,
         beat: 0.80,
         drift: 0.0,
         twitch: 0.3,
@@ -1000,9 +1014,9 @@ mod tests {
     #[test]
     fn squash_stays_within_reactivity_limit() {
         for (reactivity, limit) in [
-            (MotionReactivity::Low, 0.010),
-            (MotionReactivity::Normal, 0.020),
-            (MotionReactivity::High, 0.035),
+            (MotionReactivity::Low, 0.025),
+            (MotionReactivity::Normal, 0.050),
+            (MotionReactivity::High, 0.090),
         ] {
             let mut mixer = MotionMixer::default();
             let motion = run(
@@ -1083,7 +1097,7 @@ mod tests {
     }
 
     #[test]
-    fn idle_breathing_is_small_and_slow() {
+    fn idle_breathing_is_visible_and_slow() {
         let mut mixer = MotionMixer::default();
         let mut min = f32::INFINITY;
         let mut max = f32::NEG_INFINITY;
@@ -1100,16 +1114,16 @@ mod tests {
         }
 
         assert!(
-            max - min > 0.004,
+            max - min > 0.010,
             "дыхание должно быть заметно: {}",
             max - min
         );
         assert!(
-            max - min < 0.008,
+            max - min < 0.016,
             "дыхание не должно раздувать планету: {}",
             max - min
         );
-        assert!((max - 1.0) < 0.0040 && (1.0 - min) < 0.0040);
+        assert!((max - 1.0) < 0.008 && (1.0 - min) < 0.008);
     }
 
     #[test]
@@ -1122,7 +1136,7 @@ mod tests {
             10.0,
         );
 
-        assert!(motion.deform.scale_y() <= 1.035 + 1e-5);
+        assert!(motion.deform.scale_y() <= 1.090 + 1e-5);
         assert!(motion.deform.scale_y().is_finite());
         assert!(motion.flash <= 0.15);
     }
@@ -1139,7 +1153,7 @@ mod tests {
         );
 
         assert!(motion.ripple > 0.0);
-        assert!(motion.ripple <= 0.004 + 1e-6);
+        assert!(motion.ripple <= 0.018 + 1e-6);
         assert!(motion.ripple_phase >= 0.0 && motion.ripple_phase < std::f32::consts::TAU);
     }
 
@@ -1413,8 +1427,8 @@ mod tests {
 
         assert!(max_flash > 0.02, "flash должен срабатывать: {max_flash}");
         assert!(max_flash <= 0.15, "flash ограничен: {max_flash}");
-        assert!(max_sway > 0.004, "качка должна быть заметна: {max_sway}");
-        assert!(max_sway <= 0.015 + 1e-6, "качка ограничена: {max_sway}");
+        assert!(max_sway > 0.01, "качка должна быть заметна: {max_sway}");
+        assert!(max_sway <= 0.05 + 1e-6, "качка ограничена: {max_sway}");
     }
 
     #[test]

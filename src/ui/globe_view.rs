@@ -9,6 +9,7 @@ use crate::render::{
     CountryStyle, GlobeCamera, GlobeDeform, GlobeInput, GlobeMotion, MarkerLabel, MarkerVisual,
     paint_country, paint_globe, paint_markers, sphere_point,
 };
+use crate::services::Station;
 use crate::session::markers::GlobeMarker;
 
 use super::animation;
@@ -37,6 +38,8 @@ const CALLOUT_LEADER: f32 = 26.0;
 /// Смещение карточки от якоря на время появления.
 const CALLOUT_SLIDE: f32 = 6.0;
 const CALLOUT_ROUNDING: f32 = 11.0;
+/// Минимальный просвет между плашкой страны и плашкой станции, px.
+const CALLOUT_STACK_GAP: f32 = 6.0;
 const CALLOUT_EPSILON: f32 = 0.004;
 const CALLOUT_REPAINT: std::time::Duration = std::time::Duration::from_millis(16);
 
@@ -135,17 +138,48 @@ fn paint_starfield(painter: &egui::Painter, rect: egui::Rect) {
     }
 }
 
-/// Callout переживает кадры: у карточки своя прозрачность и цель.
+/// Плашка, переживающая кадры: страна или активная станция. Содержимое
+/// вычисляется один раз при появлении, дальше анимируется только прозрачность.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct CalloutCard {
-    iso: String,
-    name: String,
+    /// Ключ идентичности: ISO страны или UUID станции.
+    key: String,
+    title: String,
+    subtitle: String,
+    /// Якорь на сфере, градусы.
+    lat: f32,
+    lon: f32,
+    /// Станция подсвечивается акцентом, страна — обычным текстом.
+    accent: bool,
     /// Текущая прозрачность 0..1 (умножается на цвета карточки).
     alpha: f32,
     target: f32,
 }
 
-/// Состояние country callout: видимая и исчезающая карточки (ТЗ §1.2).
+impl CalloutCard {
+    fn new(
+        key: String,
+        title: String,
+        subtitle: String,
+        lat: f32,
+        lon: f32,
+        accent: bool,
+        target: f32,
+    ) -> Self {
+        Self {
+            key,
+            title,
+            subtitle,
+            lat,
+            lon,
+            accent,
+            alpha: 0.0,
+            target,
+        }
+    }
+}
+
+/// Состояние одного callout-канала: видимая и исчезающая карточки (ТЗ §1.2).
 #[derive(Debug, Default, Clone)]
 pub(crate) struct CalloutState {
     current: Option<CalloutCard>,
@@ -158,7 +192,8 @@ pub(crate) struct GlobeState<'a> {
     pub motion: &'a GlobeMotion,
     pub ready: bool,
     pub markers: &'a [GlobeMarker],
-    pub current_uuid: Option<&'a str>,
+    /// Активная станция: маркер пульсирует, у точки — плашка, как у страны.
+    pub current_station: Option<&'a Station>,
     pub geo: &'a GeoService,
     pub selected_country: Option<&'a Country>,
     /// В режиме жанра страна не выбирается и не подсвечивается.
@@ -172,8 +207,15 @@ pub(crate) struct GlobeState<'a> {
     pub layout: DeskLayout,
     /// Перевороты разрешены: Focus, движение включено и настройка активна.
     pub allow_flips: bool,
+    /// Режим вращения: аудио-реактивность выключена, глобус крутится сам.
+    pub auto_spin: bool,
+    /// Тепловая карта стран: текстура уже собрана под текущую выборку.
+    pub heat: Option<&'a std::sync::Arc<crate::render::HeatFrame>>,
     /// Callout страны: переживает кадр ради fade-in/out (ТЗ §1.2).
-    pub callout: &'a mut CalloutState,
+    pub country_callout: &'a mut CalloutState,
+    /// Callout активной станции: отдельный канал, чтобы плашки не спорили
+    /// за одну карточку и могли разъезжаться.
+    pub station_callout: &'a mut CalloutState,
     /// Reduce motion: карточка появляется и гаснет без перехода (ADR-0032).
     pub reduce_motion: bool,
 }
@@ -183,6 +225,9 @@ pub(crate) struct GlobeResponse {
     pub actions: Vec<UiAction>,
     /// Точка на сфере, если клик не попал в маркер.
     pub clicked_point: Option<(f64, f64, f64)>,
+    /// Первичный клик не попал ни в маркер, ни в страну: выделение страны
+    /// снимается, список станций при этом остаётся.
+    pub clicked_empty: bool,
 }
 
 pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) -> GlobeResponse {
@@ -230,6 +275,7 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
     }
     if hover_pos.is_some() && !modal {
         input.scroll_delta = ui.input(|input| input.smooth_scroll_delta.y);
+        input.hovered = true;
     }
     if let Some(position) = sense
         .clicked_by(egui::PointerButton::Primary)
@@ -241,14 +287,21 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
     }
 
     let (dt, elapsed) = ui.input(|input| (input.stable_dt, input.unstable_dt));
-    state
-        .camera
-        .advance(dt, elapsed, &input, state.motion, state.allow_flips);
+    state.camera.advance(
+        dt,
+        elapsed,
+        &input,
+        state.motion,
+        state.allow_flips,
+        state.auto_spin,
+    );
     // Пока камера под управлением пользователя, squash и рябь ослабляются
-    // до 35 %; качка гасится самим камерным приоритетом (ADR-0028).
+    // до 35 %; качка гасится самим камерным приоритетом (ADR-0028). Курсор
+    // над глобусом плавно успокаивает движение до нуля.
     let mut motion = state
         .motion
-        .with_camera_priority(state.camera.camera_priority());
+        .with_camera_priority(state.camera.camera_priority())
+        .with_calm(state.camera.hover_calm());
     // Переворот живёт в камере: снимок отражает фактический roll кадра.
     motion.roll = state.camera.roll();
     let deform = motion.deform;
@@ -260,12 +313,15 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
             response
                 .actions
                 .push(UiAction::Play(state.markers[index].station.clone()));
-        } else if let Some(point) = state
-            .camera
-            .screen_to_sphere_deformed(position, globe_rect, &deform)
-        {
-            response.clicked_point =
-                Some((f64::from(point.x), f64::from(point.y), f64::from(point.z)));
+        } else {
+            response.clicked_empty = true;
+            if let Some(point) = state
+                .camera
+                .screen_to_sphere_deformed(position, globe_rect, &deform)
+            {
+                response.clicked_point =
+                    Some((f64::from(point.x), f64::from(point.y), f64::from(point.z)));
+            }
         }
     }
 
@@ -279,7 +335,7 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
         paint_vignette(ui.painter(), globe_rect);
     }
 
-    paint_globe(ui.painter(), globe_rect, state.camera, &motion);
+    paint_globe(ui.painter(), globe_rect, state.camera, &motion, state.heat);
 
     let hovered = hover_pos.and_then(|position| nearest_marker(&marker_screens, position));
     let hovered_country =
@@ -314,6 +370,9 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
     }
 
     let mut any_playing = false;
+    let current_uuid = state
+        .current_station
+        .map(|station| station.stationuuid.as_str());
     if !marker_screens.is_empty() {
         let visuals: Vec<MarkerVisual> = marker_screens
             .iter()
@@ -321,8 +380,7 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
                 let marker = &state.markers[*index];
                 MarkerVisual {
                     pos: *position,
-                    playing: state
-                        .current_uuid
+                    playing: current_uuid
                         .is_some_and(|uuid| marker.members.iter().any(|member| member == uuid)),
                 }
             })
@@ -340,34 +398,54 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
         );
     }
 
-    let active_callout = state
+    let active_country = state
         .country_enabled
         .then_some(match state.selected_country {
-            Some(country) => Some((country, 1.0)),
-            None => hovered_country.map(|country| (country, CALLOUT_HOVER_ALPHA)),
-        });
-    let active_callout = active_callout.flatten();
-    update_callout(state.callout, active_callout, dt, state.reduce_motion);
+            Some(country) => country_card(country, state.markers, state.geo, 1.0),
+            None => hovered_country.and_then(|country| {
+                country_card(country, state.markers, state.geo, CALLOUT_HOVER_ALPHA)
+            }),
+        })
+        .flatten();
+    update_callout(
+        state.country_callout,
+        active_country,
+        dt,
+        state.reduce_motion,
+    );
+    let active_station = state
+        .current_station
+        .and_then(|station| station_card(station, 1.0));
+    update_callout(
+        state.station_callout,
+        active_station,
+        dt,
+        state.reduce_motion,
+    );
     let scene = CalloutScene {
         camera: state.camera,
         deform,
         globe_rect,
         layout: state.layout,
         palette,
-        geo: state.geo,
-        markers: state.markers,
     };
     let mut callout_fading = false;
-    for card in state
-        .callout
-        .previous
-        .iter()
-        .chain(state.callout.current.iter())
-        .filter(|card| card.alpha > CALLOUT_EPSILON)
-    {
-        paint_country_callout(ui.painter(), &scene, card);
-        callout_fading |= (card.alpha - card.target).abs() > CALLOUT_EPSILON;
-    }
+    // Порядок важен: страна занимает место первой, плашка станции обходит её
+    // прямоугольник — две карточки никогда не накладываются.
+    let country_rect = paint_callout_channel(
+        ui.painter(),
+        &scene,
+        state.country_callout,
+        None,
+        &mut callout_fading,
+    );
+    paint_callout_channel(
+        ui.painter(),
+        &scene,
+        state.station_callout,
+        country_rect,
+        &mut callout_fading,
+    );
     if callout_fading {
         ui.ctx().request_repaint_after(CALLOUT_REPAINT);
     }
@@ -504,32 +582,22 @@ fn country_station_count(markers: &[GlobeMarker], iso_a2: &str) -> usize {
 
 /// Плавное появление и исчезновение callout (ТЗ §1.2): карточки идут к своей цели.
 /// Reduce motion (ADR-0032) убирает переход: карточка сразу в конечном состоянии.
-fn update_callout(
-    state: &mut CalloutState,
-    active: Option<(&Country, f32)>,
-    dt: f32,
-    reduce: bool,
-) {
+fn update_callout(state: &mut CalloutState, active: Option<CalloutCard>, dt: f32, reduce: bool) {
     match active {
-        Some((country, target)) => {
+        Some(card) => {
             let same = state
                 .current
                 .as_ref()
-                .is_some_and(|card| card.iso == country.iso_a2);
-            if same && let Some(card) = state.current.as_mut() {
-                card.target = target;
+                .is_some_and(|current| current.key == card.key);
+            if same && let Some(current) = state.current.as_mut() {
+                current.target = card.target;
             }
             if !same {
                 state.previous = state.current.take().map(|mut card| {
                     card.target = 0.0;
                     card
                 });
-                state.current = Some(CalloutCard {
-                    iso: country.iso_a2.clone(),
-                    name: single_line(&country.name),
-                    alpha: 0.0,
-                    target,
-                });
+                state.current = Some(card);
             }
         }
         None => {
@@ -562,78 +630,166 @@ fn update_callout(
     }
 }
 
-/// Контекст кадра для карточки страны: камера, раскладка, палитра и данные.
+/// Контекст кадра для карточек: камера, раскладка, палитра и данные.
 struct CalloutScene<'a> {
     camera: &'a GlobeCamera,
     deform: GlobeDeform,
     globe_rect: egui::Rect,
     layout: DeskLayout,
     palette: &'a Palette,
-    geo: &'a GeoService,
-    markers: &'a [GlobeMarker],
 }
 
-/// Карточка страны у якоря: флаг, имя, число станций, leader line и пин (ТЗ §1.1).
-fn paint_country_callout(painter: &egui::Painter, scene: &CalloutScene<'_>, card: &CalloutCard) {
-    let CalloutScene {
-        camera,
-        deform,
-        globe_rect,
-        layout,
-        palette,
-        geo,
-        markers,
-    } = *scene;
+/// Карточка страны: флаг, имя и число станций группы.
+fn country_card(
+    country: &Country,
+    markers: &[GlobeMarker],
+    geo: &GeoService,
+    target: f32,
+) -> Option<CalloutCard> {
     // Якорь — focus_point страны, тот же путь, что у доворота камеры.
-    let Some(anchor) = geo
-        .country_shape(&card.iso)
-        .and_then(|shape| shape.focus_point())
-        .and_then(|(lat, lon)| {
-            camera.project_on_sphere(
-                deform.to_world(sphere_point(lat as f32, lon as f32)),
-                globe_rect,
-            )
-        })
-    else {
-        return;
-    };
-
-    let alpha = card.alpha;
-    let count = country_station_count(markers, &card.iso);
-    let flag = flag_emoji(&card.iso);
+    let (lat, lon) = geo.country_shape(&country.iso_a2)?.focus_point()?;
+    let count = country_station_count(markers, &country.iso_a2);
+    let flag = flag_emoji(&country.iso_a2);
+    let name = single_line(&country.name);
     let title = if flag.is_empty() {
-        card.name.clone()
+        name
     } else {
-        format!("{flag} {}", card.name)
+        format!("{flag} {name}")
     };
     let subtitle = if count == 1 {
         "1 station".to_owned()
     } else {
         format!("{count} stations")
     };
-
-    let title_galley = painter.layout_no_wrap(
+    Some(CalloutCard::new(
+        country.iso_a2.clone(),
         title,
-        egui::FontId::proportional(13.5),
-        faded(palette.text, alpha),
-    );
-    let subtitle_galley = painter.layout_no_wrap(
         subtitle,
-        egui::FontId::proportional(11.0),
-        faded(palette.muted, alpha),
+        lat as f32,
+        lon as f32,
+        false,
+        target,
+    ))
+}
+
+/// Карточка активной станции: имя, место, качество и кодек.
+fn station_card(station: &Station, target: f32) -> Option<CalloutCard> {
+    let (lat, lon) = station.geo_lat.zip(station.geo_long)?;
+    let name = single_line(&station.name);
+    let title = if name.is_empty() {
+        "Untitled".to_owned()
+    } else {
+        truncate(&name, 32)
+    };
+    let subtitle = [
+        row_place(station),
+        if station.bitrate > 0 {
+            format!("{} kbps", station.bitrate)
+        } else {
+            String::new()
+        },
+        single_line(&station.codec).to_uppercase(),
+    ]
+    .into_iter()
+    .filter(|part| !part.trim().is_empty())
+    .collect::<Vec<_>>()
+    .join(" · ");
+    Some(CalloutCard::new(
+        station.stationuuid.clone(),
+        title,
+        subtitle,
+        lat as f32,
+        lon as f32,
+        true,
+        target,
+    ))
+}
+
+/// Рисует карточки одного канала и возвращает прямоугольник видимой текущей:
+/// второй канал обходит его, чтобы плашки никогда не перекрывались.
+fn paint_callout_channel(
+    painter: &egui::Painter,
+    scene: &CalloutScene<'_>,
+    state: &CalloutState,
+    avoid: Option<egui::Rect>,
+    fading: &mut bool,
+) -> Option<egui::Rect> {
+    let current_key = state.current.as_ref().map(|card| card.key.as_str());
+    let mut current_rect = None;
+    for card in state
+        .previous
+        .iter()
+        .chain(state.current.iter())
+        .filter(|card| card.alpha > CALLOUT_EPSILON)
+    {
+        *fading |= (card.alpha - card.target).abs() > CALLOUT_EPSILON;
+        let rect = paint_callout(painter, scene, card, avoid);
+        if current_key == Some(card.key.as_str()) {
+            current_rect = rect;
+        }
+    }
+    current_rect
+}
+
+/// Карточка у якоря: заголовок, подпись, leader line и точка. `avoid` —
+/// прямоугольник соседней карточки, который нельзя перекрывать.
+fn paint_callout(
+    painter: &egui::Painter,
+    scene: &CalloutScene<'_>,
+    card: &CalloutCard,
+    avoid: Option<egui::Rect>,
+) -> Option<egui::Rect> {
+    let CalloutScene {
+        camera,
+        deform,
+        globe_rect,
+        layout,
+        palette,
+        ..
+    } = *scene;
+    let anchor = camera.project_on_sphere(
+        deform.to_world(sphere_point(card.lat, card.lon)),
+        globe_rect,
+    )?;
+
+    let alpha = card.alpha;
+    let title_galley = painter.layout_no_wrap(
+        card.title.clone(),
+        egui::FontId::proportional(13.5),
+        faded(
+            if card.accent {
+                palette.accent
+            } else {
+                palette.text
+            },
+            alpha,
+        ),
     );
+    let subtitle_galley = (!card.subtitle.trim().is_empty()).then(|| {
+        painter.layout_no_wrap(
+            card.subtitle.clone(),
+            egui::FontId::proportional(11.0),
+            faded(palette.muted, alpha),
+        )
+    });
     let padding = egui::vec2(11.0, 8.0);
     let gap = 3.0;
-    let size = egui::vec2(
-        title_galley.size().x.max(subtitle_galley.size().x) + padding.x * 2.0,
-        title_galley.size().y + subtitle_galley.size().y + gap + padding.y * 2.0,
+    let text_width = title_galley.size().x.max(
+        subtitle_galley
+            .as_ref()
+            .map_or(0.0, |galley| galley.size().x),
     );
+    let text_height = title_galley.size().y
+        + subtitle_galley
+            .as_ref()
+            .map_or(0.0, |galley| galley.size().y + gap);
+    let size = egui::vec2(text_width + padding.x * 2.0, text_height + padding.y * 2.0);
 
     // Свободная зона между HUD, transport и панелью станций. Callout живёт
     // только в Focus: в капсулах этих зон нет.
     let (Some(hud), Some(transport), Some(globe)) = (layout.hud, layout.transport, layout.globe)
     else {
-        return;
+        return None;
     };
     let top = hud.bottom() + 6.0;
     let bottom = transport.top() - 6.0;
@@ -642,41 +798,52 @@ fn paint_country_callout(painter: &egui::Painter, scene: &CalloutScene<'_>, card
         .panel
         .map_or(globe.right() - 6.0, |panel| panel.left() - 8.0);
 
-    // По умолчанию карточка над якорем, при нехватке места — под ним.
+    // По умолчанию карточка над якорем, при нехватке места — под ним; если
+    // рядом стоит вторая плашка, пробуем встать над ней или под ней.
     let slide = CALLOUT_SLIDE * (1.0 - alpha);
-    let below = anchor.y - CALLOUT_LEADER - size.y < top;
-    let mut rect = if below {
-        egui::Rect::from_min_size(
-            egui::pos2(anchor.x - size.x / 2.0, anchor.y + CALLOUT_LEADER + slide),
-            size,
-        )
-    } else {
+    let mut candidates = [
         egui::Rect::from_min_size(
             egui::pos2(
                 anchor.x - size.x / 2.0,
                 anchor.y - CALLOUT_LEADER - size.y - slide,
             ),
             size,
-        )
-    };
-    if rect.right() > right {
-        rect = rect.translate(egui::vec2(right - rect.right(), 0.0));
+        ),
+        egui::Rect::from_min_size(
+            egui::pos2(anchor.x - size.x / 2.0, anchor.y + CALLOUT_LEADER + slide),
+            size,
+        ),
+        egui::Rect::ZERO,
+        egui::Rect::ZERO,
+    ];
+    if let Some(avoid) = avoid {
+        candidates[2] = egui::Rect::from_min_size(
+            egui::pos2(
+                anchor.x - size.x / 2.0,
+                avoid.top() - CALLOUT_LEADER * 0.5 - size.y,
+            ),
+            size,
+        );
+        candidates[3] = egui::Rect::from_min_size(
+            egui::pos2(
+                anchor.x - size.x / 2.0,
+                avoid.bottom() + CALLOUT_LEADER * 0.5,
+            ),
+            size,
+        );
     }
-    if rect.left() < left {
-        rect = rect.translate(egui::vec2(left - rect.left(), 0.0));
-    }
-    if rect.top() < top {
-        rect = rect.translate(egui::vec2(0.0, top - rect.top()));
-    }
-    if rect.bottom() > bottom {
-        rect = rect.translate(egui::vec2(0.0, bottom - rect.bottom()));
-    }
+    let rect = candidates
+        .into_iter()
+        .filter_map(|candidate| clamp_callout(candidate, top, bottom, left, right))
+        .find(|rect| {
+            !avoid.is_some_and(|avoid| rect.intersects(avoid.expand(CALLOUT_STACK_GAP)))
+        })?;
 
-    let tail = if below {
-        egui::pos2(rect.center().x, rect.top())
-    } else {
-        egui::pos2(rect.center().x, rect.bottom())
-    };
+    let below = rect.center().y > anchor.y;
+    let tail = egui::pos2(
+        rect.center().x,
+        if below { rect.top() } else { rect.bottom() },
+    );
     painter.line_segment(
         [anchor, tail],
         egui::Stroke::new(1.0, faded(palette.accent, 0.75 * alpha)),
@@ -691,14 +858,43 @@ fn paint_country_callout(painter: &egui::Painter, scene: &CalloutScene<'_>, card
     glass_panel(painter, rect, palette, CALLOUT_ROUNDING, alpha);
     let title_height = title_galley.size().y;
     painter.galley(rect.min + padding, title_galley, egui::Color32::WHITE);
-    painter.galley(
-        egui::pos2(
-            rect.left() + padding.x,
-            rect.top() + padding.y + title_height + gap,
-        ),
-        subtitle_galley,
-        egui::Color32::WHITE,
-    );
+    if let Some(subtitle_galley) = subtitle_galley {
+        painter.galley(
+            egui::pos2(
+                rect.left() + padding.x,
+                rect.top() + padding.y + title_height + gap,
+            ),
+            subtitle_galley,
+            egui::Color32::WHITE,
+        );
+    }
+    Some(rect)
+}
+
+/// Сдвигает карточку внутрь свободной зоны; `None`, если она туда не влезает.
+fn clamp_callout(
+    mut rect: egui::Rect,
+    top: f32,
+    bottom: f32,
+    left: f32,
+    right: f32,
+) -> Option<egui::Rect> {
+    if right - left < rect.width() || bottom - top < rect.height() {
+        return None;
+    }
+    if rect.right() > right {
+        rect = rect.translate(egui::vec2(right - rect.right(), 0.0));
+    }
+    if rect.left() < left {
+        rect = rect.translate(egui::vec2(left - rect.left(), 0.0));
+    }
+    if rect.top() < top {
+        rect = rect.translate(egui::vec2(0.0, top - rect.top()));
+    }
+    if rect.bottom() > bottom {
+        rect = rect.translate(egui::vec2(0.0, bottom - rect.bottom()));
+    }
+    Some(rect)
 }
 
 fn marker_screens(
@@ -879,32 +1075,35 @@ mod tests {
         assert_eq!(heat_alpha(0), COUNTRY_HEAT_MIN_ALPHA);
     }
 
-    fn country(iso: &str, name: &str) -> Country {
-        Country {
-            name: name.to_owned(),
-            iso_a2: iso.to_owned(),
-            iso_a3: None,
-        }
+    fn card(key: &str, target: f32) -> CalloutCard {
+        CalloutCard::new(
+            key.to_owned(),
+            key.to_owned(),
+            "1 station".to_owned(),
+            51.0,
+            10.0,
+            false,
+            target,
+        )
     }
 
     #[test]
     fn callout_fades_in_and_out() {
-        let germany = country("DE", "Germany");
         let mut state = CalloutState::default();
 
         update_callout(
             &mut state,
-            Some((&germany, CALLOUT_HOVER_ALPHA)),
+            Some(card("DE", CALLOUT_HOVER_ALPHA)),
             0.05,
             false,
         );
-        let card = state.current.as_ref().expect("карточка появилась");
-        assert!(card.alpha > 0.0 && card.alpha < CALLOUT_HOVER_ALPHA);
+        let shown = state.current.as_ref().expect("карточка появилась");
+        assert!(shown.alpha > 0.0 && shown.alpha < CALLOUT_HOVER_ALPHA);
 
         for _ in 0..20 {
             update_callout(
                 &mut state,
-                Some((&germany, CALLOUT_HOVER_ALPHA)),
+                Some(card("DE", CALLOUT_HOVER_ALPHA)),
                 0.05,
                 false,
             );
@@ -928,10 +1127,9 @@ mod tests {
 
     #[test]
     fn reduce_motion_skips_the_callout_transition() {
-        let germany = country("DE", "Germany");
         let mut state = CalloutState::default();
 
-        update_callout(&mut state, Some((&germany, 1.0)), 0.016, true);
+        update_callout(&mut state, Some(card("DE", 1.0)), 0.016, true);
         assert_eq!(state.current.as_ref().expect("карточка").alpha, 1.0);
 
         update_callout(&mut state, None, 0.016, true);
@@ -944,23 +1142,21 @@ mod tests {
 
     #[test]
     fn callout_switch_keeps_the_old_card_for_fade_out() {
-        let germany = country("DE", "Germany");
-        let france = country("FR", "France");
         let mut state = CalloutState::default();
 
         for _ in 0..20 {
-            update_callout(&mut state, Some((&germany, 1.0)), 0.05, false);
+            update_callout(&mut state, Some(card("DE", 1.0)), 0.05, false);
         }
-        update_callout(&mut state, Some((&france, 1.0)), 0.05, false);
+        update_callout(&mut state, Some(card("FR", 1.0)), 0.05, false);
 
         let current = state.current.as_ref().expect("новая страна");
         let previous = state.previous.as_ref().expect("старая ещё видна");
-        assert_eq!(current.iso, "FR");
+        assert_eq!(current.key, "FR");
         assert!(
             current.alpha < previous.alpha,
             "в кадре смены старая карточка ещё ярче новой — есть кроссфэйд"
         );
-        assert_eq!(previous.iso, "DE");
+        assert_eq!(previous.key, "DE");
         assert_eq!(previous.target, 0.0);
         assert!(
             previous.alpha > 0.5,
@@ -968,7 +1164,7 @@ mod tests {
         );
 
         for _ in 0..20 {
-            update_callout(&mut state, Some((&france, 1.0)), 0.05, false);
+            update_callout(&mut state, Some(card("FR", 1.0)), 0.05, false);
         }
         assert!(state.previous.is_none(), "исчезающая карточка убирается");
         assert!(state.current.as_ref().unwrap().alpha > 0.99);
@@ -986,6 +1182,20 @@ mod tests {
                 .is_none_or(|card| card.alpha <= CALLOUT_EPSILON)
         );
         assert!(state.previous.is_none());
+    }
+
+    #[test]
+    fn clamp_callout_keeps_the_card_inside_the_zone() {
+        let rect = egui::Rect::from_min_size(egui::pos2(700.0, 460.0), egui::vec2(140.0, 44.0));
+        let clamped = clamp_callout(rect, 10.0, 500.0, 0.0, 800.0).expect("карточка влезает");
+        assert!(clamped.right() <= 800.0);
+        assert!(clamped.bottom() <= 500.0);
+        assert!(clamped.left() >= 0.0 && clamped.top() >= 10.0);
+
+        assert!(
+            clamp_callout(rect, 10.0, 30.0, 0.0, 800.0).is_none(),
+            "по высоте карточка не помещается — лучше не рисовать"
+        );
     }
 
     #[test]

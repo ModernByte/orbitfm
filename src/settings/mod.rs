@@ -87,9 +87,9 @@ impl MotionReactivity {
     pub fn squash_limit(self) -> f32 {
         match self {
             Self::Off => 0.0,
-            Self::Low => 0.010,
-            Self::Normal => 0.020,
-            Self::High => 0.035,
+            Self::Low => 0.025,
+            Self::Normal => 0.050,
+            Self::High => 0.090,
         }
     }
 
@@ -97,9 +97,9 @@ impl MotionReactivity {
     pub fn ripple_limit(self) -> f32 {
         match self {
             Self::Off => 0.0,
-            Self::Low => 0.0015,
-            Self::Normal => 0.0025,
-            Self::High => 0.0040,
+            Self::Low => 0.0050,
+            Self::Normal => 0.0100,
+            Self::High => 0.0180,
         }
     }
 
@@ -107,8 +107,8 @@ impl MotionReactivity {
     pub fn idle_amplitude(self) -> f32 {
         match self {
             Self::Off => 0.0,
-            Self::Low | Self::Normal => 0.0035,
-            Self::High => 0.0050,
+            Self::Low | Self::Normal => 0.0070,
+            Self::High => 0.0100,
         }
     }
 

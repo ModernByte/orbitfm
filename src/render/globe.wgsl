@@ -6,11 +6,14 @@ struct Camera {
     motion: vec4<f32>,
     // x = flash, y = style_id, z = beat_phase, w = time.
     motion2: vec4<f32>,
+    // x = сила тепловой карты стран (0 — выключена).
+    heat: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera: Camera;
 @group(0) @binding(1) var earth_texture: texture_2d<f32>;
 @group(0) @binding(2) var earth_sampler: sampler;
+@group(0) @binding(3) var country_heat: texture_2d<f32>;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -65,13 +68,31 @@ fn encode_srgb(linear: vec3<f32>) -> vec3<f32> {
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let normal = normalize(input.normal);
     let light = normalize(camera.light_direction.xyz);
-    let color = textureSample(earth_texture, earth_sampler, input.uv);
+    let color0 = textureSample(earth_texture, earth_sampler, input.uv);
+    // Тепловая карта стран хранится premultiplied: RGB уже умножен на альфу.
+    let heat = textureSample(country_heat, earth_sampler, input.uv);
+    let heat_strength = camera.heat.x;
+
+    // В базовой текстуре зима вшита в сушу: выбеленные области над Казахстаном
+    // и Сибирью читаются как баг заливки стран. Низконасыщенные светлые пиксели
+    // тоним к тундре; океан (насыщенный синий) и пустыни (жёлтые) не трогаем.
+    let mx = max(max(color0.r, color0.g), color0.b);
+    let mn = min(min(color0.r, color0.g), color0.b);
+    let saturation = (mx - mn) / max(mx, 0.001);
+    let brightness = dot(color0.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let snow = smoothstep(0.66, 0.88, brightness) * (1.0 - smoothstep(0.04, 0.26, saturation));
+    let color = vec4<f32>(mix(color0.rgb, vec3<f32>(0.38, 0.44, 0.52), snow * 0.85), color0.a);
 
     // Half-lambert: ночная сторона остаётся читаемой, день получает тёплый key.
     let wrapped = dot(normal, light) * 0.5 + 0.5;
     let key = pow(wrapped, 1.6);
     let warm = mix(vec3<f32>(1.0, 1.0, 1.0), vec3<f32>(1.0, 0.92, 0.82), key);
-    var shaded = color.rgb * (0.42 + 0.62 * key) * warm;
+    let light_gain = 0.42 + 0.62 * key;
+    var shaded = color.rgb * light_gain * warm;
+    // Тепловая карта ложится поверх освещённой суши и наследует её свет:
+    // иначе ночная сторона светится ровным цветом вместо терминатора.
+    let coverage = heat.a * heat_strength;
+    shaded = shaded * (1.0 - coverage) + heat.rgb * heat_strength * light_gain;
     // Лёгкий подъём сатурации вместо умножения яркости: клиппинг ниже.
     let luma = dot(shaded, vec3<f32>(0.2126, 0.7152, 0.0722));
     shaded = mix(vec3<f32>(luma), shaded, 1.12);

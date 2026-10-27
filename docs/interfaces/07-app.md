@@ -334,11 +334,15 @@ focusable, ↑/↓ переводят фокус на соседа по види
   библиотеки показываются тостом;
 - transport: слева — favicon 44 px, имя станции, `state, country` и третья строка
   `Now Playing: <первые теги>` (метаданных трека из потока нет — используются теги
-  станции); в центре — LIVE-бейдж с мини-эквалайзером, `⏮ / play-pause / ⏭`
+  станции); группа контролов — по центру строки: `⏮ / play-pause / ⏭`
   (prev/next идут по текущему видимому списку с циклом), stop, heart (избранное) и
-  кнопка `Radio Roulette` с кубиком; справа налево — `CODEC kbps`, слайдер
-  громкости, чип `Visualizer` и столбцы визуализатора (в простое —
-  «дыхание»); без станции — `Nothing playing` / `No station yet`;
+  кнопка `Radio Roulette` с кубиком; справа налево — столбцы визуализатора (в
+  простое — «дыхание»), слайдер громкости и `CODEC kbps`, если остаток ширины
+  позволяет; ширина правой группы = остаток после центрированных контролов, поэтому
+  полоса визуализатора ужимается вместе с окном; без станции — `Nothing playing` /
+  `No station yet`; чип `Visualizer` из строки убран, включение полосы живёт в
+  настройках; LIVE-бейдж и мини-эквалайзер тоже убраны: эфир показан чипом в HUD и
+  карточкой станции на глобусе, а в строке они только отнимали место у контролов;
 - фавиконки станций загружаются асинхронно (ADR-0016): `FaviconCache` в UI хранит
   состояния, `OrbitApp` спавнит `reqwest`-запросы (до 8 одновременно, кэш до 256)
   в `Session::runtime`, декод `image` приводит к 64×64, текстура поднимается в
@@ -357,8 +361,8 @@ focusable, ↑/↓ переводят фокус на соседа по види
   открывается сама только при первом запуске (`Settings::help_seen == false`) и далее
   по кнопке `?` в HUD или чекбоксом `Show help` в секции `Window` drawer'а, закрывается
   `Esc`, повторной `?` и гаснет после
-  первого выбора страны или запуска станции; легенда `Station density` слева снизу —
-  градиент Low→High;
+  первого выбора страны или запуска станции; легенда карты стран слева снизу —
+  `ComboBox` режима, градиент Low→High и подпись источника заливки (ADR-0035);
 - состояние поиска (`Searching…`), ошибки каталога и `No stations found`
   отображаются в панели; `On map: N stations` показывает число пригодных станций;
 - при отсутствии `wgpu_render_state` вместо глобуса показывается `3D globe unavailable`;
@@ -418,7 +422,8 @@ focusable, ↑/↓ переводят фокус на соседа по види
 `widgets::volume_slider`/`volume_slider_width` и `SliderResponse`,
 `settings_panel::{show, SettingsState}`, `animation` (`Transitions`, `ZoneFlags`,
 `FrameMotion`, `alpha`, `slide_x`, `rise_y`, `stagger`, `Presence`),
-`overlays::help_card`/`density_legend`, `SearchMode` (ре-экспорт
+`overlays::help_card`/`country_legend`, `ui::country_map::CountryHeatCache`,
+`SearchMode` (ре-экспорт
 `crate::session::search`), `playback_label`/`country_label`/`single_line`/`truncate`.
 Подписи зон приходят из `crate::i18n` (`catalog`, `theme_label`, `accent_label`,
 `language_label`, `motion_label`, `style_label`, `fill`) — ADR-0030. Из `src/render/` —

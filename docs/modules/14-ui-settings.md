@@ -48,7 +48,8 @@
   пояснение.
 - **Audio** — громкость (`widgets::volume_slider_width`, 230 px) и пояснение.
 - **Motion & accessibility** — реактивность (`MotionReactivity::ALL`), характер
-  движения (`MotionStyle::ALL`), reduce motion, flips.
+  движения (`MotionStyle::ALL`), reduce motion, flips; под чипами — подсказка
+  `motion_spin_hint` о том, что без реактивности глобус вращается сам.
 - **Window** — `WindowMode::ALL`, пояснение, чекбокс карточки управления,
   `Hide`, `Quit`.
 - **About** — версия, лицензия, app-id, пояснение про фоновую работу и трей,
