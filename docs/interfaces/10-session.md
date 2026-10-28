@@ -176,7 +176,7 @@ pub(crate) struct WindowState {
     quitting: bool,
 }
 
-/// Режим отображения окна (ADR-0021). `Panel` — CLI-поверхность (ADR-0033).
+/// Режим отображения окна (ADR-0021). `Panel` — поверхность бар-виджета (ADR-0033).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum WindowMode {
     #[default]
@@ -188,7 +188,8 @@ pub(crate) enum WindowMode {
 
 impl WindowMode {
     /// Режимы, доступные переключателю раскладок в настройках: `Panel` вне
-    /// списка, он открывается только командой `panel` (ADR-0033).
+    /// списка, это поверхность, а не раскладка стола; зовёт её команда `panel`
+    /// (ADR-0033, ред. 2026-10-28).
     pub(crate) const ALL: [Self; 3] = [Self::Focus, Self::Overlay, Self::Listening];
 
     /// Размер для `ViewportBuilder` нового окна.
@@ -322,8 +323,8 @@ Core к инфраструктуре (ADR-0021 п. 5).
 | `Toggle` | `toggle()` | `ok` |
 | `Show` | `show()` | `ok` |
 | `Hide` | `hide()` (закрытое окно не запрашивает ничего) | `ok` |
-| `Panel` | `toggle_dropdown(WindowMode::Panel)` — CLI-поверхность панели (ADR-0033) | `ok` |
-| `Overlay` | `toggle_dropdown(WindowMode::Overlay)` — капсула для бар-виджета (ADR-0033) | `ok` |
+| `Panel` | `toggle_dropdown(WindowMode::Panel)` — поверхность, которую зовёт клик бар-виджета (ADR-0033, ред. 2026-10-28) | `ok` |
+| `Overlay` | `toggle_dropdown(WindowMode::Overlay)` — капсула Overlay (CLI и «Компоновка») | `ok` |
 | `Status` | `status_text()` | см. § 6 |
 | `ModeQuery` | `window_mode()` | `mode <focus\|overlay\|listening\|panel>`, без побочных эффектов |
 | `SetMode { mode }` | `set_window_mode(mode.into())` — из `WindowModeArg` (ADR-0021 п. 5) | `ok` |

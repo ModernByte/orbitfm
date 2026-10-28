@@ -1,7 +1,7 @@
 {
   "widget": {
     "label": "OrbitFM",
-    "tooltip": "Show or hide OrbitFM",
+    "tooltip": "Show or hide the OrbitFM panel",
     "error_title": "OrbitFM",
     "error_body": "Failed to run the orbitfm command"
   }

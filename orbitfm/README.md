@@ -2,7 +2,7 @@
 
 OrbitFM is a desktop radio player with an interactive 3D globe for browsing
 stations by country. This plugin adds a compact bar widget that shows or hides
-the player through the application's single-instance IPC.
+the player's dropdown panel through the application's single-instance IPC.
 
 ## Plugin
 
@@ -14,7 +14,7 @@ the player through the application's single-instance IPC.
 ## Requirements
 
 Install `orbitfm` and put the binary on `PATH`. The widget launches it on demand
-with `orbitfm overlay`, so the application must be available on the same machine.
+with `orbitfm panel`, so the application must be available on the same machine.
 
 Noctalia v5 with plugin API 3 or newer is required. On Linux the application
 uses a Unix socket in `$XDG_RUNTIME_DIR` for single-instance IPC.
@@ -22,18 +22,21 @@ uses a Unix socket in `$XDG_RUNTIME_DIR` for single-instance IPC.
 ## Usage
 
 Add the **OrbitFM** widget from the Add-widget picker. Clicking it opens the
-borderless Overlay capsule — now playing with a 16-column visualizer strip, the
-mini globe, favorites, volume and play/stop; clicking again hides it. A stopped
-player starts with the capsule visible, and the first click may take a moment
-while the application starts. The capsule has no title bar, border or shadow —
-only the Focus desk keeps window decorations; the compositor positions the
-capsule next to the widget. Other surfaces remain available through the same
-IPC: `orbitfm mode focus`, `orbitfm mode listening` and, from the command line
-only, `orbitfm panel` for the dropdown panel.
+borderless dropdown panel — header with the station search and the
+Country/Genre switch, a volume slider and a 16-column visualizer strip in the
+mode row, the station list and the transport footer; clicking again hides it. A
+stopped player starts with the panel visible, and the first click may take a
+moment while the application starts. The panel has no title bar, border or
+shadow — only the Focus desk keeps window decorations; the compositor positions
+the panel next to the widget. The full Focus desk is reached by the
+`Open Focus` button in the panel header and by the application launcher
+(`org.modernbyte.OrbitFM.desktop`, `Exec=orbitfm mode focus`). The Overlay and
+Listening capsules stay separate surfaces behind the same IPC: `orbitfm overlay`,
+`orbitfm mode focus`, `orbitfm mode listening` and `orbitfm mode panel`.
 
 ## Window rules
 
-The capsule is a frameless 500×620 window. On tiling compositors it must float,
+The panel is a frameless 400×640 window. On tiling compositors it must float,
 otherwise it is stretched to the full tile. The repository ships ready rules for
 Focus, Overlay, Listening and Panel in `wm-configs/orbitfm-niri.kdl` and
 `wm-configs/orbitfm-hyprland.conf` (1100×800, 500×620, 420×152 and 400×640); the

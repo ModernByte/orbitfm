@@ -102,6 +102,7 @@
 |----------|-----------|
 | Шестерёнка HUD (Focus) | toggle drawer; видима и в узком окне |
 | Шестерёнка верхней капсулы (Overlay) | toggle drawer |
+| Шестерёнка шапки панели (Panel) | toggle drawer; в `Panel` открытый drawer занимает стеклянную поверхность целиком, поэтому шапка и список уходят (ADR-0033) |
 | Ctrl+, (`modifiers.command` + `Comma`) | toggle drawer в Focus и Overlay |
 | Ctrl+, в Listening | `open_settings` переводит окно в Overlay и открывает drawer |
 | Трей «Settings…» | `open_settings`: показывает окно, при Listening — Overlay |
@@ -121,7 +122,8 @@
 `widgets::volume_slider_width` возвращает
 `SliderResponse { changed, committed }`, где `committed` — отпускание drag либо
 изменение без продолжающегося drag (клик по треку, клавиша, щелчок колеса). Зоны —
-drawer, transport и верхняя капсула Overlay — переводят это в два действия:
+drawer, transport, верхняя капсула Overlay и строка режимов шапки выпадающей панели —
+переводят это в два действия:
 
 - `changed && !committed` → `UiAction::PreviewVolume` → `Session::preview_volume`:
   только `audio.set_volume` и `pending_volume`, файл не трогается;
@@ -130,7 +132,7 @@ drawer, transport и верхняя капсула Overlay — переводя�
 
 Клавиатурный шаг тоже коммитит: стрелки ±5 %, Home/End — край. Колесо мыши —
 третий дискретный ввод того же `widgets::volume_slider_width`, поэтому оно
-достается всем трём зонам без дублирования кода: шаг ±5 % на щелчок (`VOLUME_KEY_STEP`),
+достается всем четырём зонам без дублирования кода: шаг ±5 % на щелчок (`VOLUME_KEY_STEP`),
 коммит сразу, `pending_volume` не открывается. Три следствия реализованы в виджете:
 обработка только под указателем (`response.hovered()`) — иначе слайдер воровал бы
 скролл у списка станций и зум глобуса; шаг считается по сырым `input.events` с

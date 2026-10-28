@@ -453,8 +453,9 @@ Reconnecting`, `station` — `single_line(name)` при живом эфире и
 
 `is_borderless(mode)` = «не `Focus`»: presentation-слой по нему снимает декорации
 у `Overlay`, `Listening` и `Panel` (ADR-0021 п. 4, ADR-0033). `Panel` нет в
-`WindowMode::ALL` — его открывает только CLI-команда `panel`, бар-виджет зовёт
-`overlay` и получает `Overlay`.
+`WindowMode::ALL` — его открывает команда `panel`, которую посылает клик
+бар-виджета (ADR-0033, ред. 2026-10-28), и `orbitfm mode panel`; капсулу Overlay
+переключает команда `overlay`.
 
 `set_window_mode(mode)` — единственная точка переключения: тот же режим →
 `UiIntent::Show`; новый режим при открытом окне → `reopen = true` +

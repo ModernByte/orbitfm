@@ -53,7 +53,7 @@ src/
 ├── ui/
 │   ├── mod.rs             # UiAction, общие типы, экспорт
 │   ├── palette.rs         # Palette, configure_style (перенос из app.rs)
-│   ├── hud.rs             # top HUD: режим, поиск, now-playing, volume
+│   ├── hud.rs             # top HUD: режимы поиска, поле поиска, кнопки окна, «● LIVE»
 │   ├── mode_switch.rs     # [Страна] [Жанр] + genre chips
 │   ├── station_panel.rs   # drawer: вкладки, фильтры, сортировка, карточки
 │   ├── transport.rs       # play/stop, favorite, Roulette, codec/bitrate
@@ -157,7 +157,8 @@ egui input → ui/* → UiAction
    изменения поведения.
 2. Вынести `draw` на `hud`, `station_panel`, `transport`, `globe_view`.
 3. Собрать Focus-раскладку:
-   - top HUD: логотип, переключатель режима, поиск, now-playing, volume, настройки;
+   - top HUD: логотип, переключатель режима, поиск, индикатор «● LIVE», help,
+     настройки и закрыть (имя станции и громкость — в transport; ADR-0015, ред. 2026-10-28);
    - центр: глобус на всю доступную высоту (не менее 60% контента);
    - правый drawer 300–320 px, сворачиваемый; на узком окне (< 900 px) —
      overlay-панель поверх глобуса с кнопкой закрытия;
@@ -403,7 +404,9 @@ egui (стрелки и Space); физический ввод на живой с
 
 **Приёмка**
 
-- Focus остаётся прежним; Overlay — компактная капсула, вызывается из Noctalia/`overlay`;
+- Focus остаётся прежним; Overlay — компактная капсула, вызывается `overlay` из CLI и
+  переключателя «Компоновка» (бар-виджет Noctalia с ред. 2026-10-28 зовёт `panel`,
+  ADR-0033);
 - Listening показывает минимальный now-playing с пульсом при неактивном UI;
 - смена режима работает через принятый ADR-0018 механизм hide/show и IPC-команду
   (либо явное решение её не добавлять);

@@ -346,7 +346,7 @@ impl Session {
 
     /// Переключатель-выпадающий (ADR-0033): открытая поверхность режима `mode`
     /// закрывается, любой другой режим переключается на него и показывается.
-    /// Зовётся командами `overlay` (бар-виджет) и `panel` (CLI).
+    /// Зовётся командой `panel` (бар-виджет) и командой `overlay` (CLI).
     pub(crate) fn toggle_dropdown(&mut self, mode: WindowMode) {
         self.window.toggle_dropdown(mode);
     }

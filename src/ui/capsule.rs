@@ -29,8 +29,8 @@ use super::images::FaviconCache;
 use super::palette::{Palette, mix_colors};
 use super::station_row::{RowContext, row_place, station_row};
 use super::widgets::{
-    CapsuleDisc, avatar, capsule_button, faded, faded_group, faded_palette, pop_scale, viz_bars,
-    volume_slider_width,
+    CapsuleDisc, NARROW_VIZ_BARS, NARROW_VIZ_SIZE, avatar, bucket_max, capsule_button, faded,
+    faded_group, faded_palette, pop_scale, viz_bars, volume_slider_width,
 };
 use super::{UiAction, playback_label, single_line, truncate};
 
@@ -50,10 +50,6 @@ const PLAY_LISTENING: &str = "orbitfm_capsule_play_color_listening";
 /// Ключ press-перехода капсульной кнопки.
 const PRESS_TOP: &str = "orbitfm_capsule_press_top";
 const PRESS_LISTENING: &str = "orbitfm_capsule_press_listening";
-/// Визуализатор капсулы: 16 полос фиксированы требованием и не связаны с
-/// настройкой `viz_bars` стола. В 2,5 раза уже столовой `VIZ_SIZE` (156×46).
-const CAP_VIZ_BARS: usize = 16;
-const CAP_VIZ_SIZE: (f32, f32) = (62.0, 16.0);
 
 /// Ширина правого блока контролов капсулы Overlay в покое: все семь
 /// аллокаций ряда (визуализатор, диск play, stop, громкость, gear, expand,
@@ -63,7 +59,7 @@ const CAP_VIZ_SIZE: (f32, f32) = (62.0, 16.0);
 /// (ADR-0032 §7), и наоборот: резерв текстовой колонки — чистая арифметика
 /// по константам.
 fn cap_controls_width(spacing_x: f32) -> f32 {
-    CAP_VIZ_SIZE.0
+    NARROW_VIZ_SIZE.0
         + CAP_DISC_SIZE
         + WIDE_SIDE
         + OVERLAY_VOLUME_WIDTH
@@ -333,13 +329,13 @@ pub(crate) fn overlay_top(
                 // справа от колонки с названием. Выключенный визуализатор ничего
                 // не аллоцирует — строка не прыгает.
                 if visualizer_enabled {
-                    let levels = bucket_max::<CAP_VIZ_BARS>(visualizer.levels());
-                    let peaks = bucket_max::<CAP_VIZ_BARS>(visualizer.peaks());
+                    let levels = bucket_max::<NARROW_VIZ_BARS>(visualizer.levels());
+                    let peaks = bucket_max::<NARROW_VIZ_BARS>(visualizer.peaks());
                     // Столбцы рисуются фиксированным градиентом, не палитрой,
                     // поэтому гасятся групповой прозрачностью входа.
                     faded_group(ui, enter, |ui| {
                         let (slot, _) = ui.allocate_exact_size(
-                            egui::Vec2::from(CAP_VIZ_SIZE),
+                            egui::Vec2::from(NARROW_VIZ_SIZE),
                             egui::Sense::hover(),
                         );
                         viz_bars(ui, palette, slot, &levels, &peaks);
@@ -571,23 +567,6 @@ fn visible_favorites(favorites: &[Station]) -> &[Station] {
     &favorites[..favorites.len().min(FAVORITE_LIMIT)]
 }
 
-/// Прореживание полос модели до фиксированного числа: bucket-max по целым
-/// интервалам источника, без аллокаций (стек-массив). При `len < N` интервалы
-/// перекрываются, поэтому пустых корзин не возникает вовсе.
-fn bucket_max<const N: usize>(source: &[f32]) -> [f32; N] {
-    let mut out = [0.0; N];
-    if source.is_empty() {
-        return out;
-    }
-    let len = source.len();
-    for (index, slot) in out.iter_mut().enumerate() {
-        let start = index * len / N;
-        let end = ((index + 1) * len / N).clamp(start + 1, len);
-        *slot = source[start..end].iter().copied().fold(0.0, f32::max);
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -646,34 +625,6 @@ mod tests {
             "в капсуле 500 px текст получает > 100 px даже без учёта полей \
              (в 420 px оставалось 27 px — текст лился на контролы)"
         );
-    }
-
-    #[test]
-    fn bucket_max_collapses_source_bars_to_cap() {
-        let rising: Vec<f32> = (0..24).map(|i| i as f32 / 24.0).collect();
-        let out = bucket_max::<CAP_VIZ_BARS>(&rising);
-        assert_eq!(out.len(), CAP_VIZ_BARS);
-        assert!(
-            (out[15] - 23.0 / 24.0).abs() < 1e-6,
-            "в последней корзине — верх исходных полос"
-        );
-        assert!(
-            out.windows(2).all(|pair| pair[0] <= pair[1]),
-            "монотонность сохраняется"
-        );
-    }
-
-    #[test]
-    fn bucket_max_never_leaves_an_empty_bucket() {
-        for len in [1usize, 3, 8, 15, 16, 17, 64] {
-            let source = vec![0.5; len];
-            let out = bucket_max::<CAP_VIZ_BARS>(&source);
-            assert!(
-                out.iter().all(|value| *value == 0.5),
-                "пустая корзина при len {len}"
-            );
-        }
-        assert_eq!(bucket_max::<CAP_VIZ_BARS>(&[]), [0.0; CAP_VIZ_BARS]);
     }
 
     #[test]

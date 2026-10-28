@@ -129,7 +129,6 @@ mod tests {
                 global_genre,
                 custom_tag_hint,
                 genre_search_hint,
-                idle,
             }
         );
         assert_group_non_empty!(

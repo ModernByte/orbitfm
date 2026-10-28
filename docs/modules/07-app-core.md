@@ -186,14 +186,16 @@ src/ui/
 ├── capsule.rs        # капсулы Overlay (top с 16-полосной лентой, мини-глобус, избранное)
 │                     # и Listening
 ├── widgets.rs        # кастомные контролы: pill, chip, search_field, tab_bar, live_badge,
-│                     # eq_bars_in, viz_bars, volume_slider_width (клавиатурный
+│                     # eq_bars_in, viz_bars с общими `NARROW_VIZ_SIZE` 62×16 и
+│                     # `NARROW_VIZ_BARS` 16 плюс прореживание `bucket_max` (капсула
+│                     # Overlay и шапка панели), volume_slider_width (клавиатурный
 │                     # шаг, колесо ±5 % и `SliderResponse { changed, committed }`), circle_button, avatar,
 │                     # logo_mark, flag_emoji, glass_panel (стеклянный градиент),
 │                     # focus_ring/circle_focus_ring, capsule_button, faded/faded_group/faded_palette
 ├── images.rs         # FaviconCache: машина состояний Queued/Loading/Ready/Failed (ADR-0016)
-├── hud.rs            # верхний HUD: логотип, Country/Genre, поиск станции/страны, now-playing
-│                     # с favicon, live-бейдж, тема-луна, шестерёнка (открывает drawer),
-│                     # кнопки списка/?/скрытия
+├── hud.rs            # верхний HUD: логотип, Country/Genre, поиск станции/страны,
+│                     # индикатор эфира (live-бейдж), тема-луна, шестерёнка (открывает
+│                     # drawer), кнопки списка/?/скрытия; шапка выпадающей панели
 ├── mode_switch.rs    # pill-переключатель «Country | Genre» и popup выбора жанра
 ├── station_filter.rs # локальные фильтры: текст, жанр, сортировка, плотность compact_rows
 ├── station_panel.rs  # правая плавающая панель: вкладки (LibraryTab из crate::session),
@@ -260,7 +262,7 @@ HUD — 58 px сверху, панель — 312 px справа, transport — 
 глобуса внутри плавающих зон, включая drawer.
 
 `WindowMode` (ADR-0021) задаёт `LayoutDensity`: `Full` — раскладка Focus выше,
-`Compact` — HUD-строка с 16-полосной лентой (`CAP_VIZ_BARS = 16`, bucket-max из модели
+`Compact` — HUD-строка с 16-полосной лентой (`widgets::NARROW_VIZ_BARS = 16`, bucket-max из модели
 `VisualizerModel` стола, репейн 33 мс пока играет, при выключенном визуализаторе —
 ноль аллокаций), мини-глобус и капсула избранного (до 8 строк `station_row`),
 `Minimal` — одна строка now-playing (`src/ui/capsule.rs`). В капсулах звёздное небо и
@@ -270,14 +272,18 @@ country-режим выключены, `pulse` считается в `draw_layer
 
 Четвёртый режим — `Panel` (ADR-0033): выпадающая поверхность без рамок
 и заголовка, плотность `Panel`, окно 400×640. Внутри — шапка с поиском и
-переключателем Country/Genre, список станций и подвал транспорта; громкость и
-оформление остаются в drawer'е. `Panel` не входит в `WindowMode::ALL` и
-открывается только CLI/IPC-командой `orbitfm panel` — бар-виджет теперь зовёт
-`orbitfm overlay` и переключает капсулу Overlay.
+переключателем Country/Genre, список станций и подвал транспорта; в строке
+режимов шапки стоят 16-полосная лента (`NARROW_VIZ_SIZE` 62×16 — тот же размер,
+что у капсулы Overlay) и громкость `PANEL_VOLUME_WIDTH = 96` px (не рисуется ниже
+`PANEL_VOLUME_MIN = 56` px), в строке бренда — `×`, «Открыть Focus», шестерёнка и
+кубик рулетки; оформление остаётся в drawer'е. `Panel` не входит в
+`WindowMode::ALL` и открывается IPC-командой `orbitfm panel` — её же посылает клик
+бар-виджета (ADR-0033, ред. 2026-10-28); ярлык приложения зовёт `orbitfm mode
+focus` и всегда даёт стол Focus.
 
 | Зона | Содержимое |
 |------|------------|
-| HUD | логотип, `Country/Genre`, поиск (у страны — popup подсказок), now-playing с favicon и LIVE, луна, шестерёнка, кнопка списка, `?`, `×` |
+| HUD | логотип, `Country/Genre`, поиск (у страны — popup подсказок), индикатор эфира «● LIVE», луна, шестерёнка, кнопка списка, `?`, `×` в правом углу строки; станция и её логотип в HUD не рисуются |
 | Панель | `Results / Favorites / History` с иконками, локальные фильтры (поле, чипы, `Sort by`, `Compact`), строки станций |
 | Transport | favicon 44 px, имя/город/`Now Playing: теги`; группа контролов (`⏮ play ⏭`, stop, heart, `Radio Roulette`) — по центру строки; справа громкость и мини-спектр, у них остаток ширины; зоны текста, контролов и правой группы не пересекаются и клиппятся |
 | Help-карточка | мыши-пиктограммы: Right-drag — orbit, Left click — country/station, Scroll — zoom |

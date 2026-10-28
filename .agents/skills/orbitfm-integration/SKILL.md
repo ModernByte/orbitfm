@@ -13,9 +13,12 @@ description: Интеграции OrbitFM с окружением — Noctalia v
 
 - Плагин — тонкий адаптер, без бизнес-логики.
 - `plugin.toml`: `id = "modernbyte/orbitfm"` (формат `<author>/<plugin>` обязателен), `plugin_api = 3`, author = ModernByte.
-- Виджет при клике: `noctalia.runAsync("orbitfm overlay")` — без колбэка (вариант с callback
+- Виджет при клике: `noctalia.runAsync("orbitfm panel")` — без колбэка (вариант с callback
   имеет таймаут 5 с и убивает группу процессов, поэтому GUI запускается отсоединённо);
   `exec_async` не существует.
+- Точки входа разведены командами, а не Luau: бар-виджет зовёт `panel`, ярлык
+  приложения (`org.modernbyte.OrbitFM.desktop`, `Exec=orbitfm mode focus`) всегда
+  даёт `Focus`, капсулу `Overlay` открывает `overlay` из CLI (ADR-0033, ред. 2026-10-28).
 - Структура: `orbitfm/plugin.toml`, `plugin.luau`, `README.md`, `thumbnail.webp`, `translations/en.json`, `translations/ru.json`.
 - Имя каталога совпадает с частью id после `/` — требование каталога Noctalia.
 - Теги только из официального списка (`bar`, `audio`, `music`); `orbitfm` объявлен в `dependencies`.

@@ -32,9 +32,9 @@ pub(crate) const PANEL_TITLE: &str = "OrbitFM · Panel";
 
 /// Режим отображения окна (ADR-0021). Focus — полный Orbital Desk.
 ///
-/// `Panel` — выпадающая панель CLI-команды `panel` (ADR-0033): тот же процесс
-/// и сессия, но без декораций и только с зоной станций. Бар-виджет открывает
-/// `Overlay` командой `overlay`.
+/// `Panel` — выпадающая панель бар-виджета, команда `panel` (ADR-0033): тот же
+/// процесс и сессия, но без декораций и только с зоной станций. Капсула
+/// `Overlay` остаётся CLI-поверхностью и вызывается командой `overlay`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum WindowMode {
     #[default]
@@ -45,9 +45,9 @@ pub(crate) enum WindowMode {
 }
 
 impl WindowMode {
-    /// Режимы, доступные из настроек: `Panel` открывается только CLI-командой
-    /// `panel`, потому что это поверхность, а не раскладка стола. Бар-виджет
-    /// переключает `Overlay` командой `overlay` (ADR-0033).
+    /// Режимы, доступные из настроек: `Panel` открывается только командой `panel`
+    /// (клик по бар-виджету), потому что это поверхность, а не раскладка стола;
+    /// капсула `Overlay` остаётся CLI-переключателем `overlay` (ADR-0033).
     pub(crate) const ALL: [Self; 3] = [Self::Focus, Self::Overlay, Self::Listening];
 
     /// Размер для `ViewportBuilder` нового окна.
@@ -164,7 +164,7 @@ impl WindowState {
 
     /// Переключатель-выпадающий (ADR-0033): открытая поверхность того же режима
     /// скрывается, иначе режим переключается на `mode` и показывается. Зовётся
-    /// из бар-виджета (`overlay`) и из CLI (`panel`).
+    /// из бар-виджета (`panel`) и из CLI (`overlay`).
     pub(super) fn toggle_dropdown(&mut self, mode: WindowMode) {
         if self.mode == mode && self.visible {
             self.hide();
@@ -318,7 +318,7 @@ mod tests {
 
     #[test]
     fn overlay_dropdown_toggles_the_capsule() {
-        // Бар-виджет кликает по закрытому окну в другом режиме: Overlay открывается.
+        // Команда `overlay` приходит, когда открыт другой режим: капсула появляется.
         let mut window = WindowState {
             visible: true,
             mode: WindowMode::Focus,

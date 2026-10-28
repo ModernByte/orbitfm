@@ -46,8 +46,8 @@ OrbitFM — 3D Interactive Global Radio Player
   toggle               Показать/скрыть окно (по умолчанию)
   show                 Показать окно
   hide                 Скрыть окно
-  panel                Показать/скрыть выпадающую панель (CLI)
-  overlay              Показать/скрыть капсулу Overlay (бар-виджет)
+  panel                Показать/скрыть выпадающую панель (бар-виджет)
+  overlay              Показать/скрыть капсулу Overlay (CLI)
   status               Состояние приложения
   mode [режим]         Текущий режим окна или focus/overlay/listening/panel
   play <uuid>          Воспроизвести станцию по UUID (Radio Browser)

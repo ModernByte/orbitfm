@@ -290,7 +290,7 @@ barWidget.setText(noctalia.tr("widget.label"))
 barWidget.setTooltip(noctalia.tr("widget.tooltip"))
 
 function onClick()
-    local started = noctalia.runAsync("orbitfm overlay")
+    local started = noctalia.runAsync("orbitfm panel")
 
     if not started then
         noctalia.notify(noctalia.tr("widget.error_title"), noctalia.tr("widget.error_body"))
@@ -299,11 +299,14 @@ end
 ```
 
 Плагин не держит состояние и не содержит бизнес-логики: он только отправляет
-IPC-команду `overlay` — переключатель капсулы Overlay (открытая капсула
-скрывается, другой режим переключается на Overlay и показывается) — через CLI.
+IPC-команду `panel` — переключатель выпадающей панели (открытая панель
+скрывается, другой режим переключается на Panel и показывается) — через CLI.
 Форма `runAsync` с колбэком не используется: Noctalia ограничивает такую
 команду таймаутом 5 с и убивает группу процессов, поэтому GUI запускается без
-callback. Выпадающая панель остаётся CLI-командой `panel` — виджет её не зовёт. Строки интерфейса — в `translations/en.json` и
+callback. Капсула Overlay остаётся CLI-командой `overlay` — виджет её не зовёт;
+полный стол Focus тоже не в плагине, а в ярлыке приложения (`orbitfm mode
+focus`). Развод точек входа поэтому живёт в командах (ADR-0033, ред. 2026-10-28).
+Строки интерфейса — в `translations/en.json` и
 `translations/ru.json`; ключи вложены по сегментам (`widget.label`), плоские
 ключи с точками каталог не принимает.
 

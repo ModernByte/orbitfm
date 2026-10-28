@@ -45,9 +45,10 @@ description: GUI и 3D-глобус OrbitFM на eframe, egui и egui-wgpu. Ис
 - В render-модуль передавать `SpectrumTarget`, не `SpectrumFrame`/`AudioEngine`.
 - Сглаживание и затухание — в `SpectrumOverlay`; App Core только поставляет данные.
 - Пока оверлей виден, запрашивать repaint (~33 мс).
-- Лента в капсуле Overlay — фиксированные 16 полос (`CAP_VIZ_BARS`, bucket-max из модели
-  стола, 62×16 px), репейн 33 мс только при Playing и ноль аллокаций при выключенном
-  визуализаторе; `viz_bars` на неё не влияет.
+- Узкая лента — фиксированные 16 полос и размеры 62×16 px; константы `NARROW_VIZ_BARS`
+  и `NARROW_VIZ_SIZE` с `bucket_max` живут в `src/ui/widgets.rs` и они общие у капсулы
+  Overlay и шапки выпадающей панели (ADR-0022, ADR-0033). Репейн 33 мс только при
+  Playing и ноль аллокаций при выключенном визуализаторе; `viz_bars` на неё не влияет.
 
 ## Правила кода
 

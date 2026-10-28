@@ -43,7 +43,6 @@ pub(crate) const CATALOG: Catalog = Catalog {
         global_genre: "글로벌 장르",
         custom_tag_hint: "사용자 태그, 예: ambient",
         genre_search_hint: "전 세계 검색; 좌표가 없는 방송국도 목록에 남습니다.",
-        idle: "대기",
     },
     panel: PanelText {
         stations: "방송국",

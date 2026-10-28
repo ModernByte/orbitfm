@@ -500,6 +500,31 @@ const VIZ_BAR_RADIUS: f32 = 1.0;
 const VIZ_PEAK_HEIGHT: f32 = 2.0;
 const VIZ_BAR_MIN_HEIGHT: f32 = 1.5;
 
+/// Узкий визуализатор для узких поверхностей: 16 полос, в 2,5 раза уже столового
+/// `VIZ_SIZE` (156×46). Число полос фиксировано требованием и не связано с
+/// настройкой `viz_bars` стола (ADR-0022). Капсула Overlay и шапка выпадающей
+/// панели используют один размер — у обеих контролы живут в одной строке с
+/// текстом.
+pub(crate) const NARROW_VIZ_BARS: usize = 16;
+pub(crate) const NARROW_VIZ_SIZE: (f32, f32) = (62.0, 16.0);
+
+/// Прореживание полос модели до фиксированного числа: bucket-max по целым
+/// интервалам источника, без аллокаций (стек-массив). При `len < N` интервалы
+/// перекрываются, поэтому пустых корзин не возникает вовсе.
+pub(crate) fn bucket_max<const N: usize>(source: &[f32]) -> [f32; N] {
+    let mut out = [0.0; N];
+    if source.is_empty() {
+        return out;
+    }
+    let len = source.len();
+    for (index, slot) in out.iter_mut().enumerate() {
+        let start = index * len / N;
+        let end = ((index + 1) * len / N).clamp(start + 1, len);
+        *slot = source[start..end].iter().copied().fold(0.0, f32::max);
+    }
+    out
+}
+
 /// Столбцы визуализатора: градиент привязан к высоте поля, поэтому короткий
 /// столбец остаётся зелёным, а жёлтый и красный появляются только на подъёме.
 /// Пики висят над столбцами отдельными шапками.
@@ -1414,6 +1439,34 @@ pub(crate) fn logo_mark(ui: &mut egui::Ui, palette: &Palette, size: f32) {
 mod tests {
     use super::*;
     use crate::settings::AccentColor;
+
+    #[test]
+    fn bucket_max_collapses_source_bars_to_narrow_field() {
+        let rising: Vec<f32> = (0..24).map(|i| i as f32 / 24.0).collect();
+        let out = bucket_max::<NARROW_VIZ_BARS>(&rising);
+        assert_eq!(out.len(), NARROW_VIZ_BARS);
+        assert!(
+            (out[15] - 23.0 / 24.0).abs() < 1e-6,
+            "в последней корзине — верх исходных полос"
+        );
+        assert!(
+            out.windows(2).all(|pair| pair[0] <= pair[1]),
+            "монотонность сохраняется"
+        );
+    }
+
+    #[test]
+    fn bucket_max_never_leaves_an_empty_bucket() {
+        for len in [1usize, 3, 8, 15, 16, 17, 64] {
+            let source = vec![0.5; len];
+            let out = bucket_max::<NARROW_VIZ_BARS>(&source);
+            assert!(
+                out.iter().all(|value| *value == 0.5),
+                "пустая корзина при len {len}"
+            );
+        }
+        assert_eq!(bucket_max::<NARROW_VIZ_BARS>(&[]), [0.0; NARROW_VIZ_BARS]);
+    }
 
     #[test]
     fn flag_emoji_maps_iso_to_regional_indicators() {

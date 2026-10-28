@@ -43,7 +43,6 @@ pub(crate) const CATALOG: Catalog = Catalog {
         global_genre: "Género global",
         custom_tag_hint: "Etiqueta personalizada, p. ex. ambient",
         genre_search_hint: "Pesquisa mundial; as emissoras sem coordenadas ficam na lista.",
-        idle: "Inativo",
     },
     panel: PanelText {
         stations: "Emissoras",

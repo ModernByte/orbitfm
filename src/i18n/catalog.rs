@@ -54,7 +54,6 @@ pub(crate) struct HudText {
     pub global_genre: &'static str,
     pub custom_tag_hint: &'static str,
     pub genre_search_hint: &'static str,
-    pub idle: &'static str,
 }
 
 pub(crate) struct PanelText {

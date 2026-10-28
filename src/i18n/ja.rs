@@ -43,7 +43,6 @@ pub(crate) const CATALOG: Catalog = Catalog {
         global_genre: "世界のジャンル",
         custom_tag_hint: "任意のタグ（例: ambient）",
         genre_search_hint: "世界中を検索。座標のない放送局は一覧に残る。",
-        idle: "待機",
     },
     panel: PanelText {
         stations: "放送局",

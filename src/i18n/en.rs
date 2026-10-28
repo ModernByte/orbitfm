@@ -43,7 +43,6 @@ pub(crate) const CATALOG: Catalog = Catalog {
         global_genre: "Global genre",
         custom_tag_hint: "Custom tag, e.g. ambient",
         genre_search_hint: "Worldwide search; stations without coordinates stay in the list.",
-        idle: "Idle",
     },
     panel: PanelText {
         stations: "Stations",

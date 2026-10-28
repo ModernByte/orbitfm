@@ -54,7 +54,7 @@ Noctalia требует `id` в формате `<author>/<plugin>`; `org.modernb
 выполняется:
 
 ```luau
-local started = noctalia.runAsync("orbitfm overlay")
+local started = noctalia.runAsync("orbitfm panel")
 
 if not started then
     noctalia.notify(noctalia.tr("widget.error_title"), noctalia.tr("widget.error_body"))
@@ -67,10 +67,12 @@ end
 `kDefaultCommandTimeout = 5000 мс` и по истечении убивает всю группу процессов
 вместе с только что поднятым GUI. Поэтому виджет проверяет лишь факт запуска
 команды, а ошибки работы плеера остаются в логах OrbitFM. Плагин **не** хранит
-состояние плеера и не содержит бизнес-логики; `overlay` — переключатель капсулы:
-открытый Overlay скрывается, другой режим переключается на Overlay и показывается,
-а при отсутствии экземпляра команда поднимает OrbitFM сразу с видимой капсулой
-(семантика CLI). Выпадающая панель доступна только из CLI командой `panel`.
+состояние плеера и не содержит бизнес-логики; `panel` — переключатель выпадающей
+панели: открытая панель своего режима скрывается, другой режим переключается на
+`Panel` и показывается, а при отсутствии экземпляра команда поднимает OrbitFM
+сразу с видимой панелью (семантика CLI). Капсулу Overlay той же механикой зовёт
+команда `overlay` — из CLI и переключателя «Компоновка»; полный стол Focus —
+ярлык приложения с `Exec=orbitfm mode focus` (ADR-0033, ред. 2026-10-28).
 
 `tags` выбираются только из официального списка (здесь `bar`, `audio`, `music`),
 а `dependencies = ["orbitfm"]` объявляет внешнюю команду, которую запускает
@@ -107,9 +109,9 @@ noctalia plugins lint orbitfm
 ### Niri
 
 `wm-configs/orbitfm-niri.kdl` содержит по правилу на каждый режим; правило
-Focus — то, что открывает ярлык приложения (`orbitfm mode focus`), капсулу
-Overlay плагин зовёт командой `orbitfm overlay`, Listening и остальные режимы —
-`orbitfm mode overlay|listening`:
+Focus — то, что открывает ярлык приложения (`orbitfm mode focus`), панель
+виджета плагин зовёт командой `orbitfm panel`, капсулу Overlay и остальные
+режимы — `orbitfm overlay` и `orbitfm mode overlay|listening`:
 
 ```kdl
 window-rule {
@@ -227,7 +229,7 @@ windowrulev2 = noblur, title:^OrbitFM · Panel$
 ## 3. Принципы
 
 - Плагин Noctalia — максимально тонкий
-- Все команды идут через существующий IPC (`orbitfm overlay`, `orbitfm toggle` и т.д.)
+- Все команды идут через существующий IPC (`orbitfm panel`, `orbitfm toggle` и т.д.)
 - app-id / class должны быть стабильными и соответствовать Desktop Entry
 
 ## 4. Связанные ADR

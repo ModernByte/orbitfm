@@ -43,7 +43,6 @@ pub(crate) const CATALOG: Catalog = Catalog {
         global_genre: "全球流派",
         custom_tag_hint: "自定义标签，例如 ambient",
         genre_search_hint: "全球范围搜索；没有坐标的电台仍会留在列表中。",
-        idle: "空闲",
     },
     panel: PanelText {
         stations: "电台",

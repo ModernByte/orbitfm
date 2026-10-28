@@ -43,7 +43,7 @@ OrbitFM — не «список радиостанций с картой», а *
 | Режим | Триггер | Плотность UI | Глобус |
 |--------|---------|--------------|--------|
 | **Focus** | Обычный запуск / разворот | Полный HUD | 70–80% кадра |
-| **Overlay** | Noctalia / `orbitfm overlay` | Капсула (HUD-строка с 16-полосной лентой) | Мини-глобус или только выбранный регион |
+| **Overlay** | CLI `orbitfm overlay` / «Компоновка» | Капсула (HUD-строка с 16-полосной лентой) | Мини-глобус или только выбранный регион |
 | **Listening** | Идёт эфир, низкая активность UI | Минимальный now-playing + пульс | Idle + лёгкая анимация |
 
 Один набор виджетов, параметр `LayoutDensity` / `WindowMode`.
@@ -289,7 +289,7 @@ UI-копирайт тот же.
 | Country selected, loading | Скелетон/спиннер в панели списка |
 | Country selected, empty | «В этом секторе пока тихо» + сброс фильтров |
 | Genre mode, loading markers | Прогресс + глобус без устаревших маркеров |
-| Playing | Now-playing в HUD + pulse/visualizer |
+| Playing | Индикатор «● LIVE» в HUD + pulse/visualizer; имя станции и её логотип — в transport и списке |
 | Error (network/audio) | Тост/баннер, не блокирующий глобус |
 | Offline favorites | Список из library без запроса API |
 
