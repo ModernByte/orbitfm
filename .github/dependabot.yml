@@ -1,0 +1,17 @@
+version: 2
+updates:
+  # Экшены запинены полным SHA, поэтому без этого файла пины деградируют
+  # обратно в устаревшие теги: dependabot обновляет и SHA, и комментарий с
+  # версией. Cargo-граф намеренно не автоматизирован — правка зависимостей
+  # требует перегенерации flatpak-вендинга и ревизии ADR.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: chore(ci)
