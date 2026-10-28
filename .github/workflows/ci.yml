@@ -75,6 +75,26 @@ jobs:
       - name: Test
         run: cargo test --all-targets
 
+  # Контур поставки (QA-01). Отдельный job, а не шаг в `checks`: он не требует
+  # системных библиотек и не должен зависеть от того, собрался ли проект.
+  supply-chain:
+    name: supply chain (cargo deny)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: 1.98.1
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      - name: cargo deny check
+        run: bash packaging/cargo-deny-check.sh
+
   macos:
     name: macOS (build/test)
     runs-on: macos-latest
@@ -309,6 +329,7 @@ jobs:
 
       - name: Check AppImage and native installer script syntax
         run: |
+          bash -n packaging/cargo-deny-check.sh
           bash -n packaging/linux/build-appimage.sh
           bash -n packaging/macos/build-dmg.sh
           bash -n packaging/windows/stage-app.sh

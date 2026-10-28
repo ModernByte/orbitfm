@@ -74,6 +74,12 @@ jobs:
 
           echo "Тег $TAG подтверждён версией Cargo.toml $version"
 
+      # Пуш тега не триггерит CI, поэтому контур поставки проверяется прямо здесь:
+      # от этого job зависят все три сборочных job, и красный граф не сможет
+      # выложить артефакты.
+      - name: Supply chain (cargo deny)
+        run: bash packaging/cargo-deny-check.sh
+
   linux:
     name: Linux (AppImage)
     needs: version
