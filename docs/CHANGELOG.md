@@ -7,6 +7,12 @@
 
 ## [Unreleased]
 
+### Исправлено
+- Flatpak: `packaging/linux/flatpak-cargo-sources.json` дополнен 21 крейтом
+  SVG-стека и `egui_extras` (`resvg`, `usvg`, `tiny-skia`, `png`, `base64` и др.);
+  джоба CI «desktop metadata» снова проходит, sha256 сверены с `Cargo.lock`
+  и файлами с static.crates.io
+
 ## [0.11.0-rc.1] - 2026-10-28
 
 Пакет интерфейса после 0.10.0-rc.1: выпадающая панель бар-виджета (ADR-0033),
