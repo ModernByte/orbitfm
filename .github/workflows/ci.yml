@@ -325,40 +325,7 @@ jobs:
           '
 
       - name: Check Flatpak manifest and vendored sources
-        run: |
-          python3 - <<'PY'
-          import tomllib
-          from pathlib import Path
-
-          import yaml
-
-          manifest = yaml.safe_load(
-              Path("packaging/linux/org.modernbyte.OrbitFM.yml").read_text()
-          )
-          assert manifest["id"] == "org.modernbyte.OrbitFM"
-          assert manifest["runtime"] == "org.freedesktop.Platform"
-          assert manifest["runtime-version"] == "25.08"
-          assert manifest["command"] == "orbitfm"
-          assert any(module["name"] == "orbitfm" for module in manifest["modules"])
-
-          lock = tomllib.loads(Path("Cargo.lock").read_text())
-          expected = {
-              f"{package['name']}-{package['version']}"
-              for package in lock["package"]
-              if package.get("source", "").startswith("registry+")
-          }
-          sources = __import__("json").loads(
-              Path("packaging/linux/flatpak-cargo-sources.json").read_text()
-          )
-          vendored = {
-              source["dest"].removeprefix("cargo/vendor/")
-              for source in sources
-              if source.get("dest", "").startswith("cargo/vendor/")
-          }
-          missing = expected - vendored
-          assert not missing, f"cargo-sources.json не содержит: {sorted(missing)}"
-          print(f"manifest ok, vendored crates: {len(vendored)}")
-          PY
+        run: python3 packaging/linux/check-flatpak-sources.py
 
       - name: Check Flatpak build script syntax
         run: bash -n packaging/linux/build-flatpak.sh
