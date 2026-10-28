@@ -22,8 +22,10 @@ use crate::ipc::WakeFn;
 use crate::settings::ThemeMode;
 
 /// Пиксельный размер знака: `tray-icon` ужимает иконку до 22 pt строки меню,
-/// а запас в 48 px даёт чёткость на Retina.
-const ICON_SIZE: i32 = 48;
+/// а запас в 48 px даёт чёткость на Retina. Число берётся из верхнего края
+/// ряда `icon::SIZES`, чтобы SNI- и macOS-бэкенды не разъезжались
+/// (ADR-0026, п. 8).
+const ICON_SIZE: i32 = icon::SIZES[icon::SIZES.len() - 1];
 
 /// Стабильные ID пунктов: меню не пересобирается, обработчик переводит ID в
 /// команду (ADR-0026, п. 7).

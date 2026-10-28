@@ -49,6 +49,9 @@ pub(crate) const VOLUME_STEP: f64 = 0.1;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TrayCommand {
     Toggle,
+    /// Жест `secondary_activate` есть только у SNI; меню-бар macOS использует
+    /// тот же `Toggle` (ADR-0026, п. 7), поэтому на macOS вариант не создаётся.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     Show,
     PlayPause,
     Stop,
