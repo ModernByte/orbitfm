@@ -448,8 +448,22 @@
       (включая новый скриншот `02-settings.png`) синхронизированы
 - [x] `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, 415 тестов и
       release-сборка
-- [ ] Тег `v0.12.0-rc.1` и публикация — только после подтверждения владельца;
-      `release.yml` берёт тело из секции CHANGELOG
+- [x] Тег `v0.12.0-rc.1` и публикация (2026-10-28); `release.yml` берёт тело
+      из секции CHANGELOG
+
+## Патч 0.12.0-rc.2 (2026-10-28)
+
+- [x] Дефект 0.12.0-rc.1: в Panel 400 px dropdown наезжал на подпись и
+      подсказку в Motion, Language, Window и Appearance. `row` складывается в
+      вертикаль при контенте уже `slot + 132 px`; контрол получает фактическую
+      ширину строки, тест `narrow_row_stacks_the_control_below_the_label`
+- [x] ADR-0031 п. 2, модуль 14 и вики описывают вертикальную раскладку;
+      скриншот `02-settings.png` переснят, остальные экраны не изменились
+- [x] `Cargo.toml`/`Cargo.lock` → `0.12.0-rc.2`; CHANGELOG, VERSIONMAP,
+      metainfo, README и вики переведены на новую версию
+- [x] `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, 416 тестов и
+      release-сборка
+- [x] Тег `v0.12.0-rc.2` и публикация (2026-10-28)
 
 ## Релиз 0.11.0-rc.1 (2026-10-28)
 

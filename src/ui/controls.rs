@@ -17,6 +17,9 @@ const ROW_HEIGHT: f32 = 30.0;
 /// Подпись строки — 12.5 pt, приглушённая подсказка под ней — 10.5 pt.
 const LABEL_SIZE: f32 = 12.5;
 const HINT_SIZE: f32 = 10.5;
+/// Минимальная ширина подписи рядом с контролом: уже — строка складывается в
+/// вертикаль, иначе слот dropdown'а наезжает на текст.
+const MIN_LABEL_WIDTH: f32 = 132.0;
 /// Тумблер: трек 40×22, ручка 16 px, отступ ручки от края трека.
 const TRACK_SIZE: egui::Vec2 = egui::Vec2::new(40.0, 22.0);
 const KNOB_RADIUS: f32 = 8.0;
@@ -283,12 +286,14 @@ pub(crate) fn accent_swatch(
     response.on_hover_text(hint)
 }
 
-/// Строка настройки: подпись слева (перенос по ширине слота), контрол в
-/// фиксированном слоте справа, приглушённая подсказка под подписью.
+/// Строка настройки: подпись слева (перенос по ширине), контрол в фиксированном
+/// слоте справа, приглушённая подсказка под подписью.
 ///
-/// `slot` — (ширина, высота) места под контрол: 220×30 для dropdown, 0 для
-/// контрола, который приносит подпись сам (тумблер). Возвращает то, что вернул
-/// контрол.
+/// `slot` — (ширина, высота) места под контрол: 220×30 для dropdown, 184×26 для
+/// палитры акцентов. В окне уже `slot.0 + MIN_LABEL_WIDTH` строка складывается
+/// в вертикаль: подпись и подсказка сверху на всю ширину, контрол под ними —
+/// иначе слот наезжает на перенесённый текст (узкая рейка категорий).
+/// Возвращает то, что вернул контрол.
 pub(crate) fn row<R>(
     ui: &mut egui::Ui,
     palette: &Palette,
@@ -299,13 +304,39 @@ pub(crate) fn row<R>(
 ) -> R {
     let gap = ui.spacing().item_spacing.x;
     let width = ui.available_width();
-    let label_width = (width - slot.0 - gap).max(48.0);
+    let stacked = width < slot.0 + MIN_LABEL_WIDTH + gap;
+    let label_width = if stacked { width } else { width - slot.0 - gap };
     let galley = ui.painter().layout(
         label.to_owned(),
         egui::FontId::proportional(LABEL_SIZE),
         palette.text,
         label_width,
     );
+    if stacked {
+        let (label_rect, _) = ui.allocate_exact_size(
+            egui::Vec2::new(width, galley.size().y),
+            egui::Sense::hover(),
+        );
+        ui.painter().galley(label_rect.min, galley, palette.text);
+        if let Some(hint) = hint {
+            ui.label(
+                egui::RichText::new(hint)
+                    .size(HINT_SIZE)
+                    .color(palette.muted)
+                    .weak(),
+            );
+        }
+        let (control_rect, _) =
+            ui.allocate_exact_size(egui::Vec2::new(width, slot.1), egui::Sense::hover());
+        return ui
+            .scope_builder(
+                egui::UiBuilder::new()
+                    .max_rect(control_rect)
+                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                |ui| control(ui),
+            )
+            .inner;
+    }
     let height = ROW_HEIGHT.max(galley.size().y);
     let rect = egui::Rect::from_min_size(
         ui.available_rect_before_wrap().min,
@@ -470,6 +501,54 @@ mod tests {
         );
         assert_eq!(switch_knob_x(track, f32::NAN), off);
         assert_eq!(switch_knob_x(track, 7.0), on);
+    }
+
+    #[test]
+    fn narrow_row_stacks_the_control_below_the_label() {
+        // Панель 400 px даёт строке ~232 px: слот 220 px рядом с подписью
+        // физически не помещается, поэтому контрол уходит под текст.
+        let ctx = egui::Context::default();
+        let mut start = 0.0f32;
+        let mut control = egui::Rect::NOTHING;
+        let output = ctx.run_ui(
+            egui::RawInput {
+                time: Some(0.1),
+                predicted_dt: 1.0 / 60.0,
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(232.0, 420.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                start = ui.cursor().min.y;
+                control = row(
+                    ui,
+                    &palette(),
+                    "Компоновка окна интерфейса",
+                    Some("Подсказка под подписью."),
+                    (220.0, 30.0),
+                    |ui| {
+                        ui.allocate_exact_size(
+                            egui::vec2(ui.available_width(), 30.0),
+                            egui::Sense::hover(),
+                        )
+                        .0
+                    },
+                );
+            },
+        );
+        output.drop_without_applying_deltas();
+        assert!(
+            control.top() >= start + 30.0,
+            "контрол ниже подписи и подсказки: {control:?}"
+        );
+        assert!(
+            control.top() < start + 46.0,
+            "подпись в вертикали занимает всю ширину строки и не переносится: {control:?}"
+        );
+        assert_eq!(control.width(), 232.0, "контрол занимает всю строку");
+        assert_eq!(control.right(), 232.0, "контрол у правого края строки");
     }
 
     #[test]
