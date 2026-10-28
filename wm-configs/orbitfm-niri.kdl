@@ -43,7 +43,7 @@ window-rule {
     shadow { off; }
 }
 
-// Выпадающая панель CLI `panel` (ADR-0033): без рамки, тени и кольца фокуса,
+// Выпадающая панель бар-виджета (команда `panel`, ADR-0033): без рамки, тени и кольца фокуса,
 // чтобы читалась как продолжение бара, а не как отдельное окно.
 window-rule {
     match app-id="org.modernbyte.OrbitFM" title=r"^OrbitFM · Panel$"
