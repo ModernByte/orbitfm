@@ -140,6 +140,8 @@ pub(crate) struct SettingsText {
     pub system_language: &'static str,
     pub language_hint: &'static str,
     pub volume: &'static str,
+    /// Подсказка над слайдером: колесо мыши меняет громкость (ADR-0031 §7).
+    pub volume_hint: &'static str,
     pub audio_hint: &'static str,
     pub motion_reactivity: &'static str,
     pub motion_spin_hint: &'static str,

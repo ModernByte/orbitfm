@@ -61,9 +61,12 @@ pub enum IpcCommand {
     SetMode {
         mode: WindowModeArg,
     },
-    /// `panel`: выпадающая панель бар-виджета (ADR-0033). Повторная команда
+    /// `panel`: выпадающая панель из CLI (ADR-0033). Повторная команда
     /// при открытой панели скрывает её, из другого режима — переключает.
     Panel,
+    /// `overlay`: переключатель капсулы Overlay для бар-виджета (ADR-0033).
+    /// Открытый Overlay скрывается, из другого режима — переключается и показывается.
+    Overlay,
     /// Неизвестная команда сохраняется для расширения протокола.
     Raw(String),
 }
@@ -110,6 +113,10 @@ impl IpcCommand {
             "panel" => {
                 reject_extra_args(parts.next())?;
                 Ok(Self::Panel)
+            }
+            "overlay" => {
+                reject_extra_args(parts.next())?;
+                Ok(Self::Overlay)
             }
             "mode" => match parts.next() {
                 None => Ok(Self::ModeQuery),
@@ -161,6 +168,7 @@ impl IpcCommand {
             Self::ModeQuery => "mode".to_owned(),
             Self::SetMode { mode } => format!("mode {}", mode.as_str()),
             Self::Panel => "panel".to_owned(),
+            Self::Overlay => "overlay".to_owned(),
             Self::Raw(raw) => raw.clone(),
         }
     }
@@ -264,6 +272,17 @@ mod tests {
         assert_eq!(IpcCommand::parse("panel").unwrap(), IpcCommand::Panel);
         assert_eq!(IpcCommand::Panel.to_wire(), "panel");
         assert!(IpcCommand::parse("panel extra").is_err());
+    }
+
+    #[test]
+    fn parses_overlay_toggle() {
+        assert_eq!(
+            IpcCommand::parse("overlay").unwrap(),
+            IpcCommand::Overlay,
+            "голая команда не путается с `mode overlay`"
+        );
+        assert_eq!(IpcCommand::Overlay.to_wire(), "overlay");
+        assert!(IpcCommand::parse("overlay extra").is_err());
     }
 
     #[test]

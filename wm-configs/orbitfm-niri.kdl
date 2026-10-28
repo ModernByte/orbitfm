@@ -3,29 +3,35 @@
 // где стоит виджет. На Wayland обычное окно не может встать точно под виджет:
 // композитор центрирует плавающие окна, а правило задаёт только смещение от
 // угла вывода. x подобран под правую секцию бара; если виджет сдвинут, измените
-// x (для 420-px капсул — так, чтобы их центр совпал с иконкой).
+// x — так, чтобы центр капсулы (output_right − x − ширина/2) совпал с иконкой:
+// для 500-px Overlay это x=270, для 420-px капсул Listening — x=310.
 // Размер фиксируется по заголовку: у каждого режима свой заголовок, поэтому
 // правила не пересекаются и порядок их применения не важен.
 window-rule {
     match app-id="org.modernbyte.OrbitFM" title=r"^OrbitFM$"
     open-floating true
-    default-column-width { fixed 920; }
-    default-window-height { fixed 660; }
+    default-column-width { fixed 1100; }
+    default-window-height { fixed 800; }
     default-floating-position x=60 y=48 relative-to="top-right"
     draw-border-with-background false
 }
 
-// Капсула Overlay: узкое окно с mini-глобусом и избранным.
+// Капсула Overlay: окно 500×620 с mini-глобусом и избранным — без рамки и тени,
+// как и остальные не-Focus режимы (ADR-0021 ред. 2026-10-28, ADR-0033).
+// x=270 держит центр капсулы там же, где был у 420 px при x=310:
+// 310 + 420/2 = 270 + 500/2 = 520 px от правого края вывода.
 window-rule {
     match app-id="org.modernbyte.OrbitFM" title=r"^OrbitFM · Overlay$"
     open-floating true
-    default-column-width { fixed 420; }
+    default-column-width { fixed 500; }
     default-window-height { fixed 620; }
-    default-floating-position x=310 y=48 relative-to="top-right"
+    default-floating-position x=270 y=48 relative-to="top-right"
     draw-border-with-background false
+    border { off; }
+    shadow { off; }
 }
 
-// Окно Listening: одна строка now-playing.
+// Окно Listening: одна строка now-playing — без рамки и тени.
 window-rule {
     match app-id="org.modernbyte.OrbitFM" title=r"^OrbitFM · Listening$"
     open-floating true
@@ -33,9 +39,11 @@ window-rule {
     default-window-height { fixed 152; }
     default-floating-position x=310 y=48 relative-to="top-right"
     draw-border-with-background false
+    border { off; }
+    shadow { off; }
 }
 
-// Выпадающая панель бар-виджета (ADR-0033): без рамки, тени и кольца фокуса,
+// Выпадающая панель CLI `panel` (ADR-0033): без рамки, тени и кольца фокуса,
 // чтобы читалась как продолжение бара, а не как отдельное окно.
 window-rule {
     match app-id="org.modernbyte.OrbitFM" title=r"^OrbitFM · Panel$"

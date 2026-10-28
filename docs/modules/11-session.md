@@ -96,9 +96,9 @@ Listening — `Off`. `motion_reactivity()`, `analysis_needed()` и `sync_analysi
 | `tray_snapshot` | `Option<TraySnapshot>` | Последний опубликованный треем снимок: `sync_tray` шлёт в SNI только изменение |
 
 `size: Option<...>` — `None` только до первого `begin_window` (то есть на самом
-первом показе процесса): тогда `restore_size()` отдаёт `WINDOW_SIZE` (920×660).
+первом показе процесса): тогда `restore_size()` отдаёт `WINDOW_SIZE` (1100×800).
 Пользовательский размер относится только к `Focus`: `remember_size` игнорирует
-капсульные размеры, иначе `Overlay` заразил бы `Focus` шириной 420 px
+капсульные размеры, иначе `Overlay` заразил бы `Focus` шириной 500 px
 (`user_size_is_remembered_only_while_focused`). `mode` — режим окна (ADR-0021):
 он есть и у скрытого окна, и `restore_size()`/`min_size()` берут геометрию из него.
 `reopen` — единичный признак «пересоздать вьюпорт с геометрией нового режима»;
@@ -389,7 +389,10 @@ for WindowMode`: `src/ipc/` не знает доменного режима, п�
 снимает `pending_volume`, применяет значение ядру и пишет его в `SettingsStore`
 сразу. Перетаскивание слайдера (`UiAction::PreviewVolume` → `preview_volume`)
 меняет только звук и кладёт значение в `pending_volume`, а отпускание
-(`UiAction::CommitVolume` → `commit_volume`) записывает его. `end_window()`
+(`UiAction::CommitVolume` → `commit_volume`) записывает его; клик по треку,
+клавиатурный шаг и щелчок колеса над слайдером дают `changed` и `committed` в том
+же кадре, поэтому pending у них не открывается и запись следует сразу (шаг колеса =
+`VOLUME_KEY_STEP` = 0.05 на щелчок, ADR-0031 § 7). `end_window()`
 зовёт `flush_pending_volume()`, чтобы drag, прерванный скрытием окна, не потерял
 значение; ошибка сохранения — `warn!` и `NoticeKey::VolumeNotSaved`.
 
@@ -436,16 +439,22 @@ Reconnecting`, `station` — `single_line(name)` при живом эфире и
 
 ### 4.14. Режимы окна (ADR-0021)
 
-`WindowMode { Focus, Overlay, Listening }` живёт в `src/session/window.rs` рядом
-с `WindowState`, а не в `SettingsStore`: режим нужен припаркованному циклу
+`WindowMode { Focus, Overlay, Listening, Panel }` живёт в `src/session/window.rs`
+рядом с `WindowState`, а не в `SettingsStore`: режим нужен припаркованному циклу
 (ADR-0014 ограничивает настройки оформлением). Каждый режим несёт свою геометрию
 и заголовок:
 
 | Режим | Размер | Минимум | Заголовок |
 |-------|--------|---------|-----------|
-| `Focus` | 920×660 | 720×480 | `OrbitFM` |
-| `Overlay` | 420×620 | 360×480 | `OrbitFM · Overlay` |
+| `Focus` | 1100×800 | 720×480 | `OrbitFM` |
+| `Overlay` | 500×620 | 360×480 | `OrbitFM · Overlay` |
 | `Listening` | 420×152 | 360×120 | `OrbitFM · Listening` |
+| `Panel` | 400×640 | 360×480 | `OrbitFM · Panel` |
+
+`is_borderless(mode)` = «не `Focus`»: presentation-слой по нему снимает декорации
+у `Overlay`, `Listening` и `Panel` (ADR-0021 п. 4, ADR-0033). `Panel` нет в
+`WindowMode::ALL` — его открывает только CLI-команда `panel`, бар-виджет зовёт
+`overlay` и получает `Overlay`.
 
 `set_window_mode(mode)` — единственная точка переключения: тот же режим →
 `UiIntent::Show`; новый режим при открытом окне → `reopen = true` +

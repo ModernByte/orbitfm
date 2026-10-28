@@ -123,6 +123,7 @@ pub(crate) const CATALOG: Catalog = Catalog {
         system_language: "Sistema",
         language_hint: "Le modifiche si applicano subito; non serve riavviare.",
         volume: "Volume",
+        volume_hint: "Rotellina sulla barra — ±5 % per tacca.",
         audio_hint: "Il volume viene salvato al rilascio del cursore.",
         motion_reactivity: "Reattività",
         motion_spin_hint: "Senza reattività il globo ruota da solo, come la Terra reale.",

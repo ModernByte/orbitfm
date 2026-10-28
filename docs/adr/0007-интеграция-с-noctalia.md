@@ -49,10 +49,12 @@ entry = "plugin.luau"
 В `plugin.luau` виджет при клике выполняет:
 
 ```luau
-noctalia.runAsync("orbitfm toggle")
+noctalia.runAsync("orbitfm overlay")
 ```
 
 То есть плагин **не** содержит логики плеера — только отправляет IPC-команду уже запущенному (или запускаемому) процессу OrbitFM.
+Команда `overlay` — переключатель капсулы Overlay: открытая капсула скрывается, другой режим переключается на Overlay и показывается.
+Выпадающая панель доступна только из CLI (`orbitfm panel`).
 
 ### 3. Принцип разделения
 
@@ -118,7 +120,8 @@ noctalia.runAsync("orbitfm toggle")
 
 ## Ссылки (официальные)
 
-- ADR-0033: выпадающая панель бар-виджета — командой `orbitfm panel`
+- ADR-0033: выпадающая панель бар-виджета — командой `orbitfm panel` (CLI);
+  бар-виджет переключает капсулу Overlay командой `orbitfm overlay`
   (`docs/adr/0033-выпадающая-панель-бар-виджета.md`)
 - https://docs.noctalia.dev/noctalia/plugins/development/
 - https://docs.noctalia.dev/noctalia/plugins/development/manifest/

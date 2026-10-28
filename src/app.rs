@@ -608,6 +608,8 @@ impl<'a> OrbitApp<'a> {
                                     can_resume: frame.can_resume,
                                     volume: frame.volume,
                                     favicons,
+                                    visualizer,
+                                    visualizer_enabled: session.visualizer_enabled,
                                     language: frame.language,
                                 },
                             )

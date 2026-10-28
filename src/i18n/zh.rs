@@ -123,6 +123,7 @@ pub(crate) const CATALOG: Catalog = Catalog {
         system_language: "跟随系统",
         language_hint: "更改立即生效，无需重启。",
         volume: "音量",
+        volume_hint: "在滑块上滚动鼠标滚轮 — 每格 ±5 %。",
         audio_hint: "松开滑块时保存音量。",
         motion_reactivity: "响应度",
         motion_spin_hint: "关闭响应度后，地球会像现实一样自动旋转。",

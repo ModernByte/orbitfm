@@ -6,11 +6,14 @@
 //! создания (ADR-0018 п. 5), и поэтому смена режима — это перезапуск UI-цикла.
 
 /// Размер окна по умолчанию: применяется при показе после скрытия (ADR-0018).
-pub(crate) const WINDOW_SIZE: [f32; 2] = [920.0, 660.0];
+pub(crate) const WINDOW_SIZE: [f32; 2] = [1100.0, 800.0];
 /// Нижний лимит размера окна в обычном (не скрытом) состоянии.
 pub(crate) const WINDOW_MIN_SIZE: [f32; 2] = [720.0, 480.0];
 /// Капсула Overlay: узкое окно с mini-глобусом и избранным (ADR-0021).
-pub(crate) const OVERLAY_SIZE: [f32; 2] = [420.0, 620.0];
+/// Ширина 500 px: правый блок контролов верхнего ряда занимает ≈350 px,
+/// аватар ≈38 px, и при прежних 420 px на имя/подпись оставалось 27 px —
+/// текст заливал визуализатор и кнопки (ADR-0021, ред. 2026-10-28).
+pub(crate) const OVERLAY_SIZE: [f32; 2] = [500.0, 620.0];
 pub(crate) const OVERLAY_MIN_SIZE: [f32; 2] = [360.0, 480.0];
 /// Окно Listening: одна строка now-playing с пульсом (ADR-0021).
 pub(crate) const LISTENING_SIZE: [f32; 2] = [420.0, 152.0];
@@ -29,8 +32,9 @@ pub(crate) const PANEL_TITLE: &str = "OrbitFM · Panel";
 
 /// Режим отображения окна (ADR-0021). Focus — полный Orbital Desk.
 ///
-/// `Panel` — выпадающая панель бар-виджета (ADR-0033): тот же процесс и сессия,
-/// но без декораций окна и только с зоной станций.
+/// `Panel` — выпадающая панель CLI-команды `panel` (ADR-0033): тот же процесс
+/// и сессия, но без декораций и только с зоной станций. Бар-виджет открывает
+/// `Overlay` командой `overlay`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum WindowMode {
     #[default]
@@ -41,8 +45,9 @@ pub(crate) enum WindowMode {
 }
 
 impl WindowMode {
-    /// Режимы, доступные из настроек: `Panel` открывается только бар-виджетом
-    /// и IPC-командой `panel`, потому что это поверхность, а не раскладка стола.
+    /// Режимы, доступные из настроек: `Panel` открывается только CLI-командой
+    /// `panel`, потому что это поверхность, а не раскладка стола. Бар-виджет
+    /// переключает `Overlay` командой `overlay` (ADR-0033).
     pub(crate) const ALL: [Self; 3] = [Self::Focus, Self::Overlay, Self::Listening];
 
     /// Размер для `ViewportBuilder` нового окна.
@@ -83,10 +88,11 @@ impl WindowMode {
         }
     }
 
-    /// Панель бар-виджета не имеет ни заголовка, ни рамки: декорации окна
-    /// отключаются до создания viewport, иначе CSD рисует полосу заголовка.
+    /// Капсулы и панель не имеют ни заголовка, ни рамки: CSD рисует полосу
+    /// заголовка поверх стеклянной поверхности. Рамка остаётся только у Focus —
+    /// единственного режима, который живёт как обычное окно (ADR-0021, ADR-0033).
     pub(crate) fn is_borderless(self) -> bool {
-        matches!(self, Self::Panel)
+        self != Self::Focus
     }
 }
 
@@ -156,13 +162,14 @@ impl WindowState {
         }
     }
 
-    /// Клик по бар-виджету (ADR-0033): открытая панель скрывается, иначе режим
-    /// переключается на выпадающую панель и показывается.
-    pub(super) fn toggle_panel(&mut self) {
-        if self.mode == WindowMode::Panel && self.visible {
+    /// Переключатель-выпадающий (ADR-0033): открытая поверхность того же режима
+    /// скрывается, иначе режим переключается на `mode` и показывается. Зовётся
+    /// из бар-виджета (`overlay`) и из CLI (`panel`).
+    pub(super) fn toggle_dropdown(&mut self, mode: WindowMode) {
+        if self.mode == mode && self.visible {
             self.hide();
         } else {
-            self.set_mode(WindowMode::Panel);
+            self.set_mode(mode);
         }
     }
 
@@ -216,7 +223,7 @@ impl WindowState {
     }
 
     /// Пользовательский размер относится только к `Focus`: иначе капсула
-    /// запомнила бы 420 px и вернула их в `Focus`.
+    /// запомнила бы свою пресетную ширину и вернула её в `Focus`.
     pub(super) fn remember_size(&mut self, size: [f32; 2]) {
         if self.mode == WindowMode::Focus {
             self.size = Some(size);
@@ -286,27 +293,56 @@ mod tests {
     }
 
     #[test]
-    fn bar_panel_toggles_open_and_closed() {
+    fn panel_dropdown_toggles_open_and_closed() {
         let mut window = WindowState {
             visible: true,
             mode: WindowMode::Panel,
             ..WindowState::default()
         };
-        window.toggle_panel();
+        window.toggle_dropdown(WindowMode::Panel);
         assert_eq!(window.take_intent(), Some(UiIntent::Close));
 
         window.visible = false;
-        window.toggle_panel();
+        window.toggle_dropdown(WindowMode::Panel);
         assert_eq!(window.take_intent(), Some(UiIntent::Show));
         assert!(!window.take_reopen(), "панель уже в режиме Panel");
 
         // Из другого режима первый клик переключает и показывает панель.
         window.mode = WindowMode::Focus;
         window.visible = true;
-        window.toggle_panel();
+        window.toggle_dropdown(WindowMode::Panel);
         assert_eq!(window.mode, WindowMode::Panel);
         assert_eq!(window.take_intent(), Some(UiIntent::Close));
         assert!(window.take_reopen());
+    }
+
+    #[test]
+    fn overlay_dropdown_toggles_the_capsule() {
+        // Бар-виджет кликает по закрытому окну в другом режиме: Overlay открывается.
+        let mut window = WindowState {
+            visible: true,
+            mode: WindowMode::Focus,
+            ..WindowState::default()
+        };
+        window.toggle_dropdown(WindowMode::Overlay);
+        assert_eq!(window.mode, WindowMode::Overlay);
+        assert!(window.take_reopen());
+        assert_eq!(window.take_intent(), Some(UiIntent::Close));
+
+        // Повторный клик по открытому Overlay скрывает его.
+        window.visible = true;
+        window.toggle_dropdown(WindowMode::Overlay);
+        assert_eq!(window.mode, WindowMode::Overlay);
+        assert_eq!(window.take_intent(), Some(UiIntent::Close));
+        assert!(
+            !window.take_reopen(),
+            "режим тот же — пересоздания не нужно"
+        );
+
+        // Клик по скрытому Overlay показывает его, не трогая режим.
+        window.visible = false;
+        window.toggle_dropdown(WindowMode::Overlay);
+        assert_eq!(window.take_intent(), Some(UiIntent::Show));
     }
 
     #[test]
@@ -324,10 +360,17 @@ mod tests {
     }
 
     #[test]
-    fn only_the_bar_panel_is_borderless_and_not_in_settings() {
-        assert!(WindowMode::Panel.is_borderless());
-        for mode in WindowMode::ALL {
-            assert!(!mode.is_borderless(), "{mode:?} обязан оставаться окном");
+    fn only_focus_keeps_decorations() {
+        assert!(
+            !WindowMode::Focus.is_borderless(),
+            "Focus живёт как обычное окно"
+        );
+        for mode in [
+            WindowMode::Overlay,
+            WindowMode::Listening,
+            WindowMode::Panel,
+        ] {
+            assert!(mode.is_borderless(), "{mode:?} обязан быть без рамки");
         }
         assert!(
             !WindowMode::ALL.contains(&WindowMode::Panel),

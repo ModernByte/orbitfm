@@ -123,6 +123,7 @@ pub(crate) const CATALOG: Catalog = Catalog {
         system_language: "시스템",
         language_hint: "변경 즉시 적용되며, 재시작이 필요 없습니다.",
         volume: "볼륨",
+        volume_hint: "슬라이더에서 마우스 휠 — 한 칸에 ±5 %.",
         audio_hint: "슬라이더를 놓으면 볼륨이 저장됩니다.",
         motion_reactivity: "민감도",
         motion_spin_hint: "민감도를 끄면 지구가 실제처럼 자동으로 회전합니다.",

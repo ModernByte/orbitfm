@@ -88,6 +88,8 @@ root-вьюпорта: цикл завершается, управление в�
     при `Reduce motion`, ADR-0032). Громкость из drawer'а идёт двумя действиями:
     `UiAction::PreviewVolume` на перетаскивании (только аудио, `Session::preview_volume`)
     и `UiAction::CommitVolume` при отпускании (`Session::commit_volume`, ADR-0031).
+    Колесо над слайдером даёт оба действия в одном кадре: дискретный шаг не имеет
+    незавершённого preview (ADR-0031 § 7).
 14. Обслуживать Roulette: `Session::start_roulette` запрашивает случайную станцию с
     координатами, `Session::poll_roulette` запускает её, доворачивает камеру и отдаёт
     `Notice`; отдельной IPC-команды нет.
@@ -109,8 +111,8 @@ root-вьюпорта: цикл завершается, управление в�
 10. IpcServer::run(wake, shutdown) — accept-loop
 11. run_session(commands, wake, AppServices) — Session::new + цикл окна (ADR-0018):
     11.1. Session::restore_size()    — сохранённый размер (пользовательский пишется только
-                                       в `Focus`) либо дефолт режима: 920×660 /
-                                       OVERLAY 420×620 / LISTENING 420×152
+                                       в `Focus`) либо дефолт режима: 1100×800 /
+                                       OVERLAY 500×620 / LISTENING 420×152 / PANEL 400×640
     11.2. Session::begin_window(size) — признак «окно открыто», сброс неисполненного намерения
     11.3. Session::settle_analysis() — включить `@level`/`@spectrum` под открытое окно
     11.4. run_window(session, size)  — eframe::run_native ПОВТОРНО из главного потока
@@ -239,7 +241,7 @@ transport → help → легенда → капсулы, затем в `Order::
 (`src/ui/layout.rs`): HUD сверху (58 px), панель станций справа (312 px),
 transport снизу (84 px: контролы + громкость + 40 px визуализатора), help-карточка
 слева сверху (по требованию), легенда плотности слева снизу и drawer настроек
-справа (340 px, клампится до ширины окна) поверх scrim на весь viewport. Клик и колесо
+справа (380 px, клампится до ширины окна) поверх scrim на весь viewport. Клик и колесо
 глобуса игнорируются внутри плавающих зон (`DeskLayout::blocks_point`). UI вынесен
 в `src/ui/`; каждая зона через `ui.scope_builder(...).inner` возвращает собственный
 `Vec<UiAction>`, `OrbitApp` склеивает их и применяет после отрисовки кадра. Все
@@ -249,7 +251,9 @@ transport снизу (84 px: контролы + громкость + 40 px ви�
 
 Режим окна (ADR-0021) задаёт плотность одного набора виджетов: `Full` для Focus,
 `Compact` для Overlay и `Minimal` для Listening. `Compact` собирает HUD-строку
-сверху, мини-глобус между зонами и капсулу избранного снизу (до 8 строк
+сверху (название, подзаголовок «{статус воспроизведения} · {регион, страна}» и 16
+полос визуализатора справа от них),
+мини-глобус между зонами и капсулу избранного снизу (до 8 строк
 `station_row`); `Minimal` — единственную строку now-playing с аватаром, пульсирующим
 кольцом при Playing, heart/expand/close и play/pause (`src/ui/capsule.rs`).
 Звёздное небо и country-режим рисуются только в `Full`; сглаженный `pulse`
@@ -261,8 +265,10 @@ transport снизу (84 px: контролы + громкость + 40 px ви�
 Доступность: кастомные контролы получают focus-ring и `WidgetInfo` с ролью и
 подписью (`Role::Button`/`RadioButton`/`CheckBox`/`Tab`, `ListItem` у строки,
 `slider` у громкости); громкость принимает стрелки и Home/End с шагом
-`VOLUME_KEY_STEP` = 0.05, а `SliderResponse { changed, committed }` разделяет изменение
-и завершение (отпускание drag, клик или клавиша): первое даёт `UiAction::PreviewVolume`,
+`VOLUME_KEY_STEP` = 0.05, а колесо мыши над слайдером — тот же шаг на щелчок и
+сразу как завершённый ввод (ADR-0031 § 7). `SliderResponse { changed, committed }`
+разделяет изменение
+и завершение (отпускание drag, клик, клавиша или щелчок колеса): первое даёт `UiAction::PreviewVolume`,
 второе — `UiAction::CommitVolume` (ADR-0031); строки списка
 focusable, ↑/↓ переводят фокус на соседа по видимому списку, `scroll_to_me`
 удерживает его в кадре, Space/Enter запускают станцию штатным
@@ -369,10 +375,14 @@ focusable, ↑/↓ переводят фокус на соседа по види
 - чип `Visualizer` включает метрику спектра mpv: без неё столбцы переходят в
   idle-«дыхание», ошибка фильтра показывается тостом и не прерывает
   воспроизведение; состояние чипа — сохранённая настройка `Settings::visualizer_enabled`
-  (ADR-0031). Число столбцов (16/24/32) выбирается в секции `Appearance` drawer'а
-  настроек (`UiAction::SetVizBars` → `Settings::viz_bars`, модель перестраивается на месте);
-- секция `Motion` drawer'а настроек: реактивность Off/Low/Normal/High,
-  `Reduce motion`, `Allow flips` и `Motion style` (`UiAction::SetMotionStyle` →
+  (ADR-0031). Число столбцов (16/24/32) выбирается `dropdown`'ом в секции `Appearance`
+  drawer'а настроек (`UiAction::SetVizBars` → `Settings::viz_bars`, модель перестраивается
+  на месте); капсула Overlay показывает ровно 16 полос и от `viz_bars` не зависит —
+  срез считается bucket-max по уровням модели (`src/ui/capsule.rs`), а при
+  `visualizer_enabled == false` полосы не аллоцируются вовсе, чтобы строка не прыгала;
+- секция `Motion` drawer'а настроек: реактивность Off/Low/Normal/High и стиль
+  движения — `dropdown`'ы, `Reduce motion` и `Allow flips` — `checkbox`
+  (`UiAction::SetMotionStyle` →
   `Session::set_motion_style`, `UiAction::SetAllowFlips` →
   `Session::set_allow_flips`); переключатель переворотов недоступен при
   `Off`/Reduce motion; ошибка сохранения показывается тостом;
@@ -419,7 +429,8 @@ focusable, ↑/↓ переводят фокус на соседа по види
 `TransportState`,
 `PanelState`, `HudState`, `FaviconCache` и `decode_favicon`, `Toast`, капсулы
 `capsule::{overlay_top, overlay_favorites, listening}`, `widgets::glass_panel`,
-`widgets::volume_slider`/`volume_slider_width` и `SliderResponse`,
+`widgets::volume_slider_width` (с колесом над слайдером) и
+`SliderResponse`, примитивы строк настроек `controls::{dropdown, checkbox, row}`,
 `settings_panel::{show, SettingsState}`, `animation` (`Transitions`, `ZoneFlags`,
 `FrameMotion`, `alpha`, `slide_x`, `rise_y`, `stagger`, `Presence`),
 `overlays::help_card`/`country_legend`, `ui::country_map::CountryHeatCache`,

@@ -1,8 +1,8 @@
 # Модуль: Панель настроек (drawer)
 
-**Путь в коде:** `src/ui/settings_panel.rs`  
+**Путь в коде:** `src/ui/settings_panel.rs`, примитивы строк — `src/ui/controls.rs`  
 **Ответственность:** Содержимое правой панели настроек; scrim и модалка — в `app.rs`.  
-**Зависимости:** egui, `ui::animation`, `ui::palette`, `ui::widgets`, `ui::icons`, `i18n`, `settings`, `session::WindowMode`.
+**Зависимости:** egui, `ui::animation`, `ui::controls`, `ui::palette`, `ui::widgets`, `ui::icons`, `i18n`, `settings`, `session::WindowMode`.
 
 ---
 
@@ -28,30 +28,61 @@
 | `DeskLayout` | `settings: Option<Rect>` | зона панели в текущем кадре |
 
 Зона считается в `DeskLayout::compute` (`settings_rect`): ширина
-`min(SETTINGS_WIDTH = 340, viewport.width() − 2·MARGIN)`, правая колонна на всю
+`min(SETTINGS_WIDTH = 380, viewport.width() − 2·MARGIN)`, правая колонна на всю
 высоту между полями. Она входит в `blocks_point`, поэтому глобус не получает
 клики и drag, начатые над ней. В `Listening` зоны нет: `Session::open_settings`
 в этом режиме сначала переводит окно в `Overlay`.
 
 Содержимое входит одним `stagger` по прогрессу drawer'а: заголовок и шесть
-блоков секций (`BLOCK_HEADER`…`BLOCK_ABOUT`). Гаснут только краски — `dimmed` с
-`fade_visuals` правят `Visuals`, `widgets::faded_group` приглушает контролы, чей
-цвет приходит из палитры. Раскладка, идентификаторы виджетов и hit-зоны
-остаются неподвижными (ADR-0032 §7).
+блоков секций (`BLOCK_HEADER`…`BLOCK_ABOUT`). Гаснут только краски: у блоков,
+нарисованных палитрой, приглушается сам `Palette` (`widgets::faded_palette` —
+`dim` передаётся в `controls` и `widgets`), у нативных контролов egui —
+`Visuals` (`dimmed` + `fade_visuals`). Второй механизм поверх первого не
+накладывается: `multiply_opacity` и вложенный `Ui` ради альфы в контролах
+запрещены (ADR-0032 §7). Раскладка, идентификаторы виджетов и hit-зоны
+остаются неподвижными.
+
+### 2.1. Примитивы строк (`src/ui/controls.rs`)
+
+- `dropdown(ui, palette, id_salt, width, options, selected, label_of)` —
+  перечисление на `egui::ComboBox::from_id_salt`: чип с фоном и обводкой
+  палитры, собственный шеврон (`Shape::line`, accent на hover и на открытом
+  списке), `truncate` и подпись текущего значения из каталога. Возвращает
+  `Some(index)` только при реальном выборе, поэтому строка не генерирует
+  `UiAction` на каждом кадре. `id_salt` передаётся из вызова — авто-id egui
+  зависят от позиции в кадре, а смена языка меняет подписи.
+- `checkbox(ui, palette, checked, enabled, label)` — квадрат 18×18 с
+  скруглением 5, галочка двумя штрихами, контрастным цветом на accent-фоне;
+  hit-зона включает подпись, `Sense::hover` у выключенного, `WidgetInfo::selected`
+  с ролью `CheckBox` и focus-ring.
+- `row(ui, palette, label, hint, slot, control)` — строка настройки: галлея
+  подписи с переносом по ширине `ui.available_width() − slot.0 − gap`, контрол в
+  фиксированном слоте справа (`UiBuilder::max_rect` +
+  `Layout::centered_and_justified`), приглушённая подсказка под подписью. Слот
+  задаётся вызывающим: `DROPDOWN_SLOT` 168×26, `VOLUME_SLOT` 150×18,
+  `SWATCH_SLOT` 220×22. Высота строки — `max(ROW_HEIGHT, высота галлеи)`, так что
+  перенос подписи не сдвигает контрол по горизонтали.
+
+Контролы рисуются уже приглушённой палитрой и не делают вложенный `Ui` ради
+эффектов; переиспользуемые чипы (`ComboBox`) получают `chip_visuals` — фон,
+обводку и accent из нашей палитры.
 
 ## 3. Секции
 
-- **Appearance** — тема (`ThemeMode::ALL`), акцент (шесть плашек-свотчей с
-  подсказкой), чекбокс визуализатора (`UiAction::ToggleSpectrum`), число столбцов
-  из `VIZ_BAR_CHOICES`.
-- **Language** — `Language::ALL`: `System` и 10 языков с нативными именами,
-  пояснение.
-- **Audio** — громкость (`widgets::volume_slider_width`, 230 px) и пояснение.
-- **Motion & accessibility** — реактивность (`MotionReactivity::ALL`), характер
-  движения (`MotionStyle::ALL`), reduce motion, flips; под чипами — подсказка
-  `motion_spin_hint` о том, что без реактивности глобус вращается сам.
-- **Window** — `WindowMode::ALL`, пояснение, чекбокс карточки управления,
-  `Hide`, `Quit`.
+- **Appearance** — тема (`dropdown` по `ThemeMode::ALL`), акцент (шесть
+  плашек-свотчей 28×22 в `SWATCH_SLOT` с подсказкой), `checkbox` визуализатора
+  (`UiAction::ToggleSpectrum`), число столбцов (`dropdown` из `VIZ_BAR_CHOICES`,
+  недоступен при выключенном визуализаторе).
+- **Language** — `dropdown` по `Language::ALL`: `System` и 10 языков с нативными
+  именами, пояснение `language_hint`.
+- **Audio** — громкость (`widgets::volume_slider_width` в `VOLUME_SLOT` 150×18) и
+  пояснение `audio_hint`; у самого слайдера подсказка `volume_hint` — про колесо.
+- **Motion & accessibility** — реактивность (`dropdown` по `MotionReactivity::ALL`)
+  с подсказкой `motion_spin_hint`, характер движения (`dropdown` по
+  `MotionStyle::ALL`), reduce motion и flips — `checkbox`; под чекбоксами
+  остаётся текстовая подсказка, а наведение на flips показывает `flips_unavailable`.
+- **Window** — `dropdown` по `WindowMode::ALL` с `window_hint`, `checkbox`
+  карточки управления, `Hide`, `Quit`.
 - **About** — версия, лицензия, app-id, пояснение про фоновую работу и трей,
   подсказка про сохранение.
 
@@ -87,18 +118,31 @@
 
 ## 5. Громкость
 
-`widgets::volume_slider` и `widgets::volume_slider_width` возвращают
+`widgets::volume_slider_width` возвращает
 `SliderResponse { changed, committed }`, где `committed` — отпускание drag либо
-изменение без продолжающегося drag (клик по треку, клавиша). Зоны — drawer,
-transport и верхняя капсула Overlay — переводят это в два действия:
+изменение без продолжающегося drag (клик по треку, клавиша, щелчок колеса). Зоны —
+drawer, transport и верхняя капсула Overlay — переводят это в два действия:
 
 - `changed && !committed` → `UiAction::PreviewVolume` → `Session::preview_volume`:
   только `audio.set_volume` и `pending_volume`, файл не трогается;
 - `committed` → `UiAction::CommitVolume` → `Session::commit_volume`: звук плюс
   запись в `SettingsStore`, pending сбрасывается.
 
-Клавиатурный шаг тоже коммитит: стрелки ±5 %, Home/End — край. Дискретные
-команды (IPC `Volume`, трей VolumeUp/Down, MPRIS) идут через `Session::set_volume`
+Клавиатурный шаг тоже коммитит: стрелки ±5 %, Home/End — край. Колесо мыши —
+третий дискретный ввод того же `widgets::volume_slider_width`, поэтому оно
+достается всем трём зонам без дублирования кода: шаг ±5 % на щелчок (`VOLUME_KEY_STEP`),
+коммит сразу, `pending_volume` не открывается. Три следствия реализованы в виджете:
+обработка только под указателем (`response.hovered()`) — иначе слайдер воровал бы
+скролл у списка станций и зум глобуса; шаг считается по сырым `input.events` с
+пересчётом `MouseWheelUnit::{Point, Line, Page}` в пиксели, потому что egui
+растягивает один щелчок на несколько кадров (`smooth_scroll_delta` = 40 px плюс
+угасающий хвост), и каждый хвост дал бы лишнюю запись в `settings.json`;
+сглаженная дельта обнуляется, пока указатель над слайдером, чтобы остаток щелчка
+не доехал `ScrollArea` drawer'а. Повтор тех же входных данных в многопроходной
+отрисовке отсекается по `input.time` (`insert_temp` на `response.id`), иначе один
+щелчок применился бы дважды. Подсказка при наведении — `settings.volume_hint`.
+
+Дискретные команды (IPC `Volume`, трей VolumeUp/Down, MPRIS) идут через `Session::set_volume`
 и пишут файл сразу. Прерванный drag дописывает в файл `end_window()` через
 `flush_pending_volume()` — этот путь покрывает `Hide`, WM-close и `Quit`, так как
 все они заканчиваются закрытием вьюпорта. Значение клампится в `0.0..=1.0`,
@@ -124,9 +168,18 @@ Scrim — `egui::Area` на весь viewport в `Order::Foreground`, затем
 - `layout`: `open_settings_drawer_blocks_its_column`,
   `closed_settings_drawer_does_not_block_anything`,
   `drawer_clamps_width_on_a_narrow_viewport`, `listening_has_no_drawer_zone`;
+- `controls`: `checked_state_does_not_move_the_checkbox` (галочка не меняет ни
+  аллокацию, ни hit-зону), `long_label_wraps_instead_of_pushing_the_control`
+  (ширина слота фиксирована, правый край совпадает у короткой и длинной подписи);
 - `settings_panel`: reduce motion даёт конечную альфу без перехода, блоки идут
   по порядку на входе и в обратном порядке на выходе, альфа не выходит из
   `0..=1` включая NaN;
+- `widgets`: `wheel_over_slider_steps_volume_and_commits`,
+  `wheel_is_deduplicated_within_one_input_time`,
+  `wheel_outside_slider_leaves_volume_and_scroll_alone`,
+  `wheel_clamps_at_volume_edges_without_commit` — headless-прогоны `ctx.run_ui`
+  с `Event::PointerMoved` + `Event::MouseWheel { unit: Line }`; отдельный кадр
+  наведения нужен потому, что `hovered()` читает состояние прошлого прохода;
 - `session::window`: `mode_switch_of_an_open_window_reopens_it` — reopen
   отличается от закрытия, только поэтому drawer при смене режима сохраняется;
 - `i18n::labels`: у каждого значения `ThemeMode`, `AccentColor`,

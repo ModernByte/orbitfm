@@ -396,7 +396,7 @@ impl SettingsStore {
     }
 }
 
-fn sanitized_volume(volume: f64) -> f64 {
+pub(crate) fn sanitized_volume(volume: f64) -> f64 {
     if volume.is_finite() {
         volume.clamp(0.0, 1.0)
     } else {

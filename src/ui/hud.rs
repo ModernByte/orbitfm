@@ -27,6 +27,19 @@ use super::{
 const COMPACT_HUD_WIDTH: f32 = 1000.0;
 const TIGHT_HUD_WIDTH: f32 = 840.0;
 const COUNTRY_SUGGESTIONS: usize = 6;
+/// Штатная ширина поля поиска: плотная и полная раскладки.
+const COMPACT_SEARCH_WIDTH: f32 = 150.0;
+const SEARCH_WIDTH: f32 = 240.0;
+/// Ниже этой ширины строкой ввода нельзя пользоваться.
+const MIN_SEARCH_WIDTH: f32 = 120.0;
+/// Минимум ширины подписки now-playing: короче — станцию не прочитать.
+const MIN_NOW_PLAYING_WIDTH: f32 = 96.0;
+/// Иконочная кнопка (`icons::SIDE`), аватар и бейдж «● LIVE» в шапке.
+const ICON_BUTTON: f32 = 30.0;
+const AVATAR_SIZE: f32 = 38.0;
+const LIVE_BADGE_SIZE: f32 = 52.0;
+/// Добавочный зазор перед кнопкой «×» поверх `item_spacing`.
+const CLOSE_GAP: f32 = 4.0;
 /// Высота строки бренда в шапке панели. Строку нельзя отдавать на растяжение
 /// вертикальному layout: центрирование по перекрёстной оси тогда считает от
 /// всей высоты шапки и уводит поиск с режимами за её нижнюю границу.
@@ -63,6 +76,7 @@ pub(crate) fn show(
     let width = ui.available_width();
     let compact = width < COMPACT_HUD_WIDTH;
     let tight = width < TIGHT_HUD_WIDTH;
+    let spacing = ui.spacing().item_spacing.x;
     let shown = content_alpha(motion.scene);
     let text = i18n::catalog(state.language);
 
@@ -105,7 +119,7 @@ pub(crate) fn show(
                 ));
                 ui.add_space(8.0);
 
-                let search_width = if compact { 150.0 } else { 240.0 };
+                let search_width = search_width(ui.available_width(), compact, tight, spacing);
                 if state.mode == SearchMode::Country {
                     actions.extend(country_search(
                         ui,
@@ -154,6 +168,48 @@ pub(crate) fn show(
 /// приходит конечной единицей, и хелпер ничего не гасит.
 fn content_alpha(scene: f32) -> f32 {
     animation::alpha(animation::stagger(SCENE_INDEX, scene))
+}
+
+/// Ширина контролов правого блока, которые стоят левее подписки станции:
+/// бейдж «● LIVE», аватар и «×» с промежутками.
+fn trailing_controls_width(spacing: f32) -> f32 {
+    LIVE_BADGE_SIZE + AVATAR_SIZE + ICON_BUTTON + CLOSE_GAP + spacing * 3.0
+}
+
+/// Несгибаемая ширина правого блока: кнопки, аватар, бейдж и промежутки между
+/// ними. Подпись станции в бюджет не входит — она берёт остаток строки.
+fn right_block_width(compact: bool, tight: bool, spacing: f32) -> f32 {
+    // Кнопка панели, «?», шестерёка и «×» рисуются при любой плотности.
+    let mut width = ICON_BUTTON * 4.0;
+    // Промежутков на один меньше, чем контролов.
+    let mut gaps = 3.0;
+    if !tight {
+        // Тема, бейдж LIVE и аватар; перед «×» — добавочный `add_space`.
+        width += ICON_BUTTON + LIVE_BADGE_SIZE + AVATAR_SIZE + CLOSE_GAP;
+        gaps += 3.0;
+    }
+    if !compact {
+        // Подпись вклинивается между кнопкой темы и бейджем.
+        gaps += 1.0;
+    }
+    width + gaps * spacing
+}
+
+/// Ширина поля поиска: штатная, пока правый блок вписывается в остаток строки,
+/// иначе — этот остаток, но не меньше [`MIN_SEARCH_WIDTH`].
+///
+/// `Layout::right_to_left` не переносит содержимое на новую строку
+/// (`Layout::main_wrap == false`), поэтому единственный способ не дать
+/// контролам уехать поверх pill — уступить им место заранее.
+fn search_width(available: f32, compact: bool, tight: bool, spacing: f32) -> f32 {
+    let nominal = if compact {
+        COMPACT_SEARCH_WIDTH
+    } else {
+        SEARCH_WIDTH
+    };
+    let reserve = right_block_width(compact, tight, spacing)
+        + if compact { 0.0 } else { MIN_NOW_PLAYING_WIDTH };
+    (available - reserve).clamp(MIN_SEARCH_WIDTH, nominal)
 }
 
 fn playing(state: &HudState<'_>) -> bool {
@@ -420,49 +476,63 @@ fn right_side(
     }
 
     if !compact {
-        ui.vertical(|ui| {
-            ui.spacing_mut().item_spacing.y = 1.0;
-            let name = match state.now_playing {
-                Some(station) => {
-                    let name = single_line(&station.name);
-                    if name.is_empty() {
-                        text.common.untitled.to_owned()
-                    } else {
-                        truncate(&name, if compact { 18 } else { 26 })
-                    }
+        // Колонку станции ограничиваем остатком строки за вычетом контролов,
+        // которые стоят левее неё: `ui.vertical` в RTL-раскладке съедает всю
+        // ширину до поля поиска, и бейдж с аватаром и «×» уезжают поверх pill.
+        // Ширина зависит только от плотности и размера окна — не от текста,
+        // поэтому hit-зоны контролов не смещаются (ADR-0032 §7).
+        let spacing = ui.spacing().item_spacing.x;
+        let text_width = (ui.available_width() - trailing_controls_width(spacing)).max(0.0);
+        let name = match state.now_playing {
+            Some(station) => {
+                let name = single_line(&station.name);
+                if name.is_empty() {
+                    text.common.untitled.to_owned()
+                } else {
+                    name
                 }
-                None => playback_label(state.language, state.playback),
-            };
-            ui.label(
-                egui::RichText::new(name)
-                    .size(13.0)
-                    .strong()
-                    .color(if is_playing {
-                        palette.accent
-                    } else {
-                        palette.text
-                    }),
-            );
-            let details = match state.now_playing {
-                Some(station) => {
-                    let place = single_line(
-                        &[station.state.as_str(), station.country.as_str()]
-                            .iter()
-                            .filter(|part| !part.trim().is_empty())
-                            .copied()
-                            .collect::<Vec<_>>()
-                            .join(", "),
-                    );
-                    if place.is_empty() {
-                        truncate(&playback_label(state.language, state.playback), 24)
-                    } else {
-                        truncate(&place, if compact { 20 } else { 30 })
-                    }
+            }
+            None => playback_label(state.language, state.playback),
+        };
+        let details = match state.now_playing {
+            Some(station) => {
+                let place = single_line(
+                    &[station.state.as_str(), station.country.as_str()]
+                        .iter()
+                        .filter(|part| !part.trim().is_empty())
+                        .copied()
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                );
+                if place.is_empty() {
+                    playback_label(state.language, state.playback)
+                } else {
+                    place
                 }
-                None => text.hud.idle.to_owned(),
-            };
-            ui.label(egui::RichText::new(details).size(10.5).color(palette.muted));
-        });
+            }
+            None => text.hud.idle.to_owned(),
+        };
+        ui.allocate_ui_with_layout(
+            egui::vec2(text_width, ui.available_height()),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.spacing_mut().item_spacing.y = 1.0;
+                ui.add(
+                    egui::Label::new(egui::RichText::new(name).size(13.0).strong().color(
+                        if is_playing {
+                            palette.accent
+                        } else {
+                            palette.text
+                        },
+                    ))
+                    .truncate(),
+                );
+                ui.add(
+                    egui::Label::new(egui::RichText::new(details).size(10.5).color(palette.muted))
+                        .truncate(),
+                );
+            },
+        );
     }
 
     if !tight {
@@ -574,5 +644,135 @@ mod tests {
         assert_eq!(content_alpha(f32::NAN), 0.0);
         assert_eq!(content_alpha(f32::INFINITY), 0.0);
         assert_eq!(content_alpha(f32::NEG_INFINITY), 0.0);
+    }
+
+    /// Станция с заведомо длинным именем: подпись обязана обрезаться по
+    /// ширине, а не раздвигать строку.
+    fn far_station() -> Station {
+        Station {
+            stationuuid: "d1b0c4a8-2f77-4a4b-a5d1-3f2f6c1a9b44".to_owned(),
+            name: "Радио «Побег на край света» — длинное имя, которое не влезает".to_owned(),
+            url: "http://example.com/live".to_owned(),
+            url_resolved: "https://example.com/live".to_owned(),
+            homepage: None,
+            favicon: None,
+            tags: "jazz".to_owned(),
+            countrycode: "RU".to_owned(),
+            language: "russian".to_owned(),
+            votes: 12,
+            country: "Russia".to_owned(),
+            state: "Камчатский край".to_owned(),
+            bitrate: 128,
+            codec: "MP3".to_owned(),
+            geo_lat: None,
+            geo_long: None,
+        }
+    }
+
+    /// На сколько пикселей правый блок вылез за левую границу строки — то
+    /// есть залез на pill поиска. Отрицательное значение — запас по ширине.
+    ///
+    /// `row_width` — ширина строки под стеклом (`Palette::glass` снимает по
+    /// 16 px с каждой стороны), левый блок — 341 px живого кадра RU 1100×800.
+    fn right_block_spill(row_width: f32, compact: bool, tight: bool) -> f32 {
+        let geo = GeoService::from_embedded().expect("встроенный датасет");
+        let palette = Palette::for_ui(egui::Theme::Dark, crate::settings::AccentColor::Blue);
+        let station = far_station();
+        let mut spill = 0.0f32;
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            time: Some(1.0),
+            predicted_dt: 1.0 / 60.0,
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::pos2(30.0, 24.0),
+                egui::vec2(row_width, 38.0),
+            )),
+            ..Default::default()
+        };
+        let output = ctx.run_ui(input, |ui| {
+            ui.horizontal(|ui| {
+                ui.allocate_exact_size(egui::vec2(341.0, 30.0), egui::Sense::hover());
+                let search = search_width(
+                    ui.available_width(),
+                    compact,
+                    tight,
+                    ui.spacing().item_spacing.x,
+                );
+                ui.allocate_exact_size(egui::vec2(search, 30.0), egui::Sense::hover());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let spacing = ui.spacing().item_spacing.x;
+                    let bound = ui.max_rect().left();
+                    let mut query = String::new();
+                    let mut country_query = String::new();
+                    let mut genre_query = String::new();
+                    let mut favicons = FaviconCache::new();
+                    let playback = PlaybackState::Playing;
+                    let mut state = HudState {
+                        query: &mut query,
+                        country_query: &mut country_query,
+                        genre_query: &mut genre_query,
+                        mode: SearchMode::Country,
+                        selected_genre: None,
+                        context_active: false,
+                        geo: &geo,
+                        now_playing: Some(&station),
+                        favicons: &mut favicons,
+                        playback: &playback,
+                        panel_open: false,
+                        help_open: false,
+                        language: Language::Russian,
+                    };
+                    right_side(ui, &palette, &mut state, true, compact, tight);
+                    spill = bound - (ui.cursor().max.x + spacing);
+                });
+            });
+        });
+        output.drop_without_applying_deltas();
+        spill
+    }
+
+    #[test]
+    fn right_block_never_crosses_the_search_field() {
+        // `Layout::right_to_left` не переносит содержимое: на столе 1100 px
+        // блок из 610 px залезал на pill на 149 px. Теперь поле поиска уступает
+        // место заранее, а подпись станции берёт ровно остаток.
+        for (row_width, compact, tight) in [
+            (1040.0, false, false), // 1100 px — полная раскладка
+            (940.0, true, false),   // порог COMPACT_HUD_WIDTH
+            (780.0, true, true),    // порог TIGHT_HUD_WIDTH
+        ] {
+            let spill = right_block_spill(row_width, compact, tight);
+            assert!(
+                spill <= 0.5,
+                "правый блок вылез на pill на {row_width} px: {spill} px"
+            );
+        }
+    }
+
+    #[test]
+    fn search_field_yields_width_before_the_row_overflows() {
+        let spacing = 8.0;
+        // 1100 px: после левого блока остаётся 699 px — поиск держит штатные
+        // 240, правому блоку с минимумом подписи хватает 396.
+        assert_eq!(search_width(699.0, false, false, spacing), SEARCH_WIDTH);
+        // Длинный перевод левого блока: поиск уступает ширину, но не право
+        // жизни — правый блок с подписью станции остаётся вписанным.
+        let narrow = 520.0;
+        let yielded = search_width(narrow, false, false, spacing);
+        assert!(
+            (MIN_SEARCH_WIDTH..SEARCH_WIDTH).contains(&yielded),
+            "поиск обязан уступить, получил {yielded}"
+        );
+        assert!(
+            yielded + right_block_width(false, false, spacing) + MIN_NOW_PLAYING_WIDTH <= narrow,
+            "правый блок не влезает в остаток строки"
+        );
+        // Компактная плотность держит свои 150 px, пока правый блок вписан.
+        assert_eq!(
+            search_width(460.0, true, false, spacing),
+            COMPACT_SEARCH_WIDTH
+        );
+        // И никогда не уходит в отрицательную ширину.
+        assert_eq!(search_width(0.0, false, false, spacing), MIN_SEARCH_WIDTH);
     }
 }

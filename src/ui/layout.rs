@@ -13,7 +13,9 @@ pub(crate) const HUD_HEIGHT: f32 = 58.0;
 pub(crate) const TRANSPORT_HEIGHT: f32 = 84.0;
 pub(crate) const PANEL_WIDTH: f32 = 312.0;
 /// Правый drawer настроек (ADR-0031): фиксированная ширина, clamp по viewport.
-pub(crate) const SETTINGS_WIDTH: f32 = 340.0;
+/// 380 px хватает на строку «подпись + dropdown 168»: при переносе подписи
+/// контрол остаётся в своём слоте (`src/ui/controls.rs`).
+pub(crate) const SETTINGS_WIDTH: f32 = 380.0;
 pub(crate) const HELP_SIZE: (f32, f32) = (216.0, 108.0);
 /// Легенда карты стран: выбор метрики + градиент Low → High.
 pub(crate) const LEGEND_SIZE: (f32, f32) = (216.0, 100.0);
@@ -375,7 +377,7 @@ mod tests {
 
     #[test]
     fn overlay_is_a_three_zone_capsule() {
-        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(420.0, 620.0));
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(500.0, 620.0));
         let layout = DeskLayout::compute(viewport, true, true, false, WindowMode::Overlay);
         assert_eq!(layout.density, LayoutDensity::Compact);
         assert!(layout.panel.is_none());

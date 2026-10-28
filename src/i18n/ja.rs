@@ -123,6 +123,7 @@ pub(crate) const CATALOG: Catalog = Catalog {
         system_language: "システム",
         language_hint: "変更は即時反映され、再起動は不要。",
         volume: "音量",
+        volume_hint: "スライダー上でマウスホイール — 1 回で ±5 %。",
         audio_hint: "スライダーを離すと音量が保存される。",
         motion_reactivity: "反応度",
         motion_spin_hint: "反応度をオフにすると、地球は実際のように自動で回転します。",

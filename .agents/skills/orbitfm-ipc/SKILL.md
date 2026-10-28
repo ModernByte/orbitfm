@@ -27,7 +27,10 @@ description: Single-instance и IPC OrbitFM. Использовать при р�
 
 Текстовый, одна команда = одна строка (`\n`).
 
-Команды: `toggle`, `show`, `hide`, `play <uuid>`, `stop`, `status`, `volume <0..1>`, `quit`.
+Команды: `toggle`, `show`, `hide`, `play <uuid>`, `stop`, `status`,
+`volume <0..1>`, `quit`, `panel` (показать/скрыть CLI-поверхность панели, ADR-0033),
+`overlay` (показать/скрыть капсулу Overlay — клик бар-виджета), `mode` (текущий режим
+окна) и `mode <режим>` (переключить режим: `focus`, `overlay`, `listening`, `panel`).
 
 Ответы: `ok` / `error <msg>` / многострочный `status`.
 

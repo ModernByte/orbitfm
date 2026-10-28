@@ -123,6 +123,7 @@ pub(crate) const CATALOG: Catalog = Catalog {
         system_language: "System",
         language_hint: "Änderungen wirken sofort; kein Neustart nötig.",
         volume: "Lautstärke",
+        volume_hint: "Mausrad über dem Regler — ±5 % pro Raste.",
         audio_hint: "Lautstärke wird beim Loslassen des Reglers gespeichert.",
         motion_reactivity: "Reaktivität",
         motion_spin_hint: "Ohne Reaktivität dreht sich der Globus von selbst wie die echte Erde.",

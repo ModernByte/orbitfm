@@ -53,7 +53,11 @@ impl super::Session {
                 "ok".to_owned()
             }
             IpcCommand::Panel => {
-                self.toggle_panel_dropdown();
+                self.toggle_dropdown(WindowMode::Panel);
+                "ok".to_owned()
+            }
+            IpcCommand::Overlay => {
+                self.toggle_dropdown(WindowMode::Overlay);
                 "ok".to_owned()
             }
             IpcCommand::Quit => {
@@ -207,6 +211,8 @@ mod tests {
             IpcCommand::Quit,
             IpcCommand::Stop,
             IpcCommand::ModeQuery,
+            IpcCommand::Panel,
+            IpcCommand::Overlay,
             IpcCommand::SetMode {
                 mode: WindowModeArg::Overlay,
             },

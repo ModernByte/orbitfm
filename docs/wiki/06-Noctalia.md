@@ -3,20 +3,22 @@
 ← [Домой](Home.md)
 
 Noctalia — Wayland-панель (v5) с системой плагинов, и OrbitFM поставляет для неё готовый виджет: одна
-кнопка, которая открывает под баром выпадающую панель плеера. Вся логика остаётся в самом OrbitFM — виджет
-лишь посылает `orbitfm panel` через тот же IPC, что и терминал.
+кнопка, которая открывает под баром капсулу плеера. Вся логика остаётся в самом OrbitFM — виджет
+лишь посылает `orbitfm overlay` через тот же IPC, что и терминал.
 
 ## Что даёт интеграция
 
 | Возможность | Как выглядит |
 |---|---|
-| Выпадающая панель | Клик по виджету **OrbitFM** в баре открывает панель 400×640 без рамок и заголовка: поиск, список станций, транспорт |
-| Скрыть панель | Повторный клик по виджету |
-| Запуск «с нуля» той же кнопкой | Если процесс не запущен, клик поднимает OrbitFM сразу с панелью |
-| Те же команды из терминала и скриптов | `orbitfm panel`, `orbitfm show`, `orbitfm hide`, `orbitfm mode overlay` |
+| Капсула Overlay | Клик по виджету **OrbitFM** в баре открывает капсулу 500×620 без рамок и заголовка: строка «сейчас играет» с 16-полосным визуализатором, мини-глобус, избранное, громкость, Play/Stop |
+| Скрыть капсулу | Повторный клик по виджету |
+| Запуск «с нуля» той же кнопкой | Если процесс не запущен, клик поднимает OrbitFM сразу с капсулой |
+| Те же команды из терминала и скриптов | `orbitfm overlay`, `orbitfm panel`, `orbitfm show`, `orbitfm hide`, `orbitfm mode overlay` |
 
-Панель — не отдельное приложение и не полноценное окно: у неё нет заголовка и рамки, композитор ставит её
-рядом с баром (правила окон в `wm-configs/`). Станции, громкость и избранное остаются в общей сессии плеера,
+Капсула — то же окно OrbitFM, только без заголовка и рамки: композитор ставит её
+рядом с баром (правила окон в `wm-configs/`). Выпадающая панель 400×640 никуда не
+делась, но осталась CLI-поверхностью — виджет её больше не открывает. Станции,
+громкость и избранное остаются в общей сессии плеера,
 а состояние воспроизведения можно посмотреть в [трее и MPRIS](07-Трей-и-MPRIS.md).
 
 ## Требования
@@ -33,10 +35,10 @@ Noctalia — Wayland-панель (v5) с системой плагинов, и 
 
 ```mermaid
 flowchart LR
-    A[Клик по виджету OrbitFM] --> B["noctalia.runAsync: orbitfm panel"]
+    A[Клик по виджету OrbitFM] --> B["noctalia.runAsync: orbitfm overlay"]
     B --> C{Процесс OrbitFM уже запущен}
     C -- да --> D["Команда уходит в сокет $XDG_RUNTIME_DIR/orbitfm.sock"]
-    D --> E["Существующий процесс показывает или прячет выпадающую панель"]
+    D --> E["Существующий процесс показывает или прячет капсулу Overlay"]
     C -- нет --> F["Отсоединённый запуск нового процесса"]
     F --> E
 ```
@@ -76,13 +78,15 @@ ls ~/.local/state/noctalia/plugins/materialized/
 
 | Действие | Результат |
 |---|---|
-| Клик, процесс не запущен | Стартует OrbitFM сразу с панелью 400×640 под виджетом; первый клик заметно дольше |
-| Клик, панель уже видима | Панель скрывается, воспроизведение продолжается |
-| Клик, открыт Focus/Overlay/Listening | Окно переходит в режим Panel и показывается под баром |
+| Клик, процесс не запущен | Стартует OrbitFM сразу с капсулой Overlay 500×620 под виджетом; первый клик заметно дольше |
+| Клик, капсула уже видима | Капсула скрывается, воспроизведение продолжается |
+| Клик, открыт Focus/Overlay/Listening | Окно переходит в режим Overlay и показывается под баром |
 | `orbitfm show` / `orbitfm toggle` | Возвращают окно в его текущем режиме |
+| `orbitfm panel` | Выпадающая панель 400×640 — только из CLI, виджет её не открывает |
 | `orbitfm mode overlay` / `listening` / `focus` | Меняет компоновку стола, даже когда окно скрыто; см. [Режимы окна](03-Режимы-окна.md) |
 
-Виджет открывает именно панель; полноразмерный стол и капсулы — отдельными командами `orbitfm mode …`.
+Виджет открывает именно капсулу Overlay; полноразмерный стол, строка Listening и
+выпадающая панель — отдельными командами `orbitfm mode …` и `orbitfm panel`.
 
 ## Если «ничего не происходит»
 
@@ -107,14 +111,15 @@ ls ~/.local/state/noctalia/plugins/materialized/
 include "./cfg/orbitfm.kdl"   // скопированный wm-configs/orbitfm-niri.kdl
 ```
 
-Фрагмент файла — по такому блоку на каждый режим:
+Фрагмент файла — по такому блоку на каждый режим (у не-Focus режимов дополнительно
+выключены `border` и `shadow`):
 
 ```kdl
 window-rule {
     match app-id="org.modernbyte.OrbitFM" title=r"^OrbitFM$"
     open-floating true
-    default-column-width { fixed 920; }
-    default-window-height { fixed 660; }
+    default-column-width { fixed 1100; }
+    default-window-height { fixed 800; }
     default-floating-position x=60 y=48 relative-to="top-right"
     draw-border-with-background false
 }
@@ -122,27 +127,31 @@ window-rule {
 
 Якорь `top-right` нужен потому, что виджет живёт в правой секции бара: niri центрирует плавающие окна, и без
 `default-floating-position` окно появится посередине экрана. `y=48` — отступ от панели Noctalia (её высота 36 px).
-Отступ `x` (`60` для Focus, `310` для 420-px капсул) рассчитан для панели 1920 px; при другой раскладке бара его
-подбирают вручную — так, чтобы центр капсулы совпал с иконкой виджета. Точная привязка «под виджетом» невозможна:
+Отступ `x` (`60` для Focus, `270` для 500-px Overlay (правка 2026-10-28), `310` для 420-px Listening и Panel) рассчитан для панели 1920 px; при другой раскладке бара его
+подбирают вручную — так, чтобы центр капсулы (`output_right − x − ширина/2`, для Overlay и Listening это 520 px от правого края) совпал с иконкой виджета. Точная привязка «под виджетом» невозможна:
 Wayland не даёт обычному окну позиционировать себя, а Plugin API не отдаёт прямоугольник виджета. Проверка геометрии:
 
 ```bash
 NIRI_SOCKET=<сокет> niri msg windows
 ```
 
-Смотрите `Tile size`, `Window size`, `Workspace-view position`: у Overlay ожидаемое `Window size` 420×620, у
+Смотрите `Tile size`, `Window size`, `Workspace-view position`: у Overlay ожидаемое `Window size` 500×620, у
 Listening — 420×152; цифры, равные размеру тайла, означают, что правило не сработало (`niri validate -c <файл>`).
 
 **Hyprland.** Подключите `wm-configs/orbitfm-hyprland.conf` — там `windowrulev2` с `float`, `center`,
-`stayfocused` и размерами по заголовку:
+`stayfocused`, размерами по заголовку и `noborder`/`noshadow` у капсул:
 
 ```ini
 windowrulev2 = float, class:^(org\.modernbyte\.OrbitFM)$
 windowrulev2 = center, class:^(org\.modernbyte\.OrbitFM)$
 windowrulev2 = stayfocused, class:^(org\.modernbyte\.OrbitFM)$
-windowrulev2 = size 920 660, title:^OrbitFM$
-windowrulev2 = size 420 620, title:^OrbitFM · Overlay$
+windowrulev2 = size 1100 800, title:^OrbitFM$
+windowrulev2 = size 500 620, title:^OrbitFM · Overlay$
+windowrulev2 = noborder, title:^OrbitFM · Overlay$
+windowrulev2 = noshadow, title:^OrbitFM · Overlay$
 windowrulev2 = size 420 152, title:^OrbitFM · Listening$
+windowrulev2 = noborder, title:^OrbitFM · Listening$
+windowrulev2 = noshadow, title:^OrbitFM · Listening$
 ```
 
 `windowrulev2` работает в Hyprland 0.52 и в совместимом режиме 0.53+, где помечен как устаревший (новый формат —

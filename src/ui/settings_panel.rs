@@ -19,14 +19,20 @@ use crate::settings::{
 
 use super::UiAction;
 use super::animation;
+use super::controls::{checkbox, dropdown, row};
 use super::icons::close_button;
 use super::palette::{Palette, accent_color};
-use super::widgets::{faded, faded_group, volume_slider_width};
+use super::widgets::{faded, faded_palette, quiet_button, volume_slider_width};
 
-/// Трек громкости: почти вся ширина drawer'а за вычетом полей.
-const VOLUME_WIDTH: f32 = 230.0;
+/// Слот под dropdown в строке настройки: 168×26 при ширине drawer'а 380 px.
+const DROPDOWN_SLOT: (f32, f32) = (168.0, 26.0);
+/// Слот громкости: подпись «Громкость» и трек в одной строке.
+const VOLUME_SLOT: (f32, f32) = (150.0, 18.0);
+/// Слот палитры акцентов: шесть кружков в правой части строки. 220 px — 6×28
+/// плюс пять промежутков по 8 px, чтобы полоса не переносилась.
+const SWATCH_SLOT: (f32, f32) = (220.0, 22.0);
 /// Размер кружка акцента в палитре.
-const SWATCH_SIZE: egui::Vec2 = egui::Vec2::new(30.0, 22.0);
+const SWATCH_SIZE: egui::Vec2 = egui::Vec2::new(28.0, 22.0);
 /// Порядок stagger: заголовок, затем шесть блоков секций (ADR-0032 §4).
 const BLOCK_HEADER: usize = 0;
 const BLOCK_APPEARANCE: usize = 1;
@@ -90,41 +96,38 @@ pub(crate) fn show(
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     let appearance = shown(BLOCK_APPEARANCE);
+                    let dim = faded_palette(palette, appearance);
                     dimmed(ui, appearance, |ui| {
                         section(ui, palette, strings.appearance, appearance);
-                        choice_row(
-                            ui,
-                            palette,
-                            strings.theme,
-                            appearance,
-                            &mut actions,
-                            |ui, actions| {
-                                for theme in ThemeMode::ALL {
-                                    let selected = state.settings.theme == theme;
-                                    let label = i18n::theme_label(state.language, theme);
-                                    if selectable(ui, selected, label).clicked() && !selected {
-                                        actions.push(UiAction::SetTheme(theme));
-                                    }
-                                }
-                            },
-                        );
-                        choice_row(
-                            ui,
-                            palette,
-                            strings.accent,
-                            appearance,
-                            &mut actions,
-                            |ui, actions| {
+                        if let Some(index) =
+                            row(ui, &dim, strings.theme, None, DROPDOWN_SLOT, |ui| {
+                                dropdown(
+                                    ui,
+                                    &dim,
+                                    "orbitfm_set_theme",
+                                    DROPDOWN_SLOT.0,
+                                    &ThemeMode::ALL,
+                                    state.settings.theme,
+                                    |index| {
+                                        i18n::theme_label(state.language, ThemeMode::ALL[index])
+                                            .to_owned()
+                                    },
+                                )
+                            })
+                        {
+                            actions.push(UiAction::SetTheme(ThemeMode::ALL[index]));
+                        }
+                        row(ui, &dim, strings.accent, None, SWATCH_SLOT, |ui| {
+                            ui.horizontal_wrapped(|ui| {
                                 for accent in AccentColor::ALL {
                                     let selected = state.settings.accent == accent;
                                     let stroke = if selected {
-                                        egui::Stroke::new(2.0, faded(palette.text, appearance))
+                                        egui::Stroke::new(2.0, dim.text)
                                     } else {
-                                        egui::Stroke::new(
-                                            1.0,
-                                            faded(palette.chip_stroke, appearance),
-                                        )
+                                        egui::Stroke::new(1.0, dim.chip_stroke)
                                     };
+                                    // Кружок — вне палитры: цвет берётся из
+                                    // варианта акцента, поэтому гасится множителем.
                                     let swatch = ui
                                         .add(
                                             egui::Button::new("")
@@ -138,118 +141,145 @@ pub(crate) fn show(
                                         actions.push(UiAction::SetAccent(accent));
                                     }
                                 }
-                            },
-                        );
+                            });
+                        });
                         let visualizer = state.settings.visualizer_enabled;
-                        if ui
-                            .checkbox(&mut { visualizer }, strings.visualizer)
-                            .clicked()
-                        {
+                        if checkbox(ui, &dim, visualizer, true, strings.visualizer).clicked() {
                             actions.push(UiAction::ToggleSpectrum(!visualizer));
                         }
-                        choice_row(
-                            ui,
-                            palette,
-                            strings.viz_bars,
-                            appearance,
-                            &mut actions,
-                            |ui, actions| {
-                                for bars in VIZ_BAR_CHOICES {
-                                    let selected = state.settings.viz_bars == bars;
-                                    let caption =
-                                        i18n::fill(strings.bars, &[("count", &bars.to_string())]);
-                                    if selectable(ui, selected, &caption).clicked() && !selected {
-                                        actions.push(UiAction::SetVizBars(bars));
-                                    }
-                                }
-                            },
-                        );
+                        // Число полос живёт только вместе с визуализатором.
+                        let bars = ui.add_enabled_ui(visualizer, |ui| {
+                            row(ui, &dim, strings.viz_bars, None, DROPDOWN_SLOT, |ui| {
+                                dropdown(
+                                    ui,
+                                    &dim,
+                                    "orbitfm_set_viz_bars",
+                                    DROPDOWN_SLOT.0,
+                                    &VIZ_BAR_CHOICES,
+                                    state.settings.viz_bars,
+                                    |index| {
+                                        i18n::fill(
+                                            strings.bars,
+                                            &[("count", &VIZ_BAR_CHOICES[index].to_string())],
+                                        )
+                                    },
+                                )
+                            })
+                        });
+                        if let Some(index) = bars.inner {
+                            actions.push(UiAction::SetVizBars(VIZ_BAR_CHOICES[index]));
+                        }
                     });
 
                     let language = shown(BLOCK_LANGUAGE);
+                    let dim = faded_palette(palette, language);
                     dimmed(ui, language, |ui| {
                         section(ui, palette, strings.language, language);
-                        ui.horizontal_wrapped(|ui| {
-                            for variant in Language::ALL {
-                                let selected = state.settings.language == variant;
-                                let caption = i18n::language_label(state.language, variant);
-                                if selectable(ui, selected, caption).clicked() && !selected {
-                                    actions.push(UiAction::SetLanguage(variant));
-                                }
-                            }
-                        });
-                        hint(ui, palette, strings.language_hint, language);
+                        if let Some(index) = row(
+                            ui,
+                            &dim,
+                            strings.language,
+                            Some(strings.language_hint),
+                            DROPDOWN_SLOT,
+                            |ui| {
+                                dropdown(
+                                    ui,
+                                    &dim,
+                                    "orbitfm_set_language",
+                                    DROPDOWN_SLOT.0,
+                                    &Language::ALL,
+                                    state.settings.language,
+                                    |index| {
+                                        i18n::language_label(state.language, Language::ALL[index])
+                                            .to_owned()
+                                    },
+                                )
+                            },
+                        ) {
+                            actions.push(UiAction::SetLanguage(Language::ALL[index]));
+                        }
                     });
 
                     let audio = shown(BLOCK_AUDIO);
+                    let dim = faded_palette(palette, audio);
                     dimmed(ui, audio, |ui| {
                         section(ui, palette, strings.audio, audio);
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new(strings.volume)
-                                    .size(12.0)
-                                    .color(faded(palette.text, audio)),
-                            );
-                            // Трек громкости рисуется цветами палитры мимо
-                            // `Visuals`, поэтому гасится множителем прозрачности.
-                            let slider = faded_group(ui, audio, |ui| {
+                        // Слайдер рисует палитрой, поэтому получает уже погашенную
+                        // палитру — второго затемнения (`faded_group`) здесь нет.
+                        let slider = row(
+                            ui,
+                            &dim,
+                            strings.volume,
+                            Some(strings.audio_hint),
+                            VOLUME_SLOT,
+                            |ui| {
                                 volume_slider_width(
                                     ui,
-                                    palette,
+                                    &dim,
                                     state.volume,
-                                    VOLUME_WIDTH,
+                                    VOLUME_SLOT.0,
                                     state.language,
                                 )
-                            });
-                            if slider.changed && !slider.committed {
-                                actions.push(UiAction::PreviewVolume(*state.volume));
-                            }
-                            if slider.committed {
-                                actions.push(UiAction::CommitVolume(*state.volume));
-                            }
-                        });
-                        hint(ui, palette, strings.audio_hint, audio);
+                            },
+                        );
+                        if slider.changed && !slider.committed {
+                            actions.push(UiAction::PreviewVolume(*state.volume));
+                        }
+                        if slider.committed {
+                            actions.push(UiAction::CommitVolume(*state.volume));
+                        }
                     });
 
                     let accessibility = shown(BLOCK_MOTION);
+                    let dim = faded_palette(palette, accessibility);
                     dimmed(ui, accessibility, |ui| {
                         section(ui, palette, strings.motion, accessibility);
-                        choice_row(
+                        if let Some(index) = row(
                             ui,
-                            palette,
+                            &dim,
                             strings.motion_reactivity,
-                            accessibility,
-                            &mut actions,
-                            |ui, actions| {
-                                for reactivity in MotionReactivity::ALL {
-                                    let selected = state.settings.motion == reactivity;
-                                    let label = i18n::motion_label(state.language, reactivity);
-                                    if selectable(ui, selected, label).clicked() && !selected {
-                                        actions.push(UiAction::SetMotion(reactivity));
-                                    }
-                                }
+                            Some(strings.motion_spin_hint),
+                            DROPDOWN_SLOT,
+                            |ui| {
+                                dropdown(
+                                    ui,
+                                    &dim,
+                                    "orbitfm_set_motion",
+                                    DROPDOWN_SLOT.0,
+                                    &MotionReactivity::ALL,
+                                    state.settings.motion,
+                                    |index| {
+                                        i18n::motion_label(
+                                            state.language,
+                                            MotionReactivity::ALL[index],
+                                        )
+                                        .to_owned()
+                                    },
+                                )
                             },
-                        );
-                        hint(ui, palette, strings.motion_spin_hint, accessibility);
-                        choice_row(
-                            ui,
-                            palette,
-                            strings.motion_style,
-                            accessibility,
-                            &mut actions,
-                            |ui, actions| {
-                                for style in MotionStyle::ALL {
-                                    let selected = state.settings.motion_style == style;
-                                    let label = i18n::style_label(state.language, style);
-                                    if selectable(ui, selected, label).clicked() && !selected {
-                                        actions.push(UiAction::SetMotionStyle(style));
-                                    }
-                                }
-                            },
-                        );
+                        ) {
+                            actions.push(UiAction::SetMotion(MotionReactivity::ALL[index]));
+                        }
+                        if let Some(index) =
+                            row(ui, &dim, strings.motion_style, None, DROPDOWN_SLOT, |ui| {
+                                dropdown(
+                                    ui,
+                                    &dim,
+                                    "orbitfm_set_motion_style",
+                                    DROPDOWN_SLOT.0,
+                                    &MotionStyle::ALL,
+                                    state.settings.motion_style,
+                                    |index| {
+                                        i18n::style_label(state.language, MotionStyle::ALL[index])
+                                            .to_owned()
+                                    },
+                                )
+                            })
+                        {
+                            actions.push(UiAction::SetMotionStyle(MotionStyle::ALL[index]));
+                        }
                         let reduce = state.settings.reduce_motion;
-                        if ui
-                            .checkbox(&mut { reduce }, strings.reduce_motion)
+                        if checkbox(ui, &dim, reduce, true, strings.reduce_motion)
                             .on_hover_text(strings.reduce_motion_hint)
                             .clicked()
                         {
@@ -260,15 +290,12 @@ pub(crate) fn show(
                         let flips_available = state.settings.motion != MotionReactivity::Off
                             && !state.settings.reduce_motion;
                         let flips = state.settings.allow_flips;
-                        ui.add_enabled_ui(flips_available, |ui| {
-                            if ui
-                                .checkbox(&mut { flips }, strings.allow_flips)
-                                .on_hover_text(strings.allow_flips_hint)
-                                .clicked()
-                            {
-                                actions.push(UiAction::SetAllowFlips(!flips));
-                            }
-                        });
+                        if checkbox(ui, &dim, flips, flips_available, strings.allow_flips)
+                            .on_hover_text(strings.allow_flips_hint)
+                            .clicked()
+                        {
+                            actions.push(UiAction::SetAllowFlips(!flips));
+                        }
                         hint(
                             ui,
                             palette,
@@ -282,38 +309,42 @@ pub(crate) fn show(
                     });
 
                     let window = shown(BLOCK_WINDOW);
+                    let dim = faded_palette(palette, window);
                     dimmed(ui, window, |ui| {
                         section(ui, palette, strings.window, window);
-                        choice_row(
+                        if let Some(index) = row(
                             ui,
-                            palette,
+                            &dim,
                             strings.window_mode,
-                            window,
-                            &mut actions,
-                            |ui, actions| {
-                                for mode in WindowMode::ALL {
-                                    let selected = state.window_mode == mode;
-                                    if selectable(ui, selected, mode_label(labels, mode)).clicked()
-                                        && !selected
-                                    {
-                                        actions.push(UiAction::SetWindowMode(mode));
-                                    }
-                                }
+                            Some(strings.window_hint),
+                            DROPDOWN_SLOT,
+                            |ui| {
+                                dropdown(
+                                    ui,
+                                    &dim,
+                                    "orbitfm_set_window_mode",
+                                    DROPDOWN_SLOT.0,
+                                    &WindowMode::ALL,
+                                    state.window_mode,
+                                    |index| mode_label(labels, WindowMode::ALL[index]).to_owned(),
+                                )
                             },
-                        );
-                        hint(ui, palette, strings.window_hint, window);
+                        ) {
+                            actions.push(UiAction::SetWindowMode(WindowMode::ALL[index]));
+                        }
                         let help = state.show_help;
-                        if ui.checkbox(&mut { help }, strings.show_help).clicked() {
+                        if checkbox(ui, &dim, help, true, strings.show_help).clicked() {
                             actions.push(UiAction::ToggleHelp);
                         }
-                        ui.horizontal(|ui| {
-                            if ui.button(text.common.hide_window).clicked() {
-                                actions.push(UiAction::Hide);
-                            }
-                            if ui.button(text.common.quit).clicked() {
-                                actions.push(UiAction::Quit);
-                            }
-                        });
+                        // В безрамочных режимах это единственный выход: крестик
+                        // окна там не чем нажать.
+                        ui.add_space(6.0);
+                        if quiet_button(ui, &dim, text.common.hide_window, dim.text).clicked() {
+                            actions.push(UiAction::Hide);
+                        }
+                        if quiet_button(ui, &dim, text.common.quit, dim.error).clicked() {
+                            actions.push(UiAction::Quit);
+                        }
                     });
 
                     let about = shown(BLOCK_ABOUT);
@@ -360,28 +391,6 @@ fn hint(ui: &mut egui::Ui, palette: &Palette, text: &str, shown: f32) {
             .color(faded(palette.muted, shown))
             .weak(),
     );
-}
-
-/// Подпись варианта + значения в строке с переносом: так длинные немецкие и
-/// французские подписи не выезжают за край drawer'а.
-fn choice_row(
-    ui: &mut egui::Ui,
-    palette: &Palette,
-    title: &str,
-    shown: f32,
-    actions: &mut Vec<UiAction>,
-    body: impl FnOnce(&mut egui::Ui, &mut Vec<UiAction>),
-) {
-    ui.label(
-        egui::RichText::new(title)
-            .size(12.0)
-            .color(faded(palette.text, shown)),
-    );
-    ui.horizontal_wrapped(|ui| body(ui, actions));
-}
-
-fn selectable(ui: &mut egui::Ui, selected: bool, caption: &str) -> egui::Response {
-    ui.selectable_label(selected, caption)
 }
 
 fn about_row(ui: &mut egui::Ui, palette: &Palette, key: &str, value: &str, shown: f32) {

@@ -224,6 +224,7 @@ mod tests {
                 system_language,
                 language_hint,
                 volume,
+                volume_hint,
                 audio_hint,
                 motion_reactivity,
                 motion_spin_hint,

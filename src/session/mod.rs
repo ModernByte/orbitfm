@@ -344,10 +344,11 @@ impl Session {
         self.window.set_mode(mode);
     }
 
-    /// `panel` из бар-виджета (ADR-0033): открытая панель закрывается, любой
-    /// другой режим переключается на панель и показывается.
-    pub(crate) fn toggle_panel_dropdown(&mut self) {
-        self.window.toggle_panel();
+    /// Переключатель-выпадающий (ADR-0033): открытая поверхность режима `mode`
+    /// закрывается, любой другой режим переключается на него и показывается.
+    /// Зовётся командами `overlay` (бар-виджет) и `panel` (CLI).
+    pub(crate) fn toggle_dropdown(&mut self, mode: WindowMode) {
+        self.window.toggle_dropdown(mode);
     }
 
     /// `true`, если смена режима требует нового прогона UI-цикла (ADR-0021 п. 3).

@@ -123,6 +123,7 @@ pub(crate) const CATALOG: Catalog = Catalog {
         system_language: "Системный",
         language_hint: "Изменения применяются сразу, перезапуск не нужен.",
         volume: "Громкость",
+        volume_hint: "Колесо мыши по полосе — ±5 % за щелчок.",
         audio_hint: "Громкость сохраняется при отпускании ползунка.",
         motion_reactivity: "Реактивность",
         motion_spin_hint: "Без реактивности глобус вращается сам, как в реальном мире.",

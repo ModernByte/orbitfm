@@ -15,17 +15,21 @@ use eframe::egui::{self, Color32};
 
 use crate::audio::PlaybackState;
 use crate::i18n;
+use crate::render::VisualizerModel;
 use crate::services::Station;
 use crate::session::WindowMode;
 use crate::settings::Language;
 
 use super::animation::{self, FrameMotion};
-use super::icons::{close_button, expand_button, gear_button, heart_button, stop_button};
+use super::icons::{
+    SIDE, SMALL_SIDE, WIDE_SIDE, close_button, expand_button, gear_button, heart_button,
+    stop_button,
+};
 use super::images::FaviconCache;
 use super::palette::{Palette, mix_colors};
 use super::station_row::{RowContext, row_place, station_row};
 use super::widgets::{
-    CapsuleDisc, avatar, capsule_button, faded, faded_group, faded_palette, pop_scale,
+    CapsuleDisc, avatar, capsule_button, faded, faded_group, faded_palette, pop_scale, viz_bars,
     volume_slider_width,
 };
 use super::{UiAction, playback_label, single_line, truncate};
@@ -33,6 +37,8 @@ use super::{UiAction, playback_label, single_line, truncate};
 /// Сколько избранных показывает капсула Overlay (design-vision §6: 5–8).
 const FAVORITE_LIMIT: usize = 8;
 const OVERLAY_VOLUME_WIDTH: f32 = 72.0;
+/// Квадратный диск play/stop верхней капсулы (Listening носит диск 40 px).
+const CAP_DISC_SIZE: f32 = 30.0;
 /// Приглушение диска в паузе: accent остаётся акцентом, но полупрозрачнее
 /// (ТЗ §3.4 требует сплошной accent только для активного play).
 const IDLE_DIM: f32 = 0.55;
@@ -44,6 +50,39 @@ const PLAY_LISTENING: &str = "orbitfm_capsule_play_color_listening";
 /// Ключ press-перехода капсульной кнопки.
 const PRESS_TOP: &str = "orbitfm_capsule_press_top";
 const PRESS_LISTENING: &str = "orbitfm_capsule_press_listening";
+/// Визуализатор капсулы: 16 полос фиксированы требованием и не связаны с
+/// настройкой `viz_bars` стола. В 2,5 раза уже столовой `VIZ_SIZE` (156×46).
+const CAP_VIZ_BARS: usize = 16;
+const CAP_VIZ_SIZE: (f32, f32) = (62.0, 16.0);
+
+/// Ширина правого блока контролов капсулы Overlay в покое: все семь
+/// аллокаций ряда (визуализатор, диск play, stop, громкость, gear, expand,
+/// close) плюс промежутки между ними. Sizes берутся из тех же констант,
+/// которыми контролы аллоцируются, поэтому резерв совпадает с блоком без
+/// ручного дублирования цифр. Аллокации контролов от текста не зависят
+/// (ADR-0032 §7), и наоборот: резерв текстовой колонки — чистая арифметика
+/// по константам.
+fn cap_controls_width(spacing_x: f32) -> f32 {
+    CAP_VIZ_SIZE.0
+        + CAP_DISC_SIZE
+        + WIDE_SIDE
+        + OVERLAY_VOLUME_WIDTH
+        + SIDE
+        + SMALL_SIDE
+        + SIDE
+        + 6.0 * spacing_x
+}
+
+/// Максимум текстовой колонки (имя + подпись): остаток после блока
+/// контролов и промежутка до него. Схлопывается в ноль, а не в отрицательную
+/// ширину, если окно немыслимо узкое. Пиксельная граница надёжнее счётчика
+/// символов: в live-замере на niri подпись в капсуле 420 px (остаток 27 px)
+/// рисовалась поверх полос визуализатора и диска play — поэтому капсула
+/// стала 500 px, а колонка ограничивается этим резервом и усекается
+/// `egui::Label::truncate` (ADR-0021, ред. 2026-10-28).
+fn cap_text_width(available_width: f32, spacing_x: f32) -> f32 {
+    (available_width - cap_controls_width(spacing_x) - spacing_x).max(0.0)
+}
 
 pub(crate) struct OverlayTop<'a> {
     pub playback: &'a PlaybackState,
@@ -51,6 +90,9 @@ pub(crate) struct OverlayTop<'a> {
     pub can_resume: bool,
     pub volume: f64,
     pub favicons: &'a mut FaviconCache,
+    /// Модель стола: капсула прореживает её до 16 полос (ADR-0022).
+    pub visualizer: &'a VisualizerModel,
+    pub visualizer_enabled: bool,
     /// Разрешённый язык интерфейса (ADR-0030).
     pub language: Language,
 }
@@ -165,7 +207,8 @@ fn listening_line(
     .join(" · ")
 }
 
-/// Верх капсулы Overlay: станция, play/stop, громкость и выход в Focus.
+/// Верх капсулы Overlay: станция, 16-полосный визуализатор, play/stop,
+/// громкость и выход в Focus.
 pub(crate) fn overlay_top(
     ui: &mut egui::Ui,
     palette: &Palette,
@@ -179,6 +222,8 @@ pub(crate) fn overlay_top(
         can_resume,
         volume,
         favicons,
+        visualizer,
+        visualizer_enabled,
         language,
     } = state;
     let is_playing = playing(playback);
@@ -207,18 +252,32 @@ pub(crate) fn overlay_top(
             faded_group(ui, enter, |ui| {
                 avatar(ui, palette, texture, &name, 30.0);
             });
+            // Резерв считается до текстовой колонки: right-to-left блок
+            // прижат к правому краю полосы, поэтому колонка обязана зазнать
+            // ширину блока заранее — иначе текст зальёт контролы.
+            let text_width = cap_text_width(ui.available_width(), ui.spacing().item_spacing.x);
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
-                ui.label(
-                    egui::RichText::new(truncate(&name, 18))
-                        .size(12.5)
-                        .strong()
-                        .color(if is_playing { shell.accent } else { shell.text }),
+                // Пиксельный потолок колонки вместо `truncate` по символам:
+                // имя и подпись физически не могут залезть на визуализатор и
+                // кнопки, а длинный текст усекается многоточием egui.
+                ui.set_max_width(text_width);
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(name.as_str())
+                            .size(12.5)
+                            .strong()
+                            .color(if is_playing { shell.accent } else { shell.text }),
+                    )
+                    .truncate(),
                 );
-                ui.label(
-                    egui::RichText::new(truncate(&subtitle, 24))
-                        .size(10.0)
-                        .color(shell.muted),
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(subtitle.as_str())
+                            .size(10.0)
+                            .color(shell.muted),
+                    )
+                    .truncate(),
                 );
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -260,7 +319,7 @@ pub(crate) fn overlay_top(
                 };
                 let disc = CapsuleDisc {
                     palette: &shell,
-                    size: 30.0,
+                    size: CAP_DISC_SIZE,
                     pop,
                     fill,
                     playing: is_playing,
@@ -269,6 +328,28 @@ pub(crate) fn overlay_top(
                 };
                 if capsule_button(ui, motion, egui::Id::unique(PRESS_TOP), &disc).clicked() {
                     actions.push(UiAction::TogglePlayback);
+                }
+                // Последний child right-to-left ряда: левее контролов и сразу
+                // справа от колонки с названием. Выключенный визуализатор ничего
+                // не аллоцирует — строка не прыгает.
+                if visualizer_enabled {
+                    let levels = bucket_max::<CAP_VIZ_BARS>(visualizer.levels());
+                    let peaks = bucket_max::<CAP_VIZ_BARS>(visualizer.peaks());
+                    // Столбцы рисуются фиксированным градиентом, не палитрой,
+                    // поэтому гасятся групповой прозрачностью входа.
+                    faded_group(ui, enter, |ui| {
+                        let (slot, _) = ui.allocate_exact_size(
+                            egui::Vec2::from(CAP_VIZ_SIZE),
+                            egui::Sense::hover(),
+                        );
+                        viz_bars(ui, palette, slot, &levels, &peaks);
+                    });
+                    if is_playing {
+                        // Лента живёт своими кадрами: глобальный репейнт завязан
+                        // на реактивность движения, а она в капсуле может быть Off.
+                        ui.ctx()
+                            .request_repaint_after(std::time::Duration::from_millis(33));
+                    }
                 }
             });
         });
@@ -490,6 +571,23 @@ fn visible_favorites(favorites: &[Station]) -> &[Station] {
     &favorites[..favorites.len().min(FAVORITE_LIMIT)]
 }
 
+/// Прореживание полос модели до фиксированного числа: bucket-max по целым
+/// интервалам источника, без аллокаций (стек-массив). При `len < N` интервалы
+/// перекрываются, поэтому пустых корзин не возникает вовсе.
+fn bucket_max<const N: usize>(source: &[f32]) -> [f32; N] {
+    let mut out = [0.0; N];
+    if source.is_empty() {
+        return out;
+    }
+    let len = source.len();
+    for (index, slot) in out.iter_mut().enumerate() {
+        let start = index * len / N;
+        let end = ((index + 1) * len / N).clamp(start + 1, len);
+        *slot = source[start..end].iter().copied().fold(0.0, f32::max);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -522,6 +620,60 @@ mod tests {
         assert_eq!(visible_favorites(&list).len(), FAVORITE_LIMIT);
         assert_eq!(visible_favorites(&list[..3]).len(), 3);
         assert!(visible_favorites(&[]).is_empty());
+    }
+
+    /// Текстовая колонка ограничена остатком после правого блока контролов,
+    /// а резерв считается по тем же константам, что аллоцируют сами контролы
+    /// (ADR-0021 ред. 2026-10-28, ADR-0032 §7).
+    #[test]
+    fn overlay_text_column_is_bounded_by_the_controls_block() {
+        let spacing = 8.0;
+        // Семь фиксированных аллокаций: 62 + 30 + 32 + 72 + 30 + 28 + 30 и
+        // шесть промежутков между ними.
+        assert_eq!(cap_controls_width(spacing), 284.0 + 6.0 * spacing);
+        assert_eq!(
+            cap_text_width(400.0, spacing),
+            400.0 - spacing - cap_controls_width(spacing),
+            "колонка = остаток после блока и промежутка"
+        );
+        assert_eq!(
+            cap_text_width(cap_controls_width(spacing) + spacing, spacing),
+            0.0,
+            "места нет — схлопывается в ноль, а не в минус"
+        );
+        assert!(
+            cap_text_width(500.0, spacing) > 100.0,
+            "в капсуле 500 px текст получает > 100 px даже без учёта полей \
+             (в 420 px оставалось 27 px — текст лился на контролы)"
+        );
+    }
+
+    #[test]
+    fn bucket_max_collapses_source_bars_to_cap() {
+        let rising: Vec<f32> = (0..24).map(|i| i as f32 / 24.0).collect();
+        let out = bucket_max::<CAP_VIZ_BARS>(&rising);
+        assert_eq!(out.len(), CAP_VIZ_BARS);
+        assert!(
+            (out[15] - 23.0 / 24.0).abs() < 1e-6,
+            "в последней корзине — верх исходных полос"
+        );
+        assert!(
+            out.windows(2).all(|pair| pair[0] <= pair[1]),
+            "монотонность сохраняется"
+        );
+    }
+
+    #[test]
+    fn bucket_max_never_leaves_an_empty_bucket() {
+        for len in [1usize, 3, 8, 15, 16, 17, 64] {
+            let source = vec![0.5; len];
+            let out = bucket_max::<CAP_VIZ_BARS>(&source);
+            assert!(
+                out.iter().all(|value| *value == 0.5),
+                "пустая корзина при len {len}"
+            );
+        }
+        assert_eq!(bucket_max::<CAP_VIZ_BARS>(&[]), [0.0; CAP_VIZ_BARS]);
     }
 
     #[test]

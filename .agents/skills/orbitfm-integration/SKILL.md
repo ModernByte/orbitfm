@@ -13,7 +13,9 @@ description: Интеграции OrbitFM с окружением — Noctalia v
 
 - Плагин — тонкий адаптер, без бизнес-логики.
 - `plugin.toml`: `id = "modernbyte/orbitfm"` (формат `<author>/<plugin>` обязателен), `plugin_api = 3`, author = ModernByte.
-- Виджет при клике: `noctalia.runAsync("orbitfm toggle", callback)`; `exec_async` не существует.
+- Виджет при клике: `noctalia.runAsync("orbitfm overlay")` — без колбэка (вариант с callback
+  имеет таймаут 5 с и убивает группу процессов, поэтому GUI запускается отсоединённо);
+  `exec_async` не существует.
 - Структура: `orbitfm/plugin.toml`, `plugin.luau`, `README.md`, `thumbnail.webp`, `translations/en.json`, `translations/ru.json`.
 - Имя каталога совпадает с частью id после `/` — требование каталога Noctalia.
 - Теги только из официального списка (`bar`, `audio`, `music`); `orbitfm` объявлен в `dependencies`.

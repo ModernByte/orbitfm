@@ -12,10 +12,15 @@ use super::widgets::{control_motion, faded, focus_ring};
 
 /// Оптический размер глифа внутри кнопки.
 const GLYPH: f32 = 19.0;
-/// Квадратная иконочная кнопка шапок и панелей.
-const SIDE: f32 = 30.0;
+/// Квадратная иконочная кнопка шапок и панелей. `pub(crate)` — по этой же
+/// константе капсула Overlay резервирует ширину правого блока контролов.
+pub(crate) const SIDE: f32 = 30.0;
 /// Кнопки капсул и строк: компактнее, но заметно крупнее прежних 22–24 px.
-const SMALL_SIDE: f32 = 28.0;
+/// Используется и капсулой для того же резерва.
+pub(crate) const SMALL_SIDE: f32 = 28.0;
+/// Транспортные кнопки на треть шире квадратных: 32×28 (stop/prev/next).
+/// Ширина нужна капсуле Overlay, чтобы резерв совпал с аллокацией.
+pub(crate) const WIDE_SIDE: f32 = 32.0;
 
 /// Набор встроенных иконок. Файлы — `assets/icons/*.svg`, белый штрих
 /// перекрашивается `Image::tint` под палитру (ADR-0034).
@@ -202,7 +207,7 @@ pub(crate) fn stop_button(
     icon_button(
         ui,
         palette,
-        Vec2::new(32.0, SMALL_SIDE),
+        Vec2::new(WIDE_SIDE, SMALL_SIDE),
         enabled,
         false,
         i18n::catalog(language).common.stop,
@@ -222,7 +227,7 @@ pub(crate) fn prev_button(
     icon_button(
         ui,
         palette,
-        Vec2::new(32.0, SMALL_SIDE),
+        Vec2::new(WIDE_SIDE, SMALL_SIDE),
         enabled,
         false,
         i18n::catalog(language).common.previous_station,
@@ -242,7 +247,7 @@ pub(crate) fn next_button(
     icon_button(
         ui,
         palette,
-        Vec2::new(32.0, SMALL_SIDE),
+        Vec2::new(WIDE_SIDE, SMALL_SIDE),
         enabled,
         false,
         i18n::catalog(language).common.next_station,

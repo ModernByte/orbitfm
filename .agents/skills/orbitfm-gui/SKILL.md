@@ -20,7 +20,9 @@ description: GUI и 3D-глобус OrbitFM на eframe, egui и egui-wgpu. Ис
 
 - Standalone и Overlay — один и тот же процесс.
 - Закрытие окна = Hide (`window_visible = false`), процесс продолжает жить.
-- Для overlay: `ViewportBuilder::with_transparent(true)`, `with_decorations(false)`, `App::clear_color` с альфой 0.
+- Рамка и тень остаются только у Focus: `WindowMode::is_borderless()` — это `self != Focus`,
+  поэтому Overlay, Listening и Panel открываются с `with_decorations(false)` и без тени.
+- Для borderless-режимов: `ViewportBuilder::with_transparent(true)`, `with_decorations(false)`, `App::clear_color` с альфой 0.
 - Прозрачность с wgpu имеет известные ограничения (особенно Windows). На Linux тестировать в первую очередь. При проблемах допустим fallback на glow для overlay.
 
 ## 3D-глобус
@@ -43,12 +45,23 @@ description: GUI и 3D-глобус OrbitFM на eframe, egui и egui-wgpu. Ис
 - В render-модуль передавать `SpectrumTarget`, не `SpectrumFrame`/`AudioEngine`.
 - Сглаживание и затухание — в `SpectrumOverlay`; App Core только поставляет данные.
 - Пока оверлей виден, запрашивать repaint (~33 мс).
+- Лента в капсуле Overlay — фиксированные 16 полос (`CAP_VIZ_BARS`, bucket-max из модели
+  стола, 62×16 px), репейн 33 мс только при Playing и ноль аллокаций при выключенном
+  визуализаторе; `viz_bars` на неё не влияет.
 
 ## Правила кода
 
 - Состояние камеры и input глобуса держать в `GlobeRenderer` / AppState, не размазывать по UI.
 - Тяжёлую подготовку GPU делать в `prepare`, отрисовку — в `paint`.
 - Не тянуть domain-типы (Station, AudioEngine) внутрь render-модуля.
+- Контролы drawer'а настроек — `src/ui/controls.rs`: `dropdown` (`egui::ComboBox` в стиле чипа
+  со своим шевроном), `checkbox` (18×18, галка из двух штрихов, hit-зона вместе с подписью) и
+  `row` (подпись слева, контрол в фиксированном слоте справа, подсказка под подписью); ширина
+  drawer'а `SETTINGS_WIDTH = 380` px. Наборы `selectable_label` и нативный `ui.checkbox` в
+  настройках не использовать.
+- Колесо над слайдером громкости (`widgets::volume_slider_width`) — ±5 % за щелчок, нормировка
+  по `line_scroll_speed`, коммит в `settings.json` сразу (как стрелки) и потребление дельты,
+  чтобы drawer под курсором не прокручивался.
 
 ## Чего нельзя
 

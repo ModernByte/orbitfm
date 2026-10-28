@@ -31,7 +31,7 @@ Application Core — слой, который переживает закрыт�
 | `begin_window` | `pub(crate) fn begin_window(&mut self, size: [f32; 2])` | Отмечает окно открытым, сбрасывает `intent` и `reopen`, запоминает размер (только в `Focus`) |
 | `end_window` | `pub(crate) fn end_window(&mut self)` | Отмечает окно закрытым, снимает `intent`, `wake.clear()`, `flush_pending_volume()`, `sync_media()`, `sync_tray()` |
 | `set_window_size` | `pub(crate) fn set_window_size(&mut self, size: [f32; 2])` | Сохраняет текущий размер окна; в капсульных режимах значение отбрасывается (ADR-0021 п. 4) |
-| `restore_size` | `pub(crate) fn restore_size(&self) -> [f32; 2]` | В `Focus` — сохранённый размер либо `WINDOW_SIZE`; в `Overlay`/`Listening` — всегда пресет режима |
+| `restore_size` | `pub(crate) fn restore_size(&self) -> [f32; 2]` | В `Focus` — сохранённый размер либо `WINDOW_SIZE`; в любом капсульном режиме (`Overlay`, `Listening`, `Panel`) — всегда пресет режима |
 | `window_min_size` | `pub(crate) fn window_min_size(&self) -> [f32; 2]` | Нижний лимит для `ViewportBuilder` текущего режима |
 | `window_mode` | `pub(crate) fn window_mode(&self) -> WindowMode` | Текущий режим окна (ADR-0021) |
 | `set_window_mode` | `pub(crate) fn set_window_mode(&mut self, mode: WindowMode)` | Меняет режим и гарантирует показ: тот же режим → `Show`; новый режим при открытом окне → `Close` + `reopen`, при закрытом → `Show` |
@@ -39,6 +39,7 @@ Application Core — слой, который переживает закрыт�
 | `hide` | `pub(crate) fn hide(&mut self)` | `UiIntent::Close`, только если окно открыто; иначе ничего |
 | `show` | `pub(crate) fn show(&mut self)` | Ставит `UiIntent::Show` |
 | `toggle` | `pub(crate) fn toggle(&mut self)` | Открыто → `Close`, закрыто → `Show` |
+| `toggle_dropdown` | `pub(crate) fn toggle_dropdown(&mut self, mode: WindowMode)` | Переключатель-выпадающий: открытая поверхность того же режима скрывается, иначе `set_window_mode(mode)` (ADR-0033; пути `panel` и `overlay`) |
 | `quit` | `pub(crate) fn quit(&mut self)` | `quitting = true` и `UiIntent::Close` |
 | `is_quitting` | `pub(crate) fn is_quitting(&self) -> bool` | Признак явного выхода |
 | `status_text` | `pub(crate) fn status_text(&self) -> String` | Строка ответа IPC-команды `status` |
@@ -61,7 +62,7 @@ Application Core — слой, который переживает закрыт�
 | `set_audio_paused` | `pub(crate) fn set_audio_paused(&mut self, paused: bool) -> Result<(), String>` | Пауза/продолжение потока |
 | `set_volume` | `pub(crate) fn set_volume(&mut self, volume: f64) -> Result<(), String>` | Дискретная громкость (трей, MPRIS, IPC): снять `pending_volume`, применить к аудио-ядру и сохранить сразу |
 | `preview_volume` | `pub(crate) fn preview_volume(&mut self, volume: f64) -> Result<(), String>` | Перетаскивание слайдера: звук меняется сразу, файл — нет; значение ждёт `commit_volume` или `flush_pending_volume` (ADR-0031) |
-| `commit_volume` | `pub(crate) fn commit_volume(&mut self, volume: f64) -> Result<(), String>` | Завершение перетаскивания, клик по треку, клавиатура: применить и записать в `SettingsStore` |
+| `commit_volume` | `pub(crate) fn commit_volume(&mut self, volume: f64) -> Result<(), String>` | Завершение перетаскивания, клик по треку, клавиатурный шаг и щелчок колеса: применить и записать в `SettingsStore` (колесо — дискретный ввод, pending не открывается, ADR-0031 § 7) |
 | `flush_pending_volume` | `pub(crate) fn flush_pending_volume(&mut self)` | Дозаписать незакрытый preview в настройки; зовётся из `end_window`, ошибка — только `warn!` |
 | `visible_queue` | `pub(crate) fn visible_queue(&self) -> Vec<Station>` | Снапшот текущего видимого списка — очередь prev/next |
 | `visible_queue_len` | `pub(crate) fn visible_queue_len(&self) -> usize` | Число станций в очереди без клонирования; питает `can_go_next`/`can_go_previous` MPRIS |
@@ -175,17 +176,19 @@ pub(crate) struct WindowState {
     quitting: bool,
 }
 
-/// Режим отображения окна (ADR-0021).
+/// Режим отображения окна (ADR-0021). `Panel` — CLI-поверхность (ADR-0033).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum WindowMode {
     #[default]
     Focus,
     Overlay,
     Listening,
+    Panel,
 }
 
 impl WindowMode {
-    /// Все режимы в порядке возрастания плотности — для переключателя в UI.
+    /// Режимы, доступные переключателю раскладок в настройках: `Panel` вне
+    /// списка, он открывается только командой `panel` (ADR-0033).
     pub(crate) const ALL: [Self; 3] = [Self::Focus, Self::Overlay, Self::Listening];
 
     /// Размер для `ViewportBuilder` нового окна.
@@ -194,6 +197,9 @@ impl WindowMode {
     pub(crate) fn title(self) -> &'static str;
     /// Имя режима в IPC-протоколе и в ответе `status`.
     pub(crate) fn as_str(self) -> &'static str;
+    /// Декорации снимает всё, что не обычный стол: у `Overlay`, `Listening` и
+    /// `Panel` нет CSD-полосы и рамки (ADR-0021 п. 4, ADR-0033).
+    pub(crate) fn is_borderless(self) -> bool;
 }
 
 /// Разделяемое с фоновыми задачами пробуждение GUI-цикла.
@@ -229,15 +235,18 @@ pub(crate) enum LibraryTab {
     History,
 }
 
-pub(crate) const WINDOW_SIZE: [f32; 2] = [920.0, 660.0];
+pub(crate) const WINDOW_SIZE: [f32; 2] = [1100.0, 800.0];
 pub(crate) const WINDOW_MIN_SIZE: [f32; 2] = [720.0, 480.0];
 pub(crate) const WINDOW_TITLE: &str = "OrbitFM";
-pub(crate) const OVERLAY_SIZE: [f32; 2] = [420.0, 620.0];
+pub(crate) const OVERLAY_SIZE: [f32; 2] = [500.0, 620.0];
 pub(crate) const OVERLAY_MIN_SIZE: [f32; 2] = [360.0, 480.0];
 pub(crate) const OVERLAY_TITLE: &str = "OrbitFM · Overlay";
 pub(crate) const LISTENING_SIZE: [f32; 2] = [420.0, 152.0];
 pub(crate) const LISTENING_MIN_SIZE: [f32; 2] = [360.0, 120.0];
 pub(crate) const LISTENING_TITLE: &str = "OrbitFM · Listening";
+pub(crate) const PANEL_SIZE: [f32; 2] = [400.0, 640.0];
+pub(crate) const PANEL_MIN_SIZE: [f32; 2] = [360.0, 480.0];
+pub(crate) const PANEL_TITLE: &str = "OrbitFM · Panel";
 ```
 
 | Тип | Назначение |
@@ -313,7 +322,8 @@ Core к инфраструктуре (ADR-0021 п. 5).
 | `Toggle` | `toggle()` | `ok` |
 | `Show` | `show()` | `ok` |
 | `Hide` | `hide()` (закрытое окно не запрашивает ничего) | `ok` |
-| `Panel` | `toggle_panel_dropdown()` — панель виджета (ADR-0033) | `ok` |
+| `Panel` | `toggle_dropdown(WindowMode::Panel)` — CLI-поверхность панели (ADR-0033) | `ok` |
+| `Overlay` | `toggle_dropdown(WindowMode::Overlay)` — капсула для бар-виджета (ADR-0033) | `ok` |
 | `Status` | `status_text()` | см. § 6 |
 | `ModeQuery` | `window_mode()` | `mode <focus\|overlay\|listening\|panel>`, без побочных эффектов |
 | `SetMode { mode }` | `set_window_mode(mode.into())` — из `WindowModeArg` (ADR-0021 п. 5) | `ok` |

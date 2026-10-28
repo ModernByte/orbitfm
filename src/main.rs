@@ -46,7 +46,8 @@ OrbitFM — 3D Interactive Global Radio Player
   toggle               Показать/скрыть окно (по умолчанию)
   show                 Показать окно
   hide                 Скрыть окно
-  panel                Показать/скрыть выпадающую панель бар-виджета
+  panel                Показать/скрыть выпадающую панель (CLI)
+  overlay              Показать/скрыть капсулу Overlay (бар-виджет)
   status               Состояние приложения
   mode [режим]         Текущий режим окна или focus/overlay/listening/panel
   play <uuid>          Воспроизвести станцию по UUID (Radio Browser)
@@ -141,7 +142,11 @@ fn route_command(
 
     if !matches!(
         &command,
-        IpcCommand::Toggle | IpcCommand::Show | IpcCommand::Panel | IpcCommand::SetMode { .. }
+        IpcCommand::Toggle
+            | IpcCommand::Show
+            | IpcCommand::Panel
+            | IpcCommand::Overlay
+            | IpcCommand::SetMode { .. }
     ) {
         bail!("OrbitFM не запущен");
     }
@@ -241,10 +246,11 @@ fn launch(runtime: &tokio::runtime::Runtime, command: &IpcCommand, explicit: boo
         runtime: runtime.handle().clone(),
     };
     // При незапущенном экземпляре `mode <режим>` задаёт режим первого окна (ADR-0021 п. 5),
-    // а `panel` из бар-виджета открывает сразу выпадающую панель (ADR-0033).
+    // а `panel` и `overlay` открывают сразу свою поверхность (ADR-0033).
     let first_mode = match command {
         IpcCommand::SetMode { mode } => WindowMode::from(*mode),
         IpcCommand::Panel => WindowMode::Panel,
+        IpcCommand::Overlay => WindowMode::Overlay,
         _ => WindowMode::default(),
     };
     let gui_result = run_session(commands, wake, services, first_mode);
@@ -335,8 +341,8 @@ fn run_session(
 
 fn run_window(session: &mut Session, size: [f32; 2]) -> Result<()> {
     let title = session.window_mode().title();
-    // Панель бар-виджета — поверхность без полей окна: CSD-полоса заголовка и
-    // системная рамка ломали бы эффект выпадающей панели (ADR-0033).
+    // Капсулы и выпадающая панель — поверхности без полей окна: CSD-полоса
+    // заголовка и системная рамка ломали бы стеклянную капсулу (ADR-0021 п. 4).
     let mut viewport = eframe::egui::ViewportBuilder::default()
         .with_title(title)
         .with_app_id(APP_ID)

@@ -54,7 +54,7 @@ Noctalia требует `id` в формате `<author>/<plugin>`; `org.modernb
 выполняется:
 
 ```luau
-local started = noctalia.runAsync("orbitfm toggle")
+local started = noctalia.runAsync("orbitfm overlay")
 
 if not started then
     noctalia.notify(noctalia.tr("widget.error_title"), noctalia.tr("widget.error_body"))
@@ -67,8 +67,10 @@ end
 `kDefaultCommandTimeout = 5000 мс` и по истечении убивает всю группу процессов
 вместе с только что поднятым GUI. Поэтому виджет проверяет лишь факт запуска
 команды, а ошибки работы плеера остаются в логах OrbitFM. Плагин **не** хранит
-состояние плеера и не содержит бизнес-логики; `toggle` при отсутствии экземпляра
-запускает OrbitFM с видимым окном (семантика CLI).
+состояние плеера и не содержит бизнес-логики; `overlay` — переключатель капсулы:
+открытый Overlay скрывается, другой режим переключается на Overlay и показывается,
+а при отсутствии экземпляра команда поднимает OrbitFM сразу с видимой капсулой
+(семантика CLI). Выпадающая панель доступна только из CLI командой `panel`.
 
 `tags` выбираются только из официального списка (здесь `bar`, `audio`, `music`),
 а `dependencies = ["orbitfm"]` объявляет внешнюю команду, которую запускает
@@ -105,15 +107,16 @@ noctalia plugins lint orbitfm
 ### Niri
 
 `wm-configs/orbitfm-niri.kdl` содержит по правилу на каждый режим; правило
-Focus — то, что открывает плагин через `orbitfm toggle`, капсулы — через
+Focus — то, что открывает ярлык приложения (`orbitfm mode focus`), капсулу
+Overlay плагин зовёт командой `orbitfm overlay`, Listening и остальные режимы —
 `orbitfm mode overlay|listening`:
 
 ```kdl
 window-rule {
     match app-id="org.modernbyte.OrbitFM" title=r"^OrbitFM$"
     open-floating true
-    default-column-width { fixed 920; }
-    default-window-height { fixed 660; }
+    default-column-width { fixed 1100; }
+    default-window-height { fixed 800; }
     default-floating-position x=60 y=48 relative-to="top-right"
     draw-border-with-background false
 }
@@ -121,10 +124,12 @@ window-rule {
 window-rule {
     match app-id="org.modernbyte.OrbitFM" title=r"^OrbitFM · Overlay$"
     open-floating true
-    default-column-width { fixed 420; }
+    default-column-width { fixed 500; }
     default-window-height { fixed 620; }
-    default-floating-position x=310 y=48 relative-to="top-right"
+    default-floating-position x=270 y=48 relative-to="top-right"
     draw-border-with-background false
+    border { off; }
+    shadow { off; }
 }
 
 window-rule {
@@ -134,6 +139,20 @@ window-rule {
     default-window-height { fixed 152; }
     default-floating-position x=310 y=48 relative-to="top-right"
     draw-border-with-background false
+    border { off; }
+    shadow { off; }
+}
+
+window-rule {
+    match app-id="org.modernbyte.OrbitFM" title=r"^OrbitFM · Panel$"
+    open-floating true
+    default-column-width { fixed 400; }
+    default-window-height { fixed 640; }
+    default-floating-position x=310 y=48 relative-to="top-right"
+    draw-border-with-background false
+    focus-ring { off; }
+    border { off; }
+    shadow { off; }
 }
 ```
 
@@ -141,9 +160,15 @@ window-rule {
 `default-floating-position` окно появляется в центре экрана. Якорь
 `top-right` ставит окно под панелью Noctalia (её высота 36 px, отсюда `y=48`)
 и по центру виджета OrbitFM. Отступы рассчитаны для панели 1920 px, где центр
-виджета примерно в 520 px от правого края: Focus шириной 920 px требует
-`x=60`, капсулы шириной 420 px — `x=310`. При другой ширине экрана или
-расположении виджета отступы подбираются так же.
+виджета примерно в 520 px от правого края: центр окна — это
+`output_right − x − ширина/2`, поэтому капсулы центрируются под виджетом при
+`x=270` для Overlay шириной 500 px (правка 2026-10-28) и при `x=310` для
+420-px Listening; `270 + 250 = 310 + 210 = 520` — оба центра в одной точке.
+Panel (400 px) держится `x=310`. Focus при `x=60` — стол шириной 1100 px
+центрироваться
+под виджетом не может и просто держится у правого края. При другой ширине экрана
+или расположении виджета отступы подбираются так же. Не-Focus правила дополнительно
+выключают `border` и `shadow`: окно режима Focus — единственное с рамкой.
 
 Wayland не позволяет обычному top-level окну позиционировать себя самому, а
 Plugin API Noctalia не отдаёт прямоугольник виджета, поэтому точная привязка
@@ -163,7 +188,13 @@ include "./cfg/orbitfm.kdl"
 Listening растягивается. Приёмочная проверка 2026-10-24: `orbitfm toggle`
 через изолированный runtime даёт Focus 920×660 floating, `mode overlay` —
 420×620 floating с позицией `[1188, 84]` (x = 1920 − 310 − ширина окна,
-y = 36 + 48), `mode listening` — 420×152 floating.
+y = 36 + 48), `mode listening` — 420×152 floating. Замеры сделаны до правки
+ширины Overlay 2026-10-28: с `fixed 500` и `x=270` позиция Overlay —
+`[1150, 84]` (1920 − 270 − 500). Приёмка 2026-10-27: пресет
+Focus поднят до 1100×800 (`WINDOW_SIZE` в `src/session/window.rs`, `fixed 1100` /
+`fixed 800` в niri и `size 1100 800` в Hyprland), и живая проверка этой геометрии
+по правилу WM ещё не выполнена — пункт остаётся открытым в `docs/ROADMAP.md`
+(«Пакет окон, колеса и переработки настроек»).
 
 ### Hyprland
 
@@ -173,9 +204,17 @@ y = 36 + 48), `mode listening` — 420×152 floating.
 windowrulev2 = float, class:^(org\.modernbyte\.OrbitFM)$
 windowrulev2 = center, class:^(org\.modernbyte\.OrbitFM)$
 windowrulev2 = stayfocused, class:^(org\.modernbyte\.OrbitFM)$
-windowrulev2 = size 920 660, title:^OrbitFM$
-windowrulev2 = size 420 620, title:^OrbitFM · Overlay$
+windowrulev2 = size 1100 800, title:^OrbitFM$
+windowrulev2 = size 500 620, title:^OrbitFM · Overlay$
+windowrulev2 = noborder, title:^OrbitFM · Overlay$
+windowrulev2 = noshadow, title:^OrbitFM · Overlay$
 windowrulev2 = size 420 152, title:^OrbitFM · Listening$
+windowrulev2 = noborder, title:^OrbitFM · Listening$
+windowrulev2 = noshadow, title:^OrbitFM · Listening$
+windowrulev2 = size 400 640, title:^OrbitFM · Panel$
+windowrulev2 = noborder, title:^OrbitFM · Panel$
+windowrulev2 = noshadow, title:^OrbitFM · Panel$
+windowrulev2 = noblur, title:^OrbitFM · Panel$
 ```
 
 Синтаксис `windowrulev2` работает в Hyprland 0.52 и совместимом режиме 0.53+.
@@ -188,7 +227,7 @@ windowrulev2 = size 420 152, title:^OrbitFM · Listening$
 ## 3. Принципы
 
 - Плагин Noctalia — максимально тонкий
-- Все команды идут через существующий IPC (`orbitfm toggle` и т.д.)
+- Все команды идут через существующий IPC (`orbitfm overlay`, `orbitfm toggle` и т.д.)
 - app-id / class должны быть стабильными и соответствовать Desktop Entry
 
 ## 4. Связанные ADR

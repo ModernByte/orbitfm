@@ -11,7 +11,7 @@ use eframe::egui::{
 
 use crate::i18n;
 use crate::render::bar_color;
-use crate::settings::Language;
+use crate::settings::{Language, sanitized_volume};
 
 use super::animation;
 use super::icons;
@@ -577,7 +577,8 @@ pub(crate) fn volume_slider_width(
     width: f32,
     language: Language,
 ) -> SliderResponse {
-    let label = i18n::catalog(language).transport.volume;
+    let text = i18n::catalog(language);
+    let label = text.transport.volume;
     let (rect, response) =
         ui.allocate_exact_size(Vec2::new(width, 18.0), egui::Sense::click_and_drag());
     focus_ring(ui, &response, rect, 9.0);
@@ -608,6 +609,59 @@ pub(crate) fn volume_slider_width(
         {
             *volume = next;
             changed = true;
+        }
+    }
+
+    // Колесо — третий дискретный ввод наравне со стрелками и кликом (ADR-0031 §7):
+    // только когда указатель над слайдером, иначе оно ворует скролл у списка
+    // станций и глобуса. Шаг считаем из сырых событий: egui растягивает щелчок
+    // на несколько кадров (`smooth_scroll_delta` = 40 px + угасающий хвост), и
+    // каждый хвост дал бы лишнюю запись в settings.json. Обнуляем сглаженную
+    // дельту на всех кадрах под указателем, чтобы остаток щелчка не доехал
+    // `ScrollArea` drawer'а, а повтор тех же входных данных в многопроходной
+    // отрисовке отсекаем по `time` — иначе один щелчок применился бы дважды.
+    let mut wheel = false;
+    if response.hovered() {
+        // Нормировка по line_scroll_speed (на native — 40 px за щелчок):
+        // щелчок — ровно один шаг 5 %, как у стрелок.
+        let line_px = ui
+            .ctx()
+            .memory(|mem| mem.options.input_options.line_scroll_speed);
+        let (notches, time) = ui.input(|input| {
+            let mut notches = 0.0f32;
+            for event in &input.events {
+                if let egui::Event::MouseWheel {
+                    unit,
+                    delta,
+                    phase: egui::TouchPhase::Move,
+                    ..
+                } = event
+                {
+                    notches += match unit {
+                        egui::MouseWheelUnit::Point => delta.y,
+                        egui::MouseWheelUnit::Line => delta.y * line_px,
+                        egui::MouseWheelUnit::Page => {
+                            delta.y * input.viewport_rect().height().max(1.0)
+                        }
+                    };
+                }
+            }
+            (notches, input.time)
+        });
+        ui.input_mut(|input| input.smooth_scroll_delta.y = 0.0);
+        let wheel_key = response.id.with("volume_wheel");
+        let handled = ui
+            .ctx()
+            .data(|d| d.get_temp::<f64>(wheel_key) == Some(time));
+        if notches != 0.0 && !handled {
+            ui.ctx().data_mut(|d| d.insert_temp(wheel_key, time));
+            let unit = f64::from(line_px.max(1.0));
+            let next = sanitized_volume(*volume + f64::from(notches) / unit * VOLUME_KEY_STEP);
+            if next != *volume {
+                *volume = next;
+                changed = true;
+                wheel = true;
+            }
         }
     }
 
@@ -656,10 +710,12 @@ pub(crate) fn volume_slider_width(
         changed |= *volume != previous;
     }
     response.widget_info(|| egui::WidgetInfo::slider(true, *volume, label));
-    // Коммит — отпускание drag, клик или клавиша: всё, что не «продолжающийся
-    // drag» (ADR-0031). На кадрe отпускания changed может быть false (значение
-    // не двинулось), но drag_stopped всё равно закрывает pending.
-    let committed = response.drag_stopped() || (changed && !response.dragged());
+    // Коммит — отпускание drag, клик, клавиша или колесо: всё, что не «продолжающийся
+    // drag» (ADR-0031). Колесо дискретно, как стрелки, поэтому пишет настройки
+    // сразу. На кадре отпускания changed может быть false (значение не двинулось),
+    // но drag_stopped всё равно закрывает pending.
+    let committed = wheel || response.drag_stopped() || (changed && !response.dragged());
+    response.on_hover_text(text.settings.volume_hint);
     SliderResponse { changed, committed }
 }
 
@@ -1372,6 +1428,182 @@ mod tests {
     fn contrast_prefers_dark_text_on_light_accent() {
         assert_eq!(contrast_color(Color32::WHITE), Color32::BLACK);
         assert_eq!(contrast_color(Color32::BLACK), Color32::WHITE);
+    }
+
+    /// Один кадр со слайдером: указатель в `pointer`, колесо на `notch` щелчков.
+    /// Щелчок приходит в единицах Line — ровно как его даёт winit на Wayland.
+    /// Первый вызов без указателя запоминает прямоугольник слайдера в `slot` —
+    /// по его центру тесты и наводят курсор.
+    fn wheel_frame(
+        ctx: &egui::Context,
+        palette: &Palette,
+        volume: &mut f64,
+        notch: f32,
+        pointer: Option<Pos2>,
+        time: f64,
+        slot: &mut Option<egui::Rect>,
+    ) -> SliderResponse {
+        let mut events = Vec::new();
+        if let Some(pos) = pointer {
+            events.push(egui::Event::PointerMoved(pos));
+        }
+        if notch != 0.0 {
+            events.push(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Line,
+                delta: Vec2::new(0.0, notch),
+                phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Wheel,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        let input = egui::RawInput {
+            time: Some(time),
+            predicted_dt: 1.0 / 60.0,
+            screen_rect: Some(egui::Rect::from_min_size(
+                Pos2::ZERO,
+                Vec2::new(400.0, 200.0),
+            )),
+            events,
+            ..Default::default()
+        };
+        let mut response = SliderResponse::default();
+        let output = ctx.run_ui(input, |ui| {
+            let origin = ui.cursor().min;
+            response = volume_slider_width(ui, palette, volume, 120.0, Language::English);
+            if slot.is_none() {
+                *slot = Some(egui::Rect::from_min_size(origin, Vec2::new(120.0, 18.0)));
+            }
+        });
+        output.drop_without_applying_deltas();
+        response
+    }
+
+    /// Пробный кадр без колеса: возвращает центр слайдера для наведения указателя.
+    fn slider_center(
+        ctx: &egui::Context,
+        palette: &Palette,
+        volume: &mut f64,
+        slot: &mut Option<egui::Rect>,
+    ) -> Pos2 {
+        wheel_frame(ctx, palette, volume, 0.0, None, 0.1, slot);
+        slot.expect("пробный кадр запоминает прямоугольник")
+            .center()
+    }
+
+    /// Флаги взаимодействия egui 0.37 берутся из прошлого прохода, поэтому перед
+    /// колесом нужен «кадр-движение»: указатель уже на месте, колеса нет.
+    fn settle_hover(
+        ctx: &egui::Context,
+        palette: &Palette,
+        volume: &mut f64,
+        pointer: Pos2,
+        slot: &mut Option<egui::Rect>,
+    ) {
+        wheel_frame(ctx, palette, volume, 0.0, Some(pointer), 0.2, slot);
+    }
+
+    #[test]
+    fn wheel_over_slider_steps_volume_and_commits() {
+        let ctx = egui::Context::default();
+        let palette = Palette::for_ui(egui::Theme::Dark, AccentColor::Blue);
+        let mut volume = 0.5;
+        let mut slot = None;
+        let center = slider_center(&ctx, &palette, &mut volume, &mut slot);
+        settle_hover(&ctx, &palette, &mut volume, center, &mut slot);
+        let hover = Some(center);
+
+        let answer = wheel_frame(&ctx, &palette, &mut volume, 1.0, hover, 1.0, &mut slot);
+        assert!(
+            answer.changed && answer.committed,
+            "колесо коммитит сразу, как стрелки"
+        );
+        assert!(
+            (volume - 0.55).abs() < 1e-9,
+            "щелчок вверх: +5 %, получено {volume}"
+        );
+
+        let answer = wheel_frame(&ctx, &palette, &mut volume, -2.0, hover, 2.0, &mut slot);
+        assert!(answer.changed && answer.committed);
+        assert!(
+            (volume - 0.45).abs() < 1e-9,
+            "два щелчка вниз: −10 %, получено {volume}"
+        );
+    }
+
+    #[test]
+    fn wheel_is_deduplicated_within_one_input_time() {
+        let ctx = egui::Context::default();
+        let palette = Palette::for_ui(egui::Theme::Dark, AccentColor::Blue);
+        let mut volume = 0.5;
+        let mut slot = None;
+        let center = slider_center(&ctx, &palette, &mut volume, &mut slot);
+        settle_hover(&ctx, &palette, &mut volume, center, &mut slot);
+        // Многопроходность egui: тот же `time` не должен применять дельту дважды.
+        wheel_frame(
+            &ctx,
+            &palette,
+            &mut volume,
+            1.0,
+            Some(center),
+            1.0,
+            &mut slot,
+        );
+        let after_first = volume;
+        let answer = wheel_frame(
+            &ctx,
+            &palette,
+            &mut volume,
+            1.0,
+            Some(center),
+            1.0,
+            &mut slot,
+        );
+        assert_eq!(
+            volume, after_first,
+            "повтор тех же входных данных — без шага"
+        );
+        assert!(!answer.changed && !answer.committed);
+    }
+
+    #[test]
+    fn wheel_outside_slider_leaves_volume_and_scroll_alone() {
+        let ctx = egui::Context::default();
+        let palette = Palette::for_ui(egui::Theme::Dark, AccentColor::Blue);
+        let mut volume = 0.5;
+        let mut slot = None;
+        slider_center(&ctx, &palette, &mut volume, &mut slot);
+        let far = pos2(350.0, 180.0);
+        settle_hover(&ctx, &palette, &mut volume, far, &mut slot);
+        let answer = wheel_frame(&ctx, &palette, &mut volume, 1.0, Some(far), 1.0, &mut slot);
+        assert!(
+            !answer.changed && !answer.committed,
+            "указатель мимо — дельта не наша"
+        );
+        assert_eq!(volume, 0.5);
+    }
+
+    #[test]
+    fn wheel_clamps_at_volume_edges_without_commit() {
+        let ctx = egui::Context::default();
+        let palette = Palette::for_ui(egui::Theme::Dark, AccentColor::Blue);
+        let mut volume = 1.0;
+        let mut slot = None;
+        let center = slider_center(&ctx, &palette, &mut volume, &mut slot);
+        settle_hover(&ctx, &palette, &mut volume, center, &mut slot);
+        let answer = wheel_frame(
+            &ctx,
+            &palette,
+            &mut volume,
+            1.0,
+            Some(center),
+            1.0,
+            &mut slot,
+        );
+        assert_eq!(volume, 1.0, "выше максимума не прыгает");
+        assert!(
+            !answer.committed,
+            "на границе записывать в настройки нечего"
+        );
     }
 
     #[test]

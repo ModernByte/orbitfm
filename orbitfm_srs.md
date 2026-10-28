@@ -178,8 +178,15 @@ OrbitFM проектируется по архитектуре **«Единый 
   настройки. Ошибка записи показывается в карточке и не прерывает воспроизведение.
 * **Отказоустойчивость:** отсутствующий файл — значения по умолчанию; повреждённый
   JSON — ошибка загрузки и эфемерные настройки, файл не перезаписывается.
-* **Интерфейс:** раскрывающийся блок «Оформление» в карточке. Новых IPC-команд нет.
-  Решение — ADR-0014.
+* **Интерфейс:** drawer настроек шириной `SETTINGS_WIDTH = 380` px
+  (`src/ui/settings_panel.rs`). Строка настройки собирается `controls::row`
+  (`src/ui/controls.rs`): подпись слева, контрол в фиксированном слоте справа,
+  приглушённая подсказка под подписью. Тема, число полос, язык, реактивность,
+  стиль движения и режим окна — `controls::dropdown` (`egui::ComboBox` в стиле
+  чипа со своим шевроном), булевые настройки — `controls::checkbox` (18×18,
+  галка из двух штрихов, зона нажатия вместе с подписью), палитра акцента —
+  шесть плашек, «Скрыть окно» и «Выход» — `widgets::quiet_button` в футере.
+  Новых IPC-команд нет. Решение — ADR-0014, интерфейс — ADR-0031.
 
 ---
 
@@ -283,12 +290,7 @@ barWidget.setText(noctalia.tr("widget.label"))
 barWidget.setTooltip(noctalia.tr("widget.tooltip"))
 
 function onClick()
-    local started = noctalia.runAsync("orbitfm toggle", function(result)
-        if result.exitCode ~= 0 then
-            local detail = result.stderr ~= "" and result.stderr or noctalia.tr("widget.error_body")
-            noctalia.notify(noctalia.tr("widget.error_title"), detail)
-        end
-    end)
+    local started = noctalia.runAsync("orbitfm overlay")
 
     if not started then
         noctalia.notify(noctalia.tr("widget.error_title"), noctalia.tr("widget.error_body"))
@@ -297,7 +299,11 @@ end
 ```
 
 Плагин не держит состояние и не содержит бизнес-логики: он только отправляет
-IPC-команду `toggle` через CLI. Строки интерфейса — в `translations/en.json` и
+IPC-команду `overlay` — переключатель капсулы Overlay (открытая капсула
+скрывается, другой режим переключается на Overlay и показывается) — через CLI.
+Форма `runAsync` с колбэком не используется: Noctalia ограничивает такую
+команду таймаутом 5 с и убивает группу процессов, поэтому GUI запускается без
+callback. Выпадающая панель остаётся CLI-командой `panel` — виджет её не зовёт. Строки интерфейса — в `translations/en.json` и
 `translations/ru.json`; ключи вложены по сегментам (`widget.label`), плоские
 ключи с точками каталог не принимает.
 
@@ -325,26 +331,35 @@ IPC-команду `toggle` через CLI. Строки интерфейса �
 
 ```kdl
 window-rule {
-    match app-id="org.modernbyte.OrbitFM"
-
+    match app-id="org.modernbyte.OrbitFM" title=r"^OrbitFM$"
     open-floating true
-    default-column-width { fixed 920; }
-    default-window-height { fixed 660; }
+    default-column-width { fixed 1100; }
+    default-window-height { fixed 800; }
+    default-floating-position x=60 y=48 relative-to="top-right"
     draw-border-with-background false
 }
 ```
 
-Плавающие окна Niri центрирует по умолчанию; `default-floating-position`
-не требуется (значение `relative-to="center"` не поддерживается).
+Плавающие окна Niri центрирует по умолчанию, поэтому правило задаёт якорь само:
+`default-floating-position x=60 y=48 relative-to="top-right"` ставит Focus под
+правую секцию бара Noctalia, где стоит виджет; `x` подбирается вручную. Размер
+привязан к заголовку (`title=r"^OrbitFM$"`), а не к app-id: у каждого режима свой
+заголовок, поэтому правила не пересекаются и порядок их применения не важен.
+Правила не-Focus режимов (`Overlay`, `Listening`, `Panel`) по их заголовкам
+дополнительно выключают `border` и `shadow`: рамка и тень остаются только у Focus,
+который один живёт как обычное окно (`WindowMode::is_borderless`).
 
 ### 4.5. Оконные правила Hyprland (`wm-configs/orbitfm-hyprland.conf`)
 
 ```ini
 windowrulev2 = float, class:^(org\.modernbyte\.OrbitFM)$
-windowrulev2 = size 920 660, class:^(org\.modernbyte\.OrbitFM)$
 windowrulev2 = center, class:^(org\.modernbyte\.OrbitFM)$
 windowrulev2 = stayfocused, class:^(org\.modernbyte\.OrbitFM)$
+windowrulev2 = size 1100 800, title:^OrbitFM$
 ```
+
+`size` ключуется по заголовку (`title:^OrbitFM$` — только Focus), а не по классу:
+правило по классу навязало бы 1100×800 всем остальным режимам окон.
 
 `windowrulev2` работает в Hyprland 0.52 и совместимом режиме 0.53+; в 0.53+
 синтаксис помечен deprecated, новый формат — блок `windowrule { ... }`.
