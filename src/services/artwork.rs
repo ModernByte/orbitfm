@@ -743,4 +743,79 @@ mod tests {
         assert_eq!(publishable("не url"), None);
         assert_eq!(publishable(""), None);
     }
+
+    /// Замер покрытия обложек на живом каталоге перед релизом (S7): политика
+    /// HTTPS-only может оставить заметную долю станций с инициалами, и это
+    /// решение про UX, а не про код. Печатает раскладку по причинам отказа,
+    /// ничего не утверждает по значению — сеть здесь не детерминирована.
+    #[tokio::test]
+    #[ignore = "требует сеть и живой Radio Browser; запускайте с --ignored --nocapture"]
+    async fn measures_live_artwork_coverage() {
+        use super::super::radio_browser::{RadioBrowserClient, SearchParams};
+        use std::collections::BTreeMap;
+
+        let client = RadioBrowserClient::new();
+        let stations = client
+            .search(SearchParams {
+                limit: 300,
+                hide_broken: true,
+                ..SearchParams::default()
+            })
+            .await
+            .expect("Radio Browser недоступен");
+        assert!(!stations.is_empty(), "каталог вернул пустую выборку");
+
+        let fetcher = ArtworkFetcher::new();
+        let mut causes: BTreeMap<String, usize> = BTreeMap::new();
+        let mut http_origin: BTreeMap<String, usize> = BTreeMap::new();
+        // По 8 загрузок параллельно: столько же, сколько in_flight в UI-кэше,
+        // чтобы замер не отличался от боевого профиля.
+        for batch in stations.chunks(8) {
+            let mut tasks = tokio::task::JoinSet::new();
+            for station in batch {
+                let fetcher = fetcher.clone();
+                let reference = station.favicon.clone().unwrap_or_default();
+                tasks.spawn(async move {
+                    let was_http = reference.starts_with("http://");
+                    let cause = if reference.trim().is_empty() {
+                        "нет ссылки".to_owned()
+                    } else {
+                        match fetcher.fetch(&reference).await {
+                            Ok(bytes) if bytes.is_empty() => "пустой ответ".to_owned(),
+                            Ok(_) => "загружено".to_owned(),
+                            Err(cause) => cause.to_string(),
+                        }
+                    };
+                    (was_http, cause)
+                });
+            }
+            while let Some(outcome) = tasks.join_next().await {
+                let (was_http, cause) = outcome.expect("задача не должна паниковать");
+                *causes.entry(cause.clone()).or_default() += 1;
+                if was_http {
+                    *http_origin.entry(cause).or_default() += 1;
+                }
+            }
+        }
+
+        let served = causes.get("загружено").copied().unwrap_or_default();
+        println!("выборка: {} станций", stations.len());
+        for (cause, count) in &causes {
+            println!("  {cause}: {count}");
+        }
+        println!(
+            "покрытие обложек: {served}/{} ({:.1}%)",
+            stations.len(),
+            100.0 * served as f64 / stations.len() as f64
+        );
+        // Отдельно: ссылки, которые политика подняла с http на https. Это и
+        // есть цена HTTPS-only — если тут «не 2xx» больше половины, opt-in
+        // `artwork_allow_http` нужен не в 0.14, а сейчас.
+        if !http_origin.is_empty() {
+            println!("изначально http (подняты до https):");
+            for (cause, count) in &http_origin {
+                println!("  {cause}: {count}");
+            }
+        }
+    }
 }
