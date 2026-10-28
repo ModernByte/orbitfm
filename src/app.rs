@@ -28,7 +28,7 @@ use crate::ui::images::{FaviconCache, MAX_FAVICON_BYTES, decode_favicon};
 use crate::ui::layout::{DeskLayout, LayoutDensity};
 use crate::ui::orbit_ring::OrbitRing;
 use crate::ui::palette::{self, Palette};
-use crate::ui::settings_panel::{self, SettingsState};
+use crate::ui::settings_panel::{self, SettingsCategory, SettingsState};
 use crate::ui::toast::Toast;
 use crate::ui::transport::{self, TransportState};
 use crate::ui::{capsule, hud, overlays, station_panel, widgets};
@@ -54,8 +54,10 @@ const ALLOWED_FAVICON_MIME: &[&str] = &[
 const GLASS_RADIUS_MAJOR: f32 = 16.0;
 /// Скругление маленьких зон (легенда, карточка управления).
 const GLASS_RADIUS_MINOR: f32 = 14.0;
-/// Затемнение стола под открытым drawer настроек (ADR-0031).
+/// Затемнение стола под открытым модальным окном настроек (ADR-0031).
 const SCRIM_ALPHA: u8 = 90;
+/// Скругление модального окна настроек.
+const SETTINGS_RADIUS: f32 = 20.0;
 
 /// Строка тоста для ключа сообщения ядра: `detail` остаётся технической
 /// вставкой и не переводится (ADR-0030).
@@ -116,9 +118,11 @@ pub(crate) struct OrbitApp<'a> {
     toast: Toast,
     /// Переходы UI этого прогона окна (ADR-0032).
     transitions: Transitions,
-    /// Прямоугольник drawer'а с последнего открытого кадра: нужен, чтобы
-    /// панель гасла по месту, а не исчезала скачком (ADR-0032).
-    drawer_rect: Option<egui::Rect>,
+    /// Прямоугольник модального окна настроек с последнего открытого кадра:
+    /// нужен, чтобы окно гасло по месту, а не исчезало скачком (ADR-0032).
+    settings_rect: Option<egui::Rect>,
+    /// Открытая категория модального окна: состояние представления, не настройка.
+    settings_category: SettingsCategory,
     /// Режим тепловой карты стран из легенды Focus-стола.
     country_metric: CountryMetric,
     /// Текстура карты: пересобирается на смену выборки или режима.
@@ -171,7 +175,8 @@ impl<'a> OrbitApp<'a> {
                 .expect("конфигурация HTTP-клиента favicon корректна"),
             toast: Toast::default(),
             transitions: Transitions::new(),
-            drawer_rect: None,
+            settings_rect: None,
+            settings_category: SettingsCategory::default(),
             country_metric: CountryMetric::default(),
             country_heat: CountryHeatCache::default(),
         }
@@ -327,7 +332,7 @@ impl<'a> OrbitApp<'a> {
         // Прогрессы переходов считаются один раз на кадр (ADR-0032): зоны
         // читают готовые значения, а каркас стеклянных зон гаснет здесь.
         if layout.settings.is_some() {
-            self.drawer_rect = layout.settings;
+            self.settings_rect = layout.settings;
         }
         let mut ui_motion = self.transitions.frame(
             ui.ctx(),
@@ -336,7 +341,7 @@ impl<'a> OrbitApp<'a> {
                 panel: layout.panel.is_some(),
                 help: layout.help.is_some(),
                 legend: layout.legend.is_some(),
-                drawer: layout.settings.is_some(),
+                settings: layout.settings.is_some(),
                 capsules: matches!(density, LayoutDensity::Compact | LayoutDensity::Panel),
                 favorites: density == LayoutDensity::Compact && layout.capsule.is_some(),
                 listening: density == LayoutDensity::Minimal,
@@ -809,7 +814,13 @@ impl<'a> OrbitApp<'a> {
             }
         }
 
-        actions.extend(draw_settings(ui, frame, &mut ui_motion, self.drawer_rect));
+        actions.extend(draw_settings(
+            ui,
+            frame,
+            &ui_motion,
+            self.settings_rect,
+            &mut self.settings_category,
+        ));
 
         if frame.motion_reactivity.is_enabled() {
             // Активный эфир — 30 fps; idle-дыханию хватает 15 fps.
@@ -937,7 +948,7 @@ impl<'a> OrbitApp<'a> {
             UiAction::CloseSettings => self.session.close_settings(),
             UiAction::SetWindowMode(mode) => {
                 self.session.set_window_mode(mode);
-                // В Listening drawer не помещается: выбор режима закрывает его.
+                // В Listening окно настроек не помещается: выбор режима закрывает его.
                 if mode == WindowMode::Listening {
                     self.session.close_settings();
                 }
@@ -984,11 +995,11 @@ struct Frame {
     /// Клик по сфере выбирает страну только в режиме страны (ТЗ §5.2).
     country_mode: bool,
     layout: DeskLayout,
-    /// Разрешённый язык: из него drawer берёт подписи (ADR-0030).
+    /// Разрешённый язык: из него окно настроек берёт подписи (ADR-0030).
     language: Language,
     window_mode: WindowMode,
     show_help: bool,
-    /// Всё окно: по нему рисуется затемнение под drawer.
+    /// Всё окно: по нему рисуется затемнение под окном настроек.
     viewport: egui::Rect,
     /// Тепловая карта стран: режим, выбранный в легенде.
     country_metric: CountryMetric,
@@ -1060,32 +1071,33 @@ impl Frame {
     }
 }
 
-/// Скрим + drawer настроек поверх всех зон (ADR-0031, ADR-0032).
+/// Скрим + модальное окно настроек поверх всех зон (ADR-0031, ADR-0032).
 ///
-/// Layer `Foreground`: затемнение перехватывает клики и scroll стола, а drawer
-/// как аллоцирован позже — забирает ввод у скрима. Закрытием считаются клик по
+/// Layer `Foreground`: затемнение перехватывает клики и scroll стола, а модалка
+/// аллоцирована позже — забирает ввод у скрима. Закрытием считаются клик по
 /// скриму и Escape, который обрабатывает [`eframe::App::logic`].
 ///
 /// На выходе `layout.settings` уже `None`, поэтому каркас берёт последний
-/// прямоугольник `last_drawer_rect`: геометрия кадра не меняется, zones стола
-/// не дёргаются. Гаснущий drawer рисует содержимое, но не принимает ввод.
+/// прямоугольник `last_settings_rect`: геометрия кадра не меняется, зоны стола
+/// не дёргаются. Гаснущее окно рисует содержимое, но не принимает ввод.
 fn draw_settings(
     ui: &mut egui::Ui,
     frame: &Frame,
-    motion: &mut FrameMotion<'_>,
-    last_drawer_rect: Option<egui::Rect>,
+    motion: &FrameMotion<'_>,
+    last_settings_rect: Option<egui::Rect>,
+    category: &mut SettingsCategory,
 ) -> Vec<UiAction> {
     let palette = &frame.palette;
     let mut volume = frame.volume;
     let mut actions = Vec::new();
 
     let open = frame.layout.settings.is_some();
-    let Some(rect) = frame.layout.settings.or(last_drawer_rect) else {
+    let Some(rect) = frame.layout.settings.or(last_settings_rect) else {
         return actions;
     };
     let scrim = animation::alpha(motion.scrim);
-    let drawer = animation::alpha(motion.drawer);
-    if scrim == 0.0 && drawer == 0.0 {
+    let panel = animation::alpha(motion.settings);
+    if scrim == 0.0 && panel == 0.0 {
         return actions;
     }
 
@@ -1115,19 +1127,26 @@ fn draw_settings(
             });
     }
 
-    // Drawer приходит справа: в закрытом состоянии смещён на SLIDE_X вправо.
-    let shifted = rect.translate(egui::vec2(animation::slide_x(drawer), 0.0));
-    egui::Area::new(egui::Id::unique("orbitfm_settings_drawer"))
-        .fixed_pos(shifted.min)
-        .default_size(shifted.size())
+    egui::Area::new(egui::Id::unique("orbitfm_settings_modal"))
+        .fixed_pos(rect.min)
+        .default_size(rect.size())
         .interactable(open)
         .order(egui::Order::Foreground)
         .show(ui.ctx(), |ui| {
-            widgets::glass_panel(ui.painter(), shifted, palette, GLASS_RADIUS_MAJOR, drawer);
+            // Мягкая тень: несколько расширяющихся заливок вместо одной резкой.
+            for (spread, alpha) in [(20.0, 0.10), (12.0, 0.12), (5.0, 0.16)] {
+                ui.painter().rect_filled(
+                    rect.expand(spread),
+                    SETTINGS_RADIUS + spread,
+                    widgets::faded(egui::Color32::BLACK, alpha * panel),
+                );
+            }
+            widgets::glass_panel(ui.painter(), rect, palette, SETTINGS_RADIUS, panel);
             ui.set_min_size(rect.size());
             ui.set_max_size(rect.size());
             actions.extend(settings_panel::show(
                 ui,
+                rect,
                 palette,
                 motion,
                 SettingsState {
@@ -1136,6 +1155,7 @@ fn draw_settings(
                     window_mode: frame.window_mode,
                     volume: &mut volume,
                     show_help: frame.show_help,
+                    category,
                 },
             ));
         });
@@ -1205,7 +1225,7 @@ impl eframe::App for OrbitApp<'_> {
             None => {}
         }
 
-        // Escape сначала снимает самый верхний модальный слой: drawer, затем help.
+        // Escape сначала снимает самый верхний модальный слой: настройки, затем help.
         if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
             if self.session.settings_open {
                 self.session.close_settings();
@@ -1235,7 +1255,7 @@ impl eframe::App for OrbitApp<'_> {
 
         // Space без фокуса — play/pause. На сфокусированной строке Space уже
         // занят станцией (station_row), поэтому просим клавишу только когда
-        // фокус пуст и drawer настроек закрыт.
+        // фокус пуст и окно настроек закрыто.
         if !self.session.settings_open
             && unfocused
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Space))

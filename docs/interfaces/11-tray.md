@@ -70,7 +70,7 @@ pub(crate) fn spawn(
 | Элемент | Сигнатура | Поведение |
 |---------|-----------|-----------|
 | `VOLUME_STEP` | `pub(crate) const f64 = 0.1` | Единый шаг для `VolumeUp`/`VolumeDown` (колесо и меню): 10 шагов от `0.0` до `1.0` |
-| `TrayCommand` | `enum`, 12 вариантов, `Copy + Eq` | Ровно один вариант на каждое действие пользователя; `Hide` нет — окно прячут тем же `Toggle`, что Noctalia-виджет и IPC; `Settings` открывает drawer настроек (ADR-0031) |
+| `TrayCommand` | `enum`, 12 вариантов, `Copy + Eq` | Ровно один вариант на каждое действие пользователя; `Hide` нет — окно прячут тем же `Toggle`, что Noctalia-виджет и IPC; `Settings` открывает окно настроек (ADR-0031) |
 | `TraySnapshot` | `struct`, 5 полей, `Default + Eq` | Снимок витрины; `Default` — окно скрыто, эфира нет, тема и язык дефолтные. `Eq` нужен `sync_tray`: публикуется только изменение, и смена языка — тоже изменение |
 | `TrayHandle` | `struct` | Владелец обеих очередей живого трея; `None` в `Session::tray` означает «трея нет» |
 | `TrayHandle::publish` | `fn publish(&self, snapshot: &TraySnapshot) -> bool` | Non-blocking отправка снимка в поток-владелец; `false` — канал закрыт, трей умер |
@@ -93,7 +93,7 @@ pub(crate) fn spawn(
 | `Roulette` | `StandardItem` `radio_roulette` | `start_roulette()`; ответ придёт в `tick()` или в `Parked::Roulette` |
 | `VolumeUp` / `VolumeDown` | колесо (`Scroll`) и пункты `volume_up` / `volume_down` | `nudge_volume(±VOLUME_STEP)` с `clamp` к `0.0..=1.0` |
 | `SetTheme(mode)` | `RadioGroup` с подписями `i18n::theme_label` | `set_theme(mode)` в `SettingsStore` |
-| `Settings` | `StandardItem` `settings` | `open_settings()`: в `Listening` сначала переводит окно в `Overlay`, затем открывает drawer и показывает окно, если оно было скрыто |
+| `Settings` | `StandardItem` `settings` | `open_settings()`: в `Listening` сначала переводит окно в `Overlay`, затем открывает окно настроек и показывает окно, если оно было скрыто |
 | `Quit` | `StandardItem` `quit` | `window.quit()` |
 
 Ответов у трей-команд нет: SNI-меню не ждёт строки, поэтому неудача уходит в
@@ -179,7 +179,7 @@ pub(crate) fn spawn(
 
 - ADR-0020 — выбор протокола, зависимости, меню, иконка, деградация
 - ADR-0030 — язык снимка и каталог `text.tray.*` (заменяет English-only конвенцию ADR-0020 п. 5)
-- ADR-0031 — drawer настроек, который открывает команда `Settings`
+- ADR-0031 — окно настроек, которое открывает команда `Settings`
 - ADR-0018 — почему трей нужен: закрытие окна = скрытие, процесс живёт
 - ADR-0005 — IPC (трей не меняет протокол), ADR-0006 — MPRIS, ADR-0007 — Noctalia
 - `docs/modules/12-tray.md` — модульная спецификация `src/tray/`

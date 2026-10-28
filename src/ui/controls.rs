@@ -1,24 +1,30 @@
-//! Примитивы строк drawer'а настроек: dropdown, чекбокс и строка-ряд (ADR-0031).
+//! Примитивы строк модального окна настроек: dropdown, тумблер, свотч и
+//! строка-ряд (ADR-0031).
 //!
 //! Контролы рисуют себя сами и берут цвета из палитры, которую вызывающий код уже
 //! погасил stagger'ом входа. Внутри контролов запрещены `multiply_opacity` и
 //! условная вложенность `Ui`: по ADR-0032 §7 анимация не имеет права двигать
 //! аллокации, идентификаторы виджетов и hit-зоны — поэтому геометрия строки не
-//! зависит от `checked`, а переходы остаются только в отрисовке.
+//! зависит от `on`, а переходы остаются только в отрисовке.
 
 use eframe::egui;
 
 use super::palette::{Palette, mix_colors};
 use super::widgets::{contrast_color, control_motion, faded, focus_ring};
 
-/// Высота строки с контролом: чип dropdown выше подписи, поэтому задаёт ритм.
-const ROW_HEIGHT: f32 = 26.0;
-/// Квадрат чекбокса и его скругление.
-const CHECK_SIZE: f32 = 18.0;
-const CHECK_RADIUS: f32 = 5.0;
-/// Подпись строки — 12 pt, приглушённая подсказка под ней — 10 pt.
-const LABEL_SIZE: f32 = 12.0;
-const HINT_SIZE: f32 = 10.0;
+/// Высота строки с контролом: тумблер выше подписи, поэтому задаёт ритм.
+const ROW_HEIGHT: f32 = 30.0;
+/// Подпись строки — 12.5 pt, приглушённая подсказка под ней — 10.5 pt.
+const LABEL_SIZE: f32 = 12.5;
+const HINT_SIZE: f32 = 10.5;
+/// Тумблер: трек 40×22, ручка 16 px, отступ ручки от края трека.
+const TRACK_SIZE: egui::Vec2 = egui::Vec2::new(40.0, 22.0);
+const KNOB_RADIUS: f32 = 8.0;
+const KNOB_INSET: f32 = 3.0;
+/// Свотч акцента: кружок 17 px в слоте 26 px и кольцо выбора вокруг него.
+const SWATCH_SIZE: f32 = 26.0;
+const SWATCH_RADIUS: f32 = 8.5;
+const SWATCH_RING: f32 = 12.0;
 /// Насколько гаснут цвета выключенного контрола: своего `disabled` у нашей
 /// палитры нет, поэтому приглушаем явно.
 const DISABLED: f32 = 0.45;
@@ -42,10 +48,11 @@ pub(crate) fn dropdown<T: Copy + PartialEq>(
         .position(|option| *option == selected)
         .unwrap_or_default();
     let mut picked = current;
-    // Стиль чипа правим на текущем Ui (вложенный сдвину бы auto-иденты), а потом
-    // возвращаем прежний: попап строится из `ctx.style()` и гаснуть не должен —
-    // он открывается кликом, когда вход drawer'а уже завершён.
+    // Стиль чипа правим на текущем Ui (вложенный сдвинул бы auto-иденты), а
+    // потом возвращаем прежний: попап строится из `ctx.style()` и гаснуть не
+    // должен — он открывается кликом, когда вход модалки уже завершён.
     let base = ui.style().clone();
+    ui.spacing_mut().button_padding = egui::vec2(10.0, 6.0);
     chip_visuals(ui.visuals_mut(), palette);
     egui::ComboBox::from_id_salt(id_salt)
         .width(width)
@@ -94,43 +101,60 @@ pub(crate) fn dropdown<T: Copy + PartialEq>(
     (picked != current).then_some(picked)
 }
 
-/// Чекбокс строки настройки: квадрат с галочкой из двух штрихов и hit-зоной
-/// вместе с подписью. `enabled` гасит цвета и снимает `Sense::click`, не трогая
-/// размеры строки.
-pub(crate) fn checkbox(
+/// Тумблер современного вида: подпись слева на всю ширину строки, трек справа.
+/// Клик по любому месту строки переключает значение, `enabled` гасит цвета и
+/// снимает `Sense::click`, не трогая размеры (ADR-0032 §7).
+///
+/// Возвращает `Response` строки: вызывающий смотрит `clicked()`, а `hint`
+/// остаётся внутри hit-зоны, поэтому отдельный `on_hover_text` не нужен.
+pub(crate) fn switch_row(
     ui: &mut egui::Ui,
     palette: &Palette,
-    checked: bool,
-    enabled: bool,
     label: &str,
+    hint: Option<&str>,
+    on: bool,
+    enabled: bool,
 ) -> egui::Response {
     let gap = ui.spacing().item_spacing.x;
+    let width = ui.available_width();
+    let text_width = (width - TRACK_SIZE.x - gap).max(48.0);
     let text = if enabled {
         palette.text
     } else {
         faded(palette.text, DISABLED)
     };
-    let galley = ui.painter().layout_no_wrap(
+    let hint_color = if enabled {
+        palette.muted
+    } else {
+        faded(palette.muted, DISABLED)
+    };
+    let label_galley = ui.painter().layout(
         label.to_owned(),
         egui::FontId::proportional(LABEL_SIZE),
         text,
+        text_width,
     );
+    let hint_galley = hint.map(|hint| {
+        ui.painter().layout(
+            hint.to_owned(),
+            egui::FontId::proportional(HINT_SIZE),
+            hint_color,
+            text_width,
+        )
+    });
+    let label_height = label_galley.size().y;
+    let text_height = label_height
+        + hint_galley
+            .as_ref()
+            .map_or(0.0, |galley| galley.size().y + 2.0);
+    let height = ROW_HEIGHT.max(text_height);
     let sense = if enabled {
         egui::Sense::click()
     } else {
         egui::Sense::hover()
     };
-    let (rect, response) = ui.allocate_exact_size(
-        egui::Vec2::new(
-            CHECK_SIZE + gap + galley.size().x,
-            ROW_HEIGHT.max(galley.size().y),
-        ),
-        sense,
-    );
-    let box_rect = egui::Rect::from_center_size(
-        egui::pos2(rect.left() + CHECK_SIZE * 0.5, rect.center().y),
-        egui::Vec2::splat(CHECK_SIZE),
-    );
+    let (rect, response) = ui.allocate_exact_size(egui::Vec2::new(width, height), sense);
+    let track = switch_track(rect);
     if ui.is_rect_visible(rect) {
         let (hover, press) = control_motion(
             ui,
@@ -138,56 +162,133 @@ pub(crate) fn checkbox(
             enabled && response.hovered(),
             response.is_pointer_button_down_on(),
         );
-        let edge = if enabled {
-            mix_colors(palette.chip_stroke, palette.accent, hover.max(press))
+        if hover > 0.0 || press > 0.0 {
+            ui.painter().rect_filled(
+                rect,
+                8.0,
+                faded(palette.chip_fill, 0.7 * hover.max(0.6 * press)),
+            );
+        }
+        let text_top = rect.center().y - text_height * 0.5;
+        ui.painter()
+            .galley(egui::pos2(rect.left(), text_top), label_galley, text);
+        if let Some(galley) = hint_galley {
+            ui.painter().galley(
+                egui::pos2(rect.left(), text_top + label_height + 2.0),
+                galley,
+                hint_color,
+            );
+        }
+        // Ручка едет по треку; при reduce motion egui сам отдаёт конечное
+        // значение, потому что `animation_time` равен нулю (ADR-0032 §3).
+        let travel = ui.ctx().animate_bool_with_time(
+            response.id.with("orbitfm-switch"),
+            on,
+            ui.style().animation_time,
+        );
+        let knob_x = switch_knob_x(track, travel);
+        let track_fill = if on {
+            if enabled {
+                mix_colors(palette.accent, egui::Color32::WHITE, 0.12 * hover)
+            } else {
+                faded(palette.accent, DISABLED)
+            }
         } else {
-            faded(palette.chip_stroke, DISABLED)
+            mix_colors(palette.chip_fill, palette.accent, 0.10 * hover)
         };
-        let fill = if checked && enabled {
-            palette.accent
+        let track_stroke = if on {
+            egui::Stroke::NONE
+        } else if enabled {
+            egui::Stroke::new(
+                1.0,
+                mix_colors(palette.chip_stroke, palette.accent, 0.7 * hover.max(press)),
+            )
         } else {
-            palette.chip_fill
+            egui::Stroke::new(1.0, faded(palette.chip_stroke, DISABLED))
         };
-        ui.painter().rect_filled(box_rect, CHECK_RADIUS, fill);
-        ui.painter().rect_stroke(
-            box_rect,
-            CHECK_RADIUS,
-            egui::Stroke::new(1.0, edge),
+        ui.painter().rect(
+            track,
+            TRACK_SIZE.y * 0.5,
+            track_fill,
+            track_stroke,
             egui::StrokeKind::Inside,
         );
-        if checked {
-            // Галочка двумя штрихами: SVG-ассета под неё нет, и ADR-0034 не
-            // трогается — цвет контрастный к accent, как текст на выбранном чипе.
-            let check = egui::Stroke::new(2.0, contrast_color(palette.accent));
-            let left = box_rect.left_top() + box_rect.size() * egui::Vec2::new(0.24, 0.52);
-            let bottom = box_rect.left_top() + box_rect.size() * egui::Vec2::new(0.44, 0.72);
-            let right = box_rect.left_top() + box_rect.size() * egui::Vec2::new(0.78, 0.30);
-            ui.painter()
-                .add(egui::Shape::line(vec![left, bottom], check));
-            ui.painter()
-                .add(egui::Shape::line(vec![bottom, right], check));
-        }
-        ui.painter().galley(
-            egui::pos2(
-                box_rect.right() + gap,
-                rect.center().y - galley.size().y * 0.5,
-            ),
-            galley,
-            text,
-        );
+        let knob = if on {
+            contrast_color(palette.accent)
+        } else if enabled {
+            palette.text
+        } else {
+            faded(palette.text, DISABLED)
+        };
+        ui.painter()
+            .circle_filled(egui::pos2(knob_x, track.center().y), KNOB_RADIUS, knob);
     }
-    focus_ring(ui, &response, box_rect, CHECK_RADIUS);
+    focus_ring(ui, &response, track, TRACK_SIZE.y * 0.5);
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, enabled, on, label));
     response
-        .widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, enabled, checked, label));
+}
+
+/// Круглый свотч палитры акцентов: выбранный обведён кольцом и галочкой.
+/// В отличие от строки, подпись приходит снаружи — свотчи стоят в ряд.
+pub(crate) fn accent_swatch(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    color: egui::Color32,
+    selected: bool,
+    hint: &str,
+) -> egui::Response {
+    let (rect, response) =
+        ui.allocate_exact_size(egui::Vec2::splat(SWATCH_SIZE), egui::Sense::click());
+    let center = rect.center();
+    if ui.is_rect_visible(rect) {
+        let (hover, press) = control_motion(
+            ui,
+            response.id,
+            response.hovered(),
+            response.is_pointer_button_down_on(),
+        );
+        if selected || hover > 0.0 || press > 0.0 {
+            ui.painter().circle_stroke(
+                center,
+                SWATCH_RING,
+                egui::Stroke::new(
+                    if selected { 1.8 } else { 1.2 },
+                    if selected {
+                        palette.text
+                    } else {
+                        mix_colors(palette.chip_stroke, palette.text, hover)
+                    },
+                ),
+            );
+        }
+        ui.painter().circle_filled(center, SWATCH_RADIUS, color);
+        if selected {
+            // Галочка двумя штрихами: цвет контрастный к кружку, как у текста
+            // на выбранном чипе. SVG-ассета под неё нет и ADR-0034 не трогается.
+            let check = egui::Stroke::new(1.8, contrast_color(color));
+            let point = |dx: f32, dy: f32| center + egui::vec2(dx, dy);
+            ui.painter().add(egui::Shape::line(
+                vec![point(-3.4, 0.2), point(-0.8, 2.8)],
+                check,
+            ));
+            ui.painter().add(egui::Shape::line(
+                vec![point(-0.8, 2.8), point(3.8, -2.6)],
+                check,
+            ));
+        }
+    }
+    focus_ring(ui, &response, rect, SWATCH_SIZE * 0.5);
     response
+        .widget_info(|| egui::WidgetInfo::selected(egui::Role::RadioButton, true, selected, hint));
+    response.on_hover_text(hint)
 }
 
 /// Строка настройки: подпись слева (перенос по ширине слота), контрол в
 /// фиксированном слоте справа, приглушённая подсказка под подписью.
 ///
-/// `slot` — (ширина, высота) места под контрол: 168×26 для dropdown, 150×18 для
-/// слайдера, 0 для контрола, который приносит подпись сам (чекбокс). Возвращает
-/// то, что вернул контрол.
+/// `slot` — (ширина, высота) места под контрол: 220×30 для dropdown, 0 для
+/// контрола, который приносит подпись сам (тумблер). Возвращает то, что вернул
+/// контрол.
 pub(crate) fn row<R>(
     ui: &mut egui::Ui,
     palette: &Palette,
@@ -243,6 +344,28 @@ pub(crate) fn row<R>(
     outcome
 }
 
+/// Место трека тумблера в строке: всегда у правого края, независимо от
+/// состояния и подсказки.
+fn switch_track(row: egui::Rect) -> egui::Rect {
+    egui::Rect::from_center_size(
+        egui::pos2(row.right() - TRACK_SIZE.x * 0.5, row.center().y),
+        TRACK_SIZE,
+    )
+}
+
+/// Позиция центра ручки по прогрессу `0..1`: крайние точки внутри трека,
+/// поэтому ручка не вылезает за скругление.
+fn switch_knob_x(track: egui::Rect, progress: f32) -> f32 {
+    let progress = if progress.is_finite() {
+        progress.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let left = track.left() + KNOB_INSET + KNOB_RADIUS;
+    let right = track.right() - KNOB_INSET - KNOB_RADIUS;
+    left + (right - left) * progress
+}
+
 /// Краска чипа для нативного `ComboBox`: фон и обводка нашей палитры, accent на
 /// hover и на открытом списке.
 fn chip_visuals(visuals: &mut egui::Visuals, palette: &Palette) {
@@ -256,7 +379,7 @@ fn chip_visuals(visuals: &mut egui::Visuals, palette: &Palette) {
         widget.weak_bg_fill = palette.chip_fill;
         widget.fg_stroke.color = palette.text;
         widget.bg_stroke = egui::Stroke::new(1.0, palette.chip_stroke);
-        widget.corner_radius = egui::CornerRadius::same(8);
+        widget.corner_radius = egui::CornerRadius::same(9);
     }
     visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, palette.accent);
     visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, palette.accent);
@@ -270,7 +393,7 @@ mod tests {
     use super::*;
     use crate::settings::AccentColor;
 
-    /// Кадр drawer'а: 352 px — содержимое drawer'а 380 px за вычетом полей.
+    /// Кадр содержимого модалки: 512 px — правая колонка 760 минус навигация.
     fn palette() -> Palette {
         Palette::for_ui(egui::Theme::Dark, AccentColor::Blue)
     }
@@ -281,35 +404,85 @@ mod tests {
             predicted_dt: 1.0 / 60.0,
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
-                egui::vec2(352.0, 400.0),
+                egui::vec2(512.0, 420.0),
             )),
             ..Default::default()
         }
     }
 
     #[test]
-    fn checked_state_does_not_move_the_checkbox() {
-        // ADR-0032 §7: stagger и состояние гасят только отрисовку, hit-зона
-        // остаётся на месте.
-        let mut boxes = Vec::new();
-        for (time, checked) in [(0.1, false), (0.2, true)] {
+    fn switch_state_does_not_move_the_row_or_the_track() {
+        // ADR-0032 §7: состояние гасит только отрисовку, hit-зона остаётся.
+        let mut seen = Vec::new();
+        for (time, on) in [(0.1, false), (0.2, true)] {
+            let ctx = egui::Context::default();
+            let mut frame = (egui::Rect::NOTHING, egui::Rect::NOTHING);
+            let output = ctx.run_ui(input(time), |ui| {
+                let response = switch_row(ui, &palette(), "Визуализатор", None, on, true);
+                frame = (response.rect, switch_track(response.rect));
+            });
+            output.drop_without_applying_deltas();
+            seen.push(frame);
+        }
+        assert_eq!(seen[0].0, seen[1].0, "тумблер не двигает строку");
+        assert_eq!(seen[0].1, seen[1].1, "трек стоит на месте");
+        assert!(seen[0].1.right() <= seen[0].0.right() + 0.01, "трек у края");
+        assert!(seen[0].0.width() > 40.0, "подпись входит в hit-зону");
+    }
+
+    #[test]
+    fn disabled_switch_keeps_its_geometry() {
+        let mut seen = Vec::new();
+        for (time, enabled) in [(0.1, true), (0.2, false)] {
             let ctx = egui::Context::default();
             let mut rect = egui::Rect::NOTHING;
             let output = ctx.run_ui(input(time), |ui| {
-                rect = checkbox(ui, &palette(), checked, true, "Визуализатор").rect;
+                rect = switch_row(
+                    ui,
+                    &palette(),
+                    "Перевороты",
+                    Some("Подсказка"),
+                    true,
+                    enabled,
+                )
+                .rect;
             });
             output.drop_without_applying_deltas();
-            boxes.push(rect);
+            seen.push(rect);
         }
-        assert_eq!(boxes[0], boxes[1], "галочка не двигает квадрат и подпись");
-        assert!(boxes[0].width() > 18.0, "подпись входит в hit-зону");
+        assert_eq!(seen[0], seen[1], "disabled не меняет размеры и позицию");
+    }
+
+    #[test]
+    fn knob_travels_between_the_track_edges() {
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(300.0, 30.0));
+        let track = switch_track(rect);
+        let off = switch_knob_x(track, 0.0);
+        let on = switch_knob_x(track, 1.0);
+        assert!(off < on, "ручка едет слева направо");
+        assert!(
+            (off - track.left() - KNOB_INSET - KNOB_RADIUS).abs() < 0.01,
+            "в покое ручка у левого края"
+        );
+        assert!(
+            (on - track.right() + KNOB_INSET + KNOB_RADIUS).abs() < 0.01,
+            "включённая ручка у правого края"
+        );
+        assert_eq!(switch_knob_x(track, f32::NAN), off);
+        assert_eq!(switch_knob_x(track, 7.0), on);
     }
 
     #[test]
     fn long_label_wraps_instead_of_pushing_the_control() {
-        let slot = (168.0, 26.0);
+        let slot = (220.0, 30.0);
         let mut seen = Vec::new();
-        for (time, label) in [(0.1, "Тема"), (0.2, "Darstellung der Kamerabewegung")] {
+        for (time, label) in [
+            (0.1, "Тема"),
+            (
+                0.2,
+                "Darstellung der Kamerabewegung bei weichen Übergängen im Fokus, in der Übersicht und in der Kapsel",
+            ),
+        ] {
             let ctx = egui::Context::default();
             let mut control = egui::Rect::NOTHING;
             let mut after = 0.0f32;

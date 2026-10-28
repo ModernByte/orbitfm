@@ -143,7 +143,7 @@ pub(crate) struct Session {
     pub(crate) library_tab: LibraryTab,
     pub(crate) country_filter: CountryFilterState,
     pub(crate) panel_open: bool,
-    /// Открыт ли правый drawer настроек (ADR-0031).
+    /// Открыто ли модальное окно настроек (ADR-0031).
     pub(crate) settings_open: bool,
     /// Громкость, изменённая перетаскиванием, но ещё не записанная на диск.
     pub(crate) pending_volume: Option<f64>,
@@ -266,7 +266,7 @@ impl Session {
         self.language
     }
 
-    /// Открывает drawer настроек; в Listening его нет (ADR-0031).
+    /// Открывает окно настроек; в Listening его нет (ADR-0031).
     pub(crate) fn open_settings(&mut self) {
         if self.window.mode == WindowMode::Listening {
             self.set_window_mode(WindowMode::Overlay);

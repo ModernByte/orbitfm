@@ -30,7 +30,7 @@ use session::{AppServices, ParkOutcome, Session, WINDOW_TITLE, WakeHandle, Windo
 use settings::SettingsStore;
 
 const APP_ID: &str = "org.modernbyte.OrbitFM";
-/// Секция About в drawer настроек (ADR-0031): версия и лицензия из манифеста.
+/// Секция About модального окна настроек (ADR-0031): версия и лицензия из манифеста.
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const APP_LICENSE: &str = env!("CARGO_PKG_LICENSE");
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
@@ -329,7 +329,7 @@ fn run_session(
             // парковки — следующий прогон уже с геометрией нового режима (ADR-0021 п. 3).
             continue;
         }
-        // Drawer живёт только внутри одного показа окна: hide, WM-close и парковка
+        // Окно настроек живёт только внутри одного показа окна: hide, WM-close и парковка
         // его закрывают, а mode-switch (строка выше) сохраняет (ADR-0031 п. 4).
         session.close_settings();
         session.settle_analysis();

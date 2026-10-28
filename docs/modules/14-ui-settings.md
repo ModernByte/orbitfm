@@ -1,46 +1,61 @@
-# Модуль: Панель настроек (drawer)
+# Модуль: Модальное окно настроек
 
 **Путь в коде:** `src/ui/settings_panel.rs`, примитивы строк — `src/ui/controls.rs`  
-**Ответственность:** Содержимое правой панели настроек; scrim и модалка — в `app.rs`.  
+**Ответственность:** Содержимое модального окна настроек: шапка, категории, карточки и подвал; scrim и каркас стекла — в `app.rs`.  
 **Зависимости:** egui, `ui::animation`, `ui::controls`, `ui::palette`, `ui::widgets`, `ui::icons`, `i18n`, `settings`, `session::WindowMode`.
 
 ---
 
 ## 1. Назначение
 
-Единое место изменения всех пользовательских настроек (ADR-0031). Drawer
-пришёл на смену popup из шестерёнки HUD: один скролл, секции, пояснения,
-полноширинные контролы и подписи из каталога уже разрешённого языка (смена
-языка видна в том же кадре). Модуль только рисует содержимое и возвращает
-`Vec<UiAction>`; сохранение и прочие побочные эффекты выполняют `OrbitApp` и
-`Session`. Каркас стекла, scrim и приход/уход считает `app.rs` (`draw_settings`)
-по прогрессам `animation::FrameMotion`.
+Единое место изменения всех пользовательских настроек (ADR-0031, ред.
+2026-10-28). Модальное окно пришло на смену popup из шестерёнки HUD и drawer'у:
+слева — категории, справа — карточки строк с пояснениями, подписи берутся из
+каталога уже разрешённого языка, поэтому смена языка видна в том же кадре.
+Модуль только рисует содержимое и возвращает `Vec<UiAction>`; сохранение и
+прочие побочные эффекты выполняют `OrbitApp` и `Session`. Каркас стекла, scrim,
+тень и приход/уход считает `app.rs` (`draw_settings`) по прогрессам
+`animation::FrameMotion`.
 
-## 2. Состояние
+## 2. Состояние и геометрия
 
 | Владелец | Поле | Смысл |
 |----------|------|-------|
-| `Session` | `settings_open: bool` | drawer открыт |
+| `Session` | `settings_open: bool` | окно настроек открыто |
 | `Session` | `pending_volume: Option<f64>` | громкость незавершённого перетаскивания |
-| `OrbitApp` | `drawer_rect: Option<Rect>` | прямоугольник с последнего открытого кадра |
-| `OrbitApp` | `transitions: Transitions` | прогрессы `drawer` и `scrim` кадра |
+| `OrbitApp` | `settings_rect: Option<Rect>` | прямоугольник с последнего открытого кадра |
+| `OrbitApp` | `settings_category: SettingsCategory` | открытая категория, состояние представления |
+| `OrbitApp` | `transitions: Transitions` | прогрессы `settings` и `scrim` кадра |
 | `OrbitApp` | `Toast` | сообщения об ошибках сохранения |
-| `DeskLayout` | `settings: Option<Rect>` | зона панели в текущем кадре |
+| `DeskLayout` | `settings: Option<Rect>` | зона модалки в текущем кадре |
 
-Зона считается в `DeskLayout::compute` (`settings_rect`): ширина
-`min(SETTINGS_WIDTH = 380, viewport.width() − 2·MARGIN)`, правая колонна на всю
-высоту между полями. Она входит в `blocks_point`, поэтому глобус не получает
-клики и drag, начатые над ней. В `Listening` зоны нет: `Session::open_settings`
-в этом режиме сначала переводит окно в `Overlay`.
+`DeskLayout::compute` считает окно в `settings_rect`: размер
+`SETTINGS_MODAL = 760×544`, клампится до `viewport − 2·MARGIN`, центр — центр
+вьюпорта. Окно входит в `blocks_point`, поэтому глобус не получает клики и
+drag, начатые над ним. В `Listening` зоны нет: `Session::open_settings` в этом
+режиме сначала переводит окно в `Overlay`. В `Panel` сцена (шапка, список,
+подвал) остаётся под scrim'ом — настройки больше не занимают стеклянную
+поверхность целиком.
 
-Содержимое входит одним `stagger` по прогрессу drawer'а: заголовок и шесть
-блоков секций (`BLOCK_HEADER`…`BLOCK_ABOUT`). Гаснут только краски: у блоков,
-нарисованных палитрой, приглушается сам `Palette` (`widgets::faded_palette` —
-`dim` передаётся в `controls` и `widgets`), у нативных контролов egui —
-`Visuals` (`dimmed` + `fade_visuals`). Второй механизм поверх первого не
-накладывается: `multiply_opacity` и вложенный `Ui` ради альфы в контролах
-запрещены (ADR-0032 §7). Раскладка, идентификаторы виджетов и hit-зоны
-остаются неподвижными.
+Внутри окна:
+
+| Константа | Значение | Смысл |
+|-----------|----------|-------|
+| `HEADER_HEIGHT` | 58 | шапка со знаком, заголовком, `Esc` и крестиком |
+| `NAV_WIDTH` / `NAV_RAIL` | 188 / 64 | колонка подписей или рейка иконок |
+| `NAV_BREAKPOINT` | 640 | ниже этой ширины окна категории сжимаются до иконок |
+| `BODY_MARGIN` | 16 | поля тела и подвала |
+| подвал | 32 | закреплённая строка `saved_hint` |
+
+Содержимое входит одним `stagger` по прогрессу окна: шапка, навигация,
+заголовок категории, затем две карточки (`BLOCK_HEADER`, `BLOCK_NAV`,
+`BLOCK_TITLE`, `BLOCK_CARD`, `BLOCK_CARD + 1`). Гаснут только краски: у зон,
+нарисованных палитрой, приглушается сам `Palette`
+(`widgets::faded_palette` — `dim` передаётся в `controls` и `widgets`), у
+нативных контролов egui — `Visuals` (`dimmed` + `fade_visuals`). Второй
+механизм поверх первого не накладывается: `multiply_opacity` и вложенный `Ui`
+ради альфы в контролах запрещены (ADR-0032 §7). Раскладка, идентификаторы
+виджетов и hit-зоны остаются неподвижными.
 
 ### 2.1. Примитивы строк (`src/ui/controls.rs`)
 
@@ -51,42 +66,60 @@
   `Some(index)` только при реальном выборе, поэтому строка не генерирует
   `UiAction` на каждом кадре. `id_salt` передаётся из вызова — авто-id egui
   зависят от позиции в кадре, а смена языка меняет подписи.
-- `checkbox(ui, palette, checked, enabled, label)` — квадрат 18×18 с
-  скруглением 5, галочка двумя штрихами, контрастным цветом на accent-фоне;
-  hit-зона включает подпись, `Sense::hover` у выключенного, `WidgetInfo::selected`
-  с ролью `CheckBox` и focus-ring.
+- `switch_row(ui, palette, label, hint, on, enabled)` — современный тумблер:
+  подпись и подсказка слева, трек 40×22 справа, кликабельна вся строка.
+  Ручка 16 px едет по треку через `ctx.animate_bool_with_time`; анимируется
+  только отрисовка, `Sense` и размеры не меняются (ADR-0032 §7). Роль —
+  `CheckBox`, `enabled = false` снимает клики и гасит цвета.
+- `accent_swatch(ui, palette, color, selected, hint)` — круглый свотч 26 px;
+  выбранный обведён кольцом и контрастной галочкой, роль `RadioButton`,
+  подсказка — имя акцента.
 - `row(ui, palette, label, hint, slot, control)` — строка настройки: галлея
   подписи с переносом по ширине `ui.available_width() − slot.0 − gap`, контрол в
   фиксированном слоте справа (`UiBuilder::max_rect` +
   `Layout::centered_and_justified`), приглушённая подсказка под подписью. Слот
-  задаётся вызывающим: `DROPDOWN_SLOT` 168×26, `VOLUME_SLOT` 150×18,
-  `SWATCH_SLOT` 220×22. Высота строки — `max(ROW_HEIGHT, высота галлеи)`, так что
-  перенос подписи не сдвигает контрол по горизонтали.
+  задаётся вызывающим: `DROPDOWN_SLOT` 220×30, `SWATCH_SLOT` 184×26. Высота
+  строки — `max(ROW_HEIGHT, высота галлеи)`, так что перенос подписи не сдвигает
+  контрол по горизонтали.
 
 Контролы рисуются уже приглушённой палитрой и не делают вложенный `Ui` ради
 эффектов; переиспользуемые чипы (`ComboBox`) получают `chip_visuals` — фон,
 обводку и accent из нашей палитры.
 
-## 3. Секции
+## 3. Категории
 
-- **Appearance** — тема (`dropdown` по `ThemeMode::ALL`), акцент (шесть
-  плашек-свотчей 28×22 в `SWATCH_SLOT` с подсказкой), `checkbox` визуализатора
-  (`UiAction::ToggleSpectrum`), число столбцов (`dropdown` из `VIZ_BAR_CHOICES`,
+Категории задаёт `SettingsCategory { Appearance, Language, Audio, Motion, Window,
+About }`; порядок навигации — `ALL`, иконки — `Moon`, `Globe`, `Volume`,
+`Sparkles`, `AppWindow`, `Help`. Выбранная категория залита accent-подложкой,
+роль — `Tab`; в рейке подпись заменяется подсказкой при наведении. У каждой
+страницы есть заголовок 18 px и короткий подзаголовок 11.5 px из
+`SettingsText`: подзаголовок не повторяет подсказку отдельной строки.
+
+- **Appearance** — тема (`dropdown` по `ThemeMode::ALL`), акцент (шесть круглых
+  свотчей в `SWATCH_SLOT`), `switch_row` визуализатора
+  (`UiAction::ToggleSpectrum`), число полос (`dropdown` из `VIZ_BAR_CHOICES`,
   недоступен при выключенном визуализаторе).
 - **Language** — `dropdown` по `Language::ALL`: `System` и 10 языков с нативными
   именами, пояснение `language_hint`.
-- **Audio** — громкость (`widgets::volume_slider_width` в `VOLUME_SLOT` 150×18) и
-  пояснение `audio_hint`; у самого слайдера подсказка `volume_hint` — про колесо.
-- **Motion & accessibility** — реактивность (`dropdown` по `MotionReactivity::ALL`)
-  с подсказкой `motion_spin_hint`, характер движения (`dropdown` по
-  `MotionStyle::ALL`), reduce motion и flips — `checkbox`; под чекбоксами
-  остаётся текстовая подсказка, а наведение на flips показывает `flips_unavailable`.
-- **Window** — `dropdown` по `WindowMode::ALL` с `window_hint`, `checkbox`
-  карточки управления, `Hide`, `Quit`.
-- **About** — версия, лицензия, app-id, пояснение про фоновую работу и трей,
-  подсказка про сохранение.
+- **Audio** — громкость на всю ширину карточки (`widgets::volume_slider_width`)
+  с процентом справа и пояснениями `audio_hint` и `volume_hint`.
+- **Motion & accessibility** — реактивность (`dropdown` по
+  `MotionReactivity::ALL`) с подсказкой `motion_spin_hint`, характер движения
+  (`dropdown` по `MotionStyle::ALL`), reduce motion и flips — `switch_row`;
+  под тумблерами остаётся текстовая подсказка, а на flips при недоступности
+  показывается `flips_unavailable`.
+- **Window** — `dropdown` по `WindowMode::ALL` с `window_hint`, `switch_row`
+  карточки управления.
+- **About** — версия, лицензия, app-id, пояснение про фоновую работу, затем
+  единственная кнопка окна — «Выход» (`widgets::quiet_button` в цвете ошибки,
+  `UiAction::Quit`).
 
-Подписи секций и подсказки — из `SettingsText` каталога, значения enum'ов — из
+Подвал окна (`HEADER_MARGIN` слева и справа, высота 32) отделён линией и
+показывает `saved_hint` по центру: «Настройки сохраняются автоматически».
+Скроллится только контент категории (`ScrollArea::vertical`), шапка, навигация
+и подвал неподвижны.
+
+Подписи категорий и подсказки — из `SettingsText` каталога, значения enum'ов — из
 `i18n::labels` (`theme_label`, `accent_label`, `motion_label`, `style_label`,
 `language_label`); собственных `label()` у `settings`-enum'ов нет. Режимы окна
 подписывает локальный `mode_label`: `WindowMode` — тип session, а i18n от него не
@@ -94,36 +127,36 @@
 
 Неактивные контролы остаются видимыми и объясняют причину: flips выключаются при
 `motion == Off` или `reduce_motion`, и вместо общей подсказки показывается
-`flips_unavailable`. Выбор значения не закрывает drawer.
+`flips_unavailable`. Выбор значения не закрывает окно.
 
 ## 4. Открытие и закрытие
 
 | Источник | Поведение |
 |----------|-----------|
-| Шестерёнка HUD (Focus) | toggle drawer; видима и в узком окне |
-| Шестерёнка верхней капсулы (Overlay) | toggle drawer |
-| Шестерёнка шапки панели (Panel) | toggle drawer; в `Panel` открытый drawer занимает стеклянную поверхность целиком, поэтому шапка и список уходят (ADR-0033) |
-| Ctrl+, (`modifiers.command` + `Comma`) | toggle drawer в Focus и Overlay |
-| Ctrl+, в Listening | `open_settings` переводит окно в Overlay и открывает drawer |
+| Шестерёнка HUD (Focus) | toggle окна настроек; видима и в узком окне |
+| Шестерёнка верхней капсулы (Overlay) | toggle окна настроек |
+| Шестерёнка шапки панели (Panel) | toggle окна настроек; сцена остаётся под scrim'ом (ADR-0033) |
+| Ctrl+, (`modifiers.command` + `Comma`) | toggle в Focus и Overlay |
+| Ctrl+, в Listening | `open_settings` переводит окно в Overlay и открывает настройки |
 | Трей «Settings…» | `open_settings`: показывает окно, при Listening — Overlay |
-| Scrim, крестик заголовка, Escape | `CloseSettings` |
-| Hide, WM-close, park | закрытие вьюпорта закрывает drawer |
-| Смена WindowMode | drawer переживает пересоздание viewport |
-| Выбор Listening | `SetWindowMode(Listening)` закрывает drawer |
+| Scrim, крестик шапки, Escape | `CloseSettings` |
+| Hide, WM-close, park | закрытие вьюпорта закрывает настройки |
+| Смена WindowMode | настройки переживают пересоздание viewport |
+| Выбор Listening | `SetWindowMode(Listening)` закрывает настройки |
 
 `run_session` после возврата `run_window` вызывает `end_window()`, затем
 проверяет `take_reopen()` и только после него `close_settings()`. Поэтому
-пересоздание viewport из-за смены режима сохраняет drawer, а любое другое
+пересоздание viewport из-за смены режима сохраняет окно открытым, а любое другое
 закрытие — нет. В `OrbitApp::logic` Escape снимает самый верхний модальный слой:
-сначала drawer, затем help.
+сначала настройки, затем help.
 
 ## 5. Громкость
 
 `widgets::volume_slider_width` возвращает
 `SliderResponse { changed, committed }`, где `committed` — отпускание drag либо
 изменение без продолжающегося drag (клик по треку, клавиша, щелчок колеса). Зоны —
-drawer, transport, верхняя капсула Overlay и строка режимов шапки выпадающей панели —
-переводят это в два действия:
+окно настроек, transport, верхняя капсула Overlay и строка режимов шапки выпадающей
+панели — переводят это в два действия:
 
 - `changed && !committed` → `UiAction::PreviewVolume` → `Session::preview_volume`:
   только `audio.set_volume` и `pending_volume`, файл не трогается;
@@ -140,7 +173,7 @@ drawer, transport, верхняя капсула Overlay и строка реж�
 растягивает один щелчок на несколько кадров (`smooth_scroll_delta` = 40 px плюс
 угасающий хвост), и каждый хвост дал бы лишнюю запись в `settings.json`;
 сглаженная дельта обнуляется, пока указатель над слайдером, чтобы остаток щелчка
-не доехал `ScrollArea` drawer'а. Повтор тех же входных данных в многопроходной
+не доехал `ScrollArea` окна настроек. Повтор тех же входных данных в многопроходной
 отрисовке отсекается по `input.time` (`insert_temp` на `response.id`), иначе один
 щелчок применился бы дважды. Подсказка при наведении — `settings.volume_hint`.
 
@@ -154,28 +187,34 @@ non-finite заменяется на `DEFAULT_VOLUME`.
 
 Scrim — `egui::Area` на весь viewport в `Order::Foreground`, затемнение
 `SCRIM_ALPHA = 90` (чёрное в тёмной теме, белое в светлой); клик по нему даёт
-`CloseSettings`. Drawer — область того же порядка, аллоцирована позже и забирает
-ввод у скрима; тосты аллоцируются ещё позже и остаются выше. Пока drawer открыт,
+`CloseSettings`. Окно — область того же порядка, аллоцирована позже и забирает
+ввод у скрима; внутри окна `ui.interact` на теле не даёт клику провалиться к
+скриму. Тосты аллоцируются ещё позже и остаются выше. Пока окно открыто,
 `globe_view` считает кадр модальным (`layout.settings.is_some()`): вращение, зум
 и клик по сфере не обрабатываются, а вне модалки работает фильтр по
 `press_origin` — жест, начатый под панелью, глобус не двигает.
 
-На уходе `DeskLayout` уже не отдаёт зону, поэтому каркас и содержимое дорисовываются
-по сохранённому `drawer_rect`: скрим получает `Sense::hover`, drawer —
-`interactable(false)`. Гаснущие слои рисуются, но ввод не принимают. Скрытия окна
-по Escape нет.
+На уходе `DeskLayout` уже не отдаёт зону, поэтому каркас и содержимое
+дорисовываются по сохранённому `settings_rect`: скрим получает `Sense::hover`,
+окно — `interactable(false)`. Гаснущие слои рисуются, но ввод не принимают.
+Скрытия окна по Escape нет.
 
 ## 7. Тесты
 
-- `layout`: `open_settings_drawer_blocks_its_column`,
-  `closed_settings_drawer_does_not_block_anything`,
-  `drawer_clamps_width_on_a_narrow_viewport`, `listening_has_no_drawer_zone`;
-- `controls`: `checked_state_does_not_move_the_checkbox` (галочка не меняет ни
-  аллокацию, ни hit-зону), `long_label_wraps_instead_of_pushing_the_control`
-  (ширина слота фиксирована, правый край совпадает у короткой и длинной подписи);
+- `layout`: `open_settings_modal_is_centered_and_blocks_the_globe`,
+  `closed_settings_modal_does_not_block_anything`,
+  `settings_modal_clamps_to_a_narrow_viewport`,
+  `panel_keeps_its_scene_under_the_settings_modal`,
+  `listening_has_no_settings_zone`;
+- `controls`: `switch_state_does_not_move_the_row_or_the_track` (тумблер не меняет
+  аллокацию и hit-зону), `disabled_switch_keeps_its_geometry`,
+  `knob_travels_between_the_track_edges`,
+  `long_label_wraps_instead_of_pushing_the_control` (ширина слота фиксирована,
+  правый край совпадает у короткой и длинной подписи);
 - `settings_panel`: reduce motion даёт конечную альфу без перехода, блоки идут
   по порядку на входе и в обратном порядке на выходе, альфа не выходит из
-  `0..=1` включая NaN;
+  `0..=1` включая NaN; `narrow_modal_falls_back_to_the_icon_rail`;
+  `every_category_has_a_label_and_a_hint`;
 - `widgets`: `wheel_over_slider_steps_volume_and_commits`,
   `wheel_is_deduplicated_within_one_input_time`,
   `wheel_outside_slider_leaves_volume_and_scroll_alone`,
@@ -183,9 +222,10 @@ Scrim — `egui::Area` на весь viewport в `Order::Foreground`, затем
   с `Event::PointerMoved` + `Event::MouseWheel { unit: Line }`; отдельный кадр
   наведения нужен потому, что `hovered()` читает состояние прошлого прохода;
 - `session::window`: `mode_switch_of_an_open_window_reopens_it` — reopen
-  отличается от закрытия, только поэтому drawer при смене режима сохраняется;
+  отличается от закрытия, только поэтому настройки при смене режима сохраняются;
 - `i18n::labels`: у каждого значения `ThemeMode`, `AccentColor`,
-  `MotionReactivity`, `MotionStyle` есть непустая подпись;
+  `MotionReactivity`, `MotionStyle` есть непустая подпись; каталоги всех языков
+  заполняют подзаголовки страниц;
 - `settings`: `roundtrip_persists_language_volume_and_visualizer`,
   `invalid_volume_is_sanitized_on_load_and_write`,
   `unknown_language_code_falls_back_without_touching_other_fields`.

@@ -16,7 +16,7 @@
 
 | Переход | Длительность |
 |---------|--------------|
-| Drawer (`DRAWER`) | 200 мс |
+| Окно настроек (`SETTINGS`) | 200 мс |
 | Scrim (`SCRIM`) | 160 мс |
 | Вход сцены (`SCENE_ENTER`) | 220 мс |
 | Панель (`PANEL`) | 220 мс |
@@ -70,14 +70,14 @@ impl Transitions {
 /// Видимость зон на кадр.
 pub(crate) struct ZoneFlags {
     pub scene: bool, pub panel: bool, pub help: bool, pub legend: bool,
-    pub drawer: bool, pub capsules: bool, pub favorites: bool, pub listening: bool,
+    pub settings: bool, pub capsules: bool, pub favorites: bool, pub listening: bool,
 }
 
 /// Готовые прогрессы кадра: зоны только читают значения.
 pub(crate) struct FrameMotion<'a> {
     pub reduce: bool,
     pub scene: f32, pub panel: f32, pub help: f32, pub legend: f32,
-    pub drawer: f32, pub scrim: f32,
+    pub settings: f32, pub scrim: f32,
     pub capsules: f32, pub favorites: f32, pub listening: f32,
     pub keyed: &'a mut PresenceStore,
 }
@@ -92,10 +92,10 @@ impl PresenceStore {
 ```
 
 `Transitions` содержит по одному `Presence` на зону (`scene`, `panel`, `help`,
-`legend`, `drawer`, `scrim`, `capsules`, `favorites`, `listening`) плюс
+`legend`, `settings`, `scrim`, `capsules`, `favorites`, `listening`) плюс
 `PresenceStore` для динамических ключей. Ключей должно быть мало: длинный список
 строк анимируется общим прогрессом через `stagger`, а не по записи на строку.
-`scrim` опрашивается по флагу `drawer`, но со своей длительностью.
+`scrim` опрашивается по флагу `settings`, но со своей длительностью.
 
 Прогресс кадра считает `OrbitApp::draw_layers` один раз и передаёт в зоны
 `&mut FrameMotion` — переход по одному `Id` не может опрашиваться дважды за
@@ -137,7 +137,7 @@ impl PresenceStore {
   подложка строк списка тоже мгновенно принимают конечное состояние;
 - `widgets::pop_scale(·, reduce)` сразу даёт 1.0, а `capsule_button` на reduce
   вообще не опрашивает press-переход и не занимает слот `PresenceStore`;
-- секции drawer'а входят без stagger-задержек;
+- шапка, категории и карточки окна настроек входят без stagger-задержек;
 - радиус обода Listening не дышит (`pulse` остаётся только в прозрачности);
 - аудио-сцена продолжает получать данные, но геометрия не двигается.
 
@@ -170,9 +170,10 @@ overshoot (`pop_scale`), строки избранного — общим stagge
 Listening: вход строки 180 мс; пульс обода остаётся на кадрах эфира, при reduce
 motion радиус статичен.
 
-Drawer: scrim 160 мс, панель slide+fade 200 мс, секции входят stagger'ом и на
-выходе гаснут в обратном порядке. На выходе `DeskLayout` уже не выделяет зону,
-поэтому каркас дорисовывается по последнему прямоугольнику drawer'а, а ввод на
+Окно настроек: scrim 160 мс, каркас (стекло и тень) fade 200 мс, блоки входят
+stagger'ом и на выходе гаснут в обратном порядке; смена категории перехода не
+имеет. На выходе `DeskLayout` уже не выделяет зону,
+поэтому каркас дорисовывается по последнему прямоугольнику `settings_rect`, а ввод на
 время выхода отключается. Повторное открытие не мигает.
 
 Toast: стек до трёх записей (переполнение вытесняет самую старую), жизнь 3 с,

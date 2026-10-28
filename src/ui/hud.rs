@@ -503,7 +503,7 @@ fn right_side(
         actions.push(UiAction::ToggleHelp);
     }
 
-    // Шестерёка доступна и в узком окне: drawer — единственный вход в настройки.
+    // Шестерёка доступна и в узком окне: модалка — единственный вход в настройки.
     if gear_button(ui, palette, text.common.settings).clicked() {
         actions.push(UiAction::ToggleSettings);
     }

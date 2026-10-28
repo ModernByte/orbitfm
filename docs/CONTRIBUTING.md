@@ -49,7 +49,7 @@ orbitfm/
 ├── src/
 │   ├── main.rs
 │   ├── app.rs
-│   ├── ui/                   # HUD, drawer, фильтры страны, transport, глобус, toast, иконки
+│   ├── ui/                   # HUD, окно настроек, фильтры страны, transport, глобус, toast, иконки
 │   ├── audio/
 │   ├── geo/
 │   ├── render/

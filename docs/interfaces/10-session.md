@@ -25,8 +25,8 @@ Application Core — слой, который переживает закрыт�
 | `notify_error` | `pub(crate) fn notify_error(&mut self, key: NoticeKey)` | Ставит `Notice::Error { key, detail: None }` в конец очереди |
 | `notify_error_detail` | `pub(crate) fn notify_error_detail(&mut self, key: NoticeKey, detail: impl Into<String>)` | Ошибка с технической подробностью: `detail` не переводится (ADR-0030) |
 | `effective_language` | `pub(crate) fn effective_language(&self) -> Language` | Язык, на котором UI рисует строки; `System` здесь не встречается — он развёрнут при старте и при смене настройки |
-| `open_settings` | `pub(crate) fn open_settings(&mut self)` | Открывает drawer настроек: в `Listening` сначала переводит окно в `Overlay`, при закрытом окне ставит `UiIntent::Show` (ADR-0031) |
-| `close_settings` | `pub(crate) fn close_settings(&mut self)` | Закрывает drawer (`settings_open = false`) |
+| `open_settings` | `pub(crate) fn open_settings(&mut self)` | Открывает окно настроек: в `Listening` сначала переводит окно в `Overlay`, при закрытом окне ставит `UiIntent::Show` (ADR-0031) |
+| `close_settings` | `pub(crate) fn close_settings(&mut self)` | Закрывает окно настроек (`settings_open = false`) |
 | `toggle_settings` | `pub(crate) fn toggle_settings(&mut self)` | Открыто → `close_settings`, закрыто → `open_settings` |
 | `begin_window` | `pub(crate) fn begin_window(&mut self, size: [f32; 2])` | Отмечает окно открытым, сбрасывает `intent` и `reopen`, запоминает размер (только в `Focus`) |
 | `end_window` | `pub(crate) fn end_window(&mut self)` | Отмечает окно закрытым, снимает `intent`, `wake.clear()`, `flush_pending_volume()`, `sync_media()`, `sync_tray()` |
@@ -64,7 +64,7 @@ Application Core — слой, который переживает закрыт�
 | `set_audio_paused` | `pub(crate) fn set_audio_paused(&mut self, paused: bool) -> Result<(), String>` | Пауза/продолжение потока |
 | `set_volume` | `pub(crate) fn set_volume(&mut self, volume: f64) -> Result<(), String>` | Дискретная громкость (трей, MPRIS, IPC): снять `pending_volume`, применить к аудио-ядру и сохранить сразу |
 | `preview_volume` | `pub(crate) fn preview_volume(&mut self, volume: f64) -> Result<(), String>` | Перетаскивание слайдера: звук меняется сразу, файл — нет; значение ждёт `commit_volume` или `flush_pending_volume` (ADR-0031) |
-| `commit_volume` | `pub(crate) fn commit_volume(&mut self, volume: f64) -> Result<(), String>` | Завершение перетаскивания, клик по треку, клавиатурный шаг и щелчок колеса: применить и записать в `SettingsStore` (колесо — дискретный ввод, pending не открывается, ADR-0031 § 7) |
+| `commit_volume` | `pub(crate) fn commit_volume(&mut self, volume: f64) -> Result<(), String>` | Завершение перетаскивания, клик по треку, клавиатурный шаг и щелчок колеса: применить и записать в `SettingsStore` (колесо — дискретный ввод, pending не открывается, ADR-0031 § 8) |
 | `flush_pending_volume` | `pub(crate) fn flush_pending_volume(&mut self)` | Дозаписать незакрытый preview в настройки; зовётся из `end_window`, ошибка — только `warn!` |
 | `visible_queue` | `pub(crate) fn visible_queue(&self) -> Vec<Station>` | Снапшот текущего видимого списка — очередь prev/next |
 | `visible_queue_len` | `pub(crate) fn visible_queue_len(&self) -> usize` | Число станций в очереди без клонирования; питает `can_go_next`/`can_go_previous` MPRIS |
@@ -299,7 +299,7 @@ pub(crate) const PANEL_TITLE: &str = "OrbitFM · Panel";
 | 4 | `session.end_window()` | Presentation-прогон мёртв: `visible = false`, `intent = None`, `wake.clear()`, `flush_pending_volume()`, `sync_media()`, `sync_tray()` |
 | 5 | `session.is_quitting()` | Если выход запрошен — `run_session` возвращает `Ok(())`, дальше `launch` останавливает IPC-сервер |
 | 6 | `session.take_reopen()` | Смена режима при открытом окне: признак стоит → сразу шаг 1 с геометрией нового режима, минуя парковку (ADR-0021 п. 3) |
-| 7 | `session.park()` | Простой без окна; `ParkOutcome::Show` → шаг 1, `ParkOutcome::Quit` → завершение. Перед парковкой цикл снимает drawer (`close_settings()`; reopen-ветка шага 6 его сохраняет, ADR-0031 п. 4) и выключает анализ через `settle_analysis()` |
+| 7 | `session.park()` | Простой без окна; `ParkOutcome::Show` → шаг 1, `ParkOutcome::Quit` → завершение. Перед парковкой цикл снимает окно настроек (`close_settings()`; reopen-ветка шага 6 его сохраняет, ADR-0031 п. 6) и выключает анализ через `settle_analysis()` |
 
 Окно обязано умирать между прогонами, потому что закрытие root-вьюпорта —
 единственный честный на Wayland способ убрать окно из раскладки (ADR-0018,
@@ -402,8 +402,8 @@ mode <focus|overlay|listening|panel>
 После каждого события — `sync_media()` + `sync_tray()`, затем проверка:
 `is_quitting()` → возврат `ParkOutcome::Quit`; `intent == Some(UiIntent::Show)` →
 возврат `ParkOutcome::Show` (его ставят `show`, `toggle` из закрытого состояния,
-`TrayCommand::Show`/`Toggle` и `TrayCommand::Settings`, который открывает drawer
-через `open_settings()`).
+`TrayCommand::Show`/`Toggle` и `TrayCommand::Settings`, который открывает окно
+настроек через `open_settings()`).
 Команда `hide` в припаркованном состоянии `intent` не ставит (`WindowState::hide`
 срабатывает только при `visible`), поэтому цикл остаётся в простое.
 `Parked::QueueClosed` означает, что IPC-сервер закрыл очередь: держать процесс
@@ -510,7 +510,8 @@ mode <focus|overlay|listening|panel>
 - ADR-0020: Иконка в системном трее (StatusNotifierItem на ksni)
 - ADR-0021: Режимы окна (`WindowMode`) и IPC-глагол `mode`
 - ADR-0030: Локализация интерфейса (`NoticeKey` вместо текста в ядре)
-- ADR-0031: Панель настроек и персистентность (drawer, громкость commit-on-release)
+- ADR-0031: Панель настроек и персистентность (модальное окно, громкость
+  commit-on-release)
 - `docs/modules/11-session.md` — модульная спецификация пакета
 - `docs/interfaces/11-tray.md`, `docs/modules/12-tray.md` — контракт и модуль трея
 - `docs/interfaces/12-i18n.md`, `docs/modules/13-i18n.md` — каталоги строк и

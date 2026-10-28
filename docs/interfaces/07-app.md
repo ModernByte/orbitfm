@@ -25,9 +25,9 @@ root-вьюпорта: цикл завершается, управление в�
    `take_reopen` → `close_settings` → `settle_analysis` → `park` (§«Порядок инициализации»,
    шаги 11–12).
    `settle_analysis` включает аудио-анализ на время открытого окна и снимает его в
-   простое: скрытый эфир не тратит CPU на `@level`/`@spectrum` (ADR-0027). Drawer
+   простое: скрытый эфир не тратит CPU на `@level`/`@spectrum` (ADR-0027). Окно
    настроек закрывается на пути к парковке; `take_reopen` (смена режима) уходит на новый
-   прогон раньше, поэтому drawer переживает только её (ADR-0031).
+   прогон раньше, поэтому оно переживает только её (ADR-0031).
    Маршрутизацией `IpcCommand` и `MediaCommand` занимается `Session`: очередь
    `mpsc::Receiver<IpcRequest>` и приёмник MPRIS принадлежат ядру и обслуживаются как из
    `Session::tick()` (окно открыто), так и из `Session::park()` (окно закрыто).
@@ -36,8 +36,8 @@ root-вьюпорта: цикл завершается, управление в�
    wgpu-рендерера, `FaviconCache` с его текстурами, `reqwest::Client` для иконок,
    `SpectrumOverlay`, `motion: MotionMixer`, `orbit_ring: OrbitRing`, `CalloutState`,
    `VisualizerModel`, `Toast`, `transitions: Transitions` с прогрессами переходов зон
-   (ADR-0032) и `drawer_rect` — последний прямоугольник drawer'а, по которому гаснет
-   панель настроек (ADR-0031, ADR-0032).
+   (ADR-0032) и `settings_rect` — последний прямоугольник окна настроек, по которому
+   гаснет модалка (ADR-0031, ADR-0032).
 5. Устанавливать `WakeHandle` в начале прогона (`OrbitApp::new` → `wake.install`, замыкание
    зовёт `Context::request_repaint`) и оставлять его снятым после закрытия окна
    (`Session::end_window` → `wake.clear`), чтобы фоновые задачи не будили несуществующий цикл.
@@ -96,11 +96,11 @@ root-вьюпорта: цикл завершается, управление в�
     `Session::set_reduce_motion`, `Session::set_allow_flips`, `Session::set_volume`);
     presentation-слой применяет тему, акцент и язык к egui при старте прогона и сразу
     после изменения (`palette::configure_style` — он же обнуляет `Style::animation_time`
-    при `Reduce motion`, ADR-0032). Громкость из drawer'а идёт двумя действиями:
+    при `Reduce motion`, ADR-0032). Громкость из окна настроек идёт двумя действиями:
     `UiAction::PreviewVolume` на перетаскивании (только аудио, `Session::preview_volume`)
     и `UiAction::CommitVolume` при отпускании (`Session::commit_volume`, ADR-0031).
     Колесо над слайдером даёт оба действия в одном кадре: дискретный шаг не имеет
-    незавершённого preview (ADR-0031 § 7).
+    незавершённого preview (ADR-0031 § 8).
 14. Обслуживать Roulette: `Session::start_roulette` запрашивает случайную станцию с
     координатами, `Session::poll_roulette` запускает её, доворачивает камеру и отдаёт
     `Notice`; отдельной IPC-команды нет.
@@ -140,8 +140,8 @@ root-вьюпорта: цикл завершается, управление в�
                                        громкости, ADR-0031) + sync_media() + sync_tray()
     11.7. Session::is_quitting()     — выход по флагу, иначе …
     11.8. Session::take_reopen()     — смена режима: новый прогон без парковки,
-                                      анализ и открытый drawer остаются
-    11.9. Session::close_settings()  — drawer закрывается до парковки (ADR-0031)
+                                      анализ и открытое окно настроек остаются
+    11.9. Session::close_settings()  — окно настроек закрывается до парковки (ADR-0031)
     11.10. Session::settle_analysis() — снять анализ: окно уходит в `park`
     11.11. Session::park()           — простой без окна; ParkOutcome::Show → шаг 11.1,
                                       ParkOutcome::Quit → выход
@@ -193,7 +193,7 @@ root-вьюпорта: цикл завершается, управление в�
 `sync_tray()`. Команды трея (`Toggle/Show/PlayPause/Stop/Previous/Next/Roulette/VolumeUp/
 VolumeDown/SetTheme/Settings/Quit`) разбирает `Session::execute_tray_command`; `Settings`
 идёт через `Session::open_settings` — при скрытом окне это `UiIntent::Show`, поэтому
-показ и drawer появляются уже в новом прогоне (ADR-0031).
+показ и окно настроек появляются уже в новом прогоне (ADR-0031).
 Закрытие очереди IPC-запросов
 (`Parked::QueueClosed` — приватный признак ядра) трактуется как выход.
 
@@ -225,7 +225,7 @@ presentation-слоем позже — в `logic()` следующего кад�
    чтобы следующий показ собрал `ViewportBuilder` до создания окна).
 5. `Session::take_intent()` → `ViewportCommand::Focus` (`UiIntent::Show`) или
    `ViewportCommand::Close` (`UiIntent::Close`).
-6. `Escape` снимает верхний модальный слой: сначала drawer настроек
+6. `Escape` снимает верхний модальный слой: сначала окно настроек
    (`Session::close_settings`), затем карточку управления
    (`Session::set_help_visible(false)`, ошибка — тост `SettingNotSaved`).
    `Ctrl+,` (`Cmd+,`) — `Session::toggle_settings` (ADR-0031).
@@ -238,7 +238,7 @@ presentation-слоем позже — в `logic()` следующего кад�
 `ui()` вызывает `draw()`: `Frame::capture` снимает читаемое состояние в снапшот,
 `egui::CentralPanel` с прозрачной рамкой рисует `draw_layers` (один вызов
 `Transitions::frame` на кадр считает прогрессы зон по `ZoneFlags`; глобус → HUD → панель →
-transport → help → легенда → капсулы, затем в `Order::Foreground` скрим и drawer настроек)
+transport → help → легенда → капсулы, затем в `Order::Foreground` скрим и окно настроек)
 и `toast.draw`, затем `apply_actions` исполняет собранные
 `UiAction`. `clear_color()` возвращает полностью прозрачный цвет — стекло зон рисует само.
 
@@ -252,9 +252,10 @@ transport → help → легенда → капсулы, затем в `Order::
 считает `DeskLayout::compute(viewport, panel_open, help_open, settings_open, mode)`
 (`src/ui/layout.rs`): HUD сверху (58 px), панель станций справа (360 px),
 transport снизу (84 px: контролы + громкость + 40 px визуализатора), help-карточка
-216×128 слева сверху (по требованию, с нижним полем 8 px), легенда плотности слева снизу и drawer настроек
-справа (380 px, клампится до ширины окна) поверх scrim на весь viewport. Клик и колесо
-глобуса игнорируются внутри плавающих зон (`DeskLayout::blocks_point`). UI вынесен
+216×128 слева сверху (по требованию, с нижним полем 8 px), легенда плотности слева снизу и
+модальное окно настроек по центру (760×544, клампится до `viewport − 2·MARGIN`) поверх
+scrim на весь viewport; сцена стола под модалкой остаётся на месте. Клик и колесо
+глобуса игнорируются внутри плавающих зон и зоны окна настроек (`DeskLayout::blocks_point`). UI вынесен
 в `src/ui/`; каждая зона через `ui.scope_builder(...).inner` возвращает собственный
 `Vec<UiAction>`, `OrbitApp` склеивает их и применяет после отрисовки кадра. Все
 надписи интерфейса берутся из `crate::i18n::catalog(language)` (ADR-0030), язык —
@@ -271,14 +272,14 @@ transport снизу (84 px: контролы + громкость + 40 px ви�
 Звёздное небо и country-режим рисуются только в `Full`; сглаженный `pulse`
 считается один раз за кадр и уходит только в капсулу Listening. Возврат в Focus
 из капсулы — кнопка expand (`UiAction::SetWindowMode(WindowMode::Focus)`), выбор
-режима также доступен в секции `Window` drawer'а настроек; `UiAction::SetWindowMode`
-в `Listening` закрывает drawer — панель в капсулу не помещается (ADR-0031).
+режима также доступен в категории `Window` окна настроек; `UiAction::SetWindowMode`
+в `Listening` закрывает окно настроек — в капсуле нет его зоны (ADR-0031).
 
 Доступность: кастомные контролы получают focus-ring и `WidgetInfo` с ролью и
 подписью (`Role::Button`/`RadioButton`/`CheckBox`/`Tab`, `ListItem` у строки,
 `slider` у громкости); громкость принимает стрелки и Home/End с шагом
 `VOLUME_KEY_STEP` = 0.05, а колесо мыши над слайдером — тот же шаг на щелчок и
-сразу как завершённый ввод (ADR-0031 § 7). `SliderResponse { changed, committed }`
+сразу как завершённый ввод (ADR-0031 § 8). `SliderResponse { changed, committed }`
 разделяет изменение
 и завершение (отпускание drag, клик, клавиша или щелчок колеса): первое даёт `UiAction::PreviewVolume`,
 второе — `UiAction::CommitVolume` (ADR-0031); строки списка
@@ -337,8 +338,8 @@ focusable, ↑/↓ переводят фокус на соседа по види
   убраны (имя и `state, country` показывают transport и список станций), `HudState`
   не несёт `now_playing`/`favicons`, а ключ `hud.idle` удалён из каталога (ADR-0030,
   ADR-0015 ред. 2026-10-28); кнопка-луна
-  (быстрый Dark/Light), шестерёнка (открывает drawer настроек: `Appearance`, `Language`,
-  `Audio`, `Motion`, `Window`, `About`; он же на `Ctrl+,` и в трее — `Settings…`,
+  (быстрый Dark/Light), шестерёнка (открывает окно настроек: `Appearance`, `Language`,
+  `Audio`, `Motion`, `Window`, `About`; оно же на `Ctrl+,` и в трее — `Settings…`,
   закрывается крестиком, `Esc`, кликом по скриму и уходом окна в `park`), кнопка списка,
   `?` (карточка управления по
   требованию) и `×` (Hide: процесс и эфир остаются живыми, это не выход), прижатая
@@ -391,7 +392,7 @@ focusable, ↑/↓ переводят фокус на соседа по види
   слой (ADR-0032); help-карточка управления
   (правый клик — орбита, ЛКМ — страна/станция, колесо — zoom) включена по умолчанию:
   `Settings::help_visible` (default `true`) инициализирует `Session::show_help`;
-  `?` в HUD и чекбокс в секции `Window` drawer'а переключают и сохраняют выбор,
+  `?` в HUD и тумблер в категории `Window` окна настроек переключают и сохраняют выбор,
   `Esc` скрывает карточку и сохраняет `false`; первый выбор страны или запуск
   станции её больше не гасят (ADR-0036 § 5); легенда карты стран слева снизу —
   `ComboBox` режима по умолчанию «Без карты» (`CountryMetric::Off`), градиент
@@ -402,13 +403,13 @@ focusable, ↑/↓ переводят фокус на соседа по види
 - чип `Visualizer` включает метрику спектра mpv: без неё столбцы переходят в
   idle-«дыхание», ошибка фильтра показывается тостом и не прерывает
   воспроизведение; состояние чипа — сохранённая настройка `Settings::visualizer_enabled`
-  (ADR-0031). Число столбцов (16/24/32) выбирается `dropdown`'ом в секции `Appearance`
-  drawer'а настроек (`UiAction::SetVizBars` → `Settings::viz_bars`, модель перестраивается
+  (ADR-0031). Число столбцов (16/24/32) выбирается `dropdown`'ом в категории `Appearance`
+  окна настроек (`UiAction::SetVizBars` → `Settings::viz_bars`, модель перестраивается
   на месте); капсула Overlay показывает ровно 16 полос и от `viz_bars` не зависит —
   срез считается bucket-max по уровням модели (`src/ui/capsule.rs`), а при
   `visualizer_enabled == false` полосы не аллоцируются вовсе, чтобы строка не прыгала;
-- секция `Motion` drawer'а настроек: реактивность Off/Low/Normal/High и стиль
-  движения — `dropdown`'ы, `Reduce motion` и `Allow flips` — `checkbox`
+- категория `Motion & accessibility` окна настроек: реактивность Off/Low/Normal/High и
+  стиль движения — `dropdown`'ы, `Reduce motion` и `Allow flips` — `switch_row`
   (`UiAction::SetMotionStyle` →
   `Session::set_motion_style`, `UiAction::SetAllowFlips` →
   `Session::set_allow_flips`); переключатель переворотов недоступен при
@@ -436,7 +437,7 @@ focusable, ↑/↓ переводят фокус на соседа по види
 `orbit_ring: OrbitRing`,
 `callout: CalloutState`, `visualizer: VisualizerModel`, `favicons: FaviconCache`,
 `http: reqwest::Client`, `toast: Toast`, `transitions: Transitions`,
-`drawer_rect: Option<egui::Rect>`. Подсистемами (`AudioEngine`, `GeoService`, `RadioBrowserClient`,
+`settings_rect: Option<egui::Rect>`. Подсистемами (`AudioEngine`, `GeoService`, `RadioBrowserClient`,
 `MediaControls`, `StationLibrary`, `SettingsStore`, `GlobeCamera`, `tokio::runtime::Handle`)
 владеет `Session`; к ним presentation-слой обращается через поля ядра
 (`session.audio`, `session.geo`, `session.library`, `session.settings`, `session.runtime`,
@@ -457,8 +458,9 @@ focusable, ↑/↓ переводят фокус на соседа по види
 `PanelState`, `HudState`, `FaviconCache` и `decode_favicon`, `Toast`, капсулы
 `capsule::{overlay_top, overlay_favorites, listening}`, `widgets::glass_panel`,
 `widgets::volume_slider_width` (с колесом над слайдером) и
-`SliderResponse`, примитивы строк настроек `controls::{dropdown, checkbox, row}`,
-`settings_panel::{show, SettingsState}`, `animation` (`Transitions`, `ZoneFlags`,
+`SliderResponse`, примитивы строк настроек `controls::{dropdown, switch_row,
+accent_swatch, row}`,
+`settings_panel::{show, SettingsState, SettingsCategory}`, `animation` (`Transitions`, `ZoneFlags`,
 `FrameMotion`, `alpha`, `slide_x`, `rise_y`, `stagger`, `Presence`),
 `overlays::help_card`/`country_legend`, `ui::country_map::CountryHeatCache`,
 `SearchMode` (ре-экспорт

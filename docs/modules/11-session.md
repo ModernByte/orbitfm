@@ -11,7 +11,7 @@
 ADR-0020 «Иконка в системном трее (StatusNotifierItem на ksni)»,
 ADR-0021 «Режимы окна (`WindowMode`)», ADR-0030 «Локализация интерфейса»
 (типизированные `Notice`), ADR-0031 «Панель настроек и персистентность»
-(drawer настроек, громкость commit-on-release)
+(модальное окно настроек, громкость commit-on-release)
 
 ---
 
@@ -92,7 +92,7 @@ Listening — `Off`. `motion_reactivity()`, `analysis_needed()` и `sync_analysi
 | Поле | Тип | Пояснение |
 |------|-----|-----------|
 | `window` | `WindowState` | `visible`, `size: Option<[f32; 2]>`, `mode: WindowMode`, `reopen`, `intent: Option<UiIntent>`, `quitting` (`src/session/window.rs`) |
-| `settings_open` | `bool` | Открыт ли правый drawer настроек (ADR-0031); `false` при создании ядра |
+| `settings_open` | `bool` | Открыто ли модальное окно настроек (ADR-0031); `false` при создании ядра |
 | `pending_volume` | `Option<f64>` | Громкость перетаскивания, ещё не записанная на диск: `preview_volume` ставит, `commit_volume` и `set_volume` снимают, `end_window` дописывает в настройки через `flush_pending_volume` |
 | `notices` | `VecDeque<Notice>` | Очередь сообщений Core → пользователю; `Notice` — ключ причины плюс незапереводимый `detail` (`src/session/notice.rs`, ADR-0030); `take_notices()` забирает всю очередь через `std::mem::take` |
 | `tray_snapshot` | `Option<TraySnapshot>` | Последний опубликованный треем снимок: `sync_tray` шлёт в SNI только изменение |
@@ -115,7 +115,7 @@ Listening — `Off`. `motion_reactivity()`, `analysis_needed()` и `sync_analysi
 
 | Файл | Ответственность | Типы и функции наружу (`pub(crate)`) |
 |------|-----------------|--------------------------------------|
-| `mod.rs` | Ядро: владение подсистемами, пробуждение, drawer настроек и язык, `status`, ре-экспорт контрактов пакета | `Session`, `AppServices`, `Notice`, `NoticeKey`, `ParkOutcome`, `WakeHandle`, `LibraryTab`, `StationStartError`; наружу из `window.rs` — `UiIntent`, `WindowMode`, `WindowState`, `WINDOW_TITLE` |
+| `mod.rs` | Ядро: владение подсистемами, пробуждение, окно настроек и язык, `status`, ре-экспорт контрактов пакета | `Session`, `AppServices`, `Notice`, `NoticeKey`, `ParkOutcome`, `WakeHandle`, `LibraryTab`, `StationStartError`; наружу из `window.rs` — `UiIntent`, `WindowMode`, `WindowState`, `WINDOW_TITLE` |
 | `notice.rs` | Типизированные сообщения пользователю: ядро называет причину, строку берёт каталог `i18n` (ADR-0030) | `Notice { Info(NoticeKey), Error { key, detail } }`, `NoticeKey` |
 | `window.rs` | Состояние окна: режим (`WindowMode`), геометрия и заголовки по режиму, намерения UI, признак перезапуска (ADR-0018, ADR-0021) | `WindowMode` (+ `ALL`/`default_size`/`min_size`/`title`/`as_str`), `UiIntent`, `WindowState`, `WINDOW_SIZE`, `WINDOW_MIN_SIZE`, `WINDOW_TITLE`, `OVERLAY_SIZE`, `OVERLAY_MIN_SIZE`, `OVERLAY_TITLE`, `LISTENING_SIZE`, `LISTENING_MIN_SIZE`, `LISTENING_TITLE` |
 | `commands.rs` | Разбор `IpcCommand` (общий для окна и парковки), `impl From<WindowModeArg> for WindowMode` и настроек оформления, языка и движения | `Session::{execute, process_commands, set_theme, set_accent, set_language, set_viz_bars, set_visualizer_enabled, set_motion, set_motion_style, set_allow_flips, set_reduce_motion, settle_analysis, set_help_visible}` |
@@ -384,8 +384,8 @@ process_audio_events → process_commands → process_media_commands
 `SetVolume`, `Next`, `Previous`) и все `TrayCommand` (`Toggle`, `Show`,
 `PlayPause`, `Stop`, `Previous`, `Next`, `Roulette`, `VolumeUp`, `VolumeDown`,
 `SetTheme`, `Settings`, `Quit`). `hide` ничего не делает (окно уже закрыто), `show`,
-`toggle` и `settings` ставят `UiIntent::Show` и выводят `park()` — drawer
-открывается уже на следующем показе. `mode <режим>` при
+`toggle` и `settings` ставят `UiIntent::Show` и выводят `park()` — окно
+настроек открывается уже на следующем показе. `mode <режим>` при
 скрытом окне меняет только `window.mode` и тоже выводит `park()`: новое окно
 сразу собирается с геометрией режима, без перезапуска ради перезапуска. `quit`
 ставит `quitting` и выводит `ParkOutcome::Quit`.
@@ -422,14 +422,14 @@ for WindowMode`: `src/ipc/` не знает доменного режима, п�
 (`UiAction::CommitVolume` → `commit_volume`) записывает его; клик по треку,
 клавиатурный шаг и щелчок колеса над слайдером дают `changed` и `committed` в том
 же кадре, поэтому pending у них не открывается и запись следует сразу (шаг колеса =
-`VOLUME_KEY_STEP` = 0.05 на щелчок, ADR-0031 § 7). `end_window()`
+`VOLUME_KEY_STEP` = 0.05 на щелчок, ADR-0031 § 8). `end_window()`
 зовёт `flush_pending_volume()`, чтобы drag, прерванный скрытием окна, не потерял
 значение; ошибка сохранения — `warn!` и `NoticeKey::VolumeNotSaved`.
 
 `open_settings()` / `close_settings()` / `toggle_settings()` (`src/session/mod.rs`)
 ведут поле `settings_open` (ADR-0031). Открытие в `Listening` сначала переводит
-окно в `Overlay` — drawer в капсуле не помещается, — а при закрытом окне ещё и
-ставит `UiIntent::Show`. UI закрывает drawer по `UiAction::CloseSettings`,
+окно в `Overlay` — в капсуле нет зоны настроек, — а при закрытом окне ещё и
+ставит `UiIntent::Show`. UI закрывает окно настроек по `UiAction::CloseSettings`,
 переключает по `UiAction::ToggleSettings`; выбор режима `Listening` закрывает его
 в `src/app.rs`.
 
@@ -459,7 +459,7 @@ Reconnecting`, `station` — `single_line(name)` при живом эфире и
 | `Roulette` | `start_roulette()`, ответ придёт в `Parked::Roulette` или в следующем `tick()` |
 | `VolumeUp` / `VolumeDown` | `nudge_volume(±VOLUME_STEP /* 0.1 */)` с `clamp` к `0.0..=1.0` до вызова аудио-ядра; дальше `set_volume` — значение применяется и сохраняется сразу, сбой только `warn!` |
 | `SetTheme(mode)` | `set_theme(mode)` в `SettingsStore`; ошибка — `notify_error_detail(NoticeKey::ThemeNotSaved, …)` |
-| `Settings` | `open_settings()`: открывает drawer настроек и показывает окно (в `Listening` сначала переводит в `Overlay`) |
+| `Settings` | `open_settings()`: открывает окно настроек и показывает окно (в `Listening` сначала переводит в `Overlay`) |
 | `Quit` | `window.quit()` |
 
 Ошибки команд трея не кричат пользователю: неудача воспроизведения и громкости
@@ -494,11 +494,11 @@ Reconnecting`, `station` — `single_line(name)` при живом эфире и
 признак стоит, открывает вьюпорт заново без парковки — иначе живой resize на
 Wayland был бы просьбой, которую композитор вправе отбросить (ADR-0018 п. 5).
 Заголовок — часть контракта: по нему WM-правила из `wm-configs/` подбирают
-размер капсулы, поэтому у каждого режима он свой. Drawer настроек в `Listening`
-не помещается: `open_settings()` переключает режим на `Overlay`, а выбор
-`Listening` из UI закрывает drawer (`close_settings`). Drawer живёт только внутри
+размер капсулы, поэтому у каждого режима он свой. В `Listening` нет зоны окна
+настроек: `open_settings()` переключает режим на `Overlay`, а выбор `Listening`
+из UI закрывает окно (`close_settings`). Окно настроек живёт только внутри
 одного показа окна: перед `park()` главный цикл вызывает `close_settings()`, а
-ветка `reopen` (смена режима) его сохраняет (ADR-0031 п. 4).
+ветка `reopen` (смена режима) его сохраняет (ADR-0031 п. 6).
 
 ## 5. Текущие ограничения
 
@@ -515,7 +515,7 @@ Wayland был бы просьбой, которую композитор впр
   `toggle` опирается на признак `Session`, а не на состояние композитора: окно,
   свёрнутое WM, считается открытым и `toggle` его закрывает.
 - Смена темы/акцента/языка из IPC невозможна: этих команд в протоколе нет
-  (ADR-0005), `set_accent` и `set_language` вызывают только drawer настроек.
+  (ADR-0005), `set_accent` и `set_language` вызывают только окно настроек.
   Тема доступна из трея (`SetTheme`), язык — нет: `TraySnapshot` его показывает,
   но не меняет. При закрытом окне перекраска `egui` произойдёт лишь на следующем
   показе.
@@ -569,7 +569,8 @@ round-trip протокола и `WindowModeArg → WindowMode`; `playback.rs` �
 - ADR-0020: Иконка в системном трее (StatusNotifierItem на ksni)
 - ADR-0021: Режимы окна (`WindowMode`) и IPC-глагол `mode`
 - ADR-0030: Локализация интерфейса (типизированные `Notice` и `NoticeKey`)
-- ADR-0031: Панель настроек и персистентность (drawer, громкость commit-on-release)
+- ADR-0031: Панель настроек и персистентность (модальное окно, громкость
+  commit-on-release)
 - `docs/interfaces/10-session.md` — формальный контракт `Session`
 - `docs/modules/12-tray.md`, `docs/interfaces/11-tray.md` — модуль трея
 - `docs/modules/13-i18n.md`, `docs/interfaces/12-i18n.md` — каталоги строк, в том

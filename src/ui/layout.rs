@@ -15,10 +15,10 @@ pub(crate) const TRANSPORT_HEIGHT: f32 = 84.0;
 /// «битрейт/кодек + звезда» получает собственный запас (ADR-0033, ревизия
 /// 2026-10-28).
 pub(crate) const PANEL_WIDTH: f32 = 360.0;
-/// Правый drawer настроек (ADR-0031): фиксированная ширина, clamp по viewport.
-/// 380 px хватает на строку «подпись + dropdown 168»: при переносе подписи
-/// контрол остаётся в своём слоте (`src/ui/controls.rs`).
-pub(crate) const SETTINGS_WIDTH: f32 = 380.0;
+/// Модальное окно настроек (ADR-0031, ревизия 2026-10-28): 760×544 на столе
+/// 1100×800, clamp по viewport. Слева — колонка категорий, справа — карточки
+/// настроек; в узких окнах колонка сжимается до иконочного рейла.
+pub(crate) const SETTINGS_MODAL: (f32, f32) = (760.0, 544.0);
 /// Карточка управления: три строки по 30 px плюс поля 14 сверху и снизу.
 pub(crate) const HELP_SIZE: (f32, f32) = (216.0, 128.0);
 /// Легенда карты стран: выбор метрики + градиент Low → High.
@@ -73,7 +73,7 @@ pub(crate) struct DeskLayout {
     pub legend: Option<egui::Rect>,
     /// Нижняя зона капсулы Overlay: избранные станции.
     pub capsule: Option<egui::Rect>,
-    /// Правый drawer настроек: виден только когда открыт (ADR-0031).
+    /// Модальное окно настроек по центру: видно только когда открыто (ADR-0031).
     pub settings: Option<egui::Rect>,
 }
 
@@ -189,8 +189,8 @@ impl DeskLayout {
         }
     }
 
-    /// Listening: единственная строка now-playing с пульсом. Drawer здесь не
-    /// помещается (ADR-0031): настройки открываются через Overlay.
+    /// Listening: единственная строка now-playing с пульсом. Окно настроек здесь
+    /// не помещается (ADR-0031): настройки открываются через Overlay.
     fn minimal(viewport: egui::Rect) -> Self {
         Self {
             density: LayoutDensity::Minimal,
@@ -211,26 +211,10 @@ impl DeskLayout {
     }
 
     /// Выпадающая панель: одна поверхность, внутри — шапка, список и подвал.
-    /// Открытый drawer настроек занимает ту же поверхность целиком: в 400 px
-    /// колонка drawer'а не оставила бы списку ни места, ни смысла (ADR-0031,
-    /// ADR-0033).
+    /// Модальное окно настроек рисуется поверх неё отдельным слоем: сцена
+    /// остаётся на месте под scrim'ом (ADR-0031, ревизия 2026-10-28).
     fn panel(viewport: egui::Rect, settings_open: bool) -> Self {
         let surface = viewport.shrink(PANEL_MARGIN);
-        if settings_open {
-            return Self {
-                density: LayoutDensity::Panel,
-                globe: None,
-                hud: None,
-                panel: None,
-                transport: None,
-                surface: Some(surface),
-                help: None,
-                legend: None,
-                capsule: None,
-                settings: Some(surface),
-            };
-        }
-
         let width = surface.width();
         let header_height = PANEL_HEADER_HEIGHT.min(surface.height() * 0.4);
         let footer_height = PANEL_FOOTER_HEIGHT.min(surface.height() * 0.25);
@@ -258,7 +242,7 @@ impl DeskLayout {
             help: None,
             legend: None,
             capsule: None,
-            settings: None,
+            settings: settings_rect(viewport, settings_open),
         }
     }
 
@@ -292,14 +276,18 @@ impl DeskLayout {
     }
 }
 
-/// Зона drawer'а: правая колонна на всю высоту между полями.
+/// Модальное окно настроек: центр вьюпорта, размеры ужимаются до полей.
 fn settings_rect(viewport: egui::Rect, settings_open: bool) -> Option<egui::Rect> {
     settings_open.then(|| {
-        let width = SETTINGS_WIDTH.min(viewport.width() - 2.0 * MARGIN);
-        egui::Rect::from_min_size(
-            egui::pos2(viewport.right() - MARGIN - width, viewport.top() + MARGIN),
-            egui::vec2(width, (viewport.height() - 2.0 * MARGIN).max(1.0)),
-        )
+        let size = egui::vec2(
+            SETTINGS_MODAL
+                .0
+                .min((viewport.width() - 2.0 * MARGIN).max(1.0)),
+            SETTINGS_MODAL
+                .1
+                .min((viewport.height() - 2.0 * MARGIN).max(1.0)),
+        );
+        egui::Rect::from_center_size(viewport.center(), size)
     })
 }
 
@@ -417,23 +405,23 @@ mod tests {
     }
 
     #[test]
-    fn open_settings_drawer_blocks_its_column() {
+    fn open_settings_modal_is_centered_and_blocks_the_globe() {
         let layout = DeskLayout::compute(viewport(), true, false, true, WindowMode::Focus);
-        let drawer = layout.settings.expect("drawer открыт");
-        assert_eq!(drawer.width(), SETTINGS_WIDTH);
-        assert!(drawer.right() <= viewport().right() - MARGIN + 0.5);
-        assert!(drawer.top() >= viewport().top() + MARGIN - 0.5);
-        assert!(drawer.bottom() <= viewport().bottom() - MARGIN + 0.5);
-        assert!(layout.blocks_point(drawer.center()));
+        let modal = layout.settings.expect("модалка открыта");
+        assert_eq!(modal.width(), SETTINGS_MODAL.0);
+        assert_eq!(modal.height(), SETTINGS_MODAL.1);
+        assert_eq!(modal.center(), viewport().center());
+        assert!(modal.right() <= viewport().right() - MARGIN + 0.5);
+        assert!(modal.top() >= viewport().top() + MARGIN - 0.5);
+        assert!(modal.bottom() <= viewport().bottom() - MARGIN + 0.5);
+        assert!(layout.blocks_point(modal.center()));
     }
 
     #[test]
-    fn closed_settings_drawer_does_not_block_anything() {
-        // Панель списка закрыта: иначе правая колонна занята ею, а не drawer'ом.
+    fn closed_settings_modal_does_not_block_anything() {
         let layout = DeskLayout::compute(viewport(), false, false, false, WindowMode::Focus);
         assert!(layout.settings.is_none());
-        let drawer_point = egui::pos2(1280.0 - SETTINGS_WIDTH / 2.0, 400.0);
-        assert!(!layout.blocks_point(drawer_point));
+        assert!(!layout.blocks_point(viewport().center()));
     }
 
     /// Якорь стека тостов зависит от плотности: над занятой нижней зоной, а не
@@ -461,19 +449,39 @@ mod tests {
     }
 
     #[test]
-    fn drawer_clamps_width_on_a_narrow_viewport() {
+    fn settings_modal_clamps_to_a_narrow_viewport() {
         let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(360.0, 480.0));
         let layout = DeskLayout::compute(viewport, false, false, true, WindowMode::Overlay);
-        let drawer = layout.settings.expect("drawer в Overlay");
-        assert_eq!(drawer.width(), viewport.width() - 2.0 * MARGIN);
-        assert!(layout.blocks_point(drawer.center()));
+        let modal = layout.settings.expect("модалка в Overlay");
+        assert_eq!(modal.width(), viewport.width() - 2.0 * MARGIN);
+        assert_eq!(modal.height(), viewport.height() - 2.0 * MARGIN);
+        assert_eq!(modal.center(), viewport.center());
+        assert!(layout.blocks_point(modal.center()));
     }
 
     #[test]
-    fn listening_has_no_drawer_zone() {
+    fn listening_has_no_settings_zone() {
         let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(420.0, 152.0));
         let layout = DeskLayout::compute(viewport, false, false, true, WindowMode::Listening);
-        assert!(layout.settings.is_none(), "в Listening drawer не рисуется");
+        assert!(
+            layout.settings.is_none(),
+            "в Listening настройки не рисуются"
+        );
+    }
+
+    #[test]
+    fn panel_keeps_its_scene_under_the_settings_modal() {
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 640.0));
+        let layout = DeskLayout::compute(viewport, true, true, true, WindowMode::Panel);
+        assert!(layout.surface.is_some(), "панель остаётся под scrim'ом");
+        assert!(layout.hud.is_some());
+        assert!(layout.panel.is_some());
+        assert!(layout.transport.is_some());
+        let modal = layout.settings.expect("модалка поверх панели");
+        assert_eq!(modal.width(), viewport.width() - 2.0 * MARGIN);
+        assert_eq!(modal.height(), SETTINGS_MODAL.1);
+        assert_eq!(modal.center(), viewport.center());
+        assert!(layout.blocks_point(modal.center()));
     }
 
     #[test]
@@ -522,18 +530,6 @@ mod tests {
         assert!(footer.bottom() <= surface.bottom());
         assert!(list.height() > 200.0);
         assert!(layout.blocks_point(surface.center()));
-    }
-
-    #[test]
-    fn bar_panel_settings_take_the_whole_surface() {
-        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 640.0));
-        let layout = DeskLayout::compute(viewport, true, true, true, WindowMode::Panel);
-        let surface = layout.surface.expect("поверхность панели");
-        assert_eq!(layout.settings, Some(surface));
-        assert!(layout.hud.is_none());
-        assert!(layout.panel.is_none());
-        assert!(layout.transport.is_none());
-        assert_eq!(layout.toast_offset(viewport), MARGIN);
     }
 
     #[test]

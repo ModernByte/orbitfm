@@ -267,7 +267,7 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
         .filter(|position| !state.layout.blocks_point(*position));
 
     // Жёсткий фильтр по точке нажатия, а не по текущему курсору: жест, начатый
-    // над панелью или при открытом drawer, не должен вращать глобус (ADR-0031).
+    // над панелью или при открытом окне настроек, не должен вращать глобус (ADR-0031).
     let press_blocked = ui.input(|input| {
         input
             .pointer

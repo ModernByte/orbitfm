@@ -21,7 +21,6 @@ pub(crate) struct CommonText {
     pub untitled: &'static str,
     pub add_favorite: &'static str,
     pub remove_favorite: &'static str,
-    pub hide_window: &'static str,
     pub hide_window_hint: &'static str,
     pub show_station_list: &'static str,
     pub hide_station_list: &'static str,
@@ -173,6 +172,13 @@ pub(crate) struct SettingsText {
     pub app_id: &'static str,
     pub about_hint: &'static str,
     pub saved_hint: &'static str,
+    /// Подзаголовок страницы категории: одна строка под её названием.
+    pub appearance_page_hint: &'static str,
+    pub language_page_hint: &'static str,
+    pub audio_page_hint: &'static str,
+    pub motion_page_hint: &'static str,
+    pub window_page_hint: &'static str,
+    pub about_page_hint: &'static str,
 }
 
 #[cfg_attr(not(all(target_os = "linux", feature = "tray")), allow(dead_code))]

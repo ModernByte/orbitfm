@@ -1,7 +1,7 @@
 # OrbitFM
 
 **Плеер интернет-радио с 3D-глобусом**  
-Под эгидой [ModernByte](https://github.com/ModernByte) · версия `0.11.0-rc.1`
+Под эгидой [ModernByte](https://github.com/ModernByte) · версия `0.12.0-rc.1`
 
 [![Релиз](https://img.shields.io/github/v/release/ModernByte/orbitfm?include_prereleases)](https://github.com/ModernByte/orbitfm/releases)
 [![Статус CI](https://img.shields.io/github/actions/workflow/status/ModernByte/orbitfm/ci.yml?branch=main)](https://github.com/ModernByte/orbitfm/actions/workflows/ci.yml)
@@ -14,7 +14,7 @@ OrbitFM — плеер интернет-радио, где каталог пок
 и её станции лежат рядом в списке; так же можно искать по жанру или по названию станции. Закрытие окна музыку не
 останавливает: приложение работает одним процессом, живёт в системном трее и принимает команды из терминала и от
 медиа-клавиш. Для экрана есть три режима — от большого рабочего стола с глобусом до компактной капсулы в углу.
-Приоритетная платформа — Linux (Wayland и X11), сборки есть для Windows и macOS; версия `0.11.0-rc.1` —
+Приоритетная платформа — Linux (Wayland и X11), сборки есть для Windows и macOS; версия `0.12.0-rc.1` —
 пре-релиз, отдельные детали ещё могут меняться.
 
 ## Что умеет
@@ -61,16 +61,16 @@ OrbitFM — плеер интернет-радио, где каталог пок
 
 ### AppImage (Linux x86_64)
 
-Файл называется `OrbitFM-<версия>-x86_64.AppImage`, например `OrbitFM-0.11.0-rc.1-x86_64.AppImage`. Права root и
+Файл называется `OrbitFM-<версия>-x86_64.AppImage`, например `OrbitFM-0.12.0-rc.1-x86_64.AppImage`. Права root и
 установка не нужны — приложение rootless по определению, и `libmpv` с FFmpeg уже внутри:
 
 ```bash
-chmod +x OrbitFM-0.11.0-rc.1-x86_64.AppImage
-./OrbitFM-0.11.0-rc.1-x86_64.AppImage
+chmod +x OrbitFM-0.12.0-rc.1-x86_64.AppImage
+./OrbitFM-0.12.0-rc.1-x86_64.AppImage
 ```
 
 Если FUSE недоступен (контейнеры, минимальные образы) или не нужна интеграция через монтирование, запускайте в
-режиме распаковки: `APPIMAGE_EXTRACT_AND_RUN=1 ./OrbitFM-0.11.0-rc.1-x86_64.AppImage`. Виджету Noctalia и командам
+режиме распаковки: `APPIMAGE_EXTRACT_AND_RUN=1 ./OrbitFM-0.12.0-rc.1-x86_64.AppImage`. Виджету Noctalia и командам
 `orbitfm …` нужен запускаемый `orbitfm` в `PATH` — удобно сделать символьную ссылку на AppImage.
 
 ### Установщики Windows и macOS

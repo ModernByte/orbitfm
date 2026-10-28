@@ -17,7 +17,7 @@ mod pt;
 mod ru;
 mod zh;
 
-pub(crate) use catalog::{Catalog, LabelText};
+pub(crate) use catalog::{Catalog, LabelText, SettingsText};
 pub(crate) use labels::{accent_label, language_label, motion_label, style_label, theme_label};
 
 use crate::settings::Language;
@@ -97,7 +97,6 @@ mod tests {
                 untitled,
                 add_favorite,
                 remove_favorite,
-                hide_window,
                 hide_window_hint,
                 show_station_list,
                 hide_station_list,
@@ -252,6 +251,12 @@ mod tests {
                 app_id,
                 about_hint,
                 saved_hint,
+                appearance_page_hint,
+                language_page_hint,
+                audio_page_hint,
+                motion_page_hint,
+                window_page_hint,
+                about_page_hint,
             }
         );
         assert_group_non_empty!(

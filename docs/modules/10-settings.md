@@ -31,7 +31,7 @@ ADR-0028.
 | `viz_bars` | 16, 24, 32 (иное притягивается к ближайшему) | 24 |
 | `volume` | `0.0..=1.0`, вне диапазона клампится при загрузке и записи | `0.7` |
 | `visualizer_enabled` | визуализатор и аудиокольцо | `true` |
-| `help_visible` | видимость карточки управления глобусом; `?` в HUD, чекбокс drawer'а и `Esc` пишут выбор (ADR-0036) | `true` |
+| `help_visible` | видимость карточки управления глобусом; `?` в HUD, тумблер окна настроек и `Esc` пишут выбор (ADR-0036) | `true` |
 | `motion` | `off`, `low`, `normal`, `high` | `normal` |
 | `motion_style` | `auto`, `soft-pulse`, `groove-sway`, `bass-drop`, `ambient-drift`, `sparkle-twitch`, `beat-march` | `auto` |
 | `allow_flips` | перевороты камеры на onset | `false` |
@@ -44,7 +44,7 @@ ADR-0028.
 `MotionReactivity` задаёт пределы `squash_limit` (2,5/5,0/9,0 % для
 Low/Normal/High), `ripple_limit` (0,50/1,00/1,80 %) и `idle_amplitude`
 (0,7/0,7/1,0 %); `capped` ограничивает режим окна. `MotionStyle` содержит
-`Auto` и шесть стилей; `ALL` питает список выбора drawer'а, `id` уходит в
+`Auto` и шесть стилей; `ALL` питает список выбора окна настроек, `id` уходит в
 `CameraUniform.motion2.y`, `requires_bands` задаёт деградацию без полос. Подписей
 у самих enum'ов нет — строки даёт `i18n::labels` (ADR-0030).
 `Auto` — значение по умолчанию: стиль выбирается по сглаженным признакам
@@ -82,10 +82,10 @@ $HOME/.config/orbitfm/settings.json   (если XDG_CONFIG_HOME не задан/
   маркеры остаются яркими.
 - Маркеры глобуса используют один цвет `palette.marker` (ADR-0012, обновление
   Этапа 9); качества и рейтинга в цвете больше нет.
-- Drawer настроек (ADR-0031) содержит выбор темы и шесть акцентных образцов;
+- Окно настроек (ADR-0031) содержит выбор темы и шесть акцентных образцов;
   ошибки хранилища показываются локализованным тостом.
-- Секция `Motion` в drawer'е: `dropdown` реактивности `Off`/`Low`/`Normal`/`High`,
-  `checkbox`-ы `Reduce motion` и `Allow flips`, `dropdown` `Motion style` (`Auto`
+- Секция `Motion` в окне настроек: `dropdown` реактивности `Off`/`Low`/`Normal`/`High`,
+  тумблеры `Reduce motion` и `Allow flips`, `dropdown` `Motion style` (`Auto`
   или один из
   шести стилей); изменения применяются сразу и сохраняются. `Allow flips`
   недоступен при `Off` и `reduce_motion`. При `reduce_motion` эффективная
@@ -95,7 +95,7 @@ $HOME/.config/orbitfm/settings.json   (если XDG_CONFIG_HOME не задан/
 - Число столбцов визуализатора (`viz_bars`), видимость визуализатора
   (`visualizer_enabled`) и язык (`language`) меняются там же; громкость
   пишется по отпусканию слайдера, а клик, клавиша и щелчок колеса над ним —
-  дискретный ввод, который пишет сразу (ADR-0031 § 7).
+  дискретный ввод, который пишет сразу (ADR-0031 § 8).
 - Чекбокс карточки управления (`help_visible`) — в секции `Window`: значение
   по умолчанию `true`, `?` в HUD и `Esc` меняют то же поле; старый ключ
   `help_seen` не читается, поэтому после обновления карточка снова видна

@@ -55,7 +55,7 @@ pub(crate) enum UiAction {
     ClearHistory,
     SetTheme(ThemeMode),
     SetAccent(AccentColor),
-    /// Язык интерфейса из drawer настроек (ADR-0030).
+    /// Язык интерфейса из окна настроек (ADR-0030).
     SetLanguage(Language),
     ToggleSpectrum(bool),
     /// Число столбцов визуализатора: 16, 24 или 32 (ADR-0019).
@@ -80,9 +80,9 @@ pub(crate) enum UiAction {
     Quit,
     TogglePanel,
     ToggleHelp,
-    /// Открыть/закрыть drawer настроек (ADR-0031).
+    /// Открыть/закрыть модальное окно настроек (ADR-0031).
     ToggleSettings,
-    /// Закрыть drawer настроек: крестик, Escape, scrim.
+    /// Закрыть окно настроек: крестик, Escape, scrim.
     CloseSettings,
     /// Смена режима окна Focus/Overlay/Listening (ADR-0021).
     SetWindowMode(WindowMode),
