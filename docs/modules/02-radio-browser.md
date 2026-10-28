@@ -1,7 +1,7 @@
 # Модуль: Radio Browser Client
 
-**Путь в коде:** `src/services/` (`radio_browser.rs`, `discovery.rs`)  
-**Ответственность:** Поиск живых серверов API, запросы станций, кэширование, click-tracking.  
+**Путь в коде:** `src/services/` (`radio_browser.rs`, `discovery.rs`, `artwork.rs`, `ssrf.rs`)  
+**Ответственность:** Поиск живых серверов API, запросы станций, кэширование, click-tracking и безопасная загрузка артворка.  
 **Зависимости:** reqwest (rustls), tokio, serde
 
 ---
@@ -16,9 +16,11 @@
 
 | Файл | Назначение |
 |------|------------|
-| `mod.rs` | Публичный фасад (`RadioBrowserClient`, `RadioError`, `SearchParams`, `Station`) |
+| `mod.rs` | Публичный фасад (`RadioBrowserClient`, `RadioError`, `SearchParams`, `Station`, `ArtworkFetcher`, `publishable`) |
 | `discovery.rs` | DNS-discovery `all.api.radio-browser.info`, дедупликация и ротация |
 | `radio_browser.rs` | HTTP-клиент, пул зеркал, failover, кэш, click-tracking |
+| `artwork.rs` | Хопп-цикл артворка: резолв, припинованные клиенты, лимиты, MIME, `tracing` причин отказа |
+| `ssrf.rs` | Ярус 1 (`classify`, `parse_publishable`) и классификатор адреса `is_public_destination` |
 
 ## 3. Публичный интерфейс
 
@@ -158,11 +160,48 @@ pub struct Station {
 - попадание в кэш по UUID;
 - ротация пула сохраняет все серверы;
 - живой тест `searches_and_fetches_live_station` (SomaFM + Roulette, `--ignored`,
-  требует сеть).
+  требует сеть);
+- таблица классификатора адресов (границы диапазонов IPv4/IPv6, v4-mapped и 6to4
+  рекурсивно на один уровень);
+- хопп-цикл на рукописном loopback-макете (`tokio::net::TcpListener`, без
+  `hyper`/`wiremock`): успешный fetch с ограниченным телом, перепроверка каждого
+  редирект-хоппа, обрыв на превышении бюджета редиректов, редирект без
+  `Location`, не-2xx, отсутствие `Content-Type` + валидное тело, обрезка тела
+  за заявленным `Content-Length`, отказ понижения https→http и отклонение
+  приватного literal'а **до** всякого соединения;
+- all-or-nothing по набору адресов резолва, потолок пула припинованных клиентов
+  и узость тестового шва (шов ослабляет ровно предикат адреса);
+- ярус 1 и `publishable`: числовые трюки (`0x7f.0.0.1`, `127.1`, `0177.0.0.1`,
+  `2130706433`), punycode-канонизация, `router`/`*.local`/`*.internal`,
+  userinfo, порт 0 (и разрешение не-дефолтных портов), чужие схемы.
 
-## 10. Связанные ADR
+## 10. Артворк: политика цели в два яруса
+
+Изображения станций — единственный исходящий HTTP-путь, которым управляет не
+пользовательский ввод, а чужой каталог, поэтому он вынесен в `artwork.rs` +
+`ssrf.rs` и подчиняется ADR-0025 (ред. 2). Кратко, без пересказа ADR:
+
+- **ярус 1** — синтаксический, без DNS: `ssrf::classify` (схема, userinfo, порт
+  0, типизированный хост, ярлыковые правила) и `ssrf::parse_publishable` для
+  публикаций наружу. Синхронный вызов обязателен: `Session::sync_media`
+  исполняется на главном потоке и внутри `runtime.block_on` в `park()`.
+- **ярус 2** — разрешённый, асинхронный: `ssrf::is_public_destination` по всем
+  адресам резолва (all-or-nothing) и припинованный клиент. Зовёт только
+  `ArtworkFetcher::fetch`, на каждом хоппе заново.
+- хопп-цикл ручной (`redirect::Policy::none()`), `MAX_ARTWORK_REDIRECTS = 3`,
+  общий wall-clock `TOTAL_TIMEOUT = 6 c`, на запрос 6 c, на DNS 3 c.
+- клиенты кэшируются по `host:port` с потолком 16 и TTL 60 c, LRU-вытеснение;
+  по истечении TTL хост резолвится и валидируется заново.
+- MIME 2xx — только `image/png`, `image/jpeg`, `image/webp` и
+  `application/octet-stream` (ADR-0025, п. 4); `text/html`, `image/svg+xml` и
+  `image/gif` отклоняются. Тело — не более 512 КиБ.
+- `http` как конечная цель отвергается (`Policy::allow_http = false`); opt-in
+  перенесён в 0.14.
+
+## 11. Связанные ADR
 
 - ADR-0004: Выбор клиента Radio Browser
 - ADR-0012: Маркеры станций на глобусе (гео-фильтр и поля координат)
 - ADR-0036: один запрос на поиск; список полный, маркеры — подмножество строк
   с координатами (ред. 2026-10-28)
+- ADR-0016 (ред. 2) и ADR-0025 (ред. 2): загрузчик и сетевая политика артворка

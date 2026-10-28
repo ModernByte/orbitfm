@@ -96,6 +96,7 @@ jobs:
             -o Acquire::ForceIPv4=true \
             || echo "apt-get update не завершился вовремя; используются текущие списки"
           sudo apt-get install -y --no-install-recommends \
+            binutils \
             libgl1-mesa-dev \
             libmpv-dev \
             libwayland-dev \
@@ -124,6 +125,17 @@ jobs:
           set -euo pipefail
           cargo build --release --locked
           bash packaging/linux/build-appimage.sh
+
+      # Обязательства LGPL-2.1 по libmpv (ADR-0011): библиотека обязана
+      # оставаться заменяемым файлом, а не вырезанной из кода частью
+      # бинарника. Проверяется по AppDir — он остаётся на диске после сборки.
+      - name: Verify libmpv stays replaceable (LGPL)
+        run: |
+          set -euo pipefail
+          objdump -p target/appimage/AppDir/usr/bin/orbitfm \
+            | grep -q 'NEEDED.*libmpv\.so'
+          test -f target/appimage/AppDir/usr/lib/libmpv.so.2
+          echo "libmpv линкуется динамически и лежит отдельным .so"
 
       - name: Upload AppImage
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

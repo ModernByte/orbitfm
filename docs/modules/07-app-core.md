@@ -32,7 +32,7 @@ Presentation-слой: всё, что знает про egui и wgpu. Не со�
   пересоздание вьюпорта из-за смены режима (ADR-0031).
 - На каждый прогон собрать per-run ресурсы в `OrbitApp::new`: тему и акцент
   (`palette::configure_style`), цветной emoji-шрифт, `GlobeRenderer` в `callback_resources`,
-  `FaviconCache`, `reqwest::Client`, `VisualizerModel`, `Toast`, `Transitions`
+  `FaviconCache`, `ArtworkFetcher` (`services::artwork`), `VisualizerModel`, `Toast`, `Transitions`
   (переходы зон, ADR-0032) и установить `WakeHandle`
   (`wake.install` замыкания, зовущего `Context::request_repaint`).
 - Реализовать `eframe::App` (`logic` + `ui` + `clear_color` в eframe 0.37): фоновое
@@ -60,7 +60,7 @@ pub(crate) struct OrbitApp<'a> {
     callout: CalloutState,
     visualizer: VisualizerModel,
     favicons: FaviconCache,
-    http: reqwest::Client,
+    artwork: ArtworkFetcher,
     toast: Toast,
     /// Переходы UI этого прогона окна (ADR-0032).
     transitions: Transitions,
@@ -91,12 +91,15 @@ pub(crate) struct OrbitApp<'a> {
 - `visualizer` — уровни, пики и фазы столбцов визуализатора (ADR-0022); строится по
   `Settings::viz_bars` и пересоздаётся действием `UiAction::SetVizBars`.
 - `favicons` — `FaviconCache`: машина состояний Queued/Loading/Ready/Failed и текстуры,
-  привязанные к `egui::Context` этого прогона (ADR-0016). После закрытия окна пуст —
+  привязанные к `egui::Context` этого прогона (ADR-0016, ред. 2). После закрытия окна пуст —
   при следующем показе иконки грузятся заново. Декодируются только PNG/JPEG/WebP
-  до 512 px по стороне и 512 КиБ; SVG/GIF/ICO отклоняются (ADR-0025).
-- `http` — `reqwest::Client` с `USER_AGENT`, таймаутом 6 с и лимитом 3 редиректов;
-  для favicon проверяются `http(s)`-схема, MIME-allowlist и потоковый лимит тела
-  512 КиБ (ADR-0025).
+  до 512 px по стороне и 512 КиБ; SVG/GIF/ICO отклоняются (ADR-0025). Границы
+  `entries ≤ 256` и `in_flight ≤ 8` — инварианты: вытеснение ступенчатое, результат
+  сверяется с поколением записи, слот освобождает RAII-страховка (ADR-0016 ред. 2).
+- сетевых полей у `OrbitApp` больше нет: исходящий fetch артворка живёт в
+  `src/services/artwork.rs` вместе с клиентом, policy-проверками и бюджетами
+  (ADR-0016 ред. 2, ADR-0025 ред. 2); в `app.rs` остаются только очередь задач и
+  приём результатов.
 - `toast` — стек до трёх сообщений по 3 секунды; переходы слоёв — ADR-0032.
 - `transitions` — `Transitions` (ADR-0032): один вызов `frame` на кадр считает
   прогрессы присутствия зон (`ZoneFlags` → `FrameMotion`); значения читают зоны и
@@ -234,7 +237,8 @@ src/ui/
 - UI не вызывает `AudioEngine`, `RadioBrowserClient`, `StationLibrary` и `SettingsStore`
   (поиск страны идёт через `GeoService::search_countries`, выбор страны под курсором —
   через `GeoService::country_at_sphere_point`: это чистые offline-запросы; загрузка
-  фавиконок — состояние в `FaviconCache`, сетевые запросы спавнит `OrbitApp::poll_favicons`);
+  фавиконок — состояние в `FaviconCache`, спавн задачи — в `OrbitApp::poll_favicons`,
+  а сама сеть и политика цели — `services::ArtworkFetcher`);
 - надписи интерфейса приходят из `crate::i18n::catalog(language)` (ADR-0030), язык —
   `Session::effective_language()`; не переводятся стабильные контракты и внешние данные:
   CLI-вывод, IPC-ответы и `status`, заголовки окон, app-id, названия станций, стран и
@@ -358,9 +362,11 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
 2. `drain_notices` — `Session::take_notices()` → `Toast::info`/`Toast::error`; текст
    строится из `i18n::catalog(effective_language())` по ключу `Notice`, техническая
    `detail` ошибки добавляется как есть (ADR-0030).
-3. `poll_favicons` — `FaviconCache::begin_frame`/`poll`, `take_fetches` → `reqwest`-задачи
-   в `session.runtime` с проверками схемы, MIME и размера (ADR-0025), декод в
-   `catch_unwind`, repaint через 120 мс, пока кэш занят.
+3. `poll_favicons` — `FaviconCache::begin_frame`/`poll`, `take_fetches` → задачи
+   `ArtworkFetcher::fetch` в `session.runtime` (проверки цели, MIME и размера — внутри
+   `services::artwork`, ADR-0025 ред. 2), декод в `catch_unwind`, слот страхуется
+   `FetchGuard`, repaint через 120 мс, пока кэш занят; по закрытии партии — один
+   `debug!` со счётчиками.
 4. Размер окна: `inner_rect` из ввода → `Session::set_window_size([w, h])`.
 5. `Session::take_intent()` → `ViewportCommand::Focus` (`UiIntent::Show`, окно уже
    открыто — остаётся вернуть фокус) или `ViewportCommand::Close` (`UiIntent::Close`).

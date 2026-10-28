@@ -33,7 +33,8 @@ root-вьюпорта: цикл завершается, управление в�
    `Session::tick()` (окно открыто), так и из `Session::park()` (окно закрыто).
 4. Держать ресурсы одного прогона: тему и акцент (`palette::configure_style`), системный
    цветной emoji-шрифт (ADR-0017), `GlobeRenderer`, вставленный в `callback_resources`
-   wgpu-рендерера, `FaviconCache` с его текстурами, `reqwest::Client` для иконок,
+   wgpu-рендерера, `FaviconCache` с его текстурами, `ArtworkFetcher` для иконок
+   (`services::artwork`, ADR-0016 ред. 2),
    `SpectrumOverlay`, `motion: MotionMixer`, `orbit_ring: OrbitRing`, `CalloutState`,
    `VisualizerModel`, `Toast`, `transitions: Transitions` с прогрессами переходов зон
    (ADR-0032) и `settings_rect` — последний прямоугольник окна настроек, по которому
@@ -220,7 +221,9 @@ presentation-слоем позже — в `logic()` следующего кад�
 2. `drain_notices` — `Session::take_notices()` → `Toast::info` / `Toast::error`; текст
    берётся из `i18n::catalog(effective_language())` по ключу `NoticeKey` (ADR-0030).
 3. `poll_favicons` — `FaviconCache::begin_frame`/`poll`, затем `take_fetches` →
-   `reqwest`-задачи в `Session::runtime`; пока кэш занят — repaint через 120 мс.
+   задачи `ArtworkFetcher::fetch` в `Session::runtime` (сеть, DNS и перепроверка
+   хоппов — внутри `services::artwork`, ADR-0025 ред. 2); пока кэш занят — repaint
+   через 120 мс.
 4. Размер окна: `inner_rect` из ввода → `Session::set_window_size` (геометрия нужна,
    чтобы следующий показ собрал `ViewportBuilder` до создания окна).
 5. `Session::take_intent()` → `ViewportCommand::Focus` (`UiIntent::Show`) или
@@ -376,8 +379,8 @@ focusable, ↑/↓ переводят фокус на соседа по види
   `No station yet`; чип `Visualizer` из строки убран, включение полосы живёт в
   настройках; LIVE-бейдж и мини-эквалайзер тоже убраны: эфир показан чипом в HUD и
   карточкой станции на глобусе, а в строке они только отнимали место у контролов;
-- фавиконки станций загружаются асинхронно (ADR-0016): `FaviconCache` в UI хранит
-  состояния, `OrbitApp` спавнит `reqwest`-запросы (до 8 одновременно, кэш до 256)
+- фавиконки станций загружаются асинхронно (ADR-0016, ред. 2): `FaviconCache` в UI хранит
+  состояния, `OrbitApp` спавнит `ArtworkFetcher::fetch`-задачи (до 8 одновременно, кэш до 256)
   в `Session::runtime`, декод `image` приводит к 64×64, текстура поднимается в
   GUI-потоке; сбой кэшируется, вместо фавикона — круг с инициалом; после закрытия
   окна кэш теряется вместе с текстурами и при следующем показе загружается заново;
@@ -436,7 +439,7 @@ focusable, ↑/↓ переводят фокус на соседа по види
 `globe_ready`, `spectrum_overlay: SpectrumOverlay`, `motion: MotionMixer`,
 `orbit_ring: OrbitRing`,
 `callout: CalloutState`, `visualizer: VisualizerModel`, `favicons: FaviconCache`,
-`http: reqwest::Client`, `toast: Toast`, `transitions: Transitions`,
+`artwork: ArtworkFetcher`, `toast: Toast`, `transitions: Transitions`,
 `settings_rect: Option<egui::Rect>`. Подсистемами (`AudioEngine`, `GeoService`, `RadioBrowserClient`,
 `MediaControls`, `StationLibrary`, `SettingsStore`, `GlobeCamera`, `tokio::runtime::Handle`)
 владеет `Session`; к ним presentation-слой обращается через поля ядра

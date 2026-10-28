@@ -30,7 +30,7 @@ ADR-0021 «Режимы окна (`WindowMode`)», ADR-0026 «macOS: меню-б
 | Живёт в `src/session/` (переживает закрытие окна) | Живёт в presentation (один прогон UI) |
 |---|---|
 | `AudioEngine`, `GeoService`, `RadioBrowserClient`, `MediaControls`, `TrayHandle`, `StationLibrary`, `SettingsStore`, `tokio::runtime::Handle`, `WakeHandle` | `GlobeRenderer` в `callback_resources`, `egui`-стиль (`palette::configure_style`), цветной emoji-шрифт |
-| Текущая станция и URL, контекст/результаты/маркеры поиска и поколение, `library_tab`, `country_filter`, `globe_camera`, `panel_open`, `settings_open`, `show_help`, `spectrum_enabled`, разрешённый `language` | `VisualizerModel`, `SpectrumOverlay`, `CalloutState`, `FaviconCache` с текстурами, `reqwest::Client` для иконок, `Toast` |
+| Текущая станция и URL, контекст/результаты/маркеры поиска и поколение, `library_tab`, `country_filter`, `globe_camera`, `panel_open`, `settings_open`, `show_help`, `spectrum_enabled`, разрешённый `language` | `VisualizerModel`, `SpectrumOverlay`, `CalloutState`, `FaviconCache` с текстурами, `ArtworkFetcher` для иконок, `Toast` |
 | Геометрия окна (`WindowState`: `visible`, `size`, `intent`, `quitting`), очередь типизированных `Notice` и `pending_volume` | `globe_ready`, чтение `egui::Context`, раскладка `DeskLayout` и рисование зон |
 | Исполнение `IpcCommand`/`MediaCommand`/`TrayCommand`, `park()` | `UiAction` → вызовы методов `Session`; `UiIntent` → `ViewportCommand` |
 
@@ -229,9 +229,10 @@ MPRIS `Next`/`Previous`.
 Правила метаданных: `title` — `single_line(station.name)`, а если он пуст и трек
 есть — `WINDOW_TITLE`; `artist` — «`state, country`», при отсутствии одного из
 полей — то, что осталось, при отсутствии обоих — `single_line(tags)`, дальше
-`None`; `art_url` — `station.favicon` без изменений; `url` — `url_resolved`
-(если непустой после `trim`), иначе `current_url`, иначе пустая строка;
-`volume` — `audio.volume()`; `can_go_next`/`can_go_previous` —
+`None`; `art_url` — `station.favicon`, но только если адрес проходит ярус 1
+политики артворка (`services::publishable`), иначе пустая строка; `url` —
+`url_resolved` под тем же условием (если непустой после `trim`), иначе
+`current_url`, иначе пустая строка; `volume` — `audio.volume()`; `can_go_next`/`can_go_previous` —
 `visible_queue_len() > 0`, то есть число станций в очереди без клонирования.
 Без `current_station` заголовок — URL потока
 (пустой URL при наличии трека даёт `WINDOW_TITLE`), `artist` и `art_url` — `None`.
