@@ -15,7 +15,7 @@ use crate::i18n;
 use crate::render::{
     BandTargets, GlobeRenderer, MotionMixer, SpectrumOverlay, SpectrumTarget, VisualizerModel,
 };
-use crate::services::{Station, USER_AGENT};
+use crate::services::{ArtworkFetcher, Station};
 use crate::session::heat::CountryMetric;
 use crate::session::search::SearchMode;
 use crate::session::{Notice, NoticeKey, Session, StationStartError, UiIntent, WindowMode};
@@ -24,7 +24,7 @@ use crate::ui::UiAction;
 use crate::ui::animation::{self, FrameMotion, Transitions, ZoneFlags};
 use crate::ui::country_map::{CountryHeatCache, HeatScope, HeatSource};
 use crate::ui::globe_view::{self, CalloutState, GlobeState};
-use crate::ui::images::{FaviconCache, MAX_FAVICON_BYTES, decode_favicon};
+use crate::ui::images::{FaviconCache, decode_favicon};
 use crate::ui::layout::{DeskLayout, LayoutDensity};
 use crate::ui::orbit_ring::OrbitRing;
 use crate::ui::palette::{self, Palette};
@@ -39,17 +39,6 @@ const SPECTRUM_REPAINT: Duration = Duration::from_millis(33);
 const MOTION_IDLE_REPAINT: Duration = Duration::from_millis(66);
 /// Опрос фоновых favicon-загрузок.
 const FAVICON_REPAINT: Duration = Duration::from_millis(120);
-/// Таймаут HTTP-запроса иконки станции.
-const FAVICON_FETCH_TIMEOUT: Duration = Duration::from_secs(6);
-/// Сколько редиректов разрешено при загрузке favicon (ADR-0025).
-const MAX_FAVICON_REDIRECTS: usize = 3;
-/// MIME-типы, допустимые для favicon (ADR-0025).
-const ALLOWED_FAVICON_MIME: &[&str] = &[
-    "image/png",
-    "image/jpeg",
-    "image/webp",
-    "application/octet-stream",
-];
 /// Скругление крупных зон (HUD, панель станции).
 const GLASS_RADIUS_MAJOR: f32 = 16.0;
 /// Скругление маленьких зон (легенда, карточка управления).
@@ -114,7 +103,10 @@ pub(crate) struct OrbitApp<'a> {
     station_callout: CalloutState,
     visualizer: VisualizerModel,
     favicons: FaviconCache,
-    http: reqwest::Client,
+    artwork: ArtworkFetcher,
+    /// Занятость кэша с прошлого кадра: на фронте `занято → свободно` печатается
+    /// одна строка диагностики (PERF-01).
+    favicon_was_busy: bool,
     toast: Toast,
     /// Переходы UI этого прогона окна (ADR-0032).
     transitions: Transitions,
@@ -170,12 +162,8 @@ impl<'a> OrbitApp<'a> {
             station_callout: CalloutState::default(),
             visualizer,
             favicons: FaviconCache::new(),
-            http: reqwest::Client::builder()
-                .user_agent(USER_AGENT)
-                .timeout(FAVICON_FETCH_TIMEOUT)
-                .redirect(reqwest::redirect::Policy::limited(MAX_FAVICON_REDIRECTS))
-                .build()
-                .expect("конфигурация HTTP-клиента favicon корректна"),
+            artwork: ArtworkFetcher::new(),
+            favicon_was_busy: false,
             toast: Toast::default(),
             transitions: Transitions::new(),
             settings_rect: None,
@@ -203,45 +191,45 @@ impl<'a> OrbitApp<'a> {
         }
     }
 
-    /// Фоновые favicon-загрузки: очередь → `reqwest` → декод → текстура.
+    /// Фоновые favicon-загрузки: очередь → сетевая политика → декод → текстура.
+    /// Сеть, DNS и перепроверка хоппов живут в `services::artwork`; здесь только
+    /// оркестрация задач (ADR-0016 ред. 2, ADR-0025 ред. 2).
     fn poll_favicons(&mut self, ctx: &egui::Context) {
         self.favicons.begin_frame();
         self.favicons.poll(ctx);
-        let sender = self.favicons.sender();
         let runtime = self.session.runtime.clone();
-        for url in self.favicons.take_fetches() {
-            let http = self.http.clone();
-            let sender = sender.clone();
+        for (url, generation) in self.favicons.take_fetches() {
+            let artwork = self.artwork.clone();
+            // Guard страхует слот на любом выходе задачи, включая панику.
+            let guard = self.favicons.guard(url.clone(), generation);
             runtime.spawn(async move {
-                let image = if favicon_url_allowed(&url) {
-                    match http.get(&url).send().await {
-                        Ok(response)
-                            if response.status().is_success()
-                                && favicon_content_type_allowed(&response) =>
-                        {
-                            match read_favicon_bytes(response).await {
-                                Some(bytes) => {
-                                    // Паника декодера не должна навсегда занимать слот in_flight.
-                                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                        decode_favicon(&bytes)
-                                    }))
-                                    .ok()
-                                    .flatten()
-                                }
-                                None => None,
-                            }
-                        }
-                        _ => None,
-                    }
-                } else {
-                    None
-                };
-                let _ = sender.send((url, image));
+                let bytes = artwork.fetch(&url).await.unwrap_or_default();
+                // Паника декодера не должна навсегда занимать слот in_flight.
+                let image = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    decode_favicon(&bytes)
+                }))
+                .ok()
+                .flatten();
+                let mut guard = guard;
+                if let Some(image) = image {
+                    guard.succeed(image);
+                }
             });
         }
-        if self.favicons.is_busy() {
+        let busy = self.favicons.is_busy();
+        if busy {
             ctx.request_repaint_after(FAVICON_REPAINT);
+        } else if self.favicon_was_busy {
+            let stats = self.favicons.stats();
+            debug!(
+                entries = stats.entries,
+                served = stats.served,
+                failed = stats.failed,
+                evicted = stats.evicted,
+                "favicon-кэш: партия загрузок закрыта"
+            );
         }
+        self.favicon_was_busy = busy;
     }
 
     /// Кадр раскладки: снимаем состояние, рисуем слои, исполняем действия.
@@ -1331,73 +1319,9 @@ fn search_field_id(mode: SearchMode, window: WindowMode) -> egui::Id {
     }
 }
 
-fn favicon_url_allowed(url: &str) -> bool {
-    url::Url::parse(url)
-        .ok()
-        .is_some_and(|url| matches!(url.scheme(), "http" | "https"))
-}
-
-fn favicon_mime_allowed(value: &str) -> bool {
-    let mime = value
-        .split(';')
-        .next()
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase();
-    ALLOWED_FAVICON_MIME.contains(&mime.as_str())
-}
-
-fn favicon_content_type_allowed(response: &reqwest::Response) -> bool {
-    match response.headers().get(reqwest::header::CONTENT_TYPE) {
-        None => true,
-        Some(value) => value.to_str().ok().is_some_and(favicon_mime_allowed),
-    }
-}
-
-async fn read_favicon_bytes(mut response: reqwest::Response) -> Option<Vec<u8>> {
-    if response
-        .content_length()
-        .is_some_and(|length| length > MAX_FAVICON_BYTES as u64)
-    {
-        return None;
-    }
-
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.ok()? {
-        if bytes.len().saturating_add(chunk.len()) > MAX_FAVICON_BYTES {
-            return None;
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-    Some(bytes)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn favicon_urls_accept_only_http_and_https() {
-        assert!(favicon_url_allowed("https://example.com/icon.png"));
-        assert!(favicon_url_allowed("http://example.com/icon.png"));
-        assert!(!favicon_url_allowed("file:///etc/passwd"));
-        assert!(!favicon_url_allowed("data:image/png;base64,AAAA"));
-        assert!(!favicon_url_allowed("javascript:alert(1)"));
-        assert!(!favicon_url_allowed("not a url"));
-    }
-
-    #[test]
-    fn favicon_mime_allowlist_rejects_active_content() {
-        assert!(favicon_mime_allowed("image/png"));
-        assert!(favicon_mime_allowed("IMAGE/JPEG; charset=binary"));
-        assert!(favicon_mime_allowed("image/webp"));
-        assert!(favicon_mime_allowed("application/octet-stream"));
-        assert!(!favicon_mime_allowed("image/svg+xml"));
-        assert!(!favicon_mime_allowed("image/gif"));
-        assert!(!favicon_mime_allowed("image/x-icon"));
-        assert!(!favicon_mime_allowed("text/html"));
-        assert!(!favicon_mime_allowed(""));
-    }
 
     #[test]
     fn search_shortcut_targets_the_field_on_screen() {
