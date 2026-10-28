@@ -28,6 +28,15 @@ pub enum ThemeMode {
 
 impl ThemeMode {
     pub const ALL: [Self; 3] = [Self::System, Self::Dark, Self::Light];
+
+    /// Имя темы в IPC, JSON-статусе и установщике интеграций (ADR-0037).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Dark => "dark",
+            Self::Light => "light",
+        }
+    }
 }
 
 /// Акцентный цвет интерфейса и маркеров.

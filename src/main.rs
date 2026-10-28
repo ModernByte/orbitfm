@@ -49,10 +49,19 @@ OrbitFM — 3D Interactive Global Radio Player
   panel                Показать/скрыть выпадающую панель (бар-виджет)
   overlay              Показать/скрыть капсулу Overlay (CLI)
   status               Состояние приложения
+  status --json        Состояние приложения в JSON (для интеграций)
   mode [режим]         Текущий режим окна или focus/overlay/listening/panel
   play <uuid>          Воспроизвести станцию по UUID (Radio Browser)
+  playpause            Пуск/пауза
+  next                 Следующая станция
+  previous             Предыдущая станция
+  roulette             Радиорулетка
   stop                 Остановить воспроизведение
   volume <0.0-1.0>     Установить громкость
+  volume-up            Громче на один шаг
+  volume-down          Тише на один шаг
+  theme <режим>        Тема: system, dark или light
+  settings             Открыть настройки
   quit                 Завершить процесс
 
 Опции:
@@ -147,6 +156,7 @@ fn route_command(
             | IpcCommand::Panel
             | IpcCommand::Overlay
             | IpcCommand::SetMode { .. }
+            | IpcCommand::Settings
     ) {
         bail!("OrbitFM не запущен");
     }
@@ -253,7 +263,10 @@ fn launch(runtime: &tokio::runtime::Runtime, command: &IpcCommand, explicit: boo
         IpcCommand::Overlay => WindowMode::Overlay,
         _ => WindowMode::default(),
     };
-    let gui_result = run_session(commands, wake, services, first_mode);
+    // Модалка настроек не выражается через режим окна: флаг передаётся в цикл
+    // отдельно и открывает её поверх первого показа (ADR-0037).
+    let open_settings = matches!(command, IpcCommand::Settings);
+    let gui_result = run_session(commands, wake, services, first_mode, open_settings);
 
     let _ = shutdown_tx.send(());
     let server_exit = runtime
@@ -310,9 +323,13 @@ fn run_session(
     wake: WakeHandle,
     services: AppServices,
     mode: WindowMode,
+    open_settings: bool,
 ) -> Result<()> {
     let mut session = Session::new(commands, wake, services);
     session.set_window_mode(mode);
+    if open_settings {
+        session.open_settings();
+    }
 
     loop {
         let size = session.restore_size();

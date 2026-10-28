@@ -1,10 +1,12 @@
-# Интерфейс: Системный трей (SNI)
+# Интерфейс: Системный трей (SNI и меню-бар macOS)
 
-**Реализация:** `src/tray/` на `ksni` 0.3.7 (StatusNotifierItem + `com.canonical.dbusmenu`)  
-**Решение:** ADR-0020 «Иконка в системном трее (StatusNotifierItem на ksni)»  
-**Платформа:** только Linux и только при включённой фиче `tray` (`default = ["tray"]`);
-на остальных конфигурациях `spawn` возвращает `None`, и приложение работает ровно
-так же, только без иконки.
+**Реализация:** `src/tray/` — `ksni` 0.3.7 (StatusNotifierItem +
+`com.canonical.dbusmenu`) на Linux и `tray-icon` 0.26.1 + `muda` 0.21.2 на macOS  
+**Решение:** ADR-0020 «Иконка в системном трее (StatusNotifierItem на ksni)»,
+ADR-0026 «macOS: меню-бар и Now Playing при скрытом окне»  
+**Платформа:** Linux и macOS при включённой фиче `tray` (`default = ["tray"]`);
+на остальных конфигурациях `spawn` возвращает `None`, `attach` — no-op, и
+приложение работает ровно так же, только без иконки.
 
 Трей не знает ни про egui, ни про станции: наружу у него ровно два
 доменно-независимых типа. `TraySnapshot` — что показать, `TrayCommand` — что
@@ -55,6 +57,10 @@ pub(crate) struct TrayHandle {
 impl TrayHandle {
     /// Публикует снимок. `false` означает, что трей умер: больше к нему не идём.
     pub(crate) fn publish(&self, snapshot: &TraySnapshot) -> bool;
+
+    /// macOS: создаёт иконку и меню на главном потоке после старта run loop.
+    /// На других платформах — no-op; `false` — трей не создался, работаем без него.
+    pub(crate) fn attach(&mut self) -> bool;
 }
 
 /// Регистрирует трей и запускает его поток-владелец.
@@ -75,7 +81,8 @@ pub(crate) fn spawn(
 | `TrayHandle` | `struct` | Владелец обеих очередей живого трея; `None` в `Session::tray` означает «трея нет» |
 | `TrayHandle::publish` | `fn publish(&self, snapshot: &TraySnapshot) -> bool` | Non-blocking отправка снимка в поток-владелец; `false` — канал закрыт, трей умер |
 | `TrayHandle::commands` | `UnboundedReceiver<TrayCommand>` | Единственный путь команд наружу из dbus-потока |
-| `spawn` | `fn spawn(app_id: &'static str, title: &'static str, wake: WakeFn) -> Option<TrayHandle>` | `Some` — SNI-item зарегистрирован и поток-владелец жив; `None` — хоста нет, регистрация не удалась или сборка без фичи. Ошибки только логируются (`warn!`) |
+| `TrayHandle::attach` | `fn attach(&mut self) -> bool` | macOS: создаёт `TrayIcon` и меню на главном потоке (требование `tray-icon`); снимок, пришедший раньше, уже лежит в `pending`. `true` — трей жив, `false` — ошибка (только `warn!`). На Linux/Windows — no-op `true` |
+| `spawn` | `fn spawn(app_id: &'static str, title: &'static str, wake: WakeFn) -> Option<TrayHandle>` | `Some` — SNI-item зарегистрирован и поток-владелец жив (Linux) либо `Slot` готов к `attach` (macOS); `None` — хоста нет, регистрация не удалась или сборка без фичи. Ошибки только логируются (`warn!`) |
 
 ## 2. `TrayCommand` → действие Core
 
@@ -133,6 +140,10 @@ pub(crate) fn spawn(
   после `recv`) и обновляет item один раз.
 - `icon_pixmap()` хост вызывает на каждое событие трея, поэтому пиксели
   строятся однократно в `static ICONS: LazyLock<Vec<Icon>>` (ADR-0020 п. 6).
+- macOS: все вызовы `tray-icon`/`muda` идут только с главного потока —
+  `Slot::attach` из `OrbitApp::new`, `Slot::publish` из `Session::sync_tray`
+  (logic-проход главного потока). Глобальный `MenuEvent::set_event_handler`
+  ставится один раз (OnceLock `muda`); пункты меню не пересоздаются.
 
 ## 5. Деградация
 
@@ -143,15 +154,21 @@ pub(crate) fn spawn(
 | Регистрация прошла, но соединение мёртвое | `Handle::is_closed()` после `spawn` → `warn!` и `None` (ADR-0020 п. 8) |
 | Поток-владелец умер во время работы | `publish` → `false`, `Session` обнуляет `tray` и `tray_snapshot`; `tray_recv` в `select!` гасит ветку, чтобы не было busy-цикла |
 | Процесс выходит | `Session` дропается, канал снимков закрывается, поток делает `handle.shutdown().wait()` |
-| Сборка без фичи `tray`, macOS, Windows | `spawn` → `None`; `TrayCommand` варианты формально не конструируются, поэтому помечены `cfg_attr(..., allow(dead_code))` |
+| Сборка без фичи `tray`, Windows | `spawn` → `None`; `TrayCommand` варианты формально не конструируются, поэтому помечены `cfg_attr(..., allow(dead_code))` |
+| macOS: `Icon::from_rgba`/`build` вернул ошибку | `attach` → `false`, `Session` обнуляет `tray` и `tray_snapshot`, приложение работает без трея; ошибка в `warn!` |
+| macOS: пункт меню нажат, а канал команд закрыт | `MenuEvent` логирует `warn!` и ничего не делает |
 
 ## 6. Что не является контрактом
 
 - `OrbitTray` (`src/tray/sni.rs`) — реализация `ksni::Tray`, живёт на потоке-владельце;
-- `icon::ICONS`, `icon::Mark`, `icon::pixel`, `sni::serve`, `sni::start`,
-  `sni::standard`, `sni::now_playing_label`, `sni::nothing_playing`,
-  `sni::find_hicolor` и `THEME_PATH` — приватные детали отрисовки, сборки меню
-  и регистрации;
+- `macos::Slot`, `MenuHandle`, `build_menu`, `install_handler`, `command_for`,
+  `ID_*` — детали бэкенда строки меню; стабильные `MenuId` — внутренний контракт
+  `macos.rs`, а не API;
+- `text::now_playing_label`, `text::nothing_playing`, `text::toggle_label` —
+  общие подписи бэкендов;
+- `sni::ICONS`, `icon::Mark`, `icon::rgba`, `sni::serve`, `sni::start`,
+  `sni::standard`, `sni::find_hicolor` и `THEME_PATH` — приватные детали
+  отрисовки, сборки меню и регистрации;
 - мнемоники и порядок пунктов меню — детали ADR-0020 п. 5, а не API; хост вправе
   показать их как хочет;
 - `icon_theme_path`: если в системе есть `.../icons/hicolor`, хост может взять
@@ -168,12 +185,16 @@ pub(crate) fn spawn(
 `theme_radio_marks_the_current_mode`, `play_pause_check_follows_the_stream`,
 `clicks_publish_a_command_and_wake_the_core`,
 `icon_sizes_match_the_specification_and_byte_order`, `theme_path_is_empty_or_a_hicolor_root`;
-`src/tray/icon.rs` — `icons_are_built_for_every_host_size`, `argb_puts_alpha_first`,
+`src/tray/macos.rs` — `every_menu_id_maps_to_its_command`, `ids_are_unique`;
+`src/tray/text.rs` — `header_reflects_the_stream`,
+`toggle_label_follows_the_window`;
+`src/tray/icon.rs` — `every_size_produces_a_full_rgba_buffer`,
 `planet_core_is_opaque_and_corners_are_empty`, `orbit_reaches_beyond_the_planet`,
 `live_dot_is_part_of_the_mark`.
 
 Живая проверка в Noctalia (регистрация, свойства, клики, колесо, меню, команды
-при закрытом окне) — в ADR-0020, раздел «Проверка реализации».
+при закрытом окне) — в ADR-0020, раздел «Проверка реализации». macOS-бэкенд
+проверяется сборкой/тестами в CI и ручной матрицей ADR-0026.
 
 ## 8. Связанные документы
 

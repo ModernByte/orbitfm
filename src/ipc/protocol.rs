@@ -40,6 +40,39 @@ impl WindowModeArg {
     }
 }
 
+/// Аргумент глагола `theme` — целевая тема оформления (ADR-0037).
+///
+/// Wire-тип живёт в инфраструктуре; в доменное `ThemeMode` его превращает
+/// Application Core (`src/session/commands.rs`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThemeArg {
+    System,
+    Dark,
+    Light,
+}
+
+impl ThemeArg {
+    /// Имя темы в протоколе.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Dark => "dark",
+            Self::Light => "light",
+        }
+    }
+
+    fn parse(raw: &str) -> Result<Self, IpcError> {
+        match raw {
+            "system" => Ok(Self::System),
+            "dark" => Ok(Self::Dark),
+            "light" => Ok(Self::Light),
+            other => Err(IpcError::InvalidArgument(format!(
+                "theme: ожидаются system, dark или light, получено {other}"
+            ))),
+        }
+    }
+}
+
 /// Команды IPC-протокола (docs/interfaces/05-ipc.md).
 #[derive(Debug, Clone, PartialEq)]
 pub enum IpcCommand {
@@ -51,6 +84,8 @@ pub enum IpcCommand {
     },
     Stop,
     Status,
+    /// `status --json`: машиночитаемый снимок для интеграций (ADR-0037).
+    StatusJson,
     Quit,
     Volume {
         level: f64,
@@ -67,6 +102,24 @@ pub enum IpcCommand {
     /// `overlay`: переключатель капсулы Overlay из CLI (ADR-0033).
     /// Открытый Overlay скрывается, из другого режима — переключается и показывается.
     Overlay,
+    /// `playpause`: переключить воспроизведение (ADR-0037).
+    PlayPause,
+    /// `next`: следующая станция видимой очереди.
+    Next,
+    /// `previous`: предыдущая станция видимой очереди.
+    Previous,
+    /// `roulette`: запустить радиорулетку.
+    Roulette,
+    /// `theme <system|dark|light>`: сменить тему оформления.
+    Theme {
+        mode: ThemeArg,
+    },
+    /// `settings`: открыть окно настроек; при необходимости показывает окно.
+    Settings,
+    /// `volume-up`: громкость на один шаг вверх.
+    VolumeUp,
+    /// `volume-down`: громкость на один шаг вниз.
+    VolumeDown,
     /// Неизвестная команда сохраняется для расширения протокола.
     Raw(String),
 }
@@ -102,9 +155,51 @@ impl IpcCommand {
                 reject_extra_args(parts.next())?;
                 Ok(Self::Stop)
             }
-            "status" => {
+            "status" => match parts.next() {
+                None => Ok(Self::Status),
+                Some("--json") => {
+                    reject_extra_args(parts.next())?;
+                    Ok(Self::StatusJson)
+                }
+                Some(other) => Err(IpcError::InvalidArgument(format!(
+                    "status: ожидается --json, получено {other}"
+                ))),
+            },
+            "playpause" => {
                 reject_extra_args(parts.next())?;
-                Ok(Self::Status)
+                Ok(Self::PlayPause)
+            }
+            "next" => {
+                reject_extra_args(parts.next())?;
+                Ok(Self::Next)
+            }
+            "previous" => {
+                reject_extra_args(parts.next())?;
+                Ok(Self::Previous)
+            }
+            "roulette" => {
+                reject_extra_args(parts.next())?;
+                Ok(Self::Roulette)
+            }
+            "theme" => {
+                let raw = parts.next().ok_or_else(|| {
+                    IpcError::InvalidArgument("theme: ожидается system, dark или light".into())
+                })?;
+                let mode = ThemeArg::parse(raw)?;
+                reject_extra_args(parts.next())?;
+                Ok(Self::Theme { mode })
+            }
+            "settings" => {
+                reject_extra_args(parts.next())?;
+                Ok(Self::Settings)
+            }
+            "volume-up" => {
+                reject_extra_args(parts.next())?;
+                Ok(Self::VolumeUp)
+            }
+            "volume-down" => {
+                reject_extra_args(parts.next())?;
+                Ok(Self::VolumeDown)
             }
             "quit" => {
                 reject_extra_args(parts.next())?;
@@ -163,12 +258,21 @@ impl IpcCommand {
             Self::Play { station_uuid } => format!("play {station_uuid}"),
             Self::Stop => "stop".to_owned(),
             Self::Status => "status".to_owned(),
+            Self::StatusJson => "status --json".to_owned(),
             Self::Quit => "quit".to_owned(),
             Self::Volume { level } => format!("volume {level}"),
             Self::ModeQuery => "mode".to_owned(),
             Self::SetMode { mode } => format!("mode {}", mode.as_str()),
             Self::Panel => "panel".to_owned(),
             Self::Overlay => "overlay".to_owned(),
+            Self::PlayPause => "playpause".to_owned(),
+            Self::Next => "next".to_owned(),
+            Self::Previous => "previous".to_owned(),
+            Self::Roulette => "roulette".to_owned(),
+            Self::Theme { mode } => format!("theme {}", mode.as_str()),
+            Self::Settings => "settings".to_owned(),
+            Self::VolumeUp => "volume-up".to_owned(),
+            Self::VolumeDown => "volume-down".to_owned(),
             Self::Raw(raw) => raw.clone(),
         }
     }
@@ -218,6 +322,60 @@ mod tests {
         assert_eq!(IpcCommand::parse("show\n").unwrap(), IpcCommand::Show);
         assert_eq!(IpcCommand::parse("status").unwrap(), IpcCommand::Status);
         assert_eq!(IpcCommand::parse("quit").unwrap(), IpcCommand::Quit);
+    }
+
+    #[test]
+    fn parses_status_json() {
+        assert_eq!(
+            IpcCommand::parse("status --json").unwrap(),
+            IpcCommand::StatusJson
+        );
+        assert_eq!(IpcCommand::StatusJson.to_wire(), "status --json");
+        assert!(IpcCommand::parse("status --xml").is_err());
+        assert!(IpcCommand::parse("status --json extra").is_err());
+    }
+
+    #[test]
+    fn parses_playback_and_theme_commands() {
+        for (wire, command) in [
+            ("playpause", IpcCommand::PlayPause),
+            ("next", IpcCommand::Next),
+            ("previous", IpcCommand::Previous),
+            ("roulette", IpcCommand::Roulette),
+            ("settings", IpcCommand::Settings),
+            ("volume-up", IpcCommand::VolumeUp),
+            ("volume-down", IpcCommand::VolumeDown),
+        ] {
+            assert_eq!(IpcCommand::parse(wire).unwrap(), command, "{wire}");
+            assert_eq!(command.to_wire(), wire);
+        }
+        assert_eq!(
+            IpcCommand::parse("theme dark").unwrap(),
+            IpcCommand::Theme {
+                mode: ThemeArg::Dark
+            }
+        );
+        assert_eq!(
+            IpcCommand::parse("theme light").unwrap(),
+            IpcCommand::Theme {
+                mode: ThemeArg::Light
+            }
+        );
+        assert_eq!(
+            IpcCommand::parse("theme system").unwrap(),
+            IpcCommand::Theme {
+                mode: ThemeArg::System
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_theme_arguments() {
+        assert!(IpcCommand::parse("theme").is_err());
+        assert!(IpcCommand::parse("theme sepia").is_err());
+        assert!(IpcCommand::parse("theme Dark").is_err());
+        assert!(IpcCommand::parse("theme dark extra").is_err());
+        assert!(IpcCommand::parse("playpause now").is_err());
     }
 
     #[test]
@@ -305,6 +463,17 @@ mod tests {
             IpcCommand::SetMode {
                 mode: WindowModeArg::Listening,
             },
+            IpcCommand::StatusJson,
+            IpcCommand::PlayPause,
+            IpcCommand::Next,
+            IpcCommand::Previous,
+            IpcCommand::Roulette,
+            IpcCommand::Theme {
+                mode: ThemeArg::Dark,
+            },
+            IpcCommand::Settings,
+            IpcCommand::VolumeUp,
+            IpcCommand::VolumeDown,
             IpcCommand::Raw("custom arg".to_owned()),
         ];
         for command in commands {

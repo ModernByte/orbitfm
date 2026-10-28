@@ -33,6 +33,19 @@
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.13.0-rc.1" date="2026-10-28">
+      <description>
+        <p>OrbitFM 0.13.0-rc.1 — кроссплатформенный контракт интеграций после
+        0.12.0-rc.2. На macOS Now Playing и медиа-клавиши управляют плеером
+        при скрытом окне, а иконка живёт в строке меню с тем же набором
+        действий, что и трей Linux (ADR-0026). Команда `orbitfm status --json`
+        отдаёт стабильный JSON-снимок состояния со станцией, окном и
+        локализованными подписями, а новые команды `playpause`, `next`,
+        `previous`, `roulette`, `volume-up`, `volume-down`, `theme` и
+        `settings` дают единый контракт для скриптов и будущих плагинов
+        оболочек (ADR-0037).</p>
+      </description>
+    </release>
     <release version="0.12.0-rc.2" date="2026-10-28">
       <description>
         <p>OrbitFM 0.12.0-rc.2 — патч окна настроек после 0.12.0-rc.1.

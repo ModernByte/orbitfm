@@ -30,7 +30,7 @@ use crate::library::StationLibrary;
 use crate::media::MediaControls;
 use crate::render::GlobeCamera;
 use crate::services::{RadioBrowserClient, Station};
-use crate::settings::{Language, MotionReactivity, SettingsStore};
+use crate::settings::{Language, MotionReactivity, SettingsStore, ThemeMode};
 use crate::tray::{TrayHandle, TraySnapshot};
 use crate::ui::single_line;
 use crate::ui::station_filter::CountryFilterState;
@@ -384,20 +384,92 @@ impl Session {
         self.window.is_quitting()
     }
 
-    /// Строка ответа на IPC-команду `status`.
-    pub(crate) fn status_text(&self) -> String {
-        let state = self.audio.state();
-        let station = match state {
+    /// Идёт ли пересоздание окна из-за смены режима: на macOS такой
+    /// `close_requested` отменять нельзя (ADR-0026).
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) fn is_reopening(&self) -> bool {
+        self.window.is_reopening()
+    }
+
+    /// Видимо ли окно пользователю: на macOS скрытое окно продолжает жить,
+    /// поэтому одного признака закрытого вьюпорта недостаточно (ADR-0026).
+    pub(crate) fn window_visible(&self) -> bool {
+        self.window.visible
+    }
+
+    /// Окно спрятано без закрытия root-вьюпорта (macOS): настройки закрываются,
+    /// незаписанная громкость фиксируется, анализ и витрины обновляются сразу,
+    /// не дожидаясь кадра (ADR-0026).
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) fn mark_hidden(&mut self) {
+        self.window.mark_hidden();
+        self.close_settings();
+        self.flush_pending_volume();
+        self.settle_analysis();
+        self.sync_media();
+        self.sync_tray();
+    }
+
+    /// Окно снова видимо: анализ возвращается, витрины отражают показ.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) fn mark_shown(&mut self) {
+        self.window.mark_shown();
+        self.settle_analysis();
+        self.sync_media();
+        self.sync_tray();
+    }
+
+    /// Создаёт macOS-иконку в строке меню, когда run loop уже запущен
+    /// (требование `tray-icon`, ADR-0026). На других платформах и без фичи
+    /// `tray` — no-op.
+    pub(crate) fn attach_tray(&mut self) {
+        #[cfg(all(target_os = "macos", feature = "tray"))]
+        {
+            let Some(tray) = self.tray.as_mut() else {
+                return;
+            };
+            if tray.attach() {
+                return;
+            }
+            tracing::warn!("не удалось создать элемент строки меню, продолжаем без трея");
+            self.tray = None;
+            self.tray_snapshot = None;
+        }
+    }
+
+    /// Станция, которая сейчас в эфире: `None` для остановки и ошибки.
+    fn active_station(&self) -> Option<&Station> {
+        match self.audio.state() {
             PlaybackState::Stopped | PlaybackState::Error(_) => None,
             _ => self.current_station.as_ref(),
-        };
+        }
+    }
+
+    /// Строка ответа на IPC-команду `status`.
+    pub(crate) fn status_text(&self) -> String {
         format_status(
-            &state,
+            &self.audio.state(),
             self.audio.volume(),
             self.window.visible,
             self.window.mode,
-            station,
+            self.active_station(),
         )
+    }
+
+    /// Ответ на IPC-команду `status --json` (ADR-0037): одна строка JSON,
+    /// схема 1. Поля только добавляются; удаление и переименование — schema 2.
+    pub(crate) fn status_json(&self) -> String {
+        let payload = build_status_payload(
+            &self.audio.state(),
+            self.audio.volume(),
+            self.window.visible,
+            self.window.mode,
+            self.active_station(),
+            self.settings.settings().theme,
+            self.language,
+            self.visible_queue_len() > 0,
+        );
+        serde_json::to_string(&payload).unwrap_or_else(|err| format!("error {err}"))
     }
 }
 
@@ -430,6 +502,141 @@ fn format_status(
         mode.as_str()
     ));
     status
+}
+
+/// Версия схемы `status --json` (ADR-0037). Растёт только при удалении или
+/// переименовании полей; добавление полей её не меняет.
+pub(crate) const STATUS_SCHEMA: u32 = 1;
+
+/// Машиночитаемый снимок состояния для плагинов оболочек и бар-виджетов.
+#[derive(Debug, serde::Serialize)]
+struct StatusPayload {
+    schema: u32,
+    app: &'static str,
+    version: &'static str,
+    state: &'static str,
+    station: Option<StatusStation>,
+    volume: f64,
+    window: StatusWindow,
+    theme: &'static str,
+    language: &'static str,
+    can: StatusCan,
+    ui: StatusUi,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct StatusStation {
+    uuid: String,
+    name: String,
+    country: String,
+    countrycode: String,
+    tags: String,
+    favicon: Option<String>,
+    homepage: Option<String>,
+    bitrate: u32,
+    codec: String,
+}
+
+impl StatusStation {
+    fn new(station: &Station) -> Self {
+        Self {
+            uuid: station.stationuuid.clone(),
+            name: station.name.clone(),
+            country: station.country.clone(),
+            countrycode: station.countrycode.clone(),
+            tags: station.tags.clone(),
+            favicon: station.favicon.clone(),
+            homepage: station.homepage.clone(),
+            bitrate: station.bitrate,
+            codec: station.codec.clone(),
+        }
+    }
+}
+
+#[derive(Debug, serde::Serialize)]
+struct StatusWindow {
+    visible: bool,
+    mode: &'static str,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct StatusCan {
+    previous: bool,
+    next: bool,
+}
+
+/// Локализованные подписи из `i18n::catalog`: QML/JS не дублируют каталог
+/// на 11 языках (ADR-0037).
+#[derive(Debug, serde::Serialize)]
+struct StatusUi {
+    play_pause: &'static str,
+    stop: &'static str,
+    previous: &'static str,
+    next: &'static str,
+    radio_roulette: &'static str,
+    settings: &'static str,
+    show_window: &'static str,
+    hide_window: &'static str,
+    nothing_playing: &'static str,
+    volume_up: &'static str,
+    volume_down: &'static str,
+}
+
+impl StatusUi {
+    fn new(language: Language) -> Self {
+        let tray = &crate::i18n::catalog(language).tray;
+        Self {
+            play_pause: tray.play_pause,
+            stop: tray.stop,
+            previous: tray.previous,
+            next: tray.next,
+            radio_roulette: tray.radio_roulette,
+            settings: tray.settings,
+            show_window: tray.show_window,
+            hide_window: tray.hide_window,
+            nothing_playing: tray.nothing_playing,
+            volume_up: tray.volume_up,
+            volume_down: tray.volume_down,
+        }
+    }
+}
+
+/// Округление громкости до тысячных: серия `volume-up` иначе даёт
+/// `0.30000000000000004` в JSON и в подписях бар-виджетов.
+fn round_volume(volume: f64) -> f64 {
+    (volume * 1000.0).round() / 1000.0
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_status_payload(
+    state: &PlaybackState,
+    volume: f64,
+    window_visible: bool,
+    mode: WindowMode,
+    station: Option<&Station>,
+    theme: ThemeMode,
+    language: Language,
+    can_skip: bool,
+) -> StatusPayload {
+    StatusPayload {
+        schema: STATUS_SCHEMA,
+        app: "orbitfm",
+        version: env!("CARGO_PKG_VERSION"),
+        state: state.as_str(),
+        station: station.map(StatusStation::new),
+        volume: round_volume(volume),
+        window: StatusWindow {
+            visible: window_visible,
+            mode: mode.as_str(),
+        },
+        theme: theme.as_str(),
+        language: language.code(),
+        can: StatusCan {
+            previous: can_skip,
+            next: can_skip,
+        },
+        ui: StatusUi::new(language),
+    }
 }
 
 #[cfg(test)]
@@ -563,5 +770,122 @@ mod tests {
         );
         assert!(status.contains("\nname Radio Nova Live\n"));
         assert!(status.ends_with("\nmode listening"));
+    }
+
+    fn status_value(payload: &StatusPayload) -> serde_json::Value {
+        serde_json::to_value(payload).expect("снимок сериализуется")
+    }
+
+    #[test]
+    fn status_json_is_compact_and_keeps_schema_one() {
+        let payload = build_status_payload(
+            &PlaybackState::Stopped,
+            0.5,
+            false,
+            WindowMode::Panel,
+            None,
+            ThemeMode::Dark,
+            Language::Russian,
+            false,
+        );
+        let json = serde_json::to_string(&payload).expect("снимок сериализуется");
+        assert!(!json.contains('\n'), "IPC отвечает одной строкой");
+        let value = status_value(&payload);
+        assert_eq!(value["schema"], 1);
+        assert_eq!(value["app"], "orbitfm");
+        assert_eq!(value["version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(value["state"], "stopped");
+        assert!(value["station"].is_null());
+        assert_eq!(value["volume"], 0.5);
+        assert_eq!(value["window"]["visible"], false);
+        assert_eq!(value["window"]["mode"], "panel");
+        assert_eq!(value["theme"], "dark");
+        assert_eq!(value["language"], "ru");
+        assert_eq!(value["can"]["previous"], false);
+        assert_eq!(value["can"]["next"], false);
+    }
+
+    #[test]
+    fn status_json_exposes_station_metadata_and_skip_flags() {
+        let station = markers::sample_station();
+        let payload = build_status_payload(
+            &PlaybackState::Playing,
+            0.3,
+            true,
+            WindowMode::Focus,
+            Some(&station),
+            ThemeMode::System,
+            Language::English,
+            true,
+        );
+        let value = status_value(&payload);
+        assert_eq!(value["state"], "playing");
+        assert_eq!(value["station"]["uuid"], station.stationuuid);
+        assert_eq!(value["station"]["name"], station.name);
+        assert_eq!(value["station"]["country"], station.country);
+        assert_eq!(value["station"]["countrycode"], station.countrycode);
+        assert_eq!(value["station"]["tags"], station.tags);
+        assert_eq!(
+            value["station"]["favicon"],
+            serde_json::json!(station.favicon)
+        );
+        assert_eq!(
+            value["station"]["homepage"],
+            serde_json::json!(station.homepage)
+        );
+        assert_eq!(value["station"]["bitrate"], station.bitrate);
+        assert_eq!(value["station"]["codec"], station.codec);
+        assert_eq!(value["window"]["visible"], true);
+        assert_eq!(value["window"]["mode"], "focus");
+        assert_eq!(value["theme"], "system");
+        assert_eq!(value["language"], "en");
+        assert_eq!(value["can"]["previous"], true);
+        assert_eq!(value["can"]["next"], true);
+    }
+
+    #[test]
+    fn status_json_ui_labels_come_from_the_catalog() {
+        for language in [Language::English, Language::Russian, Language::Japanese] {
+            let payload = build_status_payload(
+                &PlaybackState::Stopped,
+                1.0,
+                true,
+                WindowMode::Focus,
+                None,
+                ThemeMode::Light,
+                language,
+                false,
+            );
+            let value = status_value(&payload);
+            let tray = &crate::i18n::catalog(language).tray;
+            assert_eq!(value["ui"]["play_pause"], tray.play_pause);
+            assert_eq!(value["ui"]["stop"], tray.stop);
+            assert_eq!(value["ui"]["previous"], tray.previous);
+            assert_eq!(value["ui"]["next"], tray.next);
+            assert_eq!(value["ui"]["radio_roulette"], tray.radio_roulette);
+            assert_eq!(value["ui"]["settings"], tray.settings);
+            assert_eq!(value["ui"]["show_window"], tray.show_window);
+            assert_eq!(value["ui"]["hide_window"], tray.hide_window);
+            assert_eq!(value["ui"]["nothing_playing"], tray.nothing_playing);
+            assert_eq!(value["ui"]["volume_up"], tray.volume_up);
+            assert_eq!(value["ui"]["volume_down"], tray.volume_down);
+            assert_eq!(value["theme"], "light");
+        }
+    }
+
+    #[test]
+    fn status_json_rounds_fractional_volume() {
+        let payload = build_status_payload(
+            &PlaybackState::Playing,
+            0.30000000000000004,
+            true,
+            WindowMode::Focus,
+            None,
+            ThemeMode::Dark,
+            Language::English,
+            false,
+        );
+        let value = status_value(&payload);
+        assert_eq!(value["volume"], 0.3);
     }
 }

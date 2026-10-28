@@ -11,9 +11,9 @@ use crate::ui::single_line;
 use super::notice::NoticeKey;
 
 impl super::Session {
-    /// Снимок состояния для SNI-хоста. Публикуется только при изменении:
-    /// `update` блокирует поток трея до dbus-ответа, гонять его на каждый кадр
-    /// нельзя (ADR-0020, п. 4).
+    /// Снимок состояния для трея (SNI на Linux, строка меню на macOS).
+    /// Публикуется только при изменении: на Linux `update` блокирует поток трея
+    /// до dbus-ответа, гонять его на каждый кадр нельзя (ADR-0020, п. 4).
     pub(crate) fn sync_tray(&mut self) {
         let snapshot = self.tray_snapshot();
         if self.tray_snapshot.as_ref() == Some(&snapshot) {
@@ -76,8 +76,9 @@ impl super::Session {
 
     /// Громкость двигается относительно текущего значения и упирается в границы
     /// диапазона: `AudioEngine` вне `0.0..=1.0` отказывает, а трей не должен
-    /// показывать ошибку на крайних значениях.
-    fn nudge_volume(&mut self, delta: f64) {
+    /// показывать ошибку на крайних значениях. Тот же шаг используют IPC-команды
+    /// `volume-up`/`volume-down` (ADR-0037).
+    pub(crate) fn nudge_volume(&mut self, delta: f64) {
         let target = (self.audio.volume() + delta).clamp(0.0, 1.0);
         if let Err(err) = self.set_volume(target) {
             tracing::warn!(error = %err, "не удалось изменить громкость из трея");

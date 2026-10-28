@@ -101,6 +101,9 @@ impl WindowMode {
 pub(crate) enum UiIntent {
     /// Окно уже открыто: достаточно переместить фокус (на Wayland `Focus` — no-op).
     Show,
+    /// Спрятать окно без завершения прогона UI. На macOS это `Visible(false)`,
+    /// на Linux/Windows — закрытие root-вьюпорта, как и раньше (ADR-0026).
+    Hide,
     /// Закрыть root-вьюпорт. Скрытие и завершение различает `WindowState::quitting`.
     Close,
 }
@@ -108,13 +111,17 @@ pub(crate) enum UiIntent {
 /// Состояние окна (ADR-0018).
 #[derive(Debug, Default)]
 pub(crate) struct WindowState {
-    /// Окно открыто: root-вьюпорт существует.
+    /// Окно видимо пользователю. На macOS после `Visible(false)` остаётся
+    /// `false` при живом root-вьюпорте (ADR-0026).
     pub(super) visible: bool,
+    /// Root-вьюпорт существует. На Linux/Windows совпадает с `visible`,
+    /// на macOS скрытое окно продолжает жить в run loop.
+    viewport: bool,
     /// Последний известный размер: применяется до создания нового окна.
     /// Относится только к Focus — капсулы живут пресетами режима (ADR-0021 п. 4).
     pub(super) size: Option<[f32; 2]>,
     pub(super) mode: WindowMode,
-    /// Режим меняется при открытом окне: вьюпорт закрывается и тут же открывается
+    /// Режим меняется при живом вьюпорте: вьюпорт закрывается и тут же открывается
     /// заново с геометрией нового режима (ADR-0021 п. 3).
     reopen: bool,
     intent: Option<UiIntent>,
@@ -143,9 +150,15 @@ impl WindowState {
         std::mem::take(&mut self.reopen)
     }
 
+    /// Идёт ли сейчас пересоздание окна из-за смены режима (ADR-0026).
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(super) fn is_reopening(&self) -> bool {
+        self.reopen
+    }
+
     pub(super) fn hide(&mut self) {
-        if self.visible {
-            self.intent = Some(UiIntent::Close);
+        if self.visible && self.intent != Some(UiIntent::Hide) {
+            self.intent = Some(UiIntent::Hide);
         }
     }
 
@@ -173,17 +186,19 @@ impl WindowState {
         }
     }
 
-    /// Смена режима. Тот же режим — просто показ; новый режим при открытом окне
-    /// требует перезапуска UI-цикла, потому что размер задаётся до создания окна.
+    /// Смена режима. Тот же режим — просто показ; новый режим при живом
+    /// вьюпорте требует перезапуска UI-цикла, потому что размер задаётся до
+    /// создания окна. На macOS скрытое окно тоже пересоздаётся: иначе оно
+    /// показалось бы в геометрии старого режима (ADR-0026).
     pub(super) fn set_mode(&mut self, mode: WindowMode) {
         if self.mode == mode {
             self.show();
             return;
         }
         self.mode = mode;
-        if self.visible {
+        if self.viewport {
             self.reopen = true;
-            self.hide();
+            self.intent = Some(UiIntent::Close);
         } else {
             self.show();
         }
@@ -198,10 +213,24 @@ impl WindowState {
         self.quitting
     }
 
+    /// Окно спрятано без закрытия root-вьюпорта (macOS, ADR-0026).
+    /// `WakeHandle` не трогаем: именно он будит скрытое окно.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(super) fn mark_hidden(&mut self) {
+        self.visible = false;
+    }
+
+    /// Окно снова видимо — без пересоздания UI-контекста.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(super) fn mark_shown(&mut self) {
+        self.visible = true;
+    }
+
     /// Начало прогона UI: root-вьюпорт создан, намерений больше нет.
     /// Признак перезапуска снимается — геометрия нового режима уже применена.
     pub(super) fn begin(&mut self, size: [f32; 2]) {
         self.visible = true;
+        self.viewport = true;
         self.intent = None;
         self.reopen = false;
         self.remember_size(size);
@@ -210,6 +239,7 @@ impl WindowState {
     /// Конец прогона: окно закрыто, процесс жив.
     pub(super) fn end(&mut self) {
         self.visible = false;
+        self.viewport = false;
         self.intent = None;
     }
 
@@ -236,13 +266,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn toggle_alternates_between_close_and_show() {
+    fn toggle_alternates_between_hide_and_show() {
         let mut window = WindowState {
             visible: true,
+            viewport: true,
             ..WindowState::default()
         };
         window.toggle();
-        assert_eq!(window.take_intent(), Some(UiIntent::Close));
+        assert_eq!(window.take_intent(), Some(UiIntent::Hide));
 
         window.visible = false;
         window.toggle();
@@ -254,6 +285,34 @@ mod tests {
         let mut window = WindowState::default();
         window.hide();
         assert_eq!(window.intent(), None, "окно уже закрыто, закрывать нечего");
+    }
+
+    /// Панель и трей могут попросить скрытие дважды до кадра: намерение одно.
+    #[test]
+    fn repeated_hide_before_the_frame_keeps_a_single_intent() {
+        let mut window = WindowState {
+            visible: true,
+            viewport: true,
+            ..WindowState::default()
+        };
+        window.hide();
+        window.hide();
+        assert_eq!(window.take_intent(), Some(UiIntent::Hide));
+        assert_eq!(window.intent(), None, "очередь намерений пуста");
+    }
+
+    #[test]
+    fn mark_hidden_and_shown_track_visibility_without_a_viewport_restart() {
+        let mut window = WindowState::shown();
+        window.begin(WINDOW_SIZE);
+        window.mark_hidden();
+        assert!(!window.visible, "status и трей видят скрытое окно сразу");
+        assert!(!window.take_reopen());
+        assert_eq!(window.intent(), None, "mark_hidden не рождает намерений");
+
+        window.mark_shown();
+        assert!(window.visible);
+        assert_eq!(window.intent(), None);
     }
 
     #[test]
@@ -272,6 +331,7 @@ mod tests {
     fn mode_switch_of_an_open_window_reopens_it() {
         let mut window = WindowState {
             visible: true,
+            viewport: true,
             ..WindowState::default()
         };
         window.set_mode(WindowMode::Listening);
@@ -282,6 +342,21 @@ mod tests {
         );
         assert!(window.take_reopen());
         assert!(!window.take_reopen(), "признак забирается один раз");
+    }
+
+    /// На macOS скрытое окно остаётся живым: смена режима обязана пересоздать
+    /// вьюпорт, иначе показ вернёт геометрию старого режима (ADR-0026).
+    #[test]
+    fn mode_switch_of_a_hidden_macos_window_reopens_it() {
+        let mut window = WindowState::shown();
+        window.begin(WINDOW_SIZE);
+        window.mark_hidden();
+        assert_eq!(window.take_intent(), None);
+
+        window.set_mode(WindowMode::Overlay);
+        assert_eq!(window.take_intent(), Some(UiIntent::Close));
+        assert!(window.is_reopening(), "цикл обязан пересоздать вьюпорт");
+        assert!(window.take_reopen());
     }
 
     #[test]
@@ -296,13 +371,15 @@ mod tests {
     fn panel_dropdown_toggles_open_and_closed() {
         let mut window = WindowState {
             visible: true,
+            viewport: true,
             mode: WindowMode::Panel,
             ..WindowState::default()
         };
         window.toggle_dropdown(WindowMode::Panel);
-        assert_eq!(window.take_intent(), Some(UiIntent::Close));
+        assert_eq!(window.take_intent(), Some(UiIntent::Hide));
 
         window.visible = false;
+        window.viewport = false;
         window.toggle_dropdown(WindowMode::Panel);
         assert_eq!(window.take_intent(), Some(UiIntent::Show));
         assert!(!window.take_reopen(), "панель уже в режиме Panel");
@@ -310,6 +387,7 @@ mod tests {
         // Из другого режима первый клик переключает и показывает панель.
         window.mode = WindowMode::Focus;
         window.visible = true;
+        window.viewport = true;
         window.toggle_dropdown(WindowMode::Panel);
         assert_eq!(window.mode, WindowMode::Panel);
         assert_eq!(window.take_intent(), Some(UiIntent::Close));
@@ -321,6 +399,7 @@ mod tests {
         // Команда `overlay` приходит, когда открыт другой режим: капсула появляется.
         let mut window = WindowState {
             visible: true,
+            viewport: true,
             mode: WindowMode::Focus,
             ..WindowState::default()
         };
@@ -333,7 +412,7 @@ mod tests {
         window.visible = true;
         window.toggle_dropdown(WindowMode::Overlay);
         assert_eq!(window.mode, WindowMode::Overlay);
-        assert_eq!(window.take_intent(), Some(UiIntent::Close));
+        assert_eq!(window.take_intent(), Some(UiIntent::Hide));
         assert!(
             !window.take_reopen(),
             "режим тот же — пересоздания не нужно"

@@ -94,11 +94,11 @@
   отдаёт HWND для playwire, контролы переживают скрытие окна; осталось
   рантайм-проверить play/pause/stop, громкость, hide/show и отсутствие окна в Alt-Tab
 - [x] macOS: CI-сборка, clippy и тесты на `macos-latest` с libmpv из Homebrew
-- [ ] macOS (Now Playing) — метаданные playwire публикуются; осталось
-  рантайм-проверить, а доставку remote-команд при скрытом окне закрывает
-  ADR-0026 (предложено)
-- [ ] macOS (трей) — ADR-0026 (предложено): статус-элемент в строке меню
-  (`tray-icon`) и скрытое окно eframe вместо `park`; нужна live-проверка на Mac
+- [x] macOS (Now Playing) — ADR-0026 принят и реализован: скрытие без остановки
+  run loop, remote-команды доставляются при скрытом окне; live-проверка на
+  живом Mac остаётся
+- [x] macOS (трей) — ADR-0026: статус-элемент в строке меню
+  (`tray-icon`/`muda`), меню повторяет SNI; live-проверка на Mac остаётся
 - [x] Безопасная обработка favicon (ADR-0025): allowlist PNG/JPEG/WebP, лимиты
   размера и разрешения, MIME/`http(s)`-проверки, перехват паники декодера
 - [x] FFT-визуализатор (экспериментальный)
@@ -479,6 +479,56 @@
 - [x] Тег `v0.11.0-rc.1` и публикация (2026-10-28); Flatpak-фикс CI — в
       `Unreleased` CHANGELOG; `release.yml` запускается по тегу и берёт тело из
       секции CHANGELOG
+
+## Интеграции: macOS, оболочки и браузеры (0.13 → 0.15)
+
+Пользовательский запрос 2026-10-28: Now Playing на macOS, плазмоид KDE Plasma,
+плагин GNOME, плагин Omarchy, виджеты популярных оболочек и расширения
+Chromium/Firefox. Решения — ADR-0026 (macOS, принят) и ADR-0037 (единая
+поверхность: `status --json`, команды, установщик); браузеры получают отдельный
+ADR-0038 в 0.15. Инварианты: один GUI-процесс и один экземпляр, три релизных
+артефакта, никаких правок чужих конфигов установщиком.
+
+### 0.13.0-rc.1 — macOS и контракт
+
+- [x] ADR-0026 принят: `UiIntent::Hide`, `mark_hidden`/`mark_shown`, скрытое
+      окно eframe без `park`, перехват Cmd-W/крестика, quit и смена режима —
+      реальное закрытие
+- [x] macOS-трей `src/tray/macos.rs` на `tray-icon`/`muda`: меню как у SNI,
+      template-иконка, стабильные `MenuId`, создание на главном потоке,
+      `warn!`-деградация; общие `text.rs` и RGBA-`icon.rs`
+- [x] ADR-0037: `status --json` схемы 1, локализованный `ui`, команды
+      `playpause`, `next`, `previous`, `roulette`, `volume-up/down`, `theme`,
+      `settings`; cold-start allowlist; правило совместимости схемы
+- [x] Тесты `WindowState` (Hide/Close/mark_hidden), `status_json`, IPC round-trip
+      и отрицательных аргументов, меню macOS; Linux-набор зелёный
+- [ ] Live на macOS: медиа-клавиши и Control Center при скрытом окне, меню-бар,
+      Cmd-W/Cmd-Q, template-иконка — нужен живой Mac
+- [ ] Релиз `v0.13.0-rc.1` (AppImage, MSI, DMG + `SHA256SUMS`) и локальная
+      установка приложения, плагина Noctalia и настроек
+
+### 0.14.0-rc.1 — плагины оболочек и установщик
+
+- [ ] `src/integration/`: `Target`, `install`/`uninstall`/`status`, квитанции
+      `asset|generated`, `--force`, `ORBITFM_INTEGRATION_ROOT`; ассеты через
+      `include_str!`/`include_bytes!`
+- [ ] Plasma 6 (`Plasma5Support.DataSource` + `PlasmoidItem`), GNOME 45–51
+      (`PanelMenu.Button` + `Gio.Subprocess`), Omarchy/Quickshell (`BarWidget`)
+- [ ] Бары: Waybar, Polybar, i3blocks, swaybar, i3status-rust и generic-сниппеты
+      XFCE/Cinnamon/MATE/LXQt; установщик печатает шаги и не правит конфиги
+- [ ] ADR-0037 (расширение установщика), интерфейс 13, модуль 16, вики 11;
+      релиз и локальная установка
+
+### 0.15.0-rc.1 — расширения браузеров
+
+- [ ] `orbitfm native-host`: stdio-фрейминг, лимиты 1 МиБ, allowlist без
+      `quit`/`play`/`mode`, конверт `{"ok":…}`, свой current-thread runtime без GUI
+- [ ] Chrome/Chromium/Brave/Edge/Vivaldi и Firefox: host-манифесты, wrapper
+      вокруг AppImage, фиксированные ID и точные `allowed_origins`/
+      `allowed_extensions`
+- [ ] MV3-popup без content scripts и background: `sendNativeMessage` на каждое
+      действие, подписи из `status.ui`
+- [ ] ADR-0038, интерфейс 14, вики 12; релиз и live-проверка Firefox
 
 ## Открытые решения — ждут ответа владельца
 

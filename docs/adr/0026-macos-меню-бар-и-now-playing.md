@@ -1,6 +1,6 @@
 # ADR-0026: macOS — трей в строке меню и Now Playing при скрытом окне
 
-**Статус:** Предложено (2026-10-24)  
+**Статус:** Принято (2026-10-28)  
 **Дата:** 2026-10-24  
 **Участники решения:** ModernByte Architecture, Юрий Анатольевич  
 
@@ -53,7 +53,7 @@ icons is on `StartCause::Init`» (`tray-icon-0.26.1/src/lib.rs:21`). Это
 `resumed` уже после старта цикла
 (`eframe-0.37.0/src/native/wgpu_integration.rs:345,459`). Меню строит `muda`
 0.21.2 (Apache-2.0/MIT), поддерживаются шаблонная иконка
-(`with_icon_as_template`, `tray-icon/src/lib.rs:412`) и изменяемые пункты
+(`with_icon_templated`, `tray-icon/src/lib.rs:412`) и изменяемые пункты
 (`set_text`, `set_enabled`, `set_checked` в `muda/src/items/{normal,check}.rs`).
 События меню можно получать глобальным обработчиком и будить GUI
 (`tray-icon/src/lib.rs:100-122`).
@@ -115,7 +115,7 @@ icons is on `StartCause::Init`» (`tray-icon-0.26.1/src/lib.rs:21`). Это
    орбитального знака из `src/tray/icon.rs` выносим в платформенно-нейтральный
    растеризатор RGBA; Linux-адаптер по-прежнему конвертирует RGBA в ARGB32 для
    `ksni`, macOS отдаёт RGBA в `tray_icon::Icon` с
-   `with_icon_as_template(true)`. Новый бинарный ассет не добавляется.
+   `with_icon_templated(true)`. Новый бинарный ассет не добавляется.
 9. **Вне области решения:** Windows-трей в области уведомлений (SMTC уже
    закрыт ADR-0024; трей — отдельная задача), изменение Dock-политики macOS,
    `NSStatusItem` на чистом `objc2` вместо `tray-icon`.
@@ -164,6 +164,52 @@ icons is on `StartCause::Init`» (`tray-icon-0.26.1/src/lib.rs:21`). Это
 - Cmd-Q и закрытие последнего окна на macOS имеют собственные пути AppKit;
   поведение `quit` из трея нужно проверить отдельно, чтобы процесс завершался,
   а не оставался без окна и без иконки.
+
+## Реализация
+
+Решено и реализовано в 0.13.0-rc.1 (2026-10-28).
+
+- **Намерения окна.** `UiIntent` получил вариант `Hide`; `WindowState::hide`
+  ставит его, `set_mode` при живом вьюпорте — `Close` + `reopen`, `quit` —
+  `Close` (`src/session/window.rs`). Повторный `hide` до обработки кадра не
+  плодит намерений. Presentation-слой в `OrbitApp::logic`
+  (`src/app.rs`) переводит на macOS `Hide` в `CancelClose` +
+  `ViewportCommand::Visible(false)` и зовёт `Session::mark_hidden`; `Show` —
+  `Visible(true)` + `Focus` + `mark_shown`; `Close` — реальное закрытие.
+  На Linux/Windows `Hide` по-прежнему означает `ViewportCommand::Close`,
+  то есть ADR-0018 не меняется.
+- **Перехват пользовательского закрытия.** На macOS `close_requested` (кнопка
+  окна, Cmd-W) отменяется через `CancelClose` и превращается в `hide`, кроме
+  `is_quitting()` и `is_reopening()` — quit и смена режима остаются реальным
+  закрытием.
+- **Состояние без перезапуска прогона.** `WindowState::mark_hidden/mark_shown`
+  выставляют видимость сразу; `Session::mark_hidden` закрывает настройки,
+  фиксирует незаписанную громкость (`flush_pending_volume`), обновляет анализ,
+  MPRIS и `TraySnapshot`; `mark_shown` возвращает анализ и витрины.
+  `Session::window_visible()` читают `status`, трей и гейт репейнта спектра:
+  скрытое окно не рисуется и не просыпается ради кадров. `WakeHandle` при
+  скрытии не очищается.
+- **Run loop.** `run_session` на macOS живёт в одном `run_native`: скрытый
+  вьюпорт получает только logic-проходы, IPC, playwire и трей тикают в них.
+  Возврат из `run_native` — только реальный `Close` (quit или смена режима).
+  `Session::park` остаётся путём для Linux/Windows и аварийным путём macOS.
+- **Трей.** `src/tray/macos.rs` на `tray-icon` 0.26.1 + `muda` 0.21.2
+  (target-specific optional deps, `default-features = false`, фича `tray`
+  включает `dep:ksni`, `dep:tray-icon`, `dep:muda`). `tray::spawn` создаёт
+  `Slot` с каналом команд и копит снимки в `pending`; `OrbitApp::new` зовёт
+  `Session::attach_tray` → `Slot::attach` на главном потоке после старта run
+  loop. Меню строится один раз со стабильными `MenuId`, подписи и чекбоксы
+  обновляются `set_text`/`set_checked`; глобальный `MenuEvent` переводит ID в
+  `TrayCommand` и зовёт `wake`. Ошибка создания — `warn!`, приложение работает
+  без трея. Общие подписи вынесены в `src/tray/text.rs`, растеризатор знака —
+  платформенно-нейтральный RGBA (`src/tray/icon.rs`), Linux-адаптер
+  конвертирует его в ARGB32, macOS отдаёт `tray_icon::Icon` с
+  `with_icon_templated(true)`.
+- **Тесты.** `WindowState`: `Hide` при скрытии, `Close` при смене режима,
+  `mark_hidden/shown`, отсутствие повторного скрытия; маппинг всех `MenuId` в
+  `TrayCommand` и их уникальность; весь существующий набор идёт зелёным.
+  Компиляцию `tray-icon`/`muda` проверяет macOS-раннер CI; live-приёмка
+  (медиа-клавиши, меню, Cmd-W/Cmd-Q) — по плану ниже.
 
 ## План проверки
 

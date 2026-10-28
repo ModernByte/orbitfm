@@ -1,6 +1,6 @@
 [package]
 name = "orbitfm"
-version = "0.12.0-rc.2"
+version = "0.13.0-rc.1"
 edition = "2024"
 rust-version = "1.95"
 description = "3D Interactive Global Radio Player"
@@ -69,9 +69,18 @@ windows = { version = "0.62", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# Трей в строке меню (ADR-0026, п. 5–8): tray-icon создаёт NSStatusItem и
+# требует уже запущенного run loop на главном потоке, muda строит меню и
+# обновляет пункты. default-features выключены: на macOS GTK-графа нет.
+muda = { version = "0.21.2", default-features = false, optional = true }
+tray-icon = { version = "0.26.1", default-features = false, optional = true }
+
 [dev-dependencies]
 tempfile = "3"
 
 [features]
 default = ["tray"]
-tray = ["dep:ksni"]
+# На каждой платформе собирается только её зависимость: ksni на Linux,
+# tray-icon/muda на macOS (ADR-0020, ADR-0026).
+tray = ["dep:ksni", "dep:tray-icon", "dep:muda"]

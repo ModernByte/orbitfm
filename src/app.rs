@@ -140,6 +140,9 @@ impl<'a> OrbitApp<'a> {
             let ctx = egui_ctx.clone();
             move || ctx.request_repaint()
         });
+        // macOS: tray-icon требует запущенного run loop и главного потока,
+        // поэтому иконка создаётся здесь, а не в spawn до старта окна (ADR-0026).
+        session.attach_tray();
         let globe_ready = if let Some(render_state) = &cc.wgpu_render_state {
             let renderer = GlobeRenderer::new(
                 &render_state.device,
@@ -1218,9 +1221,41 @@ impl eframe::App for OrbitApp<'_> {
             self.session.set_window_size([rect.width(), rect.height()]);
         }
 
+        // macOS: кнопка окна и Cmd-W — это скрытие, а не выход (ADR-0026).
+        // Реальное закрытие оставляем только для quit и смены режима.
+        #[cfg(target_os = "macos")]
+        if ctx.input(|input| input.viewport().close_requested())
+            && !self.session.is_quitting()
+            && !self.session.is_reopening()
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.session.hide();
+        }
+
         match self.session.take_intent() {
             // Окно уже открыто: остаётся вернуть ему фокус.
-            Some(UiIntent::Show) => ctx.send_viewport_cmd(egui::ViewportCommand::Focus),
+            Some(UiIntent::Show) => {
+                #[cfg(target_os = "macos")]
+                {
+                    if !self.session.window_visible() {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                    }
+                    self.session.mark_shown();
+                }
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            }
+            Some(UiIntent::Hide) => {
+                #[cfg(target_os = "macos")]
+                {
+                    // Скрытый вьюпорт живёт в run loop: logic продолжает тикать,
+                    // MPRIS и трей управляют эфиром, показ мгновенный (ADR-0026).
+                    ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                    self.session.mark_hidden();
+                }
+                #[cfg(not(target_os = "macos"))]
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
             Some(UiIntent::Close) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             None => {}
         }
@@ -1264,7 +1299,10 @@ impl eframe::App for OrbitApp<'_> {
             self.error_toast(ctx, NoticeKey::PlaybackFailed, Some(err));
         }
 
-        if self.session.visualizer_enabled
+        // Скрытое окно на macOS не рисуется: анализ уже выключен `mark_hidden`,
+        // и просыпаться ради кадров спектра незачем (ADR-0026).
+        if self.session.window_visible()
+            && self.session.visualizer_enabled
             && matches!(
                 self.session.audio.state(),
                 PlaybackState::Playing | PlaybackState::Buffering

@@ -1,7 +1,7 @@
 # OrbitFM
 
 **Плеер интернет-радио с 3D-глобусом**  
-Под эгидой [ModernByte](https://github.com/ModernByte) · версия `0.12.0-rc.2`
+Под эгидой [ModernByte](https://github.com/ModernByte) · версия `0.13.0-rc.1`
 
 [![Релиз](https://img.shields.io/github/v/release/ModernByte/orbitfm?include_prereleases)](https://github.com/ModernByte/orbitfm/releases)
 [![Статус CI](https://img.shields.io/github/actions/workflow/status/ModernByte/orbitfm/ci.yml?branch=main)](https://github.com/ModernByte/orbitfm/actions/workflows/ci.yml)
@@ -14,7 +14,7 @@ OrbitFM — плеер интернет-радио, где каталог пок
 и её станции лежат рядом в списке; так же можно искать по жанру или по названию станции. Закрытие окна музыку не
 останавливает: приложение работает одним процессом, живёт в системном трее и принимает команды из терминала и от
 медиа-клавиш. Для экрана есть три режима — от большого рабочего стола с глобусом до компактной капсулы в углу.
-Приоритетная платформа — Linux (Wayland и X11), сборки есть для Windows и macOS; версия `0.12.0-rc.2` —
+Приоритетная платформа — Linux (Wayland и X11), сборки есть для Windows и macOS; версия `0.13.0-rc.1` —
 пре-релиз, отдельные детали ещё могут меняться.
 
 ## Что умеет
@@ -31,16 +31,19 @@ OrbitFM — плеер интернет-радио, где каталог пок
 - **Живая картинка.** Визуализатор на 16, 24 или 32 полосы, орбитальное аудиокольцо в Focus и аудио-реактивная
   планета: глобус дышит и качается в такт эфиру, шесть стилей движения, перевороты камеры. Всё выключается одной
   галкой «Уменьшить движение».
-- **Системный трей (Linux).** Пуск/Пауза, Stop, предыдущая и следующая, радиорулетка, громкость, настройки, выход;
-  колесо мыши по иконке меняет громкость. Первая строка меню: «Сейчас играет: …», «Пауза: …» или
-  «Ничего не играет».
-- **Медиа-клавиши и системные виджеты.** MPRIS на Linux, System Media Transport Controls на Windows, метаданные
-  Now Playing на macOS.
+- **Системный трей.** На Linux — StatusNotifierItem, на macOS — элемент строки меню: Пуск/Пауза, Stop,
+  предыдущая и следующая, радиорулетка, громкость, настройки, выход; колесо мыши по иконке меняет громкость.
+  Первая строка меню: «Сейчас играет: …», «Пауза: …» или «Ничего не играет».
+- **Медиа-клавиши и системные виджеты.** MPRIS на Linux, System Media Transport Controls на Windows,
+  Now Playing на macOS — в том числе при скрытом окне.
 - **11 языков интерфейса** — «Системный» плюс 10 языков, смена без перезапуска.
 - **Настройки.** Тема (системная / тёмная / светлая), акцент, язык, громкость, визуализатор, реактивность и стиль
   движения, «Уменьшить движение», компоновка окна. Сохраняются автоматически.
 - **Три режима окна** — Focus / Overlay / Listening, переключение из интерфейса и командой `orbitfm mode …`.
 - **Виджет для панели Noctalia v5** и готовые правила окон для niri и Hyprland.
+- **Машиночитаемый статус для интеграций.** `orbitfm status --json` (схема 1) отдаёт состояние, станцию,
+  громкость, окно, тему, язык, доступные действия и локализованные подписи — на нём строятся плагины
+  оболочек и будущие расширения браузеров.
 
 ## Системные требования
 
@@ -61,16 +64,16 @@ OrbitFM — плеер интернет-радио, где каталог пок
 
 ### AppImage (Linux x86_64)
 
-Файл называется `OrbitFM-<версия>-x86_64.AppImage`, например `OrbitFM-0.12.0-rc.2-x86_64.AppImage`. Права root и
+Файл называется `OrbitFM-<версия>-x86_64.AppImage`, например `OrbitFM-0.13.0-rc.1-x86_64.AppImage`. Права root и
 установка не нужны — приложение rootless по определению, и `libmpv` с FFmpeg уже внутри:
 
 ```bash
-chmod +x OrbitFM-0.12.0-rc.2-x86_64.AppImage
-./OrbitFM-0.12.0-rc.2-x86_64.AppImage
+chmod +x OrbitFM-0.13.0-rc.1-x86_64.AppImage
+./OrbitFM-0.13.0-rc.1-x86_64.AppImage
 ```
 
 Если FUSE недоступен (контейнеры, минимальные образы) или не нужна интеграция через монтирование, запускайте в
-режиме распаковки: `APPIMAGE_EXTRACT_AND_RUN=1 ./OrbitFM-0.12.0-rc.2-x86_64.AppImage`. Виджету Noctalia и командам
+режиме распаковки: `APPIMAGE_EXTRACT_AND_RUN=1 ./OrbitFM-0.13.0-rc.1-x86_64.AppImage`. Виджету Noctalia и командам
 `orbitfm …` нужен запускаемый `orbitfm` в `PATH` — удобно сделать символьную ссылку на AppImage.
 
 ### Установщики Windows и macOS
@@ -188,7 +191,8 @@ include "./cfg/orbitfm.kdl"   // скопированный wm-configs/orbitfm-n
 систему в текущей версии нет.
 
 **Медиа-клавиши и виджеты.** Play/Pause, Stop, следующая и предыдущая станция, громкость приходят из MPRIS (Linux),
-SMTC (Windows) и Now Playing (macOS); всё работает и при скрытом окне. На Linux плеер виден как
+SMTC (Windows) и Now Playing (macOS); на Linux они работают и при скрытом окне, на macOS — с 0.13.0-rc.1, потому
+что скрытое окно больше не останавливает главный цикл. На Linux плеер виден как
 `org.mpris.MediaPlayer2.OrbitFM`, поэтому им управляет и `playerctl`. Рантайм-проверки SMTC и Now Playing на
 Windows/macOS ещё не выполнены — там интеграции собраны, но проверялись только сборкой и тестами.
 
@@ -200,10 +204,16 @@ orbitfm show | orbitfm hide
 orbitfm overlay             # капсула Overlay: показать или скрыть (из CLI)
 orbitfm panel               # выпадающая панель: показать или скрыть (её зовёт бар-виджет)
 orbitfm status              # состояние, станция, громкость, окно, режим
+orbitfm status --json       # то же в JSON схемы 1 (для плагинов и скриптов)
 orbitfm mode overlay        # focus | overlay | listening | panel
 orbitfm play <stationuuid>  # запустить станцию по UUID из Radio Browser
+orbitfm playpause | orbitfm next | orbitfm previous
+orbitfm roulette            # случайная станция
 orbitfm stop
 orbitfm volume 0.4          # 0.0–1.0
+orbitfm volume-up | orbitfm volume-down
+orbitfm theme dark          # system | dark | light
+orbitfm settings            # открыть настройки (запускает приложение, если нужно)
 orbitfm quit                # завершить процесс
 orbitfm --help              # -h: список команд; -V / --version — версия сборки
 ```
@@ -245,7 +255,8 @@ Noto Sans CJK вашего дистрибутива); это зависимос�
   тайлового WM (см. раздел про niri и Hyprland) либо не найден системный Noto Color Emoji.
 - **Иконки трея нет.** На Linux трей работает по StatusNotifierItem и требует хоста SNI: Noctalia, KDE, Hyprland,
   Sway/waybar; в GNOME нужно расширение вроде AppIndicator/StatusNotifier. Без хоста иконка не появится — это
-  штатная деградация, управляйте через `orbitfm …`. На Windows и macOS трея пока нет: модуль там намеренно no-op.
+  штатная деградация, управляйте через `orbitfm …`. На macOS значок живёт в строке меню; на Windows трея пока
+  нет — модуль там намеренно no-op.
 - **В меню трея «Ничего не играет».** Процесс жив, но воспроизведение не запущено или поток не загрузился. Запустите
   станцию из меню («Пуск/Пауза», «Радиорулетка») или из окна.
 - **Как выйти полностью.** Закрытие окна — не выход. Выход: «Выход» в меню трея, «Выход» в секции «Окно» настроек
@@ -320,7 +331,7 @@ ModernByte собирал OrbitFM из чужой хорошей работы и
 | [reqwest](https://docs.rs/reqwest) | 0.13 | HTTP к серверам Radio Browser и загрузка фавиконов (rustls, json) |
 | [tokio](https://docs.rs/tokio) | 1.54 | Async runtime, каналы, таймауты, DNS-discovery зеркал |
 | [serde](https://docs.rs/serde) | 1.0 | Сериализация настроек, библиотеки и ответов API |
-| [serde_json](https://docs.rs/serde_json) | 1.0 | `settings.json`, `library.json`, разбор JSON Radio Browser |
+| [serde_json](https://docs.rs/serde_json) | 1.0 | `settings.json`, `library.json`, разбор JSON Radio Browser и ответ `status --json` |
 | [thiserror](https://docs.rs/thiserror) | 2.0 | Типизированные ошибки внутри модулей |
 | [anyhow](https://docs.rs/anyhow) | 1.0 | Ошибки и контекст на границах и при запуске процесса |
 | [tracing](https://docs.rs/tracing) | 0.1 | Логи подсистем |
@@ -329,6 +340,8 @@ ModernByte собирал OrbitFM из чужой хорошей работы и
 | [url](https://docs.rs/url) | 2.5 | Разбор и проверка адресов потоков и фавиконов |
 | [libc](https://docs.rs/libc) | 0.2 | Установка C-локали для корректной работы libmpv |
 | [ksni](https://crates.io/crates/ksni) | 0.3.7 | StatusNotifierItem для трея (только Linux, фича `tray`; лицензия Unlicense отмечена в ADR-0020) |
+| [tray-icon](https://crates.io/crates/tray-icon) | 0.26.1 | Иконка в строке меню macOS (только macOS, фича `tray`, ADR-0026) |
+| [muda](https://crates.io/crates/muda) | 0.21.2 | Меню строки меню macOS и его обновление (только macOS, фича `tray`) |
 | [windows](https://docs.rs/windows) | 0.62 | Win32-окно-владелец для SMTC (только Windows) |
 | [tempfile](https://docs.rs/tempfile) | 3 | Временные каталоги в тестах (dev-зависимость) |
 

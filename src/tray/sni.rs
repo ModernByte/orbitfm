@@ -11,7 +11,7 @@ use ksni::{Category, Icon, OfflineReason, Orientation, Status, ToolTip, Tray};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{info, warn};
 
-use super::{TrayCommand, TraySnapshot, icon};
+use super::{TrayCommand, TraySnapshot, icon, text};
 use crate::i18n;
 use crate::ipc::WakeFn;
 use crate::settings::ThemeMode;
@@ -19,6 +19,24 @@ use crate::settings::ThemeMode;
 /// Каталог hicolor, если он установлен: тогда хост может взять векторную иконку
 /// из упаковки вместо нашего pixmap'а.
 static THEME_PATH: LazyLock<String> = LazyLock::new(find_hicolor);
+
+/// Пиксели знака в ARGB32 (network byte order), как требует SNI: растеризатор
+/// общий с macOS-треем и отдаёт RGBA (ADR-0026, п. 8).
+static ICONS: LazyLock<Vec<Icon>> = LazyLock::new(|| {
+    icon::SIZES
+        .iter()
+        .map(|&size| Icon {
+            width: size,
+            height: size,
+            data: icon::rgba(size)
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .flat_map(|pixel| [pixel[3], pixel[0], pixel[1], pixel[2]])
+                .collect(),
+        })
+        .collect()
+});
 
 /// Подпись, которую рисует трей, и канал, по которому он отдаёт команды ядру.
 pub(crate) struct OrbitTray {
@@ -138,7 +156,7 @@ impl Tray for OrbitTray {
 
     /// Пиксели строятся один раз: хост спрашивает их на каждое событие трея.
     fn icon_pixmap(&self) -> Vec<Icon> {
-        icon::ICONS.clone()
+        ICONS.clone()
     }
 
     /// Название станции — внешние данные Radio Browser, оно не переводится
@@ -152,7 +170,7 @@ impl Tray for OrbitTray {
                 .snapshot
                 .station
                 .clone()
-                .unwrap_or_else(|| nothing_playing(&self.snapshot)),
+                .unwrap_or_else(|| text::nothing_playing(&self.snapshot)),
         }
     }
 
@@ -179,36 +197,37 @@ impl Tray for OrbitTray {
         // Язык берётся из снимка: `Session` публикует его разрешённым, а смена
         // языка меняет сам снимок, поэтому меню перестраивается без перезапуска
         // (ADR-0030, п. 8–9).
-        let text = i18n::catalog(self.snapshot.language);
-        let toggle_label = if self.snapshot.window_visible {
-            text.tray.hide_window
-        } else {
-            text.tray.show_window
-        };
+        let catalog = i18n::catalog(self.snapshot.language);
         vec![
             MenuItem::Standard(StandardItem {
-                label: now_playing_label(&self.snapshot),
+                label: text::now_playing_label(&self.snapshot),
                 enabled: false,
                 ..Default::default()
             }),
             MenuItem::Separator,
-            standard(toggle_label, |tray| tray.send(TrayCommand::Toggle)),
+            standard(text::toggle_label(&self.snapshot), |tray| {
+                tray.send(TrayCommand::Toggle)
+            }),
             MenuItem::Separator,
             MenuItem::Checkmark(CheckmarkItem {
-                label: text.tray.play_pause.to_owned(),
+                label: catalog.tray.play_pause.to_owned(),
                 checked: self.snapshot.playing,
                 activate: Box::new(|tray: &mut Self| tray.send(TrayCommand::PlayPause)),
                 ..Default::default()
             }),
-            standard(text.tray.stop, |tray| tray.send(TrayCommand::Stop)),
-            standard(text.tray.previous, |tray| tray.send(TrayCommand::Previous)),
-            standard(text.tray.next, |tray| tray.send(TrayCommand::Next)),
-            standard(text.tray.radio_roulette, |tray| {
+            standard(catalog.tray.stop, |tray| tray.send(TrayCommand::Stop)),
+            standard(catalog.tray.previous, |tray| {
+                tray.send(TrayCommand::Previous)
+            }),
+            standard(catalog.tray.next, |tray| tray.send(TrayCommand::Next)),
+            standard(catalog.tray.radio_roulette, |tray| {
                 tray.send(TrayCommand::Roulette)
             }),
             MenuItem::Separator,
-            standard(text.tray.volume_up, |tray| tray.send(TrayCommand::VolumeUp)),
-            standard(text.tray.volume_down, |tray| {
+            standard(catalog.tray.volume_up, |tray| {
+                tray.send(TrayCommand::VolumeUp)
+            }),
+            standard(catalog.tray.volume_down, |tray| {
                 tray.send(TrayCommand::VolumeDown)
             }),
             MenuItem::Separator,
@@ -231,8 +250,10 @@ impl Tray for OrbitTray {
                     .collect(),
             }),
             MenuItem::Separator,
-            standard(text.tray.settings, |tray| tray.send(TrayCommand::Settings)),
-            standard(text.tray.quit, |tray| tray.send(TrayCommand::Quit)),
+            standard(catalog.tray.settings, |tray| {
+                tray.send(TrayCommand::Settings)
+            }),
+            standard(catalog.tray.quit, |tray| tray.send(TrayCommand::Quit)),
         ]
     }
 
@@ -253,24 +274,6 @@ fn standard(
         activate: Box::new(activate),
         ..Default::default()
     })
-}
-
-/// Первая строка меню — витрина, а не команда: `enabled: false` у StandardItem.
-fn now_playing_label(snapshot: &TraySnapshot) -> String {
-    let text = &i18n::catalog(snapshot.language).tray;
-    match (&snapshot.station, snapshot.playing) {
-        (Some(station), true) => i18n::fill(text.now_playing, &[("station", station.as_str())]),
-        (Some(station), false) => i18n::fill(text.paused, &[("station", station.as_str())]),
-        (None, _) => nothing_playing(snapshot),
-    }
-}
-
-/// Заглушка, когда станция не играя: общая для тултипа и первой строки меню.
-fn nothing_playing(snapshot: &TraySnapshot) -> String {
-    i18n::catalog(snapshot.language)
-        .tray
-        .nothing_playing
-        .to_owned()
 }
 
 /// Первый существующий каталог тем: пользовательский XDG, затем системный.
@@ -490,10 +493,11 @@ mod tests {
 
     #[test]
     fn icon_sizes_match_the_specification_and_byte_order() {
-        let icons = icon::ICONS.clone();
-        assert_eq!(icons.len(), 3);
-        for item in &icons {
+        let icons = ICONS.clone();
+        assert_eq!(icons.len(), icon::SIZES.len());
+        for (item, size) in icons.iter().zip(icon::SIZES) {
             assert_eq!(item.data.len(), (item.width * item.height * 4) as usize);
+            assert_eq!((item.width, item.height), (size, size));
         }
         let small = &icons[0];
         assert_eq!((small.width, small.height), (22, 22));

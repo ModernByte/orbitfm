@@ -1,19 +1,16 @@
-//! Процедурная иконка трея (ADR-0020, п. 6).
+//! Процедурная иконка трея (ADR-0020, п. 6; ADR-0026, п. 8).
 //!
 //! Рисуем тот же орбитальный знак, что `ui::widgets::logo_mark` — диск планеты,
 //! наклонённое кольцо и точка эфира, — но растеризуем сами: у модуля трея нет
 //! зависимости от egui и от presentation-слоя. Полупрозрачных линий из 22 px
 //! хватило бы только на векторном рендере, поэтому планета заливается целиком.
 //!
-//! Буферы строятся один раз (`LazyLock`): хост вызывает `icon_pixmap()` на
-//! каждое событие трея, и пересчёт пикселей в этом пути — чистая потеря времени.
-
-use std::sync::LazyLock;
-
-use ksni::Icon;
+//! Растеризатор платформенно-нейтрален и отдаёт RGBA: Linux-адаптер поворачивает
+//! каналы в ARGB32 для SNI, macOS отдаёт те же пиксели `tray_icon::Icon`
+//! с шаблонным режимом (ADR-0026, п. 8). Бинарный ассет не нужен.
 
 /// Размерности, которые запрашивают типовые SNI-хосты.
-const SIZES: [i32; 3] = [22, 32, 48];
+pub(crate) const SIZES: [i32; 3] = [22, 32, 48];
 /// Проб на пиксель по каждой оси: тонкие штрихи иначе рассыпаются.
 const SUPERSAMPLE: i32 = 4;
 /// Планета — акцентный синий OrbitFM.
@@ -22,9 +19,6 @@ const PLANET: [u8; 3] = [96, 165, 250];
 const RING: [u8; 3] = [190, 215, 255];
 /// Точка эфира (LIVE).
 const LIVE: [u8; 3] = [52, 211, 153];
-
-/// Иконки во всех размерностях.
-pub(crate) static ICONS: LazyLock<Vec<Icon>> = LazyLock::new(build_icons);
 
 /// Порядок наложения совпадает с `logo_mark`: планета, кольцо поверх, точка поверх.
 const LAYERS: [Layer; 3] = [Layer::Planet, Layer::Ring, Layer::Dot];
@@ -85,11 +79,8 @@ impl Mark {
     }
 }
 
-fn build_icons() -> Vec<Icon> {
-    SIZES.iter().map(|&size| icon(size)).collect()
-}
-
-fn icon(size: i32) -> Icon {
+/// Пиксели знака в RGBA, построчно, без выравнивания строк.
+pub(crate) fn rgba(size: i32) -> Vec<u8> {
     let mark = Mark::new(size);
     let mut data = Vec::with_capacity((size * size * 4) as usize);
     for y in 0..size {
@@ -97,18 +88,13 @@ fn icon(size: i32) -> Icon {
             data.extend_from_slice(&pixel(x, y, &mark));
         }
     }
-    Icon {
-        width: size,
-        height: size,
-        data,
-    }
+    data
 }
 
-/// Пиксель в ARGB32 (network byte order), как требует SNI.
 fn pixel(x: i32, y: i32, mark: &Mark) -> [u8; 4] {
     let samples = (SUPERSAMPLE * SUPERSAMPLE) as f32;
     let step = 1.0 / SUPERSAMPLE as f32;
-    let mut rgba = [0.0f32; 4];
+    let mut dst = [0.0f32; 4];
     for layer in LAYERS {
         let mut hits = 0u32;
         for sy in 0..SUPERSAMPLE {
@@ -131,15 +117,15 @@ fn pixel(x: i32, y: i32, mark: &Mark) -> [u8; 4] {
                 color[2] as f32 / 255.0,
                 layer.alpha() * coverage,
             ];
-            rgba = over(rgba, source);
+            dst = over(dst, source);
         }
     }
-    to_argb([
-        (rgba[0] * 255.0).round() as u8,
-        (rgba[1] * 255.0).round() as u8,
-        (rgba[2] * 255.0).round() as u8,
-        (rgba[3] * 255.0).round() as u8,
-    ])
+    [
+        (dst[0] * 255.0).round() as u8,
+        (dst[1] * 255.0).round() as u8,
+        (dst[2] * 255.0).round() as u8,
+        (dst[3] * 255.0).round() as u8,
+    ]
 }
 
 /// Принадлежность точки слою знака.
@@ -184,43 +170,31 @@ fn over(dst: [f32; 4], src: [f32; 4]) -> [f32; 4] {
     ]
 }
 
-/// RGBA → ARGB32 network byte order: тот же поворот, что в примере crate `ksni`.
-fn to_argb(rgba: [u8; 4]) -> [u8; 4] {
-    [rgba[3], rgba[0], rgba[1], rgba[2]]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn alpha(icon: &Icon, x: i32, y: i32) -> u8 {
-        let index = ((y * icon.width + x) * 4) as usize;
-        icon.data[index]
+    fn alpha(data: &[u8], size: i32, x: i32, y: i32) -> u8 {
+        let index = ((y * size + x) * 4) as usize;
+        data[index + 3]
     }
 
     #[test]
-    fn icons_are_built_for_every_host_size() {
-        let icons = &*ICONS;
-        assert_eq!(icons.len(), SIZES.len());
-        for (icon, size) in icons.iter().zip(SIZES) {
-            assert_eq!(icon.width, size);
-            assert_eq!(icon.height, size);
-            assert_eq!(icon.data.len(), (size * size * 4) as usize);
+    fn every_size_produces_a_full_rgba_buffer() {
+        for size in SIZES {
+            let data = rgba(size);
+            assert_eq!(data.len(), (size * size * 4) as usize);
         }
     }
 
     #[test]
-    fn argb_puts_alpha_first() {
-        assert_eq!(to_argb([10, 20, 30, 40]), [40, 10, 20, 30]);
-    }
-
-    #[test]
     fn planet_core_is_opaque_and_corners_are_empty() {
-        let small = &ICONS[0];
-        let center = small.width / 2;
-        assert_eq!(alpha(small, center, center), 255);
-        assert_eq!(alpha(small, 0, 0), 0);
-        assert_eq!(alpha(small, small.width - 1, small.height - 1), 0);
+        let size = SIZES[0];
+        let data = rgba(size);
+        let center = size / 2;
+        assert_eq!(alpha(&data, size, center, center), 255);
+        assert_eq!(alpha(&data, size, 0, 0), 0);
+        assert_eq!(alpha(&data, size, size - 1, size - 1), 0);
     }
 
     #[test]

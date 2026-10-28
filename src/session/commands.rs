@@ -4,8 +4,9 @@
 //! есть ли `egui::Context`, а всё, что касается окна, выражается через
 //! [`UiIntent`](super::UiIntent).
 
-use crate::ipc::{IpcCommand, WindowModeArg};
+use crate::ipc::{IpcCommand, ThemeArg, WindowModeArg};
 use crate::settings::{AccentColor, Language, MotionReactivity, MotionStyle, ThemeMode};
+use crate::tray::VOLUME_STEP;
 
 use super::WindowMode;
 use super::notice::NoticeKey;
@@ -17,6 +18,16 @@ impl From<WindowModeArg> for WindowMode {
             WindowModeArg::Overlay => Self::Overlay,
             WindowModeArg::Listening => Self::Listening,
             WindowModeArg::Panel => Self::Panel,
+        }
+    }
+}
+
+impl From<ThemeArg> for ThemeMode {
+    fn from(arg: ThemeArg) -> Self {
+        match arg {
+            ThemeArg::System => Self::System,
+            ThemeArg::Dark => Self::Dark,
+            ThemeArg::Light => Self::Light,
         }
     }
 }
@@ -47,6 +58,7 @@ impl super::Session {
                 "ok".to_owned()
             }
             IpcCommand::Status => self.status_text(),
+            IpcCommand::StatusJson => self.status_json(),
             IpcCommand::ModeQuery => format!("mode {}", self.window_mode().as_str()),
             IpcCommand::SetMode { mode } => {
                 self.set_window_mode((*mode).into());
@@ -58,6 +70,38 @@ impl super::Session {
             }
             IpcCommand::Overlay => {
                 self.toggle_dropdown(WindowMode::Overlay);
+                "ok".to_owned()
+            }
+            IpcCommand::PlayPause => match self.toggle_playback() {
+                Ok(()) => "ok".to_owned(),
+                Err(err) => format!("error {err}"),
+            },
+            IpcCommand::Next => {
+                self.play_relative(1);
+                "ok".to_owned()
+            }
+            IpcCommand::Previous => {
+                self.play_relative(-1);
+                "ok".to_owned()
+            }
+            IpcCommand::Roulette => {
+                self.start_roulette();
+                "ok".to_owned()
+            }
+            IpcCommand::Theme { mode } => match self.set_theme(ThemeMode::from(*mode)) {
+                Ok(()) => "ok".to_owned(),
+                Err(err) => format!("error {err}"),
+            },
+            IpcCommand::Settings => {
+                self.open_settings();
+                "ok".to_owned()
+            }
+            IpcCommand::VolumeUp => {
+                self.nudge_volume(VOLUME_STEP);
+                "ok".to_owned()
+            }
+            IpcCommand::VolumeDown => {
+                self.nudge_volume(-VOLUME_STEP);
                 "ok".to_owned()
             }
             IpcCommand::Quit => {
@@ -209,11 +253,22 @@ mod tests {
             IpcCommand::Show,
             IpcCommand::Hide,
             IpcCommand::Status,
+            IpcCommand::StatusJson,
             IpcCommand::Quit,
             IpcCommand::Stop,
             IpcCommand::ModeQuery,
             IpcCommand::Panel,
             IpcCommand::Overlay,
+            IpcCommand::PlayPause,
+            IpcCommand::Next,
+            IpcCommand::Previous,
+            IpcCommand::Roulette,
+            IpcCommand::Settings,
+            IpcCommand::VolumeUp,
+            IpcCommand::VolumeDown,
+            IpcCommand::Theme {
+                mode: ThemeArg::Light,
+            },
             IpcCommand::SetMode {
                 mode: WindowModeArg::Overlay,
             },
@@ -232,5 +287,12 @@ mod tests {
             WindowMode::Listening
         );
         assert_eq!(WindowMode::from(WindowModeArg::Panel), WindowMode::Panel);
+    }
+
+    #[test]
+    fn theme_argument_maps_to_domain_theme() {
+        assert_eq!(ThemeMode::from(ThemeArg::System), ThemeMode::System);
+        assert_eq!(ThemeMode::from(ThemeArg::Dark), ThemeMode::Dark);
+        assert_eq!(ThemeMode::from(ThemeArg::Light), ThemeMode::Light);
     }
 }

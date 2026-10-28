@@ -36,13 +36,19 @@ Application Core — слой, который переживает закрыт�
 | `window_mode` | `pub(crate) fn window_mode(&self) -> WindowMode` | Текущий режим окна (ADR-0021) |
 | `set_window_mode` | `pub(crate) fn set_window_mode(&mut self, mode: WindowMode)` | Меняет режим и гарантирует показ: тот же режим → `Show`; новый режим при открытом окне → `Close` + `reopen`, при закрытом → `Show` |
 | `take_reopen` | `pub(crate) fn take_reopen(&mut self) -> bool` | Забирает единичный признак «пересоздать окно с геометрией нового режима» |
-| `hide` | `pub(crate) fn hide(&mut self)` | `UiIntent::Close`, только если окно открыто; иначе ничего |
+| `is_reopening` | `pub(crate) fn is_reopening(&self) -> bool` | Идёт ли пересоздание окна из-за смены режима (macOS: не превращать `close_requested` в Hide) |
+| `window_visible` | `pub(crate) fn window_visible(&self) -> bool` | Видимо ли окно пользователю: на macOS скрытое окно живёт в run loop (ADR-0026) |
+| `mark_hidden` | `pub(crate) fn mark_hidden(&mut self)` | macOS: окно скрыто — закрыть настройки, зафиксировать `pending_volume`, обновить анализ, MPRIS и трей без ожидания кадра |
+| `mark_shown` | `pub(crate) fn mark_shown(&mut self)` | macOS: окно снова видимо — вернуть анализ и обновить витрины |
+| `hide` | `pub(crate) fn hide(&mut self)` | `UiIntent::Hide`, только если окно открыто и намерение ещё не стоит; иначе ничего. На Linux/Windows презентация переводит `Hide` в `ViewportCommand::Close`, на macOS — в `Visible(false)` |
 | `show` | `pub(crate) fn show(&mut self)` | Ставит `UiIntent::Show` |
-| `toggle` | `pub(crate) fn toggle(&mut self)` | Открыто → `Close`, закрыто → `Show` |
+| `toggle` | `pub(crate) fn toggle(&mut self)` | Открыто → `Hide`/`Close`, закрыто → `Show` |
 | `toggle_dropdown` | `pub(crate) fn toggle_dropdown(&mut self, mode: WindowMode)` | Переключатель-выпадающий: открытая поверхность того же режима скрывается, иначе `set_window_mode(mode)` (ADR-0033; пути `panel` и `overlay`) |
 | `quit` | `pub(crate) fn quit(&mut self)` | `quitting = true` и `UiIntent::Close` |
 | `is_quitting` | `pub(crate) fn is_quitting(&self) -> bool` | Признак явного выхода |
 | `status_text` | `pub(crate) fn status_text(&self) -> String` | Строка ответа IPC-команды `status` |
+| `status_json` | `pub(crate) fn status_json(&self) -> String` | Ответ IPC-команды `status --json`: одна строка JSON схемы 1 (ADR-0037) |
+| `attach_tray` | `pub(crate) fn attach_tray(&mut self)` | macOS: создать иконку и меню на главном потоке; ошибка — `warn!` и работа без трея. На других платформах — no-op |
 | `park` | `pub(crate) fn park(&mut self) -> ParkOutcome` | Простой без окна: ждёт IPC/MPRIS/трей/аудио/рулетку и исполняет их без UI |
 | `execute` | `pub(crate) fn execute(&mut self, command: &IpcCommand) -> String` | Исполняет IPC-команду и возвращает строку ответа; общее для окна и парковки |
 | `process_commands` | `pub(crate) fn process_commands(&mut self)` | Вычерпывает очередь `IpcRequest` (`try_recv`) и отвечает через `try_respond` |
@@ -63,6 +69,7 @@ Application Core — слой, который переживает закрыт�
 | `resume_playback` | `pub(crate) fn resume_playback(&mut self) -> Result<(), String>` | Снятие паузы или повторный запуск последнего URL |
 | `set_audio_paused` | `pub(crate) fn set_audio_paused(&mut self, paused: bool) -> Result<(), String>` | Пауза/продолжение потока |
 | `set_volume` | `pub(crate) fn set_volume(&mut self, volume: f64) -> Result<(), String>` | Дискретная громкость (трей, MPRIS, IPC): снять `pending_volume`, применить к аудио-ядру и сохранить сразу |
+| `nudge_volume` | `pub(crate) fn nudge_volume(&mut self, delta: f64) -> Result<(), String>` | Шаг громкости: `audio.volume() + delta` с округлением до сотых и `clamp` к `0.0..=1.0`, дальше `set_volume`; общий для трея, media и IPC `volume-up`/`volume-down` |
 | `preview_volume` | `pub(crate) fn preview_volume(&mut self, volume: f64) -> Result<(), String>` | Перетаскивание слайдера: звук меняется сразу, файл — нет; значение ждёт `commit_volume` или `flush_pending_volume` (ADR-0031) |
 | `commit_volume` | `pub(crate) fn commit_volume(&mut self, volume: f64) -> Result<(), String>` | Завершение перетаскивания, клик по треку, клавиатурный шаг и щелчок колеса: применить и записать в `SettingsStore` (колесо — дискретный ввод, pending не открывается, ADR-0031 § 8) |
 | `flush_pending_volume` | `pub(crate) fn flush_pending_volume(&mut self)` | Дозаписать незакрытый preview в настройки; зовётся из `end_window`, ошибка — только `warn!` |
@@ -316,9 +323,10 @@ pub(crate) const PANEL_TITLE: &str = "OrbitFM · Panel";
 ## 4. Реакция на IPC-команды
 
 `Session::execute` (`src/session/commands.rs`) — единственная точка разбора;
-она не знает, есть ли окно. Здесь же `impl From<WindowModeArg> for WindowMode`:
-wire-тип остаётся в `src/ipc/`, доменный — в Core, зависимость направлена от
-Core к инфраструктуре (ADR-0021 п. 5).
+она не знает, есть ли окно. Здесь же `impl From<WindowModeArg> for WindowMode` и
+`impl From<ThemeArg> for ThemeMode`: wire-типы остаются в `src/ipc/`, доменные —
+в Core, зависимость направлена от Core к инфраструктуре (ADR-0021 п. 5,
+ADR-0037).
 
 | `IpcCommand` | Действие | Ответ |
 |--------------|----------|-------|
@@ -328,12 +336,19 @@ Core к инфраструктуре (ADR-0021 п. 5).
 | `Panel` | `toggle_dropdown(WindowMode::Panel)` — поверхность, которую зовёт клик бар-виджета (ADR-0033, ред. 2026-10-28) | `ok` |
 | `Overlay` | `toggle_dropdown(WindowMode::Overlay)` — капсула Overlay (CLI и «Компоновка») | `ok` |
 | `Status` | `status_text()` | см. § 6 |
+| `StatusJson` | `status_json()` — снимок схемы 1 (ADR-0037) | JSON одной строкой, см. § 6.1 |
 | `ModeQuery` | `window_mode()` | `mode <focus\|overlay\|listening\|panel>`, без побочных эффектов |
 | `SetMode { mode }` | `set_window_mode(mode.into())` — из `WindowModeArg` (ADR-0021 п. 5) | `ok` |
 | `Quit` | `quit()` | `ok` |
 | `Play { station_uuid }` | `resolve_station` → `start_station` | `ok`, иначе `error <ошибка>` |
 | `Stop` | `stop_playback()` | `ok`, иначе `error <ошибка>` |
 | `Volume { level }` | `set_volume(level)` | `ok`, иначе `error <ошибка>` |
+| `PlayPause` | `toggle_playback()` | `ok`, иначе `error <ошибка>` |
+| `Next` / `Previous` | `play_relative(±1)` по видимой очереди | `ok`, иначе `error <ошибка>` |
+| `Roulette` | `start_roulette()` (повтор игнорируется, пока ответ в пути) | `ok` |
+| `VolumeUp` / `VolumeDown` | `nudge_volume(±VOLUME_STEP)` с `clamp` к `0.0..=1.0` | `ok`, иначе `error <ошибка>` |
+| `Theme { mode }` | `set_theme(ThemeMode::from(mode))` | `ok`, иначе `error <ошибка>` |
+| `Settings` | `open_settings()`: показывает окно, если оно скрыто; в `Listening` сначала переводит в `Overlay` | `ok` |
 | `Raw(raw)` | нет действия | `error неизвестная команда: <raw>` |
 
 Ответ клиенту формируется после фактического исполнения команды и отправки
@@ -383,6 +398,18 @@ mode <focus|overlay|listening|panel>
   поэтому каждая пара «ключ значение» остаётся одной строкой;
 - текст ошибки в `status` не включается — `Error(_)` даёт `status error`.
 
+### 6.1. `status --json` (схема 1)
+
+`status_json()` (`src/session/mod.rs`) сериализует `StatusPayload` через
+`serde_json` в одну компактную строку; полная схема и правило совместимости —
+`docs/interfaces/05-ipc.md` § 4. Поля: `schema`, `app`, `version`, `state`,
+`station` (полные метаданные или `null`), `volume` (округление до тысячных),
+`window { visible, mode }`, `theme`, `language`, `can { previous, next }`,
+`ui` — локализованные подписи `TrayText` из `i18n::catalog`. `window.visible`
+на macOS отражает `mark_hidden`, а не только закрытие вьюпорта (ADR-0026).
+Схема растёт только при удалении или переименовании полей; добавление полей
+её не меняет (ADR-0037).
+
 ## 7. Припаркованное состояние
 
 `park()` (`src/session/park.rs`) — цикл на `runtime.block_on(wait_on(...))`:
@@ -413,6 +440,10 @@ mode <focus|overlay|listening|panel>
 событие из `block_on`, а `execute`/`apply_audio_event`/`execute_media_command`/
 `execute_tray_command` вызываются уже в синхронном коде, потому что аудио-ядро
 зовёт `Handle::block_on` (`play`, `stop`, `set_volume`, `set_paused`).
+
+На macOS `park()` не вызывается: скрытое окно остаётся жить в run loop, те же
+события приходят в logic-проходы `tick()`, а `park()` остаётся аварийным путём,
+если цикл завершился не по `Close` (ADR-0026).
 
 ## 8. Зависимости
 

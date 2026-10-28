@@ -1,4 +1,5 @@
-//! Системный трей по StatusNotifierItem (ADR-0020).
+//! Системный трей: StatusNotifierItem на Linux (ADR-0020) и строка меню на
+//! macOS (ADR-0026).
 //!
 //! Модуль не знает ни про egui, ни про станции: обмен идёт двумя
 //! доменно-независимыми типами — [`TraySnapshot`] (что показать) и
@@ -6,13 +7,23 @@
 //! Core, что IPC и MPRIS, поэтому трей — третий источник команд, а не новый
 //! протокол (ADR-0005 остаётся как есть).
 //!
-//! На платформах без SNI и в сборке без фичи `tray` [`spawn`] возвращает `None`:
+//! На платформах без трея и в сборке без фичи `tray` [`spawn`] возвращает `None`:
 //! вызывающий код не обрастает `cfg`-ветками, поведение не меняется.
 
-#[cfg(all(target_os = "linux", feature = "tray"))]
+#[cfg(any(
+    all(target_os = "linux", feature = "tray"),
+    all(target_os = "macos", feature = "tray")
+))]
 mod icon;
+#[cfg(all(target_os = "macos", feature = "tray"))]
+mod macos;
 #[cfg(all(target_os = "linux", feature = "tray"))]
 mod sni;
+#[cfg(any(
+    all(target_os = "linux", feature = "tray"),
+    all(target_os = "macos", feature = "tray")
+))]
+mod text;
 
 use tokio::sync::mpsc;
 
@@ -25,9 +36,16 @@ pub(crate) const VOLUME_STEP: f64 = 0.1;
 /// Запрос пользователя из трея. `Hide` нет: единственный способ спрятать окно из
 /// трея — тот же toggle, что у Noctalia-виджета и IPC.
 ///
-/// Конструирует их только SNI-путь, поэтому в сборке без фичи `tray` варианты
-/// формально никем не создаются; `Session` исполняет их без `cfg`-веток.
-#[cfg_attr(not(all(target_os = "linux", feature = "tray")), allow(dead_code))]
+/// Конструируют их только платформенные бэкенды, поэтому в сборке без фичи
+/// `tray` варианты формально никем не создаются; `Session` исполняет их без
+/// `cfg`-веток.
+#[cfg_attr(
+    not(any(
+        all(target_os = "linux", feature = "tray"),
+        all(target_os = "macos", feature = "tray")
+    )),
+    allow(dead_code)
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TrayCommand {
     Toggle,
@@ -62,19 +80,50 @@ pub(crate) struct TraySnapshot {
 
 /// Живой трей: куда публиковать снимки и откуда читать команды.
 ///
-/// Владелец — `Session`. Когда он отдаёт handle, закрытие канала снимков
-/// останавливает поток-владелец сервиса, а тот гасит SNI-item.
+/// Владелец — `Session`. На Linux, когда он отдаёт handle, закрытие канала
+/// снимков останавливает поток-владелец сервиса, а тот гасит SNI-item. На macOS
+/// handle держит элемент строки меню сам: он создан на главном потоке после
+/// старта run loop (ADR-0026, п. 6) и живёт столько же, сколько `Session`.
 pub(crate) struct TrayHandle {
+    #[cfg(all(target_os = "linux", feature = "tray"))]
     snapshots: Option<std::sync::mpsc::Sender<TraySnapshot>>,
+    #[cfg(all(target_os = "macos", feature = "tray"))]
+    macos: Option<macos::Slot>,
     pub(crate) commands: mpsc::UnboundedReceiver<TrayCommand>,
 }
 
 impl TrayHandle {
     /// Публикует снимок. `false` означает, что трей умер: больше к нему не идём.
-    pub(crate) fn publish(&self, snapshot: &TraySnapshot) -> bool {
+    #[cfg(all(target_os = "linux", feature = "tray"))]
+    pub(crate) fn publish(&mut self, snapshot: &TraySnapshot) -> bool {
         self.snapshots
             .as_ref()
             .is_some_and(|sender| sender.send(snapshot.clone()).is_ok())
+    }
+
+    /// macOS обновляет меню на главном потоке: `Session` живёт там же, поэтому
+    /// публикация — обычный вызов без канала (ADR-0026, п. 6–7).
+    #[cfg(all(target_os = "macos", feature = "tray"))]
+    pub(crate) fn publish(&mut self, snapshot: &TraySnapshot) -> bool {
+        self.macos
+            .as_mut()
+            .is_some_and(|slot| slot.publish(snapshot))
+    }
+
+    /// Платформа без трея: публиковать некуда.
+    #[cfg(not(any(
+        all(target_os = "linux", feature = "tray"),
+        all(target_os = "macos", feature = "tray")
+    )))]
+    pub(crate) fn publish(&mut self, _snapshot: &TraySnapshot) -> bool {
+        false
+    }
+
+    /// Создаёт macOS-иконку на главном потоке, когда run loop уже запущен.
+    /// На Linux такой стадии нет: SNI-поток поднимается в [`spawn`].
+    #[cfg(all(target_os = "macos", feature = "tray"))]
+    pub(crate) fn attach(&mut self) -> bool {
+        self.macos.as_mut().is_some_and(macos::Slot::attach)
     }
 }
 
@@ -95,8 +144,22 @@ pub(crate) fn spawn(app_id: &'static str, title: &'static str, wake: WakeFn) -> 
     })
 }
 
-/// Платформы без SNI: трея нет, остальное приложение работает как раньше.
-#[cfg(not(all(target_os = "linux", feature = "tray")))]
+/// macOS: иконка создаётся позже, в `OrbitApp::new` (требование `tray-icon`),
+/// поэтому здесь только канал команд и неподключённый слот.
+#[cfg(all(target_os = "macos", feature = "tray"))]
+pub(crate) fn spawn(app_id: &'static str, title: &'static str, wake: WakeFn) -> Option<TrayHandle> {
+    let (command_tx, command_rx) = mpsc::unbounded_channel();
+    Some(TrayHandle {
+        macos: Some(macos::Slot::new(app_id, title, command_tx, wake)),
+        commands: command_rx,
+    })
+}
+
+/// Платформы без трея: трея нет, остальное приложение работает как раньше.
+#[cfg(not(any(
+    all(target_os = "linux", feature = "tray"),
+    all(target_os = "macos", feature = "tray")
+)))]
 pub(crate) fn spawn(
     _app_id: &'static str,
     _title: &'static str,

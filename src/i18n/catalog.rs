@@ -8,9 +8,8 @@ pub(crate) struct Catalog {
     pub capsule: CapsuleText,
     pub overlay: OverlayText,
     pub settings: SettingsText,
-    /// Строки SNI-меню: читаются только `src/tray/sni.rs`, поэтому в сборке
-    /// без Linux и без фичи `tray` поле формально не востребовано.
-    #[cfg_attr(not(all(target_os = "linux", feature = "tray")), allow(dead_code))]
+    /// Строки меню трея и подписи `status --json` (ADR-0020, ADR-0037):
+    /// нужны SNI на Linux, строке меню macOS и JSON-снимку на всех платформах.
     pub tray: TrayText,
     pub notices: NoticeText,
     pub labels: LabelText,
@@ -181,11 +180,26 @@ pub(crate) struct SettingsText {
     pub about_page_hint: &'static str,
 }
 
-#[cfg_attr(not(all(target_os = "linux", feature = "tray")), allow(dead_code))]
 pub(crate) struct TrayText {
     pub show_window: &'static str,
     pub hide_window: &'static str,
+    // Заголовок и Quit нужны только платформенным бэкендам трея; `status --json`
+    // их не публикует (ADR-0037), поэтому без трея они не читаются.
+    #[cfg_attr(
+        not(any(
+            all(target_os = "linux", feature = "tray"),
+            all(target_os = "macos", feature = "tray")
+        )),
+        allow(dead_code)
+    )]
     pub now_playing: &'static str,
+    #[cfg_attr(
+        not(any(
+            all(target_os = "linux", feature = "tray"),
+            all(target_os = "macos", feature = "tray")
+        )),
+        allow(dead_code)
+    )]
     pub paused: &'static str,
     pub nothing_playing: &'static str,
     pub play_pause: &'static str,
@@ -196,6 +210,13 @@ pub(crate) struct TrayText {
     pub volume_up: &'static str,
     pub volume_down: &'static str,
     pub settings: &'static str,
+    #[cfg_attr(
+        not(any(
+            all(target_os = "linux", feature = "tray"),
+            all(target_os = "macos", feature = "tray")
+        )),
+        allow(dead_code)
+    )]
     pub quit: &'static str,
 }
 

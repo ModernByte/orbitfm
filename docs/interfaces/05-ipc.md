@@ -46,16 +46,25 @@ Windows. Named pipe занимает первый экземпляр как пр
 | `panel` | Показать/скрыть выпадающую панель — её зовёт клик бар-виджета (ADR-0033, ред. 2026-10-28) | — |
 | `overlay` | Показать/скрыть капсулу Overlay (CLI, скрипты) | — |
 | `play <stationuuid>` | Воспроизвести станцию | UUID |
+| `playpause` | Переключить воспроизведение (ADR-0037) | — |
+| `next` / `previous` | Следующая/предыдущая станция (ADR-0037) | — |
+| `roulette` | Запустить радиорулетку (ADR-0037) | — |
 | `stop` | Остановить | — |
 | `status` | Текущее состояние | — |
+| `status --json` | Снимок состояния в JSON, схема 1 (ADR-0037) | — |
 | `mode` | Текущий режим окна | — |
 | `mode <режим>` | Переключить режим окна | `focus`, `overlay`, `listening` или `panel` |
-| `quit` | Полный выход | — |
+| `theme <режим>` | Установить тему интерфейса (ADR-0037) | `system`, `dark`, `light` |
 | `volume <0.0-1.0>` | Установить громкость | float |
+| `volume-up` / `volume-down` | Шаг громкости ±0.1 (ADR-0037) | — |
+| `settings` | Открыть окно настроек (ADR-0037) | — |
+| `quit` | Полный выход | — |
 
 Лишние аргументы у команд без параметров, некорректный `volume` (не число, `NaN`,
-вне диапазона `0.0..=1.0`), отсутствующий аргумент `play` и неизвестный режим у
-`mode <режим>` отклоняются как `error <сообщение>`.
+вне диапазона `0.0..=1.0`), отсутствующий аргумент `play`, неизвестный режим у
+`mode <режим>` и неизвестная тема у `theme` отклоняются как `error <сообщение>`.
+`status` принимает только необязательный `--json`; любой другой аргумент —
+`error некорректный аргумент команды: …`.
 
 На Этапе 3 `play <uuid>` полностью подключён: Application Core ищет станцию в результатах
 последнего поиска, затем в кэше/каталоге Radio Browser (таймаут 8 с), запускает
@@ -119,6 +128,58 @@ error <сообщение>
 
 Клиент считает ответ ошибочным, если после ведущих пробелов строка начинается с `error`.
 
+### `status --json` (схема 1)
+
+Ответ — одна строка компактного JSON без перевода строки в конце (сервер добавляет
+финальный `\n`). Текстовый `status` не меняется: JSON — отдельная команда, чтобы
+парсеры оболочек не зависели от формата человекочитаемого вывода (ADR-0037).
+
+```json
+{
+  "schema": 1,
+  "app": "orbitfm",
+  "version": "0.13.0-rc.1",
+  "state": "playing",
+  "station": {
+    "uuid": "960cf833-0601-11e8-ae97-52543be04c81",
+    "name": "SomaFM Groove Salad (128k MP3)",
+    "country": "The United States Of America",
+    "countrycode": "US",
+    "tags": "ambient,chillout",
+    "favicon": "https://example.org/favicon.png",
+    "homepage": "https://somafm.com",
+    "bitrate": 128,
+    "codec": "MP3"
+  },
+  "volume": 0.42,
+  "window": { "visible": true, "mode": "focus" },
+  "theme": "dark",
+  "language": "en",
+  "can": { "previous": true, "next": true },
+  "ui": {
+    "play_pause": "Play/Pause", "stop": "Stop", "previous": "Previous",
+    "next": "Next", "radio_roulette": "Radio Roulette",
+    "settings": "Settings…", "show_window": "Show window",
+    "hide_window": "Hide window", "nothing_playing": "Nothing playing",
+    "volume_up": "Volume Up", "volume_down": "Volume Down"
+  }
+}
+```
+
+- `state` использует те же значения, что текстовый `status`; `station` — `null`
+  для `stopped`/`error` и для состояния без выбранной станции.
+- `window.visible` на macOS отражает скрытое `NSWindow`, а не только закрытие
+  root-вьюпорта (ADR-0026): `hide` даёт `false` при живом процессе.
+- `volume` округляется до тысячных, чтобы серия `volume-up` не давала
+  `0.30000000000000004`.
+- `ui` — локализованные подписи из каталога i18n (`TrayText`) для действующего
+  языка: оболочки не дублируют каталог на 11 языках. Неизвестный язык клиента не
+  влияет — язык берётся из настроек приложения.
+- Совместимость: добавление полей не меняет `schema`; удаление или переименование —
+  только `schema: 2`. Клиенты обязаны игнорировать неизвестные поля.
+- `can.previous`/`can.next` — есть ли в очереди станция для перехода; рулетка
+  доступна всегда, поэтому флага нет.
+
 ## 5. Таймауты и лимиты
 
 | Параметр | Значение |
@@ -153,14 +214,36 @@ impl WindowModeArg {
     pub fn as_str(self) -> &'static str;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThemeArg {
+    System,
+    Dark,
+    Light,
+}
+
+impl ThemeArg {
+    /// Имя темы в протоколе.
+    pub fn as_str(self) -> &'static str;
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum IpcCommand {
     Toggle,
     Show,
     Hide,
     Play { station_uuid: String },
+    /// `playpause` — toggle воспроизведения (ADR-0037).
+    PlayPause,
+    /// `next` — следующая станция очереди (ADR-0037).
+    Next,
+    /// `previous` — предыдущая станция очереди (ADR-0037).
+    Previous,
+    /// `roulette` — радиорулетка (ADR-0037).
+    Roulette,
     Stop,
     Status,
+    /// `status --json` — снимок по схеме 1 (ADR-0037).
+    StatusJson,
     /// `mode` — спросить текущий режим.
     ModeQuery,
     /// `mode <режим>` — переключить.
@@ -170,6 +253,13 @@ pub enum IpcCommand {
     Panel,
     /// `overlay` — переключатель капсулы Overlay (CLI и скрипты) (ADR-0033).
     Overlay,
+    /// `theme <режим>` — установить тему (ADR-0037).
+    Theme { mode: ThemeArg },
+    /// `settings` — открыть окно настроек; может запустить экземпляр (ADR-0037).
+    Settings,
+    /// `volume-up`/`volume-down` — шаг громкости ±0.1 (ADR-0037).
+    VolumeUp,
+    VolumeDown,
     Quit,
     Volume { level: f64 },
     Raw(String),
@@ -227,8 +317,9 @@ impl IpcServer {
 
 `WindowModeArg` — wire-тип: `src/ipc/` не знает доменного `WindowMode`
 (`src/session/window.rs`), а `impl From<WindowModeArg> for WindowMode` живёт в
-Application Core (`src/session/commands.rs`). Направление зависимости остаётся
-Core → инфраструктура.
+Application Core (`src/session/commands.rs`). Точно так же `ThemeArg` не знает
+`ThemeMode`: преобразование объявлено в `src/session/commands.rs`. Направление
+зависимости остаётся Core → инфраструктура.
 
 При shutdown сервер прекращает accept, ждёт завершения активных соединений до 1 с и
 только затем удаляет сокет. Это гарантирует, что ответ на `quit` успевает уйти клиенту.
@@ -249,9 +340,11 @@ Core → инфраструктура.
 | Экземпляр запущен | Команда отправляется ему; ответ печатается для явно заданной команды |
 | Экземпляр не запущен, команда `toggle`/`show`/`panel`/`overlay` | Запускается новый процесс с видимым окном (для `panel` — в режиме Panel, для `overlay` — в режиме Overlay) |
 | Экземпляр не запущен, команда `mode <режим>` | Запускается новый процесс с видимым окном в этом режиме |
+| Экземпляр не запущен, команда `settings` | Запускается новый процесс с открытым окном настроек (ADR-0037) |
 | `try_bind` вернул `AlreadyRunning` во время запуска | Команда повторно отправляется до 5 раз с интервалом 50 мс |
-| Экземпляр не запущен, другая команда | Ошибка `OrbitFM не запущен`, код возврата 1 |
+| Экземпляр не запущен, `playpause`/`next`/`previous`/`roulette`/`theme`/`volume-up`/`volume-down`/`status`/`status --json` | Ошибка `OrbitFM не запущен`, код возврата 1: управляющая команда не поднимает GUI |
 | Ответ начинается с `error` | Текст ошибки выводится в stderr, код возврата 1 |
+| `status --json` | Строка JSON печатается как есть, без разбора клиентом |
 | `quit` | Сервер отвечает `ok`, затем окно закрывается и процесс завершается |
 
 Гонка «экземпляр появился между проверкой и `try_bind`» обрабатывается повторной

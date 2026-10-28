@@ -9,9 +9,11 @@
 `station_filter`), `tokio`, `tracing`  
 **Решение:** ADR-0018 «Скрытие окна = закрытие вьюпорта с перезапуском UI-цикла»,
 ADR-0020 «Иконка в системном трее (StatusNotifierItem на ksni)»,
-ADR-0021 «Режимы окна (`WindowMode`)», ADR-0030 «Локализация интерфейса»
+ADR-0021 «Режимы окна (`WindowMode`)», ADR-0026 «macOS: меню-бар и Now Playing
+при скрытом окне», ADR-0030 «Локализация интерфейса»
 (типизированные `Notice`), ADR-0031 «Панель настроек и персистентность»
-(модальное окно настроек, громкость commit-on-release)
+(модальное окно настроек, громкость commit-on-release), ADR-0037 «Единая
+поверхность интеграции: JSON-статус, CLI-команды и установщик»
 
 ---
 
@@ -19,9 +21,11 @@ ADR-0021 «Режимы окна (`WindowMode`)», ADR-0030 «Локализац
 
 На Wayland скрыть окно можно только закрыв root-вьюпорт, поэтому
 `eframe::run_native` перезапускается из главного потока при каждом показе, а
-`OrbitApp` создаётся заново. Чтобы состояние не умирало вместе с окном, оно
-вынесено в `Session` — пакет `src/session/`, которым владеет главный цикл
-`run_session` (`src/main.rs`).
+`OrbitApp` создаётся заново. На macOS окно скрывается `Visible(false)` без
+закрытия вьюпорта: run loop продолжает крутить logic-проходы, а `Session`
+переживает лишь реальное закрытие — quit или смену режима (ADR-0026). Чтобы
+состояние не умирало вместе с окном, оно вынесено в `Session` — пакет
+`src/session/`, которым владеет главный цикл `run_session` (`src/main.rs`).
 
 | Живёт в `src/session/` (переживает закрытие окна) | Живёт в presentation (один прогон UI) |
 |---|---|
@@ -107,7 +111,13 @@ Listening — `Off`. `motion_reactivity()`, `analysis_needed()` и `sync_analysi
 его забирает `run_session` (`take_reopen`) и снимает `begin_window`.
 `quitting` — единственный признак, отличающий «скрыли» от «вышли»: окно
 закрывается и в том, и в другом случае, поэтому `run_session` обязан проверить
-флаг ровно один раз по возврату из `run_native`. `notices` — очередь, а не одно
+флаг ровно один раз по возврату из `run_native`. На macOS скрытие не закрывает
+вьюпорт: `UiIntent::Hide` превращается в `Visible(false)`, а
+`WindowState::mark_hidden` сразу выставляет `visible = false`, не дожидаясь
+выхода из `run_native`; `mark_shown` возвращает видимость. `Session::mark_hidden`
+дополнительно закрывает настройки, фиксирует `pending_volume`, обновляет анализ,
+MPRIS и `TraySnapshot` (ADR-0026), а `window_visible()` читают `status`, трей и
+гейт репейнта спектра. `notices` — очередь, а не одно
 сообщение: сообщения, накопленные при закрытом окне, доживают до первого кадра
 после показа (в отличие от `Toast`, который держит одно сообщение).
 
@@ -115,16 +125,16 @@ Listening — `Off`. `motion_reactivity()`, `analysis_needed()` и `sync_analysi
 
 | Файл | Ответственность | Типы и функции наружу (`pub(crate)`) |
 |------|-----------------|--------------------------------------|
-| `mod.rs` | Ядро: владение подсистемами, пробуждение, окно настроек и язык, `status`, ре-экспорт контрактов пакета | `Session`, `AppServices`, `Notice`, `NoticeKey`, `ParkOutcome`, `WakeHandle`, `LibraryTab`, `StationStartError`; наружу из `window.rs` — `UiIntent`, `WindowMode`, `WindowState`, `WINDOW_TITLE` |
+| `mod.rs` | Ядро: владение подсистемами, пробуждение, окно настроек и язык, `status`, `status --json`, исследование видимости для macOS, ре-экспорт контрактов пакета | `Session`, `AppServices`, `Notice`, `NoticeKey`, `ParkOutcome`, `WakeHandle`, `LibraryTab`, `StationStartError`; наружу из `window.rs` — `UiIntent`, `WindowMode`, `WindowState`, `WINDOW_TITLE` |
 | `notice.rs` | Типизированные сообщения пользователю: ядро называет причину, строку берёт каталог `i18n` (ADR-0030) | `Notice { Info(NoticeKey), Error { key, detail } }`, `NoticeKey` |
-| `window.rs` | Состояние окна: режим (`WindowMode`), геометрия и заголовки по режиму, намерения UI, признак перезапуска (ADR-0018, ADR-0021) | `WindowMode` (+ `ALL`/`default_size`/`min_size`/`title`/`as_str`), `UiIntent`, `WindowState`, `WINDOW_SIZE`, `WINDOW_MIN_SIZE`, `WINDOW_TITLE`, `OVERLAY_SIZE`, `OVERLAY_MIN_SIZE`, `OVERLAY_TITLE`, `LISTENING_SIZE`, `LISTENING_MIN_SIZE`, `LISTENING_TITLE` |
-| `commands.rs` | Разбор `IpcCommand` (общий для окна и парковки), `impl From<WindowModeArg> for WindowMode` и настроек оформления, языка и движения | `Session::{execute, process_commands, set_theme, set_accent, set_language, set_viz_bars, set_visualizer_enabled, set_motion, set_motion_style, set_allow_flips, set_reduce_motion, settle_analysis, set_help_visible}` |
+| `window.rs` | Состояние окна: режим (`WindowMode`), геометрия и заголовки по режиму, намерения UI (`Show`/`Hide`/`Close`), признак перезапуска, видимость без пересоздания вьюпорта (ADR-0018, ADR-0021, ADR-0026) | `WindowMode` (+ `ALL`/`default_size`/`min_size`/`title`/`as_str`/`is_borderless`), `UiIntent`, `WindowState` (+ `mark_hidden`/`mark_shown`), `WINDOW_SIZE`, `WINDOW_MIN_SIZE`, `WINDOW_TITLE`, `OVERLAY_SIZE`, `OVERLAY_MIN_SIZE`, `OVERLAY_TITLE`, `LISTENING_SIZE`, `LISTENING_MIN_SIZE`, `LISTENING_TITLE`, `PANEL_SIZE`, `PANEL_MIN_SIZE`, `PANEL_TITLE` |
+| `commands.rs` | Разбор `IpcCommand` (общий для окна и парковки), `impl From<WindowModeArg> for WindowMode`, `impl From<ThemeArg> for ThemeMode`, диспетчеризация команд управления (ADR-0037) и настроек оформления, языка и движения | `Session::{execute, process_commands, set_theme, set_accent, set_language, set_viz_bars, set_visualizer_enabled, set_motion, set_motion_style, set_allow_flips, set_reduce_motion, settle_analysis, set_help_visible}` |
 | `playback.rs` | Аудио-события, запуск/остановка, выбор станции, громкость commit-on-release, избранное, история, очередь `prev`/`next`, витрина MPRIS | `Session::{process_audio_events, apply_audio_event, resolve_station, start_station, select_station, take_station_reveal, spawn_click, toggle_favorite, clear_history, focus_country, set_volume, preview_volume, commit_volume, flush_pending_volume, set_audio_paused, resume_playback, toggle_playback, stop_playback, process_media_commands, execute_media_command, visible_queue, visible_queue_len, play_relative, sync_media}` |
 | `search.rs` | Поиск по имени/стране/жанру с поколениями ответов и рулетка | `SearchMode`, `SearchContext`, `SearchState`, `SearchResponse`, `STATION_LOOKUP_TIMEOUT`, `Session::{start_search, start_country_search, start_genre_search, switch_mode, poll_search, start_roulette, poll_roulette, apply_roulette}` |
 | `markers.rs` | Агрегация станций с координатами в маркеры глобуса | `GlobeMarker`, `build_markers` (+ `#[cfg(test)] sample_station`, `geo_station`) |
 | `heat.rs` | Метрики тепловой карты стран (ADR-0035): нормировка в `0,15..=1` по выборке станций и по глобальным счётчикам | `CountryMetric` (+ `ALL`/`is_on`), `intensities`, `densities` |
 | `world.rs` | Глобальный снимок Radio Browser для карты: счётчики стран и мировой топ, загруженные одним фоном на старт (ADR-0035) | `WorldBaseline` (+ `counts`/`sample`/`revision`), `Session::{start_world, poll_world}` |
-| `tray.rs` | Трей: публикация снимка и исполнение `TrayCommand` тем же dispatch | `Session::{sync_tray, process_tray_commands, execute_tray_command}` (приватные `nudge_volume`, `tray_snapshot`) |
+| `tray.rs` | Трей: публикация снимка и исполнение `TrayCommand` тем же dispatch; `nudge_volume` общий для трея, IPC `volume-up/down` и media-команд | `Session::{sync_tray, process_tray_commands, execute_tray_command, nudge_volume}` (приватный `tray_snapshot`) |
 | `park.rs` | Простой без окна: `select!` по IPC, MPRIS, трею, аудио и ответу рулетки | `ParkOutcome`, `Session::park` (приватные `Parked`, `wait_on`, `media_recv`, `tray_recv`, `roulette_recv`) |
 
 Помощники `mpris_artist`, `country_search_params`, `roulette_label`,
@@ -380,7 +390,9 @@ process_audio_events → process_commands → process_media_commands
 нет): держать процесс без канала нечем, поэтому он трактуется как выход.
 
 В припаркованном состоянии без UI исполняются IPC-команды `play`, `stop`,
-`volume`, `status`, `mode` (обе формы), все `MediaCommand` (`Play`, `Pause`, `PlayPause`, `Stop`,
+`volume`, `volume-up`, `volume-down`, `playpause`, `next`, `previous`,
+`roulette`, `theme`, `status`, `status --json`, `mode` (обе формы), все
+`MediaCommand` (`Play`, `Pause`, `PlayPause`, `Stop`,
 `SetVolume`, `Next`, `Previous`) и все `TrayCommand` (`Toggle`, `Show`,
 `PlayPause`, `Stop`, `Previous`, `Next`, `Roulette`, `VolumeUp`, `VolumeDown`,
 `SetTheme`, `Settings`, `Quit`). `hide` ничего не делает (окно уже закрыто), `show`,
@@ -390,12 +402,30 @@ process_audio_events → process_commands → process_media_commands
 сразу собирается с геометрией режима, без перезапуска ради перезапуска. `quit`
 ставит `quitting` и выводит `ParkOutcome::Quit`.
 
+На macOS `park()` не вызывается: скрытое окно остаётся жить в run loop, и те же
+команды приходят в logic-проходы `tick()`. `park()` остаётся аварийным путём,
+если цикл завершился не по `Close` (ADR-0026).
+
 ### 4.12. IPC-команды и оформление
 
 `execute(&IpcCommand) -> String` — общий разбор для окна и парковки (полная
 таблица — `docs/interfaces/10-session.md` § 4). Здесь же `impl From<WindowModeArg>
-for WindowMode`: `src/ipc/` не знает доменного режима, превращение делает Core
-(ADR-0021 п. 5). Настройки оформления, языка и движения идут через
+for WindowMode` и `impl From<ThemeArg> for ThemeMode`: `src/ipc/` не знает
+доменных типов, превращение делает Core (ADR-0021 п. 5, ADR-0037).
+
+Команды управления из ADR-0037 — тонкие обёртки над существующими методами:
+`playpause` → `toggle_playback`, `next`/`previous` → `play_relative(±1)`,
+`roulette` → `start_roulette`, `volume-up`/`volume-down` →
+`nudge_volume(±VOLUME_STEP)`, `theme <…>` → `set_theme`, `settings` →
+`open_settings`. Ответ `ok` или `error <сообщение>`; успех `theme` и `settings`
+не дожидается перерисовки — UI применит их в следующем кадре.
+
+`status_json()` собирает `StatusPayload` (схема 1, `STATUS_SCHEMA`) через
+`serde_json`: `app`, `version` из `CARGO_PKG_VERSION`, `state`, `station`
+(полные метаданные или `null`), `volume` с округлением до тысячных, `window`,
+`theme`, `language`, `can` и локализованный `ui` из `i18n::catalog` (ADR-0037).
+Текстовый `format_status` не меняется; `window.visible` на macOS отражает
+`mark_hidden`, а не только закрытие вьюпорта. Настройки оформления, языка и движения идут через
 `SettingsStore` и возвращают `Result<(), String>`: `set_theme`, `set_accent`,
 `set_viz_bars`, `set_motion`, `set_motion_style`, `set_allow_flips`,
 `set_reduce_motion`;
@@ -442,10 +472,12 @@ Reconnecting`, `station` — `single_line(name)` при живом эфире и
 `theme` — из `SettingsStore`, `language` — поле `Session.language` (уже
 разрешённый, без `System`), от которого зависят подписи меню (ADR-0030).
 Публикация только по изменению: сравнение с
-`tray_snapshot`, `publish` в канал `TrayHandle`, а `false` (поток-владелец умер)
-гасит ветку — `tray` и `tray_snapshot` обнуляются, повторных dbus-round-trip не
-будет. Вызовы: каждый `tick()`, каждый `end_window()`, после `set_language` и
-после каждого события в `park()`.
+`tray_snapshot`, `publish` в канал `TrayHandle`, а `false` (поток-владелец умер
+или иконка macOS не создалась) гасит ветку — `tray` и `tray_snapshot`
+обнуляются, повторных dbus-round-trip не будет. Вызовы: каждый `tick()`, каждый
+`end_window()`, `mark_hidden`/`mark_shown`, после `set_language` и
+после каждого события в `park()`. На macOS снимок обновляет меню строки меню на
+главном потоке; до `attach` последний снимок копится в `pending` (ADR-0026).
 
 `process_tray_commands()` вычерпывает `tray.commands` через `try_recv` (путь
 открытого окна), а `execute_tray_command(TrayCommand)` исполняет одну команду —
@@ -512,13 +544,15 @@ Wayland был бы просьбой, которую композитор впр
   который на Wayland документированно не имеет эффекта — фокус при показе
   зависит от композитора.
 - `status` в припаркованном состоянии всегда отвечает `window hidden`;
-  `toggle` опирается на признак `Session`, а не на состояние композитора: окно,
-  свёрнутое WM, считается открытым и `toggle` его закрывает.
-- Смена темы/акцента/языка из IPC невозможна: этих команд в протоколе нет
-  (ADR-0005), `set_accent` и `set_language` вызывают только окно настроек.
-  Тема доступна из трея (`SetTheme`), язык — нет: `TraySnapshot` его показывает,
-  но не меняет. При закрытом окне перекраска `egui` произойдёт лишь на следующем
-  показе.
+  на macOS скрытое окно тоже даёт `hidden`, потому что `mark_hidden` сразу
+  обновляет `WindowState::visible` (ADR-0026). `toggle` опирается на признак
+  `Session`, а не на состояние композитора: окно, свёрнутое WM, считается
+  открытым и `toggle` его закрывает.
+- Смена акцента и языка из IPC невозможна: этих команд в протоколе нет
+  (ADR-0005, ADR-0030), `set_accent` и `set_language` вызывают только окно
+  настроек. Тема доступна из трея (`SetTheme`) и из IPC `theme`
+  (ADR-0037) — при закрытом окне перекраска `egui` произойдёт лишь на
+  следующем показе.
 - Часть состояния (`search.query`, `panel_open`, `show_help`, `library_tab`,
   `country_filter`, `globe_camera`) UI правит напрямую через `&mut`-поля;
   инкапсуляция держится на соглашении «побочные эффекты — только через методы».
@@ -542,12 +576,17 @@ Wayland был бы просьбой, которую композитор впр
 
 Unit-тесты лежат в модулах: `mod.rs` — молчание `WakeHandle` без слота,
 отсутствие потребности в анализе без окна и его следование настройкам
-визуализатора и движения, все варианты `format_status`; `window.rs` —
-чередование `toggle`, отсутствие намерения при `hide` закрытого окна, обе ветки
-смены режима, единичность `reopen`, порядок `WindowMode::ALL` от полного к
+визуализатора и движения, все варианты `format_status`, `status_json`
+(stopped/playing, `station: null`, скрытое окно, `can`, локализованный `ui`,
+округление громкости, стабильная схема); `window.rs` —
+чередование `toggle`, отсутствие намерения при `hide` закрытого окна,
+единичность `Hide` до обработки кадра, обе ветки
+смены режима, единичность `reopen`, `mark_hidden`/`mark_shown`, порядок
+`WindowMode::ALL` от полного к
 минимальному, геометрия и заголовок каждого режима, изоляция пользовательского
 размера в `Focus`; `commands.rs` — префикс `error` у неизвестной команды,
-round-trip протокола и `WindowModeArg → WindowMode`; `playback.rs` — приоритет
+round-trip протокола, `WindowModeArg → WindowMode` и `ThemeArg → ThemeMode`;
+`playback.rs` — приоритет
 локации над тегами в MPRIS;
 `search.rs` — сброс контекста при смене режима, отбрасывание устаревшего ответа,
 подпись рулетки, параметры запроса страны; `markers.rs` — группировка по
@@ -561,16 +600,20 @@ round-trip протокола и `WindowModeArg → WindowMode`; `playback.rs` �
 окно из раскладки niri, в скрытом состоянии работают `play`, `volume`, `status`,
 `show` возвращает интерфейс со старым состоянием, `quit` завершает процесс без
 паник. Живая проверка трея (SNI-регистрация, меню, клики, колесо, команды при
-закрытом окне) — в ADR-0020 («Проверка реализации»).
+закрытом окне) — в ADR-0020 («Проверка реализации»). macOS-путь (скрытие без
+закрытия вьюпорта, медиа-клавиши, меню строки меню, Cmd-W/Cmd-Q) проверяется по
+матрице ADR-0026; в CI он покрыт сборкой и тестами модулей.
 
 ## 7. Связанные документы
 
 - ADR-0018: Скрытие окна = закрытие вьюпорта с перезапуском UI-цикла
 - ADR-0020: Иконка в системном трее (StatusNotifierItem на ksni)
 - ADR-0021: Режимы окна (`WindowMode`) и IPC-глагол `mode`
+- ADR-0026: macOS — меню-бар и Now Playing при скрытом окне
 - ADR-0030: Локализация интерфейса (типизированные `Notice` и `NoticeKey`)
 - ADR-0031: Панель настроек и персистентность (модальное окно, громкость
   commit-on-release)
+- ADR-0037: Единая поверхность интеграции (JSON-статус и команды управления)
 - `docs/interfaces/10-session.md` — формальный контракт `Session`
 - `docs/modules/12-tray.md`, `docs/interfaces/11-tray.md` — модуль трея
 - `docs/modules/13-i18n.md`, `docs/interfaces/12-i18n.md` — каталоги строк, в том
