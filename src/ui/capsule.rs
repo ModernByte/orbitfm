@@ -423,6 +423,8 @@ pub(crate) fn overlay_favorites(
                 for (index, station) in visible.iter().enumerate() {
                     let mut row = RowContext {
                         playing: playing_uuid == Some(station.stationuuid.as_str()),
+                        selected: false,
+                        reveal: false,
                         compact: true,
                         favorites,
                         language,

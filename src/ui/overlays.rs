@@ -72,6 +72,9 @@ pub(crate) fn help_card(ui: &mut egui::Ui, palette: &Palette, language: Language
                 faded(palette.muted, shown),
             );
         }
+        // Нижний отступ: без него последняя строка упирается в скругление
+        // карточки (жалоба 2026-10-28).
+        ui.add_space(8.0);
     });
 }
 

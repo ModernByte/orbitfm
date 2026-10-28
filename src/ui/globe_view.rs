@@ -1,5 +1,6 @@
 //! 3D-глобус: ввод камеры, маркеры, спектр и подсказки.
 
+use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use eframe::egui;
@@ -194,7 +195,13 @@ pub(crate) struct GlobeState<'a> {
     pub markers: &'a [GlobeMarker],
     /// Активная станция: маркер пульсирует, у точки — плашка, как у страны.
     pub current_station: Option<&'a Station>,
+    /// Выбранная станция: её маркер обведён постоянным кольцом (ADR-0036).
+    pub selected_station: Option<&'a str>,
     pub geo: &'a GeoService,
+    /// Счётчики всех стран Radio Browser из прогретого `session::world`
+    /// (ADR-0035): подсказка и заливка страны показывают размер базы, а не
+    /// только видимую выборку. Пустая карта — снимок ещё не пришёл.
+    pub country_counts: Option<&'a HashMap<String, u32>>,
     pub selected_country: Option<&'a Country>,
     /// В режиме жанра страна не выбирается и не подсвечивается.
     pub country_enabled: bool,
@@ -310,9 +317,9 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
 
     if let Some(position) = input.primary_clicked {
         if let Some(index) = nearest_marker(&marker_screens, position) {
-            response
-                .actions
-                .push(UiAction::Play(state.markers[index].station.clone()));
+            response.actions.push(UiAction::SelectStation(
+                state.markers[index].station.clone(),
+            ));
         } else {
             response.clicked_empty = true;
             if let Some(point) = state
@@ -356,6 +363,7 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
             state.geo,
             CountryHighlight {
                 markers: state.markers,
+                counts: state.country_counts,
                 selected: state.selected_country,
                 hovered: hovered_country,
             },
@@ -382,6 +390,9 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
                     pos: *position,
                     playing: current_uuid
                         .is_some_and(|uuid| marker.members.iter().any(|member| member == uuid)),
+                    selected: state
+                        .selected_station
+                        .is_some_and(|uuid| marker.members.iter().any(|member| member == uuid)),
                 }
             })
             .collect();
@@ -401,9 +412,17 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
     let active_country = state
         .country_enabled
         .then_some(match state.selected_country {
-            Some(country) => country_card(country, state.markers, state.geo, 1.0),
+            Some(country) => {
+                country_card(country, state.markers, state.country_counts, state.geo, 1.0)
+            }
             None => hovered_country.and_then(|country| {
-                country_card(country, state.markers, state.geo, CALLOUT_HOVER_ALPHA)
+                country_card(
+                    country,
+                    state.markers,
+                    state.country_counts,
+                    state.geo,
+                    CALLOUT_HOVER_ALPHA,
+                )
             }),
         })
         .flatten();
@@ -482,6 +501,7 @@ fn country_at_position<'a>(
 
 struct CountryHighlight<'a> {
     markers: &'a [GlobeMarker],
+    counts: Option<&'a HashMap<String, u32>>,
     selected: Option<&'a Country>,
     hovered: Option<&'a Country>,
 }
@@ -500,7 +520,8 @@ fn paint_country_highlights(
     if let Some(country) = highlight.selected
         && let Some(shape) = geo.country_shape(&country.iso_a2)
     {
-        let count = country_station_count(highlight.markers, &country.iso_a2);
+        let count = country_station_count(highlight.markers, highlight.counts, &country.iso_a2)
+            .unwrap_or(0);
         // Заливка — по рампе плотности (ТЗ §3.2), контур остаётся акцентным.
         let heat = heat_color(heat_intensity(count));
         paint_country(
@@ -527,7 +548,8 @@ fn paint_country_highlights(
             .is_none_or(|selected| selected.iso_a2 != country.iso_a2)
         && let Some(shape) = geo.country_shape(&country.iso_a2)
     {
-        let count = country_station_count(highlight.markers, &country.iso_a2);
+        let count = country_station_count(highlight.markers, highlight.counts, &country.iso_a2)
+            .unwrap_or(0);
         let heat = heat_intensity(count);
         let color = heat_color(heat);
         let fill_alpha = (f32::from(COUNTRY_HOVER_FILL_ALPHA) * (0.35 + 0.65 * heat)).round() as u8;
@@ -572,12 +594,25 @@ fn heat_alpha(count: usize) -> u8 {
     (min + span * heat_intensity(count)).round() as u8
 }
 
-fn country_station_count(markers: &[GlobeMarker], iso_a2: &str) -> usize {
-    markers
+/// Число станций страны: сначала прогретый снимок всей базы Radio Browser,
+/// затем — сумма видимых маркеров. `None` — счётчик неизвестен (снимок ещё не
+/// пришёл, а маркеров страны нет): подсказка не пишет выдуманный ноль.
+fn country_station_count(
+    markers: &[GlobeMarker],
+    counts: Option<&HashMap<String, u32>>,
+    iso_a2: &str,
+) -> Option<usize> {
+    if let Some(counts) = counts.filter(|counts| !counts.is_empty()) {
+        return counts
+            .get(&iso_a2.to_ascii_uppercase())
+            .map(|count| *count as usize);
+    }
+    let visible: usize = markers
         .iter()
         .filter(|marker| marker.station.countrycode.eq_ignore_ascii_case(iso_a2))
         .map(|marker| marker.count)
-        .sum()
+        .sum();
+    (visible > 0).then_some(visible)
 }
 
 /// Плавное появление и исчезновение callout (ТЗ §1.2): карточки идут к своей цели.
@@ -639,16 +674,17 @@ struct CalloutScene<'a> {
     palette: &'a Palette,
 }
 
-/// Карточка страны: флаг, имя и число станций группы.
+/// Карточка страны: флаг, имя и число станций базы (или видимых маркеров,
+/// пока снимок мира не пришёл).
 fn country_card(
     country: &Country,
     markers: &[GlobeMarker],
+    counts: Option<&HashMap<String, u32>>,
     geo: &GeoService,
     target: f32,
 ) -> Option<CalloutCard> {
     // Якорь — focus_point страны, тот же путь, что у доворота камеры.
     let (lat, lon) = geo.country_shape(&country.iso_a2)?.focus_point()?;
-    let count = country_station_count(markers, &country.iso_a2);
     let flag = flag_emoji(&country.iso_a2);
     let name = single_line(&country.name);
     let title = if flag.is_empty() {
@@ -656,10 +692,10 @@ fn country_card(
     } else {
         format!("{flag} {name}")
     };
-    let subtitle = if count == 1 {
-        "1 station".to_owned()
-    } else {
-        format!("{count} stations")
+    let subtitle = match country_station_count(markers, counts, &country.iso_a2) {
+        Some(1) => "1 station".to_owned(),
+        Some(count) => format!("{count} stations"),
+        None => String::new(),
     };
     Some(CalloutCard::new(
         country.iso_a2.clone(),
@@ -1058,10 +1094,61 @@ mod tests {
         let markers = build_markers(vec![berlin, berlin_twin, paris]);
 
         assert_eq!(markers.len(), 2);
-        assert_eq!(country_station_count(&markers, "DE"), 2);
-        assert_eq!(country_station_count(&markers, "de"), 2);
-        assert_eq!(country_station_count(&markers, "FR"), 1);
-        assert_eq!(country_station_count(&markers, "US"), 0);
+        assert_eq!(country_station_count(&markers, None, "DE"), Some(2));
+        assert_eq!(country_station_count(&markers, None, "de"), Some(2));
+        assert_eq!(country_station_count(&markers, None, "FR"), Some(1));
+        assert_eq!(
+            country_station_count(&markers, None, "US"),
+            None,
+            "без маркеров и без снимка мира счётчик неизвестен, а не ноль"
+        );
+    }
+
+    #[test]
+    fn country_station_count_prefers_world_counts() {
+        let mut berlin = geo_station("de1", 52.5200, 13.4050);
+        berlin.countrycode = "DE".to_owned();
+        let markers = build_markers(vec![berlin]);
+
+        let mut counts = HashMap::new();
+        counts.insert("DE".to_owned(), 2_453u32);
+        assert_eq!(
+            country_station_count(&markers, Some(&counts), "de"),
+            Some(2_453)
+        );
+        assert_eq!(
+            country_station_count(&markers, Some(&counts), "FR"),
+            None,
+            "снимок всей базы авторитетнее видимой выборки"
+        );
+
+        let empty = HashMap::new();
+        assert_eq!(
+            country_station_count(&markers, Some(&empty), "DE"),
+            Some(1),
+            "пустая карта — снимок ещё не пришёл, считаем маркеры"
+        );
+    }
+
+    #[test]
+    fn country_card_reports_world_counts_and_never_a_bogus_zero() {
+        let geo = GeoService::from_embedded().expect("встроенный датасет");
+        let country = Country {
+            name: "Germany".to_owned(),
+            iso_a2: "DE".to_owned(),
+            iso_a3: Some("DEU".to_owned()),
+        };
+
+        let mut counts = HashMap::new();
+        counts.insert("DE".to_owned(), 4_249u32);
+        let card = country_card(&country, &[], Some(&counts), &geo, 1.0).expect("карточка страны");
+        assert_eq!(card.subtitle, "4249 stations");
+
+        let unknown = country_card(&country, &[], None, &geo, 1.0).expect("карточка страны");
+        assert_eq!(
+            unknown.subtitle, "",
+            "без счётчика подпись пустая, а не «0 stations»"
+        );
     }
 
     #[test]

@@ -54,13 +54,16 @@ pub(crate) fn fill(template: &str, args: &[(&str, &str)]) -> String {
 mod tests {
     use super::*;
 
-    /// Имена `{placeholder}` в порядке появления.
+    /// Имена `{placeholder}`; порядок в шаблоне зависит от грамматики языка,
+    /// поэтому сравниваем наборы, а не последовательности.
     fn placeholders(template: &str) -> Vec<&str> {
-        template
+        let mut names: Vec<&str> = template
             .split(['{', '}'])
             .enumerate()
             .filter_map(|(index, part)| (index % 2 == 1).then_some(part))
-            .collect()
+            .collect();
+        names.sort_unstable();
+        names
     }
 
     macro_rules! assert_group_non_empty {
@@ -156,7 +159,15 @@ mod tests {
                 clear_history,
                 search_in_country,
                 search_here,
-                all,
+                all_genres,
+                genres,
+                genres_selected,
+                remove_filter,
+                filters,
+                clear_filters,
+                loaded_of,
+                load_more,
+                loading_more,
                 sort_by,
                 compact,
             }
@@ -272,6 +283,7 @@ mod tests {
                 playback_failed,
                 station_without_url,
                 search_task_ended,
+                load_more_failed,
                 roulette_started,
                 roulette_failed,
                 roulette_task_ended,

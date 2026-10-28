@@ -54,7 +54,9 @@ Application Core — слой, который переживает закрыт�
 | `execute_tray_command` | `pub(crate) fn execute_tray_command(&mut self, command: TrayCommand)` | Реакция на одну команду трея; общее для окна и парковки |
 | `sync_tray` | `pub(crate) fn sync_tray(&mut self)` | Публикует `TraySnapshot` в SNI, только если снимок изменился |
 | `resolve_station` | `pub(crate) fn resolve_station(&self, station_uuid: &str) -> Result<Station, RadioError>` | Станция по UUID: сначала `search.results`, затем `radio.get_station` с таймаутом `STATION_LOOKUP_TIMEOUT` |
-| `start_station` | `pub(crate) fn start_station(&mut self, station: Station) -> Result<(), StationStartError>` | `audio.play(url_resolved)`, история, click, MPRIS |
+| `start_station` | `pub(crate) fn start_station(&mut self, station: Station) -> Result<(), StationStartError>` | `audio.play(url_resolved)`, `selected_station`, история, click, MPRIS |
+| `select_station` | `pub(crate) fn select_station(&mut self, station: &Station)` | Клик по маркеру до запуска: `selected_station`, разовый `reveal_station`, вкладка `Results` (ADR-0036) |
+| `take_station_reveal` | `pub(crate) fn take_station_reveal(&mut self) -> Option<String>` | Забирает просьбу прокрутки один раз; `OrbitApp::draw_layers` передаёт UUID строке |
 | `spawn_click` | `pub(crate) fn spawn_click(&self, station_uuid: String)` | Фоновая отправка click в Radio Browser |
 | `stop_playback` | `pub(crate) fn stop_playback(&mut self) -> Result<(), String>` | `audio.stop()` |
 | `toggle_playback` | `pub(crate) fn toggle_playback(&mut self) -> Result<(), String>` | Пауза/восстановление по `PlaybackState` |
@@ -91,7 +93,7 @@ Application Core — слой, который переживает закрыт�
 | `motion_reactivity` | `pub(crate) fn motion_reactivity(&self) -> MotionReactivity` | Эффективная реактивность: Reduce motion → `Off`; Focus — настройка, Overlay — не выше `Low`, Listening — `Off` |
 | `analysis_needed` | `pub(crate) fn analysis_needed(&self) -> bool` | `window.visible && (visualizer_enabled \|\| (motion.is_enabled() && !reduce_motion))` — анализ нужен хотя бы одному потребителю, но только при открытом окне |
 | `settle_analysis` | `pub(crate) fn settle_analysis(&mut self)` | Переключает анализ под текущую видимость окна; `run_session` зовёт после `begin_window` и перед `park`, ошибка — только `warn!` (ADR-0027) |
-| `mark_help_seen` | `pub(crate) fn mark_help_seen(&mut self)` | Запоминает, что карточка управления показывалась; ошибка только `warn!` |
+| `set_help_visible` | `pub(crate) fn set_help_visible(&mut self, visible: bool) -> Result<(), String>` | Меняет `show_help` и сохраняет `Settings::help_visible`; ошибка — `SettingNotSaved`; по умолчанию карточка включена (ADR-0036) |
 
 Поля `Session` — `pub(crate)`: presentation читает их напрямую (`markers`,
 `search.results`, `settings_open`) и редактирует через `&mut`-поля
@@ -277,7 +279,7 @@ pub(crate) const PANEL_TITLE: &str = "OrbitFM · Panel";
   `Result<(), StationStartError>`;
 - способ сообщить пользователю выбирает вызывающий: UI показывает `Toast`
   (`Notice` по ключу каталога, а также собственные `Err` от методов),
-  припаркованный цикл пишет `warn!` (`execute_media_command`, `mark_help_seen`,
+  припаркованный цикл пишет `warn!` (`execute_media_command`, `set_help_visible`,
   команды трея);
 - `GlobeCamera` — единственное поле-исключение по происхождению: тип из
   `src/render/`, добавленный в Core намеренно (ADR-0018 п. 2), чтобы позиция
@@ -444,12 +446,15 @@ mode <focus|overlay|listening|panel>
   `ui::globe_view` и превращает в `render::MarkerVisual`; размер (3 px) и единый
   цвет задаёт `src/render/markers.rs` (ADR-0012), а качество и рейтинг UI
   показывает в подписи `MarkerLabel`;
-- `SearchState`, `SearchResponse`, `SearchOutcome` (`src/session/search.rs`) —
+- `SearchState`, `SearchResponse` (`src/session/search.rs`) —
   внутреннее состояние поиска; наружу идут только поля `Session::search`,
   читаемые UI (`query`, `country_query`, `genre_query`, `context`, `results`,
   `pending`, `empty`, `error`, `roulette_pending`, `revision`,
-  `highlight_hidden`). `Session::hide_country_highlight` — единственный способ
-  снять подсветку, не трогая выборку;
+  `highlight_hidden`, `has_more`, `loading_more`). `Session::hide_country_highlight`
+  — единственный способ снять подсветку, не трогая выборку;
+  `Session::{load_more, country_total}` — единственные входы пагинации:
+  `load_more` двигает `offset` по `next_offset`, `country_total` читает мировой
+  снимок для подписи «загружено из всего»;
 - `Parked`, `wait_on`, `media_recv`, `tray_recv`, `roulette_recv`,
   `format_status`, `analysis_required`, `mpris_artist`, `station_geo`,
   `station_popularity`, `country_search_params`, `roulette_label`,
@@ -484,7 +489,9 @@ mode <focus|overlay|listening|panel>
 - `mpris_artist_prefers_location_over_tags`
 - `switching_mode_resets_country_and_genre`, `activating_genre_clears_country_and_vice_versa`,
   `stale_search_response_is_dropped`, `roulette_label_includes_country`,
-  `country_request_lists_only_that_country`
+  `country_request_lists_only_that_country`,
+  `pagination_follows_the_world_counter_until_exhausted`,
+  `appended_page_keeps_the_existing_list_and_skips_duplicates`
 - `marker_groups_stations_with_shared_coordinates`,
   `markers_skip_missing_invalid_and_zero_coordinates`, `markers_deduplicate_by_uuid`,
   `popularity_signal_is_votes_only`, `grouped_markers_keep_the_loudest_station`

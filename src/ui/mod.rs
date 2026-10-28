@@ -38,11 +38,17 @@ pub(crate) use crate::session::search::SearchMode;
 #[derive(Debug, Clone)]
 pub(crate) enum UiAction {
     Play(Station),
+    /// Выбор станции кликом по маркеру глобуса: станция играет, а строка
+    /// списка подсвечивается и прокручивается в центр (ADR-0036).
+    SelectStation(Station),
     ToggleFavorite(Station),
     SelectCountry(Country),
     SwitchMode(SearchMode),
     SelectGenre(String),
     RunSearch,
+    /// Догрузить следующую страницу списка выбранной страны (ADR-0036,
+    /// ревизия 2026-10-28).
+    LoadMore,
     /// Повторить последний запрос после ошибки сети (карточка ошибки панели).
     RetrySearch,
     Roulette,

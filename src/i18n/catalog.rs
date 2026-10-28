@@ -79,7 +79,22 @@ pub(crate) struct PanelText {
     pub clear_history: &'static str,
     pub search_in_country: &'static str,
     pub search_here: &'static str,
-    pub all: &'static str,
+    /// Подпись выпадающего мультивыбора, когда не выбрано ни одного жанра.
+    pub all_genres: &'static str,
+    /// Заголовок выпадающего списка жанров.
+    pub genres: &'static str,
+    /// Подпись кнопки мультивыбора с числом выбранных жанров.
+    pub genres_selected: &'static str,
+    /// Подсказка крестика на бейдже выбранного жанра.
+    pub remove_filter: &'static str,
+    /// Подсказка кнопки «показать/скрыть фильтры».
+    pub filters: &'static str,
+    /// Подсказка кнопки сброса всех фильтров.
+    pub clear_filters: &'static str,
+    /// Счётчик загруженной страницы: «{loaded} из {total}».
+    pub loaded_of: &'static str,
+    pub load_more: &'static str,
+    pub loading_more: &'static str,
     pub sort_by: &'static str,
     pub compact: &'static str,
 }
@@ -186,6 +201,7 @@ pub(crate) struct NoticeText {
     pub playback_failed: &'static str,
     pub station_without_url: &'static str,
     pub search_task_ended: &'static str,
+    pub load_more_failed: &'static str,
     pub roulette_started: &'static str,
     pub roulette_failed: &'static str,
     pub roulette_task_ended: &'static str,

@@ -13,7 +13,7 @@ use crate::services::Station;
 use crate::settings::Language;
 
 use super::animation;
-use super::icons::star_button;
+use super::icons::{SMALL_SIDE, star_button};
 use super::images::FaviconCache;
 use super::palette::Palette;
 use super::widgets::{avatar, chip, eq_bars_in, faded, focus_ring};
@@ -21,6 +21,8 @@ use super::{UiAction, single_line, truncate};
 
 const ROW_HEIGHT: f32 = 58.0;
 const TAG_LIMIT: usize = 3;
+/// Ширина колонки «битрейт/кодек» в полной строке.
+const BITRATE_WIDTH: f32 = 64.0;
 /// Скругление и обводка подложки: радиус совпадает с рамкой строки.
 const ROW_ROUNDING: u8 = 12;
 const PLAYING_STROKE: f32 = 1.4;
@@ -30,6 +32,12 @@ const HOVER_TINT: f32 = 0.7;
 
 pub(crate) struct RowContext<'a> {
     pub playing: bool,
+    /// Станция выбрана на глобусе или в списке: её строка подсвечена, даже
+    /// когда эфир уже остановлен (ADR-0036).
+    pub selected: bool,
+    /// Кадр, в котором список обязан прокрутить строку в центр: маркер глобуса
+    /// выбрал станцию, которой может не быть на экране.
+    pub reveal: bool,
     pub compact: bool,
     pub favorites: &'a [Station],
     /// Разрешённый язык интерфейса (ADR-0030).
@@ -77,6 +85,8 @@ pub(crate) fn station_row(
 
     let clicked = ui.interact(response.rect, id, egui::Sense::click());
     let visible = ui.is_rect_visible(clicked.rect);
+    let selected = state.selected;
+    let reveal = state.reveal;
     // Строки вне вьюпорта не опрашивают переход: список без виртуализации, и
     // гонять AnimationManager на сотнях невидимых строк незачем. Значение
     // анимации при этом просто замерает на месте и догорает, когда строка
@@ -88,8 +98,10 @@ pub(crate) fn station_row(
     };
     if visible {
         let rect = clicked.rect;
-        ui.painter()
-            .set(plate, row_plate(rect, palette, state.playing, hover, press));
+        ui.painter().set(
+            plate,
+            row_plate(rect, palette, state.playing || selected, hover, press),
+        );
     }
 
     let place = row_place(station);
@@ -122,7 +134,7 @@ pub(crate) fn station_row(
             ui.memory_mut(|memory| memory.request_focus(row_id(uuid)));
         }
     }
-    if clicked.gained_focus() {
+    if clicked.gained_focus() || reveal {
         clicked.scroll_to_me(Some(egui::Align::Center));
     }
 
@@ -143,13 +155,17 @@ pub(crate) fn station_row(
 /// (`Prepared::paint` не вызываем): альфа наведения и степень сжатия известны
 /// только после аллокации, а рисовать надо под содержимым.
 fn row_frame(state: &RowContext<'_>, palette: &Palette) -> egui::Frame {
-    let stroke = if state.playing { PLAYING_STROKE } else { 0.0 };
+    let stroke = if state.playing || state.selected {
+        PLAYING_STROKE
+    } else {
+        0.0
+    };
     egui::Frame::default()
         .fill(egui::Color32::TRANSPARENT)
         .stroke(egui::Stroke::new(stroke, palette.accent))
         .corner_radius(egui::CornerRadius::same(ROW_ROUNDING))
         .inner_margin(egui::Margin::symmetric(
-            8,
+            10,
             if state.compact { 4 } else { 6 },
         ))
 }
@@ -190,19 +206,19 @@ fn row_motion(ui: &egui::Ui, id: egui::Id, response: &egui::Response) -> (f32, f
     )
 }
 
-/// Пластина-подложка строки: подсветка наведения плюс accent-рамка играющей
-/// строки, сжатая по центру при нажатии.
+/// Пластина-подложка строки: подсветка наведения плюс accent-рамка выбранной
+/// или играющей строки, сжатая по центру при нажатии.
 ///
 /// Двигается только отрисовка: хиттест и расстановка строк остаются на
 /// исходном прямоугольнике (ADR-0032 §7).
 fn row_plate(
     rect: egui::Rect,
     palette: &Palette,
-    playing: bool,
+    highlighted: bool,
     hover: f32,
     press: f32,
 ) -> egui::Shape {
-    let tint = if playing {
+    let tint = if highlighted {
         1.0
     } else {
         animation::alpha(hover)
@@ -217,7 +233,7 @@ fn row_plate(
         radius,
         faded(palette.chip_fill, tint),
     )];
-    if playing {
+    if highlighted {
         shapes.push(egui::Shape::rect_stroke(
             card,
             radius,
@@ -251,26 +267,36 @@ fn draw_contents(
         let avatar_size = (ui.available_height() - 2.0).clamp(22.0, 44.0);
         avatar(ui, palette, texture, &station.name, avatar_size);
 
+        // Правый блок резервируется до текста: иначе длинное имя рисуется под
+        // звездой (жалоба 2026-10-28). Ширина текста считается от фактического
+        // остатка, а Label::truncate обрезает его многоточием по месту.
+        let reserve = right_block_width(state.compact) + ui.spacing().item_spacing.x;
+        let text_width = (ui.available_width() - reserve).max(56.0);
         ui.vertical(|ui| {
+            ui.set_max_width(text_width);
             ui.spacing_mut().item_spacing.y = if state.compact { 0.0 } else { 1.0 };
-            let name_color = if state.playing {
+            let name_color = if state.playing || state.selected {
                 palette.accent
             } else {
                 palette.text
             };
-            ui.label(
-                egui::RichText::new(row_name(station, state.compact, state.language))
-                    .size(if state.compact { 12.0 } else { 13.5 })
-                    .strong()
-                    .color(name_color),
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(row_name(station, state.compact, state.language))
+                        .size(if state.compact { 12.0 } else { 13.5 })
+                        .strong()
+                        .color(name_color),
+                )
+                .truncate(),
             );
             if !state.compact {
                 let place = row_place(station);
                 if !place.is_empty() {
-                    ui.label(
-                        egui::RichText::new(truncate(&place, 34))
-                            .size(10.5)
-                            .color(palette.muted),
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(place).size(10.5).color(palette.muted),
+                        )
+                        .truncate(),
                     );
                 }
                 if state.playing {
@@ -295,7 +321,7 @@ fn draw_contents(
             let star = star_button(ui, palette, favorite, color, hint);
             if !state.compact {
                 ui.vertical(|ui| {
-                    ui.set_width(64.0);
+                    ui.set_width(BITRATE_WIDTH);
                     ui.label(
                         egui::RichText::new(row_bitrate(station, state.language))
                             .size(11.0)
@@ -313,6 +339,16 @@ fn draw_contents(
         .inner
     })
     .inner
+}
+
+/// Ширина правого блока строки: звезда и, в полном режиме, колонка
+/// «битрейт/кодек» с промежутком между ними.
+fn right_block_width(compact: bool) -> f32 {
+    if compact {
+        SMALL_SIDE
+    } else {
+        SMALL_SIDE + 10.0 + BITRATE_WIDTH
+    }
 }
 
 /// Чипы тегов станции; клик — глобальный поиск по тегу.
@@ -569,6 +605,8 @@ mod tests {
             let mut first_cache = FaviconCache::new();
             let mut first_state = RowContext {
                 playing: false,
+                selected: false,
+                reveal: false,
                 compact: false,
                 favorites: &favorites,
                 language: Language::English,
@@ -580,6 +618,8 @@ mod tests {
             let mut second_cache = FaviconCache::new();
             let mut second_state = RowContext {
                 playing: false,
+                selected: false,
+                reveal: false,
                 compact: false,
                 favorites: &favorites,
                 language: Language::English,

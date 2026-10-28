@@ -142,7 +142,7 @@ NIRI_SOCKET=<сокет> niri msg windows
 Listening — 420×152, у Panel — 400×640; цифры, равные размеру тайла, означают, что правило не сработало (`niri validate -c <файл>`).
 
 **Hyprland.** Подключите `wm-configs/orbitfm-hyprland.conf` — там `windowrulev2` с `float`, `center`,
-`stayfocused`, размерами по заголовку и `noborder`/`noshadow` у капсул:
+`stayfocused`, размерами по заголовку и `noborder`/`noshadow` у капсул и панели:
 
 ```ini
 windowrulev2 = float, class:^(org\.modernbyte\.OrbitFM)$
@@ -155,6 +155,10 @@ windowrulev2 = noshadow, title:^OrbitFM · Overlay$
 windowrulev2 = size 420 152, title:^OrbitFM · Listening$
 windowrulev2 = noborder, title:^OrbitFM · Listening$
 windowrulev2 = noshadow, title:^OrbitFM · Listening$
+windowrulev2 = size 400 640, title:^OrbitFM · Panel$
+windowrulev2 = noborder, title:^OrbitFM · Panel$
+windowrulev2 = noshadow, title:^OrbitFM · Panel$
+windowrulev2 = noblur, title:^OrbitFM · Panel$
 ```
 
 `windowrulev2` работает в Hyprland 0.52 и в совместимом режиме 0.53+, где помечен как устаревший (новый формат —

@@ -186,8 +186,8 @@ pub struct Settings {
     pub volume: f64,
     /// Видимость визуализатора и аудиокольца (ADR-0031).
     pub visualizer_enabled: bool,
-    /// Карточка управления уже показывалась — дальше она только по `?`.
-    pub help_seen: bool,
+    /// Видимость карточки управления глобусом; по умолчанию включена.
+    pub help_visible: bool,
     /// Реактивность аудио-движения глобуса (ADR-0028).
     pub motion: MotionReactivity,
     /// Характер движения; Auto выбирает по сигналу.
@@ -214,7 +214,7 @@ impl Default for Settings {
             viz_bars: DEFAULT_VIZ_BARS,
             volume: DEFAULT_VOLUME,
             visualizer_enabled: true,
-            help_seen: false,
+            help_visible: true,
             motion: MotionReactivity::Normal,
             motion_style: MotionStyle::Auto,
             allow_flips: false,
@@ -334,12 +334,12 @@ impl SettingsStore {
         self.save()
     }
 
-    /// Запоминает, что карточка управления уже показывалась.
-    pub fn set_help_seen(&mut self) -> Result<(), SettingsError> {
-        if self.settings.help_seen {
+    /// Запоминает выбранную видимость карточки управления (ADR-0031, ADR-0036).
+    pub fn set_help_visible(&mut self, visible: bool) -> Result<(), SettingsError> {
+        if self.settings.help_visible == visible {
             return Ok(());
         }
-        self.settings.help_seen = true;
+        self.settings.help_visible = visible;
         self.save()
     }
 
@@ -494,7 +494,10 @@ mod tests {
         assert_eq!(store.settings().viz_bars, DEFAULT_VIZ_BARS);
         assert!((store.settings().volume - DEFAULT_VOLUME).abs() < f64::EPSILON);
         assert!(store.settings().visualizer_enabled);
-        assert!(!store.settings().help_seen);
+        assert!(
+            store.settings().help_visible,
+            "подсказка по управлению глобусом включена по умолчанию"
+        );
         assert_eq!(store.settings().motion, MotionReactivity::Normal);
         assert_eq!(store.settings().motion_style, MotionStyle::Auto);
         assert!(!store.settings().allow_flips);
@@ -622,12 +625,24 @@ mod tests {
         {
             let mut store = SettingsStore::load(path.clone()).unwrap();
             store.set_viz_bars(32).unwrap();
-            store.set_help_seen().unwrap();
+            store.set_help_visible(false).unwrap();
         }
 
         let store = SettingsStore::load(path).unwrap();
         assert_eq!(store.settings().viz_bars, 32);
-        assert!(store.settings().help_seen);
+        assert!(!store.settings().help_visible);
+    }
+
+    /// Старый ключ `help_seen` больше не читается: подсказка снова видна,
+    /// пока пользователь не скроет её сам (ADR-0036).
+    #[test]
+    fn legacy_help_seen_key_leaves_the_help_visible() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        fs::write(&path, br#"{"help_seen":true}"#).unwrap();
+
+        let store = SettingsStore::load(path).unwrap();
+        assert!(store.settings().help_visible);
     }
 
     #[test]

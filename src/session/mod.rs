@@ -129,6 +129,12 @@ pub(crate) struct Session {
     pub(crate) language: Language,
     pub(crate) current_url: Option<String>,
     pub(crate) current_station: Option<Station>,
+    /// UUID станции, выбранной в интерфейсе: строка списка и маркер глобуса
+    /// показывают одно и то же выделение (ADR-0036).
+    pub(crate) selected_station: Option<String>,
+    /// Разовая просьба панели прокрутить строку в центр: клик по маркеру
+    /// выбирает станцию, которой может не быть на экране.
+    pub(crate) reveal_station: Option<String>,
     pub(crate) search: SearchState,
     pub(crate) markers: Vec<GlobeMarker>,
     /// Глобальный снимок Radio Browser: счётчики стран и мировой топ для
@@ -174,7 +180,7 @@ impl Session {
         let visualizer_enabled = stored.visualizer_enabled;
         let spectrum_enabled = audio.spectrum_enabled();
         let language = stored.language.resolve();
-        let show_help = !stored.help_seen;
+        let show_help = stored.help_visible;
         let mut session = Self {
             audio,
             audio_events,
@@ -193,6 +199,8 @@ impl Session {
             language,
             current_url: None,
             current_station: None,
+            selected_station: None,
+            reveal_station: None,
             search: SearchState::default(),
             markers: Vec::new(),
             world: WorldBaseline::default(),

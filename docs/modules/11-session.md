@@ -49,7 +49,7 @@ Core не принимают `&egui::Context` — детали в `docs/interfac
 | `media` | `Option<MediaControls>` | `None`, когда MPRIS недоступен (нет D-Bus); тогда очередь команд нет |
 | `tray` | `Option<TrayHandle>` | `None`, когда SNI-хоста нет или сборка без фичи `tray`; сам `Option` меняется и в рантайме: мёртвый трей `sync_tray` выключает ветку |
 | `library` | `StationLibrary` | Избранное и история (до 20 записей, `HISTORY_LIMIT`) |
-| `settings` | `SettingsStore` | Тема, акцент, язык, `viz_bars`, `volume`, `visualizer_enabled`, признаки движения, `help_seen`; `Session::new` восстанавливает из него громкость |
+| `settings` | `SettingsStore` | Тема, акцент, язык, `viz_bars`, `volume`, `visualizer_enabled`, признаки движения, `help_visible`; `Session::new` восстанавливает из него громкость |
 | `runtime` | `tokio::runtime::Handle` | `block_on` для коротких аудио-операций и `spawn` для сетевых задач |
 | `wake` | `WakeHandle` | Разделяемый слот пробуждения: `Arc<Mutex<Option<Notifier>>>` |
 
@@ -68,12 +68,14 @@ Core не принимают `&egui::Context` — детали в `docs/interfac
 | `language` | `Language` | Разрешённый язык интерфейса: `System` из настроек свёрнут в конкретный язык при старте и при каждой смене (ADR-0030); его читает `effective_language()` и кладёт в `TraySnapshot` |
 | `current_url` | `Option<String>` | Заполняется из `start_station` и из `AudioEvent::Started`; не очищается при `Stopped`/`Error` — нужен для повторного запуска из MPRIS |
 | `current_station` | `Option<Station>` | Метаданные эфира: `status`, MPRIS, подсветка строки списка |
+| `selected_station` | `Option<String>` | UUID выбранной станции: общее выделение строки списка и маркера глобуса; ставится при каждом успешном запуске и клике по маркеру (ADR-0036) |
+| `reveal_station` | `Option<String>` | Разовая просьба прокрутить строку в центр; взводится `select_station`, забирается `take_station_reveal` в начале кадра панели |
 | `search` | `SearchState` | Всё о поиске: строки запросов, контекст, результаты, поколение, незавершённые задания |
-| `markers` | `Vec<GlobeMarker>` | Маркеры глобуса, перестраиваются при каждом ответе поиска |
+| `markers` | `Vec<GlobeMarker>` | Маркеры глобуса: подмножество строк текущего списка с координатами (ADR-0036, ревизия 2026-10-28 (второе)) |
 | `library_tab` | `LibraryTab` | Активная вкладка панели = источник очереди `prev`/`next` |
-| `country_filter` | `CountryFilterState` | Локальные фильтры панели (`text`, `genre`, `sort`, `compact_rows`) |
+| `country_filter` | `CountryFilterState` | Локальные фильтры панели (`text`, `genres: Vec<GenreTag>` — OR, `filters_visible`, `sort`, `compact_rows`) |
 | `panel_open` | `bool` | Панель станций; `true` по умолчанию |
-| `show_help` | `bool` | `!settings.settings().help_seen` при создании ядра |
+| `show_help` | `bool` | Видимость карточки управления; инициализируется из `Settings::help_visible` (по умолчанию `true`, ADR-0036) |
 
 Эффективную реактивность движения отдаёт `motion_reactivity()` (ADR-0028):
 `reduce_motion` → `Off`; Focus — значение настройки, Overlay — не выше `Low`,
@@ -116,8 +118,8 @@ Listening — `Off`. `motion_reactivity()`, `analysis_needed()` и `sync_analysi
 | `mod.rs` | Ядро: владение подсистемами, пробуждение, drawer настроек и язык, `status`, ре-экспорт контрактов пакета | `Session`, `AppServices`, `Notice`, `NoticeKey`, `ParkOutcome`, `WakeHandle`, `LibraryTab`, `StationStartError`; наружу из `window.rs` — `UiIntent`, `WindowMode`, `WindowState`, `WINDOW_TITLE` |
 | `notice.rs` | Типизированные сообщения пользователю: ядро называет причину, строку берёт каталог `i18n` (ADR-0030) | `Notice { Info(NoticeKey), Error { key, detail } }`, `NoticeKey` |
 | `window.rs` | Состояние окна: режим (`WindowMode`), геометрия и заголовки по режиму, намерения UI, признак перезапуска (ADR-0018, ADR-0021) | `WindowMode` (+ `ALL`/`default_size`/`min_size`/`title`/`as_str`), `UiIntent`, `WindowState`, `WINDOW_SIZE`, `WINDOW_MIN_SIZE`, `WINDOW_TITLE`, `OVERLAY_SIZE`, `OVERLAY_MIN_SIZE`, `OVERLAY_TITLE`, `LISTENING_SIZE`, `LISTENING_MIN_SIZE`, `LISTENING_TITLE` |
-| `commands.rs` | Разбор `IpcCommand` (общий для окна и парковки), `impl From<WindowModeArg> for WindowMode` и настроек оформления, языка и движения | `Session::{execute, process_commands, set_theme, set_accent, set_language, set_viz_bars, set_visualizer_enabled, set_motion, set_motion_style, set_allow_flips, set_reduce_motion, settle_analysis, mark_help_seen}` |
-| `playback.rs` | Аудио-события, запуск/остановка, громкость commit-on-release, избранное, история, очередь `prev`/`next`, витрина MPRIS | `Session::{process_audio_events, apply_audio_event, resolve_station, start_station, spawn_click, toggle_favorite, clear_history, focus_country, set_volume, preview_volume, commit_volume, flush_pending_volume, set_audio_paused, resume_playback, toggle_playback, stop_playback, process_media_commands, execute_media_command, visible_queue, visible_queue_len, play_relative, sync_media}` |
+| `commands.rs` | Разбор `IpcCommand` (общий для окна и парковки), `impl From<WindowModeArg> for WindowMode` и настроек оформления, языка и движения | `Session::{execute, process_commands, set_theme, set_accent, set_language, set_viz_bars, set_visualizer_enabled, set_motion, set_motion_style, set_allow_flips, set_reduce_motion, settle_analysis, set_help_visible}` |
+| `playback.rs` | Аудио-события, запуск/остановка, выбор станции, громкость commit-on-release, избранное, история, очередь `prev`/`next`, витрина MPRIS | `Session::{process_audio_events, apply_audio_event, resolve_station, start_station, select_station, take_station_reveal, spawn_click, toggle_favorite, clear_history, focus_country, set_volume, preview_volume, commit_volume, flush_pending_volume, set_audio_paused, resume_playback, toggle_playback, stop_playback, process_media_commands, execute_media_command, visible_queue, visible_queue_len, play_relative, sync_media}` |
 | `search.rs` | Поиск по имени/стране/жанру с поколениями ответов и рулетка | `SearchMode`, `SearchContext`, `SearchState`, `SearchResponse`, `STATION_LOOKUP_TIMEOUT`, `Session::{start_search, start_country_search, start_genre_search, switch_mode, poll_search, start_roulette, poll_roulette, apply_roulette}` |
 | `markers.rs` | Агрегация станций с координатами в маркеры глобуса | `GlobeMarker`, `build_markers` (+ `#[cfg(test)] sample_station`, `geo_station`) |
 | `heat.rs` | Метрики тепловой карты стран (ADR-0035): нормировка в `0,15..=1` по выборке станций и по глобальным счётчикам | `CountryMetric` (+ `ALL`/`is_on`), `intensities`, `densities` |
@@ -157,7 +159,9 @@ Core: `src/i18n/labels.rs` и `mode_label` в `src/ui/settings_panel.rs`.
 1. `url_resolved.trim()` — пусто ⇒ `Err(StationStartError::NoUrl)`;
 2. `block_on(audio.play(&url))` — отказ движка возвращён как
    `Err(StationStartError::Audio(err))`, техническая строка не переводится;
-3. сохраняются `current_url` и `current_station`;
+3. сохраняются `current_url`, `current_station` и `selected_station` — любой путь
+   запуска (строка, hotkey, MPRIS, IPC) подсвечивает один и тот же маркер
+   (ADR-0036);
 4. `library.record_played` — станция встаёт в начало истории; ошибка не мешает
    слушать: `warn!` + `notify_error_detail(NoticeKey::HistoryNotSaved, …)`;
 5. `spawn_click(stationuuid)` — фоновая задача `radio.send_click`, ошибка только
@@ -235,25 +239,34 @@ MPRIS `Next`/`Previous`.
 | Метод | Поведение |
 |-------|-----------|
 | `start_search` | `search.query.trim()` пуста — no-op; контекст активен → запрос кладётся в `country_filter.text` (локальный фильтр, без сети); `search.pending` → no-op; иначе контекст очищается и запускается `SearchParams { name, limit = 100, hide_broken = true }` |
-| `start_country_search(country)` | активирует страну, `country_filter.reset()`, запрос `country_code = <ISO alpha-2>`, `limit = 100`, `hide_broken = true`, затем `country_query.clear()` |
+| `start_country_search(country)` | активирует страну, `country_filter.reset()`, запрос `country_code = <ISO alpha-2>`, `limit = 100`, `hide_broken = true`, затем `country_query.clear()`; выдача полная, без `has_geo_info` |
 | `start_genre_search(tag)` | `tag.trim().to_lowercase()` пуст — no-op; активирует жанр, `country_filter.reset()`, `tag`, `limit = 200`, `hide_broken = true`, затем `genre_query.clear()` |
 | `switch_mode(mode)` | если режим не изменился — no-op; иначе `invalidate_search()`, очистка результатов, маркеров и фильтров, `library_tab = Results` |
+| `load_more()` | no-op при `pending`/`loading_more`/активном `rx`/`has_more = false`; клонирует `last_params`, ставит `offset = next_offset`, помечает `loading_more` и спавнит `radio.search` с `append: true` |
+| `country_total()` | мировой счётчик станций выбранной страны (`world.counts()[ISO]`), `None` без страны/снимка; подпись «загружено из всего» и `page_has_more` |
 
 `begin_search` увеличивает `generation` (`wrapping_add`), создаёт
 `mpsc::unbounded_channel`, выставляет `pending = true`, `empty = false`,
-`error = None`, очищает `results` и `markers`, ставит вкладку `Results` и
-спавнит tokio-задачу: `tokio::join!(radio.search(params), radio.search(geo_params))`,
-где `geo_params` — копия с `has_geo_info = true` и `limit = geo_limit`
-(100 для названия и страны, 200 для жанра). Ошибка гео-запроса логируется и
-заменяется пустым списком — на выдачу она не влияет. После отправки ответа
-задача вызывает `waker()`.
+`error = None`, очищает `results` и `markers`, увеличивает `revision`, ставит
+вкладку `Results` и спавнит одну tokio-задачу `radio.search(params)`.
+`has_geo_info` больше не форсируется: страна и жанр отдают полную выдачу, а
+маркеры строятся из строк с координатами (ADR-0036, ревизия 2026-10-28
+(второе)). Здесь же сбрасываются `has_more`, `loading_more`, `last_params` и
+`next_offset`; `last_params` хранит копию запроса для догрузки, `next_offset`
+стартует с `params.offset`. После отправки ответа задача вызывает `waker()`.
 
 `poll_search` (`try_recv`) различает:
 - ответ чужого поколения — только `debug!` («устаревший ответ поиска отброшен»),
   состояние не меняется: быстрый `Esc`-переполск не перерисовывает панель старым
   списком и не возвращает старые маркеры;
-- `Ok(outcome)` — `empty = stations.is_empty()`, `results = outcome.stations`,
-  `markers = build_markers(outcome.geo_stations)`, `pending = false`, `rx = None`;
+- `Ok(stations)` без `append` — `empty = stations.is_empty()`, `results = stations`,
+  `markers = build_markers(stations.clone())`, `next_offset += page_len`,
+  `update_has_more`, `revision` увеличивается, `pending = false`, `rx = None`;
+- `Ok(stations)` с `append` — `append_unique` дополняет список без повторных UUID,
+  маркеры пересобираются, `next_offset += page_len`, `update_has_more`,
+  `loading_more = false`, `rx = None`; пустая страница закрывает пагинацию;
+- `Err(err)` с `append` — список и маркеры сохраняются, `loading_more = false`,
+  тост `NoticeKey::LoadMoreFailed` с технической `detail`;
 - `Err(err)` — ошибка Radio Browser: `error = Some(err)` (техническая строка
   `RadioError`, UI рисует её как есть — в отличие от `Notice`), маркеры очищаются,
   `pending = false`, `rx = None` (результаты прошлого ответа остаются в списке);
@@ -264,6 +277,13 @@ MPRIS `Next`/`Previous`.
 Лимиты зафиксированы константами `search.rs`: `SEARCH_RESULT_LIMIT = 100`,
 `COUNTRY_RESULT_LIMIT = 100`, `GENRE_RESULT_LIMIT = 200`,
 `ROULETTE_FLY_MS = 900`, `STATION_LOOKUP_TIMEOUT = 8 с`.
+
+Признак следующей страницы считает `page_has_more(page_len, limit, loaded,
+total)`: пустая страница всегда закрывает пагинацию; при известном мировом
+счётчике продолжение есть, пока `loaded < total`, даже если страница короче
+лимита; без счётчика — только при полной странице (`page_len >= limit`).
+`SearchResponse` несёт `append: bool`; `load_more` переиспользует `generation`,
+поэтому устаревший ответ поколения отбрасывается и для догрузки.
 
 ### 4.8. Рулетка
 
@@ -292,7 +312,9 @@ MPRIS `Next`/`Previous`.
 
 ### 4.9. Маркеры (`markers::build_markers`)
 
-Вход — `Vec<Station>` гео-выдачи, выход — `Vec<GlobeMarker>`. Порядок:
+Вход — `Vec<Station>` текущей выдачи, то есть тот же массив, из которого
+наполняется список; маркеры — его подмножество с координатами (ADR-0036,
+ревизия 2026-10-28 (второе)). Выход — `Vec<GlobeMarker>`. Порядок:
 1. дедупликация по `stationuuid` (`HashSet`), повторные UUID отбрасываются;
 2. валидация координат `station_geo`: оба значения обязаны быть `Some`, конечными,
    `lat ∈ [-90, 90]`, `lon ∈ [-180, 180]`; `(0, 0)` — заглушка Radio Browser, не
@@ -311,6 +333,12 @@ MPRIS `Next`/`Previous`.
 подпись при наведении (`MarkerLabel`).
 `build_markers` вызывается только из `poll_search` (тесты `src/ui/globe_view.rs`
 используют функцию напрямую).
+
+Выделение станции (ADR-0036 § 2–3) живёт в `Session::selected_station`:
+`start_station` ставит UUID при любом пути запуска, `select_station` — при клике
+по маркеру, вместе с разовым `reveal_station` и переключением вкладки
+`Results`. `take_station_reveal` забирает просьбу один раз; presentation рисует
+accent-строку списка и белое кольцо маркера поверх пульса эфира.
 
 ### 4.10. `tick()`
 
@@ -374,8 +402,10 @@ for WindowMode`: `src/ipc/` не знает доменного режима, п�
 `set_visualizer_enabled`
 сохраняет настройку (сбой — `warn!` и `NoticeKey::VisualizerNotSaved`), затем
 вызывает `sync_analysis()` и меняет пользовательский переключатель, а не
-состояние анализа напрямую; `mark_help_seen` ошибку только
-логирует. Перекрашиванием `egui` занимается presentation: после `set_theme`/
+состояние анализа напрямую; `set_help_visible(visible)` меняет
+`Session::show_help` и сразу сохраняет выбор в `Settings::help_visible`
+(ошибка возвращается вызывающему — UI показывает `NoticeKey::SettingNotSaved`).
+Перекрашиванием `egui` занимается presentation: после `set_theme`/
 `set_accent`/`set_language` он сам вызывает `palette::configure_style` (ADR-0018 п. 3).
 
 `set_language(language)` сохраняет настройку и тут же разворачивает `System` в

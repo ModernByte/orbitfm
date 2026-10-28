@@ -11,12 +11,16 @@ pub(crate) const GAP: f32 = 12.0;
 pub(crate) const HUD_HEIGHT: f32 = 58.0;
 /// Транспортная панель: контролы + громкость + 40 px визуализатора (ТЗ §3.3).
 pub(crate) const TRANSPORT_HEIGHT: f32 = 84.0;
-pub(crate) const PANEL_WIDTH: f32 = 312.0;
+/// Панель списка: 360 px — имя станции не упирается в звезду, а правый блок
+/// «битрейт/кодек + звезда» получает собственный запас (ADR-0033, ревизия
+/// 2026-10-28).
+pub(crate) const PANEL_WIDTH: f32 = 360.0;
 /// Правый drawer настроек (ADR-0031): фиксированная ширина, clamp по viewport.
 /// 380 px хватает на строку «подпись + dropdown 168»: при переносе подписи
 /// контрол остаётся в своём слоте (`src/ui/controls.rs`).
 pub(crate) const SETTINGS_WIDTH: f32 = 380.0;
-pub(crate) const HELP_SIZE: (f32, f32) = (216.0, 108.0);
+/// Карточка управления: три строки по 30 px плюс поля 14 сверху и снизу.
+pub(crate) const HELP_SIZE: (f32, f32) = (216.0, 128.0);
 /// Легенда карты стран: выбор метрики + градиент Low → High.
 pub(crate) const LEGEND_SIZE: (f32, f32) = (216.0, 100.0);
 /// Нижняя зона капсулы Overlay с избранными станциями.

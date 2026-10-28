@@ -15,8 +15,16 @@ const GLOBE_SHADER: &str = include_str!("globe.wgsl");
 const EARTH_TEXTURE: &[u8] = include_bytes!("../../assets/textures/earth.jpg");
 /// Версия повышенного разрешения: грузится на GPU только при приближении.
 const EARTH_TEXTURE_HI: &[u8] = include_bytes!("../../assets/textures/earth@2x.jpg");
-/// Ближе этой дистанции (радиус сферы = 1) включается детальная текстура.
-const LOD_NEAR_DISTANCE: f32 = 2.6;
+/// Гистерезис LOD: детальная текстура включается на 2.6 и остаётся до 2.9 —
+/// без него колесо на границе переключало бы текстуры каждый кадр.
+const LOD_NEAR_ENTER: f32 = 2.6;
+const LOD_NEAR_EXIT: f32 = 2.9;
+/// Глубина мипов: дальняя сторона сферы и мелкий силуэт сэмплируются с
+/// уменьшением, иначе на континентах появляется муар.
+const LOD_MAX_CLAMP: f32 = 32.0;
+/// Анизотропия для наклонных участков сферы; wgpu сам срежет её до 1, если
+/// устройство не поддерживает (`DownlevelFlags::ANISOTROPIC_FILTERING`).
+const ANISOTROPY: u16 = 8;
 
 const SPHERE_SEGMENTS: u32 = 64;
 const SPHERE_STACKS: u32 = 32;
@@ -84,11 +92,11 @@ impl GlobeRenderer {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
             lod_min_clamp: 0.0,
-            lod_max_clamp: 0.0,
+            lod_max_clamp: LOD_MAX_CLAMP,
             compare: None,
-            anisotropy_clamp: 1,
+            anisotropy_clamp: ANISOTROPY,
             border_color: None,
         });
 
@@ -260,7 +268,13 @@ impl GlobeRenderer {
         }
 
         let eye = glam::Vec3::from_slice(&uniform.camera_position[..3]);
-        let near = eye.length() <= LOD_NEAR_DISTANCE;
+        let distance = eye.length();
+        // Гистерезис: войти в детальный LOD на 2.6, выйти — только после 2.9.
+        let near = if self.near_active {
+            distance <= LOD_NEAR_EXIT
+        } else {
+            distance <= LOD_NEAR_ENTER
+        };
         if near && self.near_bind_group.is_none() {
             let texture = earth_texture(device, queue, EARTH_TEXTURE_HI, "earth texture hi");
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -358,20 +372,20 @@ fn earth_texture(
     bytes: &[u8],
     label: &str,
 ) -> wgpu::Texture {
-    let image = image::load_from_memory(bytes)
+    let base = image::load_from_memory(bytes)
         .expect("встроенная текстура Земли должна декодироваться")
         .to_rgba8();
-    let (width, height) = image.dimensions();
-    let size = wgpu::Extent3d {
-        width,
-        height,
-        depth_or_array_layers: 1,
-    };
+    let (width, height) = base.dimensions();
+    let levels = mip_levels(width, height);
 
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some(label),
-        size,
-        mip_level_count: 1,
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: levels,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Rgba8UnormSrgb,
@@ -379,23 +393,46 @@ fn earth_texture(
         view_formats: &[],
     });
 
-    queue.write_texture(
-        wgpu::TexelCopyTextureInfo {
-            texture: &texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        image.as_raw(),
-        wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(4 * width),
-            rows_per_image: Some(height),
-        },
-        size,
-    );
+    let (mut level_width, mut level_height) = (width, height);
+    let mut level = base;
+    for mip in 0..levels {
+        if mip > 0 {
+            level_width = (level_width / 2).max(1);
+            level_height = (level_height / 2).max(1);
+            level = image::imageops::resize(
+                &level,
+                level_width,
+                level_height,
+                image::imageops::FilterType::Lanczos3,
+            );
+        }
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: mip,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            level.as_raw(),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * level_width),
+                rows_per_image: Some(level_height),
+            },
+            wgpu::Extent3d {
+                width: level_width,
+                height: level_height,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
 
     texture
+}
+
+/// Число мипов до 1×1 включительно: 2048 → 12, 5400 → 13.
+fn mip_levels(width: u32, height: u32) -> u32 {
+    32 - width.max(height).leading_zeros()
 }
 
 fn earth_bind_group(

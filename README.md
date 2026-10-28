@@ -1,7 +1,7 @@
 # OrbitFM
 
 **Плеер интернет-радио с 3D-глобусом**  
-Под эгидой [ModernByte](https://github.com/ModernByte) · версия `0.10.0-rc.1`
+Под эгидой [ModernByte](https://github.com/ModernByte) · версия `0.11.0-rc.1`
 
 [![Релиз](https://img.shields.io/github/v/release/ModernByte/orbitfm?include_prereleases)](https://github.com/ModernByte/orbitfm/releases)
 [![Статус CI](https://img.shields.io/github/actions/workflow/status/ModernByte/orbitfm/ci.yml?branch=main)](https://github.com/ModernByte/orbitfm/actions/workflows/ci.yml)
@@ -14,15 +14,16 @@ OrbitFM — плеер интернет-радио, где каталог пок
 и её станции лежат рядом в списке; так же можно искать по жанру или по названию станции. Закрытие окна музыку не
 останавливает: приложение работает одним процессом, живёт в системном трее и принимает команды из терминала и от
 медиа-клавиш. Для экрана есть три режима — от большого рабочего стола с глобусом до компактной капсулы в углу.
-Приоритетная платформа — Linux (Wayland и X11), сборки есть для Windows и macOS; версия `0.10.0-rc.1` —
+Приоритетная платформа — Linux (Wayland и X11), сборки есть для Windows и macOS; версия `0.11.0-rc.1` —
 пре-релиз, отдельные детали ещё могут меняться.
 
 ## Что умеет
 
 - **3D-глобус.** Клик по стране выбирает её, наведение рисует контур, выбранная страна подсвечивается
   «heatmap»-заливкой: чем больше станций загружено, тем ярче. Границы вшиты в бинарник, глобус работает без сети.
-- **Поиск.** По стране (до 100 станций), по жанру во всём мире (до 200, с маркерами на глобусе) и по названию
-  станции. Есть локальные фильтры и сортировка по популярности, битрейту, имени.
+- **Поиск.** По стране (страницы по 100 станций с догрузкой — «100 из 1244»), по жанру во всём мире
+  (до 200, с маркерами на глобусе) и по названию станции. Есть локальные фильтры с мультивыбором
+  жанров и сортировка по популярности, битрейту, имени.
 - **Избранное и история.** Звезда у каждой станции, вкладки «Результаты», «Избранное», «История». Избранное
   открывается и без сети; история держит последние 20 станций.
 - **Радиорулетка.** Запускает случайную станцию по всему миру, камера перелетает к ней, результат показывается
@@ -60,16 +61,16 @@ OrbitFM — плеер интернет-радио, где каталог пок
 
 ### AppImage (Linux x86_64)
 
-Файл называется `OrbitFM-<версия>-x86_64.AppImage`, например `OrbitFM-0.10.0-rc.1-x86_64.AppImage`. Права root и
+Файл называется `OrbitFM-<версия>-x86_64.AppImage`, например `OrbitFM-0.11.0-rc.1-x86_64.AppImage`. Права root и
 установка не нужны — приложение rootless по определению, и `libmpv` с FFmpeg уже внутри:
 
 ```bash
-chmod +x OrbitFM-0.10.0-rc.1-x86_64.AppImage
-./OrbitFM-0.10.0-rc.1-x86_64.AppImage
+chmod +x OrbitFM-0.11.0-rc.1-x86_64.AppImage
+./OrbitFM-0.11.0-rc.1-x86_64.AppImage
 ```
 
 Если FUSE недоступен (контейнеры, минимальные образы) или не нужна интеграция через монтирование, запускайте в
-режиме распаковки: `APPIMAGE_EXTRACT_AND_RUN=1 ./OrbitFM-0.10.0-rc.1-x86_64.AppImage`. Виджету Noctalia и командам
+режиме распаковки: `APPIMAGE_EXTRACT_AND_RUN=1 ./OrbitFM-0.11.0-rc.1-x86_64.AppImage`. Виджету Noctalia и командам
 `orbitfm …` нужен запускаемый `orbitfm` в `PATH` — удобно сделать символьную ссылку на AppImage.
 
 ### Установщики Windows и macOS
@@ -336,9 +337,10 @@ ModernByte собирал OrbitFM из чужой хорошей работы и
 [Natural Earth](https://www.naturalearthdata.com) — границы `ne_110m_admin_0_countries` в
 `assets/geojson/world-110m.json`, по отметке проектной документации public domain
 ([ADR-0008](docs/adr/0008-геопространственный-поиск.md), [docs/modules/03-geo.md](docs/modules/03-geo.md));
-текстура Земли `assets/textures/earth.jpg` (2048×1024) встроена в бинарник и в документации тоже помечена как
-public domain ([docs/modules/04-render-globe.md](docs/modules/04-render-globe.md)) — конкретного автора репозиторий
-не указывает; [mpv](https://mpv.io) и его
+текстура Земли `assets/textures/earth.jpg` (2048×1024) и её детальный ярус
+`assets/textures/earth@2x.jpg` (5400×2700) встроены в бинарник — NASA Blue Marble Next Generation,
+август, без облаков, public domain ([docs/modules/04-render-globe.md](docs/modules/04-render-globe.md));
+[mpv](https://mpv.io) и его
 [встраиваемый libmpv](https://mpv.io/manual/master/#embedding-libmpv);
 [Noto Color Emoji](https://fonts.google.com/noto/specimen/Noto+Color+Emoji) для флагов
 ([ADR-0017](docs/adr/0017-цветной-emoji-шрифт-для-флагов.md)), CJK — из системы

@@ -20,6 +20,11 @@ const MAX_DISTANCE: f32 = 6.0;
 const ZOOM_SENSITIVITY: f32 = 0.002;
 
 const DRAG_SENSITIVITY: f32 = 0.006;
+/// Вблизи пиксель перетаскивания приходится на меньший участок сферы, поэтому
+/// чувствительность падает; вдали — растёт. Крайние множители подобраны так,
+/// чтобы на дистанции по умолчанию остался прежний темп.
+const DRAG_SCALE_MIN: f32 = 0.30;
+const DRAG_SCALE_MAX: f32 = 1.35;
 /// Затухание броска: τ ≈ 0.67 с, вращение живёт несколько секунд.
 const INERTIA_DAMPING: f32 = 1.5;
 const INERTIA_STOP: f32 = 0.004;
@@ -223,8 +228,9 @@ impl GlobeCamera {
                 self.fly = None;
             }
         } else if input.drag_delta != Vec2::ZERO {
-            let yaw_delta = -input.drag_delta.x * DRAG_SENSITIVITY;
-            let pitch_delta = input.drag_delta.y * DRAG_SENSITIVITY;
+            let sensitivity = drag_sensitivity(self.distance);
+            let yaw_delta = -input.drag_delta.x * sensitivity;
+            let pitch_delta = input.drag_delta.y * sensitivity;
 
             self.yaw += yaw_delta;
             self.pitch += pitch_delta;
@@ -501,6 +507,13 @@ fn unproject(inverse_view_proj: Mat4, x: f32, y: f32, z: f32) -> Option<Vec3> {
 fn shortest_delta(from: f32, to: f32) -> f32 {
     let tau = std::f32::consts::TAU;
     (to - from + std::f32::consts::PI).rem_euclid(tau) - std::f32::consts::PI
+}
+
+/// Чувствительность орбиты на текущей дистанции: на дистанции по умолчанию
+/// совпадает с [`DRAG_SENSITIVITY`], вблизи уменьшается, вдали растёт.
+fn drag_sensitivity(distance: f32) -> f32 {
+    let scale = ((distance - 1.0) / (DEFAULT_DISTANCE - 1.0)).clamp(DRAG_SCALE_MIN, DRAG_SCALE_MAX);
+    DRAG_SENSITIVITY * scale
 }
 
 fn approach(current: f32, target: f32, dt: f32, tau: f32) -> f32 {
@@ -1181,5 +1194,23 @@ mod tests {
             .screen_to_sphere_deformed(after, rect, &GlobeDeform::IDENTITY)
             .expect("луч должен пересекать сферу");
         assert!((hit - point).length() < 1e-3, "hit: {hit:?}");
+    }
+
+    #[test]
+    fn drag_speed_follows_the_zoom_level() {
+        let near = drag_sensitivity(MIN_DISTANCE);
+        let default = drag_sensitivity(DEFAULT_DISTANCE);
+        let far = drag_sensitivity(MAX_DISTANCE);
+        assert!(
+            near < default,
+            "вблизи вращение медленнее: {near} vs {default}"
+        );
+        assert!(far > default, "вдали вращение быстрее: {far} vs {default}");
+        assert!(
+            (default - DRAG_SENSITIVITY).abs() < 1e-6,
+            "дистанция по умолчанию сохраняет прежний темп"
+        );
+        assert!((near - DRAG_SENSITIVITY * DRAG_SCALE_MIN).abs() < 1e-6);
+        assert!((far - DRAG_SENSITIVITY * DRAG_SCALE_MAX).abs() < 1e-6);
     }
 }

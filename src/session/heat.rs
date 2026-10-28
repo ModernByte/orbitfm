@@ -19,9 +19,9 @@ const TALK_TAGS: [&str; 8] = [
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum CountryMetric {
     /// Базовый глобус без заливки стран.
+    #[default]
     Off,
     /// Число станций страны.
-    #[default]
     Density,
     /// Жанровое разнообразие: число различных тегов.
     Genre,

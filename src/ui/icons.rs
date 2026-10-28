@@ -48,6 +48,7 @@ pub(crate) enum Icon {
     Globe,
     Clock,
     Funnel,
+    FunnelX,
     Alert,
 }
 
@@ -76,6 +77,7 @@ impl Icon {
             Self::Globe => egui::include_image!("../../assets/icons/globe.svg"),
             Self::Clock => egui::include_image!("../../assets/icons/clock.svg"),
             Self::Funnel => egui::include_image!("../../assets/icons/funnel.svg"),
+            Self::FunnelX => egui::include_image!("../../assets/icons/funnel-x.svg"),
             Self::Alert => egui::include_image!("../../assets/icons/circle-alert.svg"),
         }
     }
@@ -387,6 +389,59 @@ pub(crate) fn sort_button(ui: &mut egui::Ui, palette: &Palette, hint: &str) -> R
     )
 }
 
+/// Показать/скрыть строку фильтров списка: активное состояние подсвечивает
+/// воронку акцентом, как выбранный режим.
+pub(crate) fn filters_button(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    hint: &str,
+    visible: bool,
+) -> Response {
+    icon_button(
+        ui,
+        palette,
+        Vec2::splat(SMALL_SIDE),
+        true,
+        visible,
+        hint,
+        move |ui, rect, base, hover| {
+            let tint = if visible {
+                palette.accent
+            } else {
+                icon_tint(base, palette.accent, hover)
+            };
+            paint_icon(ui, Icon::Funnel, rect.center(), 18.0, tint);
+        },
+    )
+}
+
+/// Сброс всех фильтров списка: перечёркнутая воронка гаснет, когда сбрасывать
+/// нечего.
+pub(crate) fn clear_filters_button(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    enabled: bool,
+    hint: &str,
+) -> Response {
+    icon_button(
+        ui,
+        palette,
+        Vec2::splat(SMALL_SIDE),
+        enabled,
+        false,
+        hint,
+        |ui, rect, base, hover| {
+            paint_icon(
+                ui,
+                Icon::FunnelX,
+                rect.center(),
+                18.0,
+                icon_tint(base, palette.accent, hover),
+            );
+        },
+    )
+}
+
 /// Переключатель плотности строк: три линии в покое, четыре в компактном режиме.
 pub(crate) fn density_button(
     ui: &mut egui::Ui,
@@ -574,6 +629,7 @@ mod tests {
             Icon::Globe,
             Icon::Clock,
             Icon::Funnel,
+            Icon::FunnelX,
             Icon::Alert,
         ] {
             let uri = icon.source().uri().map(str::to_owned);

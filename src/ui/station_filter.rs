@@ -74,24 +74,55 @@ impl StationSort {
 }
 
 /// Состояние фильтров панели страны; живёт между кадрами в App Core.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub(crate) struct CountryFilterState {
     pub text: String,
-    pub genre: Option<GenreTag>,
+    /// Мультивыбор жанров: пусто — без ограничения, иначе достаточно
+    /// совпадения хотя бы одного тега.
+    pub genres: Vec<GenreTag>,
+    /// Показана ли строка жанров и бейджи выбранных фильтров. По умолчанию
+    /// фильтры видны: это рабочая строка списка, а не скрытая настройка.
+    pub filters_visible: bool,
     pub sort: StationSort,
     /// Компактные строки списка (переключатель плотности).
     pub compact_rows: bool,
 }
 
+impl Default for CountryFilterState {
+    fn default() -> Self {
+        Self {
+            text: String::new(),
+            genres: Vec::new(),
+            filters_visible: true,
+            sort: StationSort::default(),
+            compact_rows: false,
+        }
+    }
+}
+
 impl CountryFilterState {
-    /// Сбрасывает текстовый фильтр и жанр, сохраняя сортировку и плотность.
+    /// Сбрасывает текстовый фильтр и жанры, сохраняя сортировку, плотность и
+    /// видимость строки фильтров.
     pub(crate) fn reset(&mut self) {
         self.text.clear();
-        self.genre = None;
+        self.genres.clear();
     }
 
     pub(crate) fn is_active(&self) -> bool {
-        !self.text.trim().is_empty() || self.genre.is_some()
+        !self.text.trim().is_empty() || !self.genres.is_empty()
+    }
+
+    /// Добавляет или убирает жанр мультивыбора, сохраняя порядок выбора.
+    pub(crate) fn toggle_genre(&mut self, genre: GenreTag) {
+        if let Some(index) = self.genres.iter().position(|selected| *selected == genre) {
+            self.genres.remove(index);
+        } else {
+            self.genres.push(genre);
+        }
+    }
+
+    pub(crate) fn has_genre(&self, genre: GenreTag) -> bool {
+        self.genres.contains(&genre)
     }
 }
 
@@ -104,9 +135,11 @@ pub(crate) fn filtered_results<'a>(
     let mut stations: Vec<&Station> = results
         .iter()
         .filter(|station| {
-            filter
-                .genre
-                .is_none_or(|genre| genre.matches(&station.tags))
+            (filter.genres.is_empty()
+                || filter
+                    .genres
+                    .iter()
+                    .any(|genre| genre.matches(&station.tags)))
                 && (text.is_empty() || matches_text(station, &text))
         })
         .collect();
@@ -229,7 +262,7 @@ mod tests {
     fn genre_chip_checks_tags_case_insensitively() {
         let stations = sample();
         let filter = CountryFilterState {
-            genre: Some(GenreTag::Jazz),
+            genres: vec![GenreTag::Jazz],
             ..CountryFilterState::default()
         };
         let matches = filtered_results(&stations, &filter);
@@ -237,10 +270,40 @@ mod tests {
         assert_eq!(matches[0].name, "Berlin Jazz");
 
         let filter = CountryFilterState {
-            genre: Some(GenreTag::Metal),
+            genres: vec![GenreTag::Metal],
             ..CountryFilterState::default()
         };
         assert!(filtered_results(&stations, &filter).is_empty());
+    }
+
+    #[test]
+    fn multiple_genres_match_any_tag() {
+        let stations = sample();
+        let filter = CountryFilterState {
+            genres: vec![GenreTag::Jazz, GenreTag::News],
+            ..CountryFilterState::default()
+        };
+        let matches = filtered_results(&stations, &filter);
+        let names: Vec<&str> = matches
+            .iter()
+            .map(|station| station.name.as_str())
+            .collect();
+        // Сортировка по популярности сохраняется: у «Nacht-News» больше votes.
+        assert_eq!(names, vec!["Nacht-News", "Berlin Jazz"], "OR-семантика");
+    }
+
+    #[test]
+    fn toggling_genres_adds_and_removes_without_duplicates() {
+        let mut filter = CountryFilterState::default();
+        assert!(!filter.is_active());
+        filter.toggle_genre(GenreTag::Rock);
+        filter.toggle_genre(GenreTag::Jazz);
+        assert!(filter.has_genre(GenreTag::Rock) && filter.has_genre(GenreTag::Jazz));
+        assert!(filter.is_active());
+
+        filter.toggle_genre(GenreTag::Rock);
+        assert!(!filter.has_genre(GenreTag::Rock));
+        assert_eq!(filter.genres, vec![GenreTag::Jazz], "порядок сохраняется");
     }
 
     #[test]
@@ -272,15 +335,21 @@ mod tests {
     fn reset_clears_text_and_genre_but_keeps_sort() {
         let mut filter = CountryFilterState {
             text: "jazz".to_owned(),
-            genre: Some(GenreTag::Jazz),
+            genres: vec![GenreTag::Jazz, GenreTag::Rock],
             sort: StationSort::Name,
             compact_rows: true,
+            filters_visible: false,
         };
         assert!(filter.is_active());
 
         filter.reset();
         assert!(!filter.is_active());
+        assert!(filter.genres.is_empty());
         assert_eq!(filter.sort, StationSort::Name);
         assert!(filter.compact_rows, "плотность — настройка вида, не фильтр");
+        assert!(
+            !filter.filters_visible,
+            "видимость строки фильтров не сбрасывается"
+        );
     }
 }

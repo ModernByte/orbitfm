@@ -95,6 +95,9 @@ impl super::Session {
 
         self.current_url = Some(url);
         self.current_station = Some(station.clone());
+        // Запуск из списка или hotkey тоже выбирает станцию: маркер глобуса
+        // обязан отозваться тем же выделением (ADR-0036).
+        self.selected_station = Some(station.stationuuid.clone());
         if let Err(err) = self.library.record_played(&station) {
             tracing::warn!(error = %err, "не удалось сохранить историю станций");
             self.notify_error_detail(NoticeKey::HistoryNotSaved, err.to_string());
@@ -102,6 +105,19 @@ impl super::Session {
         self.spawn_click(station.stationuuid);
         self.sync_media();
         Ok(())
+    }
+
+    /// Клик по маркеру: станция становится выбранной, панель переключается на
+    /// результаты и один раз прокручивает строку в видимую часть (ADR-0036).
+    pub(crate) fn select_station(&mut self, station: &Station) {
+        self.selected_station = Some(station.stationuuid.clone());
+        self.reveal_station = Some(station.stationuuid.clone());
+        self.library_tab = LibraryTab::Results;
+    }
+
+    /// Забирает разовую просьбу прокрутки: кадр панели потребляет её один раз.
+    pub(crate) fn take_station_reveal(&mut self) -> Option<String> {
+        self.reveal_station.take()
     }
 
     /// Click-трекинг в Radio Browser; ошибка не мешает слушать.

@@ -367,7 +367,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: OrbitFM ${{ needs.version.outputs.version }}
+          name: OrbitFM v${{ needs.version.outputs.version }}
           files: |
             release/OrbitFM-*
             release/SHA256SUMS

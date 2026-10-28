@@ -15,7 +15,7 @@ use crate::i18n;
 use crate::render::{
     BandTargets, GlobeRenderer, MotionMixer, SpectrumOverlay, SpectrumTarget, VisualizerModel,
 };
-use crate::services::USER_AGENT;
+use crate::services::{Station, USER_AGENT};
 use crate::session::heat::CountryMetric;
 use crate::session::search::SearchMode;
 use crate::session::{Notice, NoticeKey, Session, StationStartError, UiIntent, WindowMode};
@@ -74,6 +74,7 @@ fn notice_text(
         NoticeKey::PlaybackFailed => notices.playback_failed,
         NoticeKey::StationWithoutUrl => notices.station_without_url,
         NoticeKey::SearchTaskEnded => notices.search_task_ended,
+        NoticeKey::LoadMoreFailed => notices.load_more_failed,
         NoticeKey::RouletteStarted { station } => {
             let label = station
                 .clone()
@@ -277,6 +278,9 @@ impl<'a> OrbitApp<'a> {
     /// `egui::Frame` умеет только сплошную заливку и остаётся прозрачным.
     fn draw_layers(&mut self, ui: &mut egui::Ui, frame: &Frame) -> Vec<UiAction> {
         let session = &mut *self.session;
+        // Просьба панели прокрутить строку живёт один кадр: клик по маркеру
+        // оставляет её, следующий кадр списка её потребляет (ADR-0036).
+        let reveal_uuid = session.take_station_reveal();
         let favicons = &mut self.favicons;
         let spectrum_overlay = &mut self.spectrum_overlay;
         let motion_mixer = &mut self.motion;
@@ -394,7 +398,13 @@ impl<'a> OrbitApp<'a> {
                             ready: self.globe_ready,
                             markers: &session.markers,
                             current_station: session.current_station.as_ref(),
+                            selected_station: session.selected_station.as_deref(),
                             geo: &session.geo,
+                            // Снимок всей базы прогревается с первого кадра;
+                            // до его прихода карта пуста, и подсказка честно
+                            // молчит о числе станций.
+                            country_counts: Some(session.world.counts())
+                                .filter(|counts| !counts.is_empty()),
                             selected_country: session
                                 .search
                                 .context
@@ -485,6 +495,7 @@ impl<'a> OrbitApp<'a> {
                         GLASS_RADIUS_MAJOR,
                         panel_a,
                     );
+                    let total_available = session.country_total();
                     actions.extend(
                         ui.scope_builder(vertical(panel_rect), |ui| {
                             station_panel::show(
@@ -502,12 +513,17 @@ impl<'a> OrbitApp<'a> {
                                     pending: session.search.pending,
                                     empty: session.search.empty,
                                     error: session.search.error.as_deref(),
+                                    total_available,
+                                    loading_more: session.search.loading_more,
+                                    has_more: session.search.has_more,
                                     filter: &mut session.country_filter,
                                     favicons,
                                     playing_uuid: session
                                         .current_station
                                         .as_ref()
                                         .map(|station| station.stationuuid.as_str()),
+                                    selected_uuid: session.selected_station.as_deref(),
+                                    reveal_uuid: reveal_uuid.as_deref(),
                                     entry: panel_entry,
                                     chrome: station_panel::PanelChrome::Full,
                                     language: frame.language,
@@ -731,6 +747,7 @@ impl<'a> OrbitApp<'a> {
                 }
 
                 if let Some(panel_rect) = layout.panel {
+                    let total_available = session.country_total();
                     actions.extend(
                         ui.scope_builder(vertical(panel_rect), |ui| {
                             station_panel::show(
@@ -748,12 +765,17 @@ impl<'a> OrbitApp<'a> {
                                     pending: session.search.pending,
                                     empty: session.search.empty,
                                     error: session.search.error.as_deref(),
+                                    total_available,
+                                    loading_more: session.search.loading_more,
+                                    has_more: session.search.has_more,
                                     filter: &mut session.country_filter,
                                     favicons,
                                     playing_uuid: session
                                         .current_station
                                         .as_ref()
                                         .map(|station| station.stationuuid.as_str()),
+                                    selected_uuid: session.selected_station.as_deref(),
+                                    reveal_uuid: reveal_uuid.as_deref(),
                                     entry: panel_a,
                                     chrome: station_panel::PanelChrome::Embedded,
                                     language: frame.language,
@@ -811,28 +833,22 @@ impl<'a> OrbitApp<'a> {
     /// Действие UI превращается в команду ядра; побочные эффекты — только здесь.
     fn apply_action(&mut self, ctx: &egui::Context, action: UiAction) {
         match action {
-            UiAction::Play(station) => {
-                self.session.mark_help_seen();
-                if let Err(err) = self.session.start_station(station) {
-                    match err {
-                        StationStartError::NoUrl => {
-                            self.error_toast(ctx, NoticeKey::StationWithoutUrl, None);
-                        }
-                        StationStartError::Audio(detail) => {
-                            self.error_toast(ctx, NoticeKey::PlaybackFailed, Some(detail));
-                        }
-                    }
-                }
+            UiAction::Play(station) => self.play_station(ctx, station),
+            UiAction::SelectStation(station) => {
+                // Маркер глобуса выбирает станцию и в списке: панель получит
+                // просьбу прокрутить строку в центр (ADR-0036).
+                self.session.select_station(&station);
+                self.play_station(ctx, station);
             }
             UiAction::ToggleFavorite(station) => self.session.toggle_favorite(&station),
             UiAction::SelectCountry(country) => {
-                self.session.mark_help_seen();
                 self.session.focus_country(&country);
                 self.session.start_country_search(country);
             }
             UiAction::SwitchMode(mode) => self.session.switch_mode(mode),
             UiAction::SelectGenre(tag) => self.session.start_genre_search(tag),
             UiAction::RunSearch => self.session.start_search(),
+            UiAction::LoadMore => self.session.load_more(),
             UiAction::RetrySearch => self.session.retry_search(),
             UiAction::Roulette => self.session.start_roulette(),
             UiAction::ClearHistory => self.session.clear_history(),
@@ -912,8 +928,10 @@ impl<'a> OrbitApp<'a> {
             UiAction::Quit => self.session.quit(),
             UiAction::TogglePanel => self.session.panel_open = !self.session.panel_open,
             UiAction::ToggleHelp => {
-                self.session.show_help = !self.session.show_help;
-                self.session.mark_help_seen();
+                let visible = !self.session.show_help;
+                if let Err(err) = self.session.set_help_visible(visible) {
+                    self.error_toast(ctx, NoticeKey::SettingNotSaved, Some(err));
+                }
             }
             UiAction::ToggleSettings => self.session.toggle_settings(),
             UiAction::CloseSettings => self.session.close_settings(),
@@ -926,6 +944,20 @@ impl<'a> OrbitApp<'a> {
             }
         }
         ctx.request_repaint();
+    }
+
+    /// Запуск станции из списка или маркера: одна обработка ошибок на оба пути.
+    fn play_station(&mut self, ctx: &egui::Context, station: Station) {
+        if let Err(err) = self.session.start_station(station) {
+            match err {
+                StationStartError::NoUrl => {
+                    self.error_toast(ctx, NoticeKey::StationWithoutUrl, None);
+                }
+                StationStartError::Audio(detail) => {
+                    self.error_toast(ctx, NoticeKey::PlaybackFailed, Some(detail));
+                }
+            }
+        }
     }
 
     /// Тост ошибки по ключу каталога: `detail` — техническая вставка (ADR-0030).
@@ -1177,9 +1209,10 @@ impl eframe::App for OrbitApp<'_> {
         if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
             if self.session.settings_open {
                 self.session.close_settings();
-            } else if self.session.show_help {
-                self.session.show_help = false;
-                self.session.mark_help_seen();
+            } else if self.session.show_help
+                && let Err(err) = self.session.set_help_visible(false)
+            {
+                self.error_toast(ctx, NoticeKey::SettingNotSaved, Some(err));
             }
         }
 

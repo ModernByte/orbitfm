@@ -6,7 +6,7 @@ use crate::i18n;
 use crate::settings::Language;
 
 use super::palette::Palette;
-use super::widgets::pill;
+use super::widgets::{chip, contrast_color, pill, search_field};
 use super::{SearchMode, UiAction};
 
 /// Предустановленные жанры глобального поиска (теги Radio Browser).
@@ -81,65 +81,86 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: ModeState<'_>) -
         {
             actions.push(UiAction::SwitchMode(SearchMode::Country));
         }
-        if pill(ui, palette, text.hud.genre, mode == SearchMode::GlobalGenre).clicked()
-            && mode != SearchMode::GlobalGenre
-        {
+
+        // Клик по «Жанру» сразу открывает меню выбора: отдельной кнопки рядом
+        // больше нет (ревизия 2026-10-28). Режим при этом переключается, чтобы
+        // выбранный жанр применился к глобальному поиску.
+        let genre_pill = pill(ui, palette, text.hud.genre, mode == SearchMode::GlobalGenre);
+        if genre_pill.clicked() && mode != SearchMode::GlobalGenre {
             actions.push(UiAction::SwitchMode(SearchMode::GlobalGenre));
         }
-
-        if mode == SearchMode::GlobalGenre {
-            let label = selected_genre.map_or_else(
-                || text.hud.pick_genre.to_owned(),
-                |tag| genre_label(language, tag),
-            );
-            let button = ui
-                .add(
-                    egui::Button::new(egui::RichText::new(label).size(13.0).color(palette.text))
-                        .fill(palette.chip_fill)
-                        .stroke(egui::Stroke::new(1.0, palette.chip_stroke))
-                        .corner_radius(egui::CornerRadius::same(14)),
-                )
-                .on_hover_text("Search stations by genre worldwide");
-            let popup_id = egui::Popup::default_response_id(&button);
-            egui::Popup::menu(&button)
-                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                .show(|ui| {
-                    ui.set_min_width(260.0);
-                    ui.label(egui::RichText::new(text.hud.global_genre).strong());
-                    ui.horizontal_wrapped(|ui| {
-                        for tag in GENRE_PRESETS {
-                            let selected = selected_genre == Some(tag);
-                            if ui
-                                .selectable_label(selected, genre_label(language, tag))
-                                .clicked()
-                            {
-                                actions.push(UiAction::SelectGenre(tag.to_owned()));
-                                egui::Popup::close_id(ui.ctx(), popup_id);
-                            }
-                        }
-                    });
-                    ui.add_space(4.0);
-                    let response = ui.add(
-                        egui::TextEdit::singleline(genre_query)
-                            .hint_text(text.hud.custom_tag_hint)
-                            .desired_width(240.0),
-                    );
-                    let enter = response.lost_focus()
-                        && ui.input(|input| input.key_pressed(egui::Key::Enter));
-                    ui.label(
-                        egui::RichText::new(text.hud.genre_search_hint)
-                            .size(10.5)
-                            .color(palette.muted),
-                    );
-                    if ui.button(text.common.search).clicked() || enter {
-                        let tag = genre_query.trim();
-                        if !tag.is_empty() {
+        let popup_id = egui::Popup::default_response_id(&genre_pill);
+        let frame = egui::Frame::popup(ui.style())
+            .fill(palette.card_fill)
+            .stroke(egui::Stroke::new(1.0, palette.card_stroke))
+            .inner_margin(egui::Margin::same(14));
+        egui::Popup::menu(&genre_pill)
+            .id(popup_id)
+            .width(300.0)
+            .frame(frame)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show(|ui| {
+                ui.set_min_width(300.0);
+                ui.visuals_mut().selection.bg_fill = palette.accent;
+                ui.visuals_mut().selection.stroke =
+                    egui::Stroke::new(1.0, contrast_color(palette.accent));
+                ui.label(
+                    egui::RichText::new(text.hud.global_genre)
+                        .size(12.5)
+                        .strong()
+                        .color(palette.text),
+                );
+                let summary = selected_genre.map_or_else(
+                    || text.hud.pick_genre.to_owned(),
+                    |tag| genre_label(language, tag),
+                );
+                ui.label(egui::RichText::new(summary).size(10.5).color(palette.muted));
+                ui.add_space(6.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+                    for tag in GENRE_PRESETS {
+                        let selected = selected_genre == Some(tag);
+                        let label = genre_label(language, tag);
+                        if chip(ui, palette, &label, selected).clicked() {
                             actions.push(UiAction::SelectGenre(tag.to_owned()));
                             egui::Popup::close_id(ui.ctx(), popup_id);
                         }
                     }
                 });
-        }
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(4.0);
+                let field = search_field(
+                    ui,
+                    palette,
+                    ui.scope_id().with("hud_genre_tag"),
+                    text.hud.custom_tag_hint,
+                    genre_query,
+                    ui.available_width(),
+                );
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new(text.hud.genre_search_hint)
+                        .size(10.0)
+                        .color(palette.muted),
+                );
+                ui.add_space(4.0);
+                let search = egui::Button::new(
+                    egui::RichText::new(text.common.search)
+                        .size(12.0)
+                        .color(contrast_color(palette.accent)),
+                )
+                .fill(palette.accent)
+                .corner_radius(egui::CornerRadius::same(8))
+                .min_size(egui::vec2(ui.available_width(), 28.0));
+                if ui.add(search).clicked() || field.enter {
+                    let tag = genre_query.trim();
+                    if !tag.is_empty() {
+                        actions.push(UiAction::SelectGenre(tag.to_owned()));
+                        egui::Popup::close_id(ui.ctx(), popup_id);
+                    }
+                }
+            });
     });
 
     actions

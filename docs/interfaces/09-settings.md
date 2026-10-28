@@ -105,8 +105,8 @@ pub struct Settings {
     pub volume: f64,
     /// Видимость визуализатора и аудиокольца (ADR-0031).
     pub visualizer_enabled: bool,
-    /// Карточка управления уже показывалась — дальше она только по `?`.
-    pub help_seen: bool,
+    /// Видимость карточки управления глобусом; по умолчанию включена (ADR-0036).
+    pub help_visible: bool,
     pub motion: MotionReactivity,
     pub motion_style: MotionStyle,
     pub allow_flips: bool,
@@ -139,7 +139,7 @@ impl SettingsStore {
     pub fn set_viz_bars(&mut self, bars: u8) -> Result<(), SettingsError>;
     pub fn set_volume(&mut self, volume: f64) -> Result<(), SettingsError>;
     pub fn set_visualizer_enabled(&mut self, enabled: bool) -> Result<(), SettingsError>;
-    pub fn set_help_seen(&mut self) -> Result<(), SettingsError>;
+    pub fn set_help_visible(&mut self, visible: bool) -> Result<(), SettingsError>;
     pub fn set_motion(&mut self, motion: MotionReactivity) -> Result<(), SettingsError>;
     pub fn set_motion_style(&mut self, style: MotionStyle) -> Result<(), SettingsError>;
     pub fn set_allow_flips(&mut self, allow: bool) -> Result<(), SettingsError>;
@@ -170,7 +170,7 @@ pub fn default_path() -> Result<PathBuf, SettingsError>;
 | `set_viz_bars` | Приводит число к ближайшему из `VIZ_BAR_CHOICES` и сохраняет |
 | `set_volume` | Клампит в `0.0..=1.0` (non-finite → `DEFAULT_VOLUME`), сравнение по `f64::EPSILON`, сохраняет только при изменении |
 | `set_visualizer_enabled` | Включает или выключает визуализатор и аудиокольцо; сохраняет только при изменении |
-| `set_help_seen` | Одноразово фиксирует показ карточки управления |
+| `set_help_visible` | Включает или выключает карточку управления глобусом; значение по умолчанию `true`, сохраняет только при изменении. Старый ключ `help_seen` игнорируется (ADR-0036) |
 | `set_motion` / `set_reduce_motion` | Меняет реактивность движения и Reduce motion; сохраняет только при изменении |
 | `set_motion_style` | Меняет характер движения (`Auto` или один из шести стилей); сохраняет только при изменении |
 | `set_allow_flips` | Разрешает перевороты камеры; по умолчанию `false`, сохраняет только при изменении |
@@ -191,7 +191,7 @@ pub fn default_path() -> Result<PathBuf, SettingsError>;
   "viz_bars": 24,
   "volume": 0.7,
   "visualizer_enabled": true,
-  "help_seen": false,
+  "help_visible": true,
   "motion": "normal",
   "motion_style": "auto",
   "allow_flips": false,

@@ -180,12 +180,13 @@ impl super::Session {
         }
     }
 
-    /// Карточка управления показана один раз; дальше её зовут кнопкой в HUD или
-    /// переключателем в настройках.
-    pub(crate) fn mark_help_seen(&mut self) {
-        if let Err(err) = self.settings.set_help_seen() {
-            tracing::warn!(error = %err, "не удалось сохранить признак просмотренной карточки");
-        }
+    /// Видимость карточки управления глобусом: выбор пользователя переживает
+    /// перезапуск, а по умолчанию карточка включена (ADR-0036).
+    pub(crate) fn set_help_visible(&mut self, visible: bool) -> Result<(), String> {
+        self.show_help = visible;
+        self.settings
+            .set_help_visible(visible)
+            .map_err(|err| err.to_string())
     }
 }
 

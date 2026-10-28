@@ -28,12 +28,8 @@ use super::widgets::{
 };
 use super::{SearchMode, UiAction, country_label, mode_switch, single_line, truncate};
 
-const COMPACT_HUD_WIDTH: f32 = 1000.0;
 const TIGHT_HUD_WIDTH: f32 = 840.0;
 const COUNTRY_SUGGESTIONS: usize = 6;
-/// Штатная ширина поля поиска: плотная и полная раскладки.
-const COMPACT_SEARCH_WIDTH: f32 = 150.0;
-const SEARCH_WIDTH: f32 = 240.0;
 /// Ниже этой ширины строкой ввода нельзя пользоваться.
 const MIN_SEARCH_WIDTH: f32 = 120.0;
 /// Иконочная кнопка (`icons::SIDE`) и бейдж «● LIVE» в шапке.
@@ -78,7 +74,6 @@ pub(crate) fn show(
 ) -> Vec<UiAction> {
     let mut actions = Vec::new();
     let width = ui.available_width();
-    let compact = width < COMPACT_HUD_WIDTH;
     let tight = width < TIGHT_HUD_WIDTH;
     let spacing = ui.spacing().item_spacing.x;
     let shown = content_alpha(motion.scene);
@@ -123,7 +118,7 @@ pub(crate) fn show(
                 ));
                 ui.add_space(8.0);
 
-                let search_width = search_width(ui.available_width(), compact, tight, spacing);
+                let search_width = search_width(ui.available_width(), tight, spacing);
                 if state.mode == SearchMode::Country {
                     actions.extend(country_search(
                         ui,
@@ -188,19 +183,15 @@ fn right_block_width(tight: bool, spacing: f32) -> f32 {
     width + (controls - 1.0) * spacing
 }
 
-/// Ширина поля поиска: штатная, пока правый блок вписывается в остаток строки,
-/// иначе — этот остаток, но не меньше [`MIN_SEARCH_WIDTH`].
+/// Ширина поля поиска: весь остаток строки после правого блока. Поле — главный
+/// контрол шапки, поэтому оно тянется до контролов, а не живёт в номинальных
+/// 240 px; уступает оно только когда места физически меньше [`MIN_SEARCH_WIDTH`].
 ///
 /// `Layout::right_to_left` не переносит содержимое на новую строку
 /// (`Layout::main_wrap == false`), поэтому единственный способ не дать
-/// контролам уехать поверх pill — уступить им место заранее.
-fn search_width(available: f32, compact: bool, tight: bool, spacing: f32) -> f32 {
-    let nominal = if compact {
-        COMPACT_SEARCH_WIDTH
-    } else {
-        SEARCH_WIDTH
-    };
-    (available - right_block_width(tight, spacing)).clamp(MIN_SEARCH_WIDTH, nominal)
+/// контролам уехать поверх pill — вычесть их резерв заранее.
+fn search_width(available: f32, tight: bool, spacing: f32) -> f32 {
+    (available - right_block_width(tight, spacing) - spacing).max(MIN_SEARCH_WIDTH)
 }
 
 fn playing(state: &HudState<'_>) -> bool {
@@ -655,12 +646,7 @@ mod tests {
         let output = ctx.run_ui(input, |ui| {
             ui.horizontal(|ui| {
                 ui.allocate_exact_size(egui::vec2(341.0, 30.0), egui::Sense::hover());
-                let search = search_width(
-                    ui.available_width(),
-                    false,
-                    tight,
-                    ui.spacing().item_spacing.x,
-                );
+                let search = search_width(ui.available_width(), tight, ui.spacing().item_spacing.x);
                 ui.allocate_exact_size(egui::vec2(search, 30.0), egui::Sense::hover());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let spacing = ui.spacing().item_spacing.x;
@@ -760,29 +746,37 @@ mod tests {
     }
 
     #[test]
-    fn search_field_yields_width_before_the_row_overflows() {
+    fn search_field_stretches_to_the_row_remainder() {
         let spacing = 8.0;
-        // 1100 px: после левого блока остаётся 699 px — поиск держит штатные
-        // 240, правому блоку хватает 276.
-        assert_eq!(search_width(699.0, false, false, spacing), SEARCH_WIDTH);
-        // Длинный перевод левого блока: поиск уступает место правому блоку,
-        // но не право на жизнь.
-        let narrow = 400.0;
-        let yielded = search_width(narrow, false, false, spacing);
+        // 1100 px: после левого блока остаётся 699 px; поиск забирает всё, что
+        // не занято правым блоком.
+        let wide = 699.0;
+        let stretched = search_width(wide, false, spacing);
+        assert_eq!(
+            stretched,
+            wide - right_block_width(false, spacing) - spacing
+        );
         assert!(
-            (MIN_SEARCH_WIDTH..SEARCH_WIDTH).contains(&yielded),
+            stretched > 240.0,
+            "поле поиска обязано быть шире прежнего номинала 240 px: {stretched}"
+        );
+
+        // Узкая шапка: поиск уступает правому блоку, но не право на жизнь.
+        let narrow = 400.0;
+        let yielded = search_width(narrow, false, spacing);
+        assert!(
+            (MIN_SEARCH_WIDTH..narrow).contains(&yielded),
             "поиск обязан уступить, получил {yielded}"
         );
         assert!(
             yielded + right_block_width(false, spacing) <= narrow,
             "правый блок не влезает в остаток строки"
         );
-        // Компактная плотность держит свои 150 px, пока правый блок вписан.
-        assert_eq!(
-            search_width(460.0, true, false, spacing),
-            COMPACT_SEARCH_WIDTH
-        );
+
+        // В узкой шапке справа меньше контролов — поиску достаётся больше.
+        assert!(search_width(wide, true, spacing) > stretched);
+
         // И никогда не уходит в отрицательную ширину.
-        assert_eq!(search_width(0.0, false, false, spacing), MIN_SEARCH_WIDTH);
+        assert_eq!(search_width(0.0, false, spacing), MIN_SEARCH_WIDTH);
     }
 }

@@ -17,12 +17,12 @@ use super::animation;
 use super::icons;
 use super::images::FaviconCache;
 use super::mode_switch::genre_label;
-use super::palette::Palette;
+use super::palette::{Palette, mix_colors};
 use super::station_filter::{self, CountryFilterState, GenreTag, StationSort};
 use super::station_row::{RowContext, station_row, station_tag_chips};
 use super::widgets::{
-    EmptyMark, EmptyState, chip, empty_state, error_card, faded_group, quiet_button, search_field,
-    segmented_tabs, skeleton_rows,
+    EmptyMark, EmptyState, contrast_color, control_motion, empty_state, error_card, faded,
+    faded_group, focus_ring, quiet_button, search_field, segmented_tabs, skeleton_rows,
 };
 use super::{UiAction, single_line, truncate};
 
@@ -33,6 +33,10 @@ const TAB_KEY: &str = "orbitfm_panel_tab";
 const TAB_COUNT: usize = 3;
 /// Высота закреплённой кнопки «Очистить историю» вместе с отступом.
 const CLEAR_HISTORY_HEIGHT: f32 = 38.0;
+/// Высота закреплённой кнопки «Загрузить ещё» вместе с отступом.
+const LOAD_MORE_HEIGHT: f32 = 38.0;
+/// Промежуток между полем поиска и иконками фильтров.
+const FILTER_GAP: f32 = 8.0;
 
 /// Оформление карточки списка. В Focus панель — самостоятельная карточка со
 /// своим заголовком; в выпадающей панели шапку рисует `hud::panel_header`, и
@@ -54,9 +58,20 @@ pub(crate) struct PanelState<'a> {
     pub pending: bool,
     pub empty: bool,
     pub error: Option<&'a str>,
+    /// Всего станций страны по мировому кэшу: «100 из 1244».
+    pub total_available: Option<u32>,
+    /// Идёт догрузка следующей страницы, список остаётся на экране.
+    pub loading_more: bool,
+    /// У текущей выборки есть ещё страницы.
+    pub has_more: bool,
     pub filter: &'a mut CountryFilterState,
     pub favicons: &'a mut FaviconCache,
     pub playing_uuid: Option<&'a str>,
+    /// Выбранная станция: маркер глобуса и строка списка делят одно выделение
+    /// (ADR-0036).
+    pub selected_uuid: Option<&'a str>,
+    /// Разовая просьба прокрутить строку в центр после клика по маркеру.
+    pub reveal_uuid: Option<&'a str>,
     /// Альфа содержимого: вход Focus-стола или появление выпадающей панели.
     pub entry: f32,
     pub chrome: PanelChrome,
@@ -99,9 +114,14 @@ pub(crate) fn show(
         pending,
         empty,
         error,
+        total_available,
+        loading_more,
+        has_more,
         filter,
         favicons,
         playing_uuid,
+        selected_uuid,
+        reveal_uuid,
         entry: shown,
         chrome,
         language,
@@ -184,6 +204,7 @@ pub(crate) fn show(
                     total,
                     filtered.len(),
                     context_mode,
+                    total_available,
                     filter,
                     language,
                 );
@@ -196,8 +217,17 @@ pub(crate) fn show(
             }
 
             let show_clear = *tab == LibraryTab::History && !history.is_empty();
+            let show_load_more = *tab == LibraryTab::Results
+                && context_mode
+                && has_more
+                && error.is_none()
+                && !pending;
             let reserve = if show_clear {
                 CLEAR_HISTORY_HEIGHT
+            } else {
+                0.0
+            } + if show_load_more {
+                LOAD_MORE_HEIGHT
             } else {
                 0.0
             };
@@ -271,6 +301,8 @@ pub(crate) fn show(
                                     palette,
                                     &filtered,
                                     playing_uuid,
+                                    selected_uuid,
+                                    reveal_uuid,
                                     compact,
                                     context_mode,
                                     favorites,
@@ -300,6 +332,8 @@ pub(crate) fn show(
                                     palette,
                                     &rows,
                                     playing_uuid,
+                                    selected_uuid,
+                                    reveal_uuid,
                                     compact,
                                     false,
                                     favorites,
@@ -329,6 +363,8 @@ pub(crate) fn show(
                                     palette,
                                     &rows,
                                     playing_uuid,
+                                    selected_uuid,
+                                    reveal_uuid,
                                     compact,
                                     false,
                                     favorites,
@@ -340,6 +376,20 @@ pub(crate) fn show(
                         }
                     });
                 });
+
+            // Догрузка закреплена под списком: длинная страница не уводит
+            // кнопку за пределы прокрутки.
+            if show_load_more {
+                ui.add_space(4.0);
+                let (label, color) = if loading_more {
+                    (text.panel.loading_more, palette.muted)
+                } else {
+                    (text.panel.load_more, palette.accent)
+                };
+                if quiet_button(ui, palette, label, color).clicked() && !loading_more {
+                    actions.push(UiAction::LoadMore);
+                }
+            }
 
             // Очистка истории закреплена под списком: длинная история не
             // уводит действие за пределы прокрутки.
@@ -414,8 +464,9 @@ fn draw_header(
     }
 }
 
-/// Подпись под вкладками: «N из M» при фильтрах, иначе число станций, плюс
-/// сортировка и плотность строк. Счётчики в самих вкладках больше не живут.
+/// Подпись под вкладками: «N из M» при фильтрах или неполной загрузке, иначе
+/// число станций, плюс сортировка и плотность строк. Счётчики в самих вкладках
+/// больше не живут.
 #[allow(clippy::too_many_arguments)]
 fn draw_meta(
     ui: &mut egui::Ui,
@@ -424,6 +475,7 @@ fn draw_meta(
     total: usize,
     shown_count: usize,
     context_mode: bool,
+    total_available: Option<u32>,
     filter: &mut CountryFilterState,
     language: Language,
 ) {
@@ -436,6 +488,23 @@ fn draw_meta(
                 ("total", &total.to_string()),
             ],
         )
+    } else if tab == LibraryTab::Results && context_mode {
+        // Страна целиком больше загруженной страницы: «100 из 1244» вместо
+        // молчаливого обрезания списка (ADR-0036, ревизия 2026-10-28).
+        total_available
+            .filter(|available| *available as usize > total)
+            .map_or_else(
+                || i18n::fill(text.panel.station_count, &[("count", &total.to_string())]),
+                |available| {
+                    i18n::fill(
+                        text.panel.loaded_of,
+                        &[
+                            ("loaded", &total.to_string()),
+                            ("total", &available.to_string()),
+                        ],
+                    )
+                },
+            )
     } else {
         i18n::fill(text.panel.station_count, &[("count", &total.to_string())])
     };
@@ -516,6 +585,8 @@ fn draw_rows(
     palette: &Palette,
     stations: &[&Station],
     playing_uuid: Option<&str>,
+    selected_uuid: Option<&str>,
+    reveal_uuid: Option<&str>,
     compact: bool,
     tag_chips: bool,
     favorites: &[Station],
@@ -524,8 +595,11 @@ fn draw_rows(
     actions: &mut Vec<UiAction>,
 ) {
     for (index, station) in stations.iter().enumerate() {
+        let uuid = station.stationuuid.as_str();
         let mut row = RowContext {
-            playing: playing_uuid == Some(&station.stationuuid),
+            playing: playing_uuid == Some(uuid),
+            selected: selected_uuid == Some(uuid),
+            reveal: reveal_uuid == Some(uuid),
             compact,
             favorites,
             language,
@@ -547,7 +621,8 @@ fn draw_rows(
     }
 }
 
-/// Локальные фильтры выбранной страны: поиск и жанровые чипы одной строкой.
+/// Локальные фильтры выбранной страны: поиск, кнопки показа/сброса и строка
+/// мультивыбора жанров с бейджами выбранных фильтров (ревизия 2026-10-28).
 fn draw_local_filters(
     ui: &mut egui::Ui,
     palette: &Palette,
@@ -563,38 +638,213 @@ fn draw_local_filters(
         }
         None => text.panel.search_here.to_owned(),
     };
-    let output = search_field(
-        ui,
-        palette,
-        egui::Id::unique("orbitfm_country_filter"),
-        &hint,
-        &mut filter.text,
-        ui.available_width(),
-    );
-    let _ = output;
+    let search_width =
+        (ui.available_width() - 2.0 * icons::SMALL_SIDE - 2.0 * FILTER_GAP).max(120.0);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = FILTER_GAP;
+        search_field(
+            ui,
+            palette,
+            egui::Id::unique("orbitfm_country_filter"),
+            &hint,
+            &mut filter.text,
+            search_width,
+        );
+        if icons::filters_button(ui, palette, text.panel.filters, filter.filters_visible).clicked()
+        {
+            filter.filters_visible = !filter.filters_visible;
+        }
+        if icons::clear_filters_button(ui, palette, filter.is_active(), text.panel.clear_filters)
+            .clicked()
+        {
+            filter.reset();
+        }
+    });
 
-    ui.add_space(4.0);
-    // Чипы всегда в одну строку: перенос ломал ритм панели, а длинный набор
-    // жанров прокручивается колесом внутри своей полосы.
-    egui::ScrollArea::horizontal()
-        .id_salt("orbitfm_country_filter_chips")
-        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-        .auto_shrink([false, true])
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                let all_selected = filter.genre.is_none();
-                if chip(ui, palette, text.panel.all, all_selected).clicked() {
-                    filter.genre = None;
+    if !filter.filters_visible {
+        return;
+    }
+
+    ui.add_space(6.0);
+    genre_selector(ui, palette, filter, language);
+    if !filter.genres.is_empty() {
+        ui.add_space(6.0);
+        let mut removed = Vec::new();
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+            for genre in &filter.genres {
+                if genre_badge(ui, palette, genre.label(language), text.panel.remove_filter) {
+                    removed.push(*genre);
                 }
-                for genre in GenreTag::ALL {
-                    let selected = filter.genre == Some(genre);
-                    if chip(ui, palette, genre.label(language), selected).clicked() {
-                        filter.genre = if selected { None } else { Some(genre) };
-                    }
-                }
-            });
+            }
         });
+        for genre in removed {
+            filter.toggle_genre(genre);
+        }
+    }
+}
+
+/// Выпадающий мультивыбор жанров: кнопка-чип с шевроном и меню, которое не
+/// закрывается после каждого выбора.
+fn genre_selector(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    filter: &mut CountryFilterState,
+    language: Language,
+) {
+    let text = i18n::catalog(language);
+    let label = match filter.genres.as_slice() {
+        [] => text.panel.all_genres.to_owned(),
+        [only] => only.label(language).to_owned(),
+        selected => i18n::fill(
+            text.panel.genres_selected,
+            &[("count", &selected.len().to_string())],
+        ),
+    };
+    let width = ui.available_width();
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 28.0), egui::Sense::click());
+    let (hover, press) = control_motion(
+        ui,
+        response.id,
+        response.hovered(),
+        response.is_pointer_button_down_on(),
+    );
+    if ui.is_rect_visible(rect) {
+        let fill = mix_colors(
+            palette.chip_fill,
+            palette.accent,
+            0.10 * hover + 0.05 * press,
+        );
+        ui.painter().rect_filled(rect, 8.0, fill);
+        ui.painter().rect_stroke(
+            rect,
+            8.0,
+            egui::Stroke::new(1.0, mix_colors(palette.chip_stroke, palette.accent, hover)),
+            egui::StrokeKind::Inside,
+        );
+        ui.painter().text(
+            egui::pos2(rect.left() + 12.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            label.as_str(),
+            egui::FontId::proportional(11.5),
+            palette.text,
+        );
+        let chevron = egui::pos2(rect.right() - 14.0, rect.center().y);
+        let stroke = egui::Stroke::new(
+            1.4,
+            if filter.genres.is_empty() {
+                palette.muted
+            } else {
+                palette.accent
+            },
+        );
+        ui.painter().line_segment(
+            [
+                chevron + egui::vec2(-3.5, -2.0),
+                chevron + egui::vec2(0.0, 2.0),
+            ],
+            stroke,
+        );
+        ui.painter().line_segment(
+            [
+                chevron + egui::vec2(0.0, 2.0),
+                chevron + egui::vec2(3.5, -2.0),
+            ],
+            stroke,
+        );
+    }
+    focus_ring(ui, &response, rect, 8.0);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, label.as_str()));
+
+    let frame = egui::Frame::popup(ui.style())
+        .fill(palette.card_fill)
+        .stroke(egui::Stroke::new(1.0, palette.card_stroke));
+    egui::Popup::menu(&response)
+        .id(response.id.with("genres_menu"))
+        .width(width)
+        .frame(frame)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            ui.set_min_width(width - 16.0);
+            ui.visuals_mut().selection.bg_fill = palette.accent;
+            ui.visuals_mut().selection.stroke =
+                egui::Stroke::new(1.0, contrast_color(palette.accent));
+            ui.label(
+                egui::RichText::new(text.panel.genres)
+                    .size(11.0)
+                    .strong()
+                    .color(palette.muted),
+            );
+            for genre in GenreTag::ALL {
+                let selected = filter.has_genre(genre);
+                if ui
+                    .selectable_label(selected, genre.label(language))
+                    .clicked()
+                {
+                    filter.toggle_genre(genre);
+                }
+            }
+            if !filter.genres.is_empty() {
+                ui.separator();
+                if ui
+                    .selectable_label(false, text.panel.clear_filters)
+                    .clicked()
+                {
+                    filter.genres.clear();
+                }
+            }
+        });
+}
+
+/// Бейдж выбранного жанра: клик в любом месте, включая крестик, снимает
+/// фильтр. Геометрия фиксирована, hover меняет только цвет (ADR-0032 §7).
+fn genre_badge(ui: &mut egui::Ui, palette: &Palette, label: &str, hint: &str) -> bool {
+    let color = contrast_color(palette.accent);
+    let galley =
+        ui.painter()
+            .layout_no_wrap(label.to_owned(), egui::FontId::proportional(11.5), color);
+    let text_size = galley.size();
+    let cross = 10.0;
+    let width = text_size.x + 12.0 + cross + 12.0;
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 24.0), egui::Sense::click());
+    let (hover, press) = control_motion(
+        ui,
+        response.id,
+        response.hovered(),
+        response.is_pointer_button_down_on(),
+    );
+    if ui.is_rect_visible(rect) {
+        let fill = mix_colors(
+            palette.accent,
+            egui::Color32::WHITE,
+            0.10 * hover + 0.05 * press,
+        );
+        ui.painter().rect_filled(rect, 12.0, fill);
+        ui.painter().galley(
+            egui::pos2(rect.left() + 12.0, rect.center().y - text_size.y * 0.5),
+            galley,
+            color,
+        );
+        let center = egui::pos2(rect.right() - 12.0, rect.center().y);
+        let stroke = egui::Stroke::new(1.6, faded(color, 0.75 + 0.25 * hover));
+        ui.painter().line_segment(
+            [
+                center + egui::vec2(-4.0, -4.0),
+                center + egui::vec2(4.0, 4.0),
+            ],
+            stroke,
+        );
+        ui.painter().line_segment(
+            [
+                center + egui::vec2(-4.0, 4.0),
+                center + egui::vec2(4.0, -4.0),
+            ],
+            stroke,
+        );
+    }
+    focus_ring(ui, &response, rect, 12.0);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, hint));
+    response.on_hover_text(hint).clicked()
 }
 
 #[cfg(test)]

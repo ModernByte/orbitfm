@@ -59,7 +59,7 @@ idle-дыхание, деформация всех слоёв), Phase 2 (onset/b
 | Авто-вращение после 4 с простоя (ADR-0023) | Остаётся базовым слоем; музыкальная качка и перевороты — Phase 3 |
 | `GlobeCamera` с orbit/inertia/fly_to/idle | Sway, приоритет и camera roll реализованы (Phase 3) |
 | Маркеры, страны и hit-test используют общий `GlobeDeform` | Деформация и roll согласованы (Phase 1, 3) |
-| `Settings`: тема, акцент, `viz_bars`, `help_seen`, `motion`, `motion_style`, `allow_flips`, `reduce_motion` | Стиль и `Allow flips` выбираются в HUD; flips реализованы |
+| `Settings`: тема, акцент, `viz_bars`, `help_visible`, `motion`, `motion_style`, `allow_flips`, `reduce_motion` | Стиль и `Allow flips` выбираются в HUD; flips реализованы |
 | `OrbitRing`: круговой слой за глобусом (ADR-0029) | Не деформирует планету; питается шестью агрегатами, а не полосами |
 | cava-визуализатор синтетический (ADR-0022) | Полосы не дают per-bin спектр; это не меняется |
 

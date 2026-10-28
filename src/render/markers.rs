@@ -13,6 +13,10 @@ const MARKER_GLOW_ALPHA: u8 = 34;
 /// Кольцо наведения отходит от маркера на столько пикселей.
 const HOVER_RING_GAP: f32 = 3.5;
 const HOVER_RING_WIDTH: f32 = 1.5;
+/// Кольцо выбранной станции: внешний контур, видимый и без наведения.
+const SELECTED_RING_GAP: f32 = 6.5;
+const SELECTED_RING_WIDTH: f32 = 1.8;
+const SELECTED_RING_ALPHA: u8 = 230;
 const PULSE_PERIOD_SECONDS: f32 = 1.4;
 const PULSE_RING_SPAN: f32 = 7.0;
 const PULSE_RING_WIDTH: f32 = 1.8;
@@ -38,6 +42,9 @@ pub struct MarkerVisual {
     pub pos: Pos2,
     /// Станция сейчас в эфире: пульсирующее кольцо того же цвета.
     pub playing: bool,
+    /// Станция выбрана в списке или на глобусе: постоянное внешнее кольцо
+    /// (ADR-0036).
+    pub selected: bool,
 }
 
 /// Точка единичной сферы по географическим координатам.
@@ -81,13 +88,16 @@ pub fn paint_markers(
     time: f64,
 ) {
     // Активная станция рисуется последней: её гало и кольца не должны
-    // прятаться под соседними маркерами.
+    // прятаться под соседними маркерами. Выбранный маркер — тоже сверху,
+    // чтобы его контур не терялся в плотной группе.
     for playing_pass in [false, true] {
-        for (index, marker) in markers.iter().enumerate() {
-            if marker.playing != playing_pass {
-                continue;
+        for selected_pass in [false, true] {
+            for (index, marker) in markers.iter().enumerate() {
+                if marker.playing != playing_pass || marker.selected != selected_pass {
+                    continue;
+                }
+                paint_marker(painter, marker, hovered == Some(index), color, time);
             }
-            paint_marker(painter, marker, hovered == Some(index), color, time);
         }
     }
 
@@ -141,6 +151,17 @@ fn paint_marker(
                 ),
             );
         }
+    }
+
+    if marker.selected {
+        painter.circle_stroke(
+            marker.pos,
+            MARKER_RADIUS + SELECTED_RING_GAP,
+            Stroke::new(
+                SELECTED_RING_WIDTH,
+                Color32::from_white_alpha(SELECTED_RING_ALPHA),
+            ),
+        );
     }
 
     if hovered {

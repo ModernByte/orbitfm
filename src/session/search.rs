@@ -92,6 +92,15 @@ pub(crate) struct SearchState {
     pub(crate) error: Option<String>,
     pub(crate) roulette_pending: bool,
     pub(crate) roulette_rx: Option<mpsc::UnboundedReceiver<Result<Station, RadioError>>>,
+    /// Есть ли ещё страницы в текущей выборке: страна догружается по
+    /// `offset`, пока не достигнут мировой счётчик (жалоба 2026-10-28).
+    pub(crate) has_more: bool,
+    /// Идёт догрузка следующей страницы: список остаётся на экране.
+    pub(crate) loading_more: bool,
+    /// Параметры текущей выборки: с них строится следующий запрос страницы.
+    pub(crate) last_params: Option<SearchParams>,
+    /// Сколько строк уже запрошено у API: offset следующей страницы.
+    pub(crate) next_offset: u32,
     /// Клик по пустому месту глобуса снял выделение страны, но список станций
     /// остаётся: контекст поиска не трогаем, гаснет только подсветка.
     pub(crate) highlight_hidden: bool,
@@ -100,16 +109,13 @@ pub(crate) struct SearchState {
     pub(crate) revision: u64,
 }
 
-/// Две выборки одного запроса: обычная и только со станциями, у которых есть координаты.
-struct SearchOutcome {
-    stations: Vec<Station>,
-    geo_stations: Vec<Station>,
-}
-
-/// Результат фонового поиска с номером поколения.
+/// Результат фонового поиска с номером поколения. Список и маркеры строятся
+/// из одной выборки: всё, что видно в панели, обязано быть и на глобусе (ADR-0036).
 pub(crate) struct SearchResponse {
     generation: u64,
-    result: Result<SearchOutcome, RadioError>,
+    result: Result<Vec<Station>, RadioError>,
+    /// `true` — следующая страница: строки дополняют список, а не заменяют.
+    append: bool,
 }
 
 impl SearchResponse {
@@ -135,15 +141,12 @@ impl super::Session {
         }
 
         self.search.context.clear();
-        self.begin_search(
-            SearchParams {
-                name: Some(query),
-                limit: SEARCH_RESULT_LIMIT,
-                hide_broken: true,
-                ..SearchParams::default()
-            },
-            SEARCH_RESULT_LIMIT,
-        );
+        self.begin_search(SearchParams {
+            name: Some(query),
+            limit: SEARCH_RESULT_LIMIT,
+            hide_broken: true,
+            ..SearchParams::default()
+        });
     }
 
     /// Повтор последнего запроса из карточки ошибки: контекст страны или жанра
@@ -167,8 +170,7 @@ impl super::Session {
         self.search.context.activate_country(country);
         self.search.highlight_hidden = false;
         self.country_filter.reset();
-        let limit = COUNTRY_RESULT_LIMIT;
-        self.begin_search(country_search_params(&iso_a2), limit);
+        self.begin_search(country_search_params(&iso_a2));
         self.search.country_query.clear();
     }
 
@@ -188,15 +190,12 @@ impl super::Session {
 
         self.search.context.activate_genre(tag.clone());
         self.country_filter.reset();
-        self.begin_search(
-            SearchParams {
-                tag: Some(tag),
-                limit: GENRE_RESULT_LIMIT,
-                hide_broken: true,
-                ..SearchParams::default()
-            },
-            GENRE_RESULT_LIMIT,
-        );
+        self.begin_search(SearchParams {
+            tag: Some(tag),
+            limit: GENRE_RESULT_LIMIT,
+            hide_broken: true,
+            ..SearchParams::default()
+        });
         self.search.genre_query.clear();
     }
 
@@ -221,9 +220,13 @@ impl super::Session {
         self.search.pending = false;
         self.search.empty = false;
         self.search.error = None;
+        self.search.has_more = false;
+        self.search.loading_more = false;
+        self.search.last_params = None;
+        self.search.next_offset = 0;
     }
 
-    fn begin_search(&mut self, params: SearchParams, geo_limit: u32) {
+    fn begin_search(&mut self, params: SearchParams) {
         self.search.generation = self.search.generation.wrapping_add(1);
         let generation = self.search.generation;
         let (sender, receiver) = mpsc::unbounded_channel();
@@ -231,39 +234,89 @@ impl super::Session {
         self.search.pending = true;
         self.search.empty = false;
         self.search.error = None;
+        self.search.has_more = false;
+        self.search.loading_more = false;
         self.search.results.clear();
         self.markers.clear();
         self.search.revision = self.search.revision.wrapping_add(1);
         self.library_tab = LibraryTab::Results;
 
-        let mut geo_params = params.clone();
-        geo_params.has_geo_info = true;
-        geo_params.limit = geo_limit;
+        // Список — полная выдача страны с пагинацией; маркеры строятся из тех
+        // же строк, но только с координатами (ADR-0036, ревизия 2026-10-28).
+        // `has_geo_info=true` здесь отрезал бы 87 % базы и сделал «100 из 1244»
+        // недостижимым.
+        self.search.next_offset = params.offset;
+        self.search.last_params = Some(params.clone());
 
         let radio = self.radio.clone();
         let waker = self.wake.waker();
         self.runtime.spawn(async move {
-            let (stations, geo_stations) =
-                tokio::join!(radio.search(params), radio.search(geo_params));
-            let result = match stations {
-                Ok(stations) => {
-                    let geo_stations = match geo_stations {
-                        Ok(stations) => stations,
-                        Err(err) => {
-                            warn!(error = %err, "гео-поиск станций не удался");
-                            Vec::new()
-                        }
-                    };
-                    Ok(SearchOutcome {
-                        stations,
-                        geo_stations,
-                    })
-                }
-                Err(err) => Err(err),
-            };
-            let _ = sender.send(SearchResponse { generation, result });
+            let result = radio.search(params).await;
+            if let Err(err) = &result {
+                warn!(error = %err, "поиск станций не удался");
+            }
+            let _ = sender.send(SearchResponse {
+                generation,
+                result,
+                append: false,
+            });
             waker();
         });
+    }
+
+    /// Догружает следующую страницу текущей выборки. Список и маркеры при этом
+    /// не гаснут: новые строки дополняют уже показанные (ADR-0036, ревизия
+    /// 2026-10-28).
+    pub(crate) fn load_more(&mut self) {
+        if self.search.pending
+            || self.search.loading_more
+            || self.search.rx.is_some()
+            || !self.search.has_more
+        {
+            return;
+        }
+        let Some(mut params) = self.search.last_params.clone() else {
+            return;
+        };
+        params.offset = self.search.next_offset;
+        let generation = self.search.generation;
+        let (sender, receiver) = mpsc::unbounded_channel();
+        self.search.rx = Some(receiver);
+        self.search.loading_more = true;
+
+        let radio = self.radio.clone();
+        let waker = self.wake.waker();
+        self.runtime.spawn(async move {
+            let result = radio.search(params).await;
+            if let Err(err) = &result {
+                warn!(error = %err, "догрузка страницы станций не удалась");
+            }
+            let _ = sender.send(SearchResponse {
+                generation,
+                result,
+                append: true,
+            });
+            waker();
+        });
+    }
+
+    /// Счётчик станций выбранной страны из мирового кэша: по нему панель
+    /// показывает «100 из 1244» и решает, есть ли ещё страницы.
+    pub(crate) fn country_total(&self) -> Option<u32> {
+        let iso_a2 = self.search.context.country.as_ref()?.iso_a2.to_uppercase();
+        self.world.counts().get(&iso_a2).copied()
+    }
+
+    /// Обновляет признак «есть ещё страницы» по размеру пришедшей страницы и
+    /// мировому счётчику страны, если он уже прогрет.
+    fn update_has_more(&mut self, page_len: u32) {
+        let limit = self
+            .search
+            .last_params
+            .as_ref()
+            .map_or(0, |params| params.limit);
+        let total = self.country_total();
+        self.search.has_more = page_has_more(page_len, limit, self.search.results.len(), total);
     }
 
     pub(crate) fn poll_search(&mut self) {
@@ -280,29 +333,57 @@ impl super::Session {
                     "устаревший ответ поиска отброшен"
                 );
             }
-            Ok(response) => match response.result {
-                Ok(outcome) => {
-                    self.search.empty = outcome.stations.is_empty();
-                    self.search.results = outcome.stations;
-                    self.markers = build_markers(outcome.geo_stations);
-                    self.search.revision = self.search.revision.wrapping_add(1);
-                    self.search.pending = false;
-                    self.search.rx = None;
+            Ok(response) => {
+                let append = response.append;
+                match response.result {
+                    Ok(stations) if append => {
+                        let page_len = stations.len() as u32;
+                        append_unique(&mut self.search.results, stations);
+                        self.search.next_offset = self.search.next_offset.saturating_add(page_len);
+                        self.markers = build_markers(self.search.results.clone());
+                        self.update_has_more(page_len);
+                        self.search.revision = self.search.revision.wrapping_add(1);
+                        self.search.loading_more = false;
+                        self.search.rx = None;
+                    }
+                    Ok(stations) => {
+                        let page_len = stations.len() as u32;
+                        self.search.next_offset = self.search.next_offset.saturating_add(page_len);
+                        self.search.empty = stations.is_empty();
+                        self.markers = build_markers(stations.clone());
+                        self.search.results = stations;
+                        self.update_has_more(page_len);
+                        self.search.revision = self.search.revision.wrapping_add(1);
+                        self.search.pending = false;
+                        self.search.rx = None;
+                    }
+                    Err(err) if append => {
+                        // Список уже на экране: ошибка догрузки не должна его
+                        // стирать, достаточно тоста с причиной.
+                        self.notify_error_detail(NoticeKey::LoadMoreFailed, err.to_string());
+                        self.search.loading_more = false;
+                        self.search.rx = None;
+                    }
+                    Err(err) => {
+                        self.search.error = Some(err.to_string());
+                        self.markers.clear();
+                        self.search.revision = self.search.revision.wrapping_add(1);
+                        self.search.pending = false;
+                        self.search.rx = None;
+                    }
                 }
-                Err(err) => {
-                    self.search.error = Some(err.to_string());
-                    self.markers.clear();
-                    self.search.revision = self.search.revision.wrapping_add(1);
-                    self.search.pending = false;
-                    self.search.rx = None;
-                }
-            },
+            }
             Err(mpsc::error::TryRecvError::Empty) => {}
             Err(mpsc::error::TryRecvError::Disconnected) => {
                 // Отправитель исчез — тот же путь, что у рулетки: ядро называет
                 // причину ключом, строку берёт каталог (ADR-0030 §6).
-                self.notify_error(NoticeKey::SearchTaskEnded);
-                self.search.pending = false;
+                if self.search.loading_more {
+                    self.notify_error(NoticeKey::LoadMoreFailed);
+                    self.search.loading_more = false;
+                } else {
+                    self.notify_error(NoticeKey::SearchTaskEnded);
+                    self.search.pending = false;
+                }
                 self.search.rx = None;
             }
         }
@@ -394,6 +475,35 @@ impl super::Session {
     }
 }
 
+/// Есть ли смысл просить следующую страницу. При известном мировом счётчике
+/// ориентир — он: сервер может отдать страницу короче лимита (мёртвые потоки
+/// отсечены `hide_broken`), но это не значит, что выборка исчерпана. Пустая
+/// страница закрывает пагинацию всегда; без счётчика — только полная страница
+/// обещает продолжение.
+fn page_has_more(page_len: u32, limit: u32, loaded: usize, total: Option<u32>) -> bool {
+    if page_len == 0 {
+        return false;
+    }
+    match total {
+        Some(total) => loaded < total as usize,
+        None => limit > 0 && page_len >= limit,
+    }
+}
+
+/// Дополняет список страницей без повторных UUID: Radio Browser может
+/// сдвинуть окно выдачи, пока пользователь листает.
+fn append_unique(results: &mut Vec<Station>, page: Vec<Station>) {
+    let mut known: std::collections::HashSet<String> = results
+        .iter()
+        .map(|station| station.stationuuid.clone())
+        .collect();
+    for station in page {
+        if known.insert(station.stationuuid.clone()) {
+            results.push(station);
+        }
+    }
+}
+
 /// Запрос «только станции выбранной страны» (ТЗ §5.3): фильтр по ISO без примеси
 /// других стран и мёртвых потоков.
 fn country_search_params(iso_a2: &str) -> SearchParams {
@@ -465,6 +575,7 @@ mod tests {
         let response = SearchResponse {
             generation: 7,
             result: Err(RadioError::NotFound),
+            append: false,
         };
         assert!(response.is_current(7));
         assert!(
@@ -497,6 +608,54 @@ mod tests {
             "выбор страны не должен подмешивать другие фильтры"
         );
         assert!(params.hide_broken, "мёртвые потоки страны не показываем");
+        assert!(
+            !params.has_geo_info,
+            "список страны — полная выдача, маркеры лишь подмножество"
+        );
         assert_eq!(params.limit, COUNTRY_RESULT_LIMIT);
+    }
+
+    #[test]
+    fn pagination_follows_the_world_counter_until_exhausted() {
+        assert!(page_has_more(100, 100, 100, Some(1244)), "100 из 1244");
+        assert!(
+            page_has_more(66, 100, 66, Some(1244)),
+            "короткая страница не закрывает выборку при известном счётчике"
+        );
+        assert!(
+            !page_has_more(100, 100, 1244, Some(1244)),
+            "счётчик достигнут"
+        );
+        assert!(
+            !page_has_more(0, 100, 300, Some(1244)),
+            "пустая страница — конец"
+        );
+        assert!(
+            page_has_more(100, 100, 100, None),
+            "без счётчика — полная страница"
+        );
+        assert!(
+            !page_has_more(66, 100, 66, None),
+            "без счётчика — короткая страница"
+        );
+        assert!(
+            !page_has_more(100, 0, 100, None),
+            "нулевой лимит не зацикливает"
+        );
+    }
+
+    #[test]
+    fn appended_page_keeps_the_existing_list_and_skips_duplicates() {
+        let mut station = sample_station();
+        let mut results = vec![station.clone()];
+        let mut duplicate = sample_station();
+        duplicate.name = "Duplicate".to_owned();
+        station.stationuuid = "uuid-2".to_owned();
+        station.name = "Second".to_owned();
+        append_unique(&mut results, vec![duplicate, station]);
+
+        assert_eq!(results.len(), 2, "дубликат по UUID отброшен");
+        assert_eq!(results[0].name, "Test Radio");
+        assert_eq!(results[1].stationuuid, "uuid-2");
     }
 }
