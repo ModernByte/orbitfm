@@ -117,10 +117,11 @@ impl AudioWorker {
         loop {
             loop {
                 match self.commands.try_recv() {
-                    Ok(AudioCommand::Shutdown) => return,
+                    Ok(AudioCommand::Shutdown) | Err(mpsc::error::TryRecvError::Disconnected) => {
+                        return;
+                    }
                     Ok(command) => self.handle_command(command),
                     Err(mpsc::error::TryRecvError::Empty) => break,
-                    Err(mpsc::error::TryRecvError::Disconnected) => return,
                 }
             }
 
@@ -152,9 +153,9 @@ impl AudioWorker {
                 ..
             })) => Some(WorkerEvent::Buffering(buffering)),
             Some(Ok(MpvEvent::Shutdown)) => Some(WorkerEvent::Shutdown),
-            Some(Ok(_)) => None,
             Some(Err(err)) => Some(WorkerEvent::Failure(format!("поток прерван: {err}"))),
-            None => None,
+            // Прочие события mpv и таймаут `wait_event` — это «ничего не пришло».
+            Some(Ok(_)) | None => None,
         }
     }
 
@@ -412,7 +413,7 @@ impl AudioWorker {
 
         tracing::debug!(%url, "повторное подключение к потоку");
         if let Err(err) = self.mpv.command("loadfile", &[&url, "replace"]) {
-            self.on_failure(format!("не удалось переподключиться: {err}"));
+            self.on_failure(&format!("не удалось переподключиться: {err}"));
         }
     }
 
@@ -422,7 +423,7 @@ impl AudioWorker {
             WorkerEvent::EndFile(reason) => self.on_end_file(reason),
             WorkerEvent::Buffering(buffering) => self.on_buffering(buffering),
             WorkerEvent::Shutdown => self.active_url = None,
-            WorkerEvent::Failure(message) => self.on_failure(message),
+            WorkerEvent::Failure(message) => self.on_failure(&message),
         }
     }
 
@@ -464,11 +465,11 @@ impl AudioWorker {
         match reason {
             END_FILE_EOF => {
                 self.shared.emit(AudioEvent::EndOfFile);
-                self.on_failure("поток завершился".to_owned());
+                self.on_failure("поток завершился");
             }
-            END_FILE_ERROR => self.on_failure("поток прерван".to_owned()),
+            END_FILE_ERROR => self.on_failure("поток прерван"),
             END_FILE_STOP | END_FILE_QUIT | END_FILE_REDIRECT => {}
-            _ => self.on_failure("поток завершился".to_owned()),
+            _ => self.on_failure("поток завершился"),
         }
     }
 
@@ -498,7 +499,7 @@ impl AudioWorker {
         }
     }
 
-    fn on_failure(&mut self, reason: String) {
+    fn on_failure(&mut self, reason: &str) {
         if self.active_url.is_none() || self.tracker.is_pending() {
             return;
         }

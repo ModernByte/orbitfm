@@ -356,8 +356,7 @@ mod tests {
                     Ok(AudioEvent::Error { message }) => {
                         panic!("ошибка потока: {message}");
                     }
-                    Ok(_) => {}
-                    Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
                     Err(broadcast::error::RecvError::Closed) => {
                         panic!("канал событий закрыт");
                     }
@@ -582,8 +581,7 @@ mod tests {
                     Ok(AudioEvent::Error { message }) => {
                         panic!("ошибка потока до события {label}: {message}")
                     }
-                    Ok(_) => {}
-                    Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
                     Err(broadcast::error::RecvError::Closed) => {
                         panic!("канал событий закрыт до события {label}")
                     }

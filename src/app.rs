@@ -137,7 +137,7 @@ impl<'a> OrbitApp<'a> {
         egui_extras::install_image_loaders(&egui_ctx);
         install_emoji_font(&egui_ctx);
         session.wake.install({
-            let ctx = egui_ctx.clone();
+            let ctx = egui_ctx;
             move || ctx.request_repaint()
         });
         // macOS: tray-icon требует запущенного run loop и главного потока,
@@ -860,7 +860,7 @@ impl<'a> OrbitApp<'a> {
                 self.session.start_country_search(country);
             }
             UiAction::SwitchMode(mode) => self.session.switch_mode(mode),
-            UiAction::SelectGenre(tag) => self.session.start_genre_search(tag),
+            UiAction::SelectGenre(tag) => self.session.start_genre_search(&tag),
             UiAction::RunSearch => self.session.start_search(),
             UiAction::LoadMore => self.session.load_more(),
             UiAction::RetrySearch => self.session.retry_search(),
@@ -868,74 +868,74 @@ impl<'a> OrbitApp<'a> {
             UiAction::ClearHistory => self.session.clear_history(),
             UiAction::SetTheme(theme) => {
                 if let Err(err) = self.session.set_theme(theme) {
-                    self.error_toast(ctx, NoticeKey::ThemeNotSaved, Some(err));
+                    self.error_toast(ctx, &NoticeKey::ThemeNotSaved, Some(err.as_str()));
                 }
                 palette::configure_style(ctx, self.session.settings.settings());
             }
             UiAction::SetAccent(accent) => {
                 if let Err(err) = self.session.set_accent(accent) {
-                    self.error_toast(ctx, NoticeKey::AccentNotSaved, Some(err));
+                    self.error_toast(ctx, &NoticeKey::AccentNotSaved, Some(err.as_str()));
                 }
                 palette::configure_style(ctx, self.session.settings.settings());
             }
             UiAction::SetLanguage(language) => {
                 if let Err(err) = self.session.set_language(language) {
-                    self.error_toast(ctx, NoticeKey::LanguageNotSaved, Some(err));
+                    self.error_toast(ctx, &NoticeKey::LanguageNotSaved, Some(err.as_str()));
                 }
                 palette::configure_style(ctx, self.session.settings.settings());
             }
             UiAction::ToggleSpectrum(enabled) => {
                 if let Err(err) = self.session.set_visualizer_enabled(enabled) {
-                    self.error_toast(ctx, NoticeKey::FftUnavailable, Some(err));
+                    self.error_toast(ctx, &NoticeKey::FftUnavailable, Some(err.as_str()));
                 }
             }
             UiAction::SetMotion(motion) => {
                 if let Err(err) = self.session.set_motion(motion) {
-                    self.error_toast(ctx, NoticeKey::MotionNotSaved, Some(err));
+                    self.error_toast(ctx, &NoticeKey::MotionNotSaved, Some(err.as_str()));
                 }
             }
             UiAction::SetMotionStyle(style) => {
                 if let Err(err) = self.session.set_motion_style(style) {
-                    self.error_toast(ctx, NoticeKey::MotionNotSaved, Some(err));
+                    self.error_toast(ctx, &NoticeKey::MotionNotSaved, Some(err.as_str()));
                 }
             }
             UiAction::SetAllowFlips(allow) => {
                 if let Err(err) = self.session.set_allow_flips(allow) {
-                    self.error_toast(ctx, NoticeKey::MotionNotSaved, Some(err));
+                    self.error_toast(ctx, &NoticeKey::MotionNotSaved, Some(err.as_str()));
                 }
             }
             UiAction::SetReduceMotion(reduce) => {
                 if let Err(err) = self.session.set_reduce_motion(reduce) {
-                    self.error_toast(ctx, NoticeKey::MotionNotSaved, Some(err));
+                    self.error_toast(ctx, &NoticeKey::MotionNotSaved, Some(err.as_str()));
                 }
                 palette::configure_style(ctx, self.session.settings.settings());
             }
             UiAction::SetVizBars(bars) => {
                 if let Err(err) = self.session.set_viz_bars(bars) {
-                    self.error_toast(ctx, NoticeKey::SettingNotSaved, Some(err));
+                    self.error_toast(ctx, &NoticeKey::SettingNotSaved, Some(err.as_str()));
                 }
                 let bars = self.session.settings.settings().viz_bars;
                 self.visualizer = VisualizerModel::new(usize::from(bars));
             }
             UiAction::PreviewVolume(volume) => {
                 if let Err(err) = self.session.preview_volume(volume) {
-                    self.error_toast(ctx, NoticeKey::VolumeNotSaved, Some(err));
+                    self.error_toast(ctx, &NoticeKey::VolumeNotSaved, Some(err.as_str()));
                 }
             }
             UiAction::CommitVolume(volume) => {
                 if let Err(err) = self.session.commit_volume(volume) {
-                    self.error_toast(ctx, NoticeKey::VolumeNotSaved, Some(err));
+                    self.error_toast(ctx, &NoticeKey::VolumeNotSaved, Some(err.as_str()));
                 }
             }
             UiAction::PlayRelative(step) => self.session.play_relative(step),
             UiAction::TogglePlayback => {
                 if let Err(err) = self.session.toggle_playback() {
-                    self.error_toast(ctx, NoticeKey::PlaybackFailed, Some(err));
+                    self.error_toast(ctx, &NoticeKey::PlaybackFailed, Some(err.as_str()));
                 }
             }
             UiAction::Stop => {
                 if let Err(err) = self.session.stop_playback() {
-                    self.error_toast(ctx, NoticeKey::PlaybackFailed, Some(err));
+                    self.error_toast(ctx, &NoticeKey::PlaybackFailed, Some(err.as_str()));
                 }
             }
             UiAction::Hide => self.session.hide(),
@@ -944,7 +944,7 @@ impl<'a> OrbitApp<'a> {
             UiAction::ToggleHelp => {
                 let visible = !self.session.show_help;
                 if let Err(err) = self.session.set_help_visible(visible) {
-                    self.error_toast(ctx, NoticeKey::SettingNotSaved, Some(err));
+                    self.error_toast(ctx, &NoticeKey::SettingNotSaved, Some(err.as_str()));
                 }
             }
             UiAction::ToggleSettings => self.session.toggle_settings(),
@@ -965,20 +965,19 @@ impl<'a> OrbitApp<'a> {
         if let Err(err) = self.session.start_station(station) {
             match err {
                 StationStartError::NoUrl => {
-                    self.error_toast(ctx, NoticeKey::StationWithoutUrl, None);
+                    self.error_toast(ctx, &NoticeKey::StationWithoutUrl, None);
                 }
                 StationStartError::Audio(detail) => {
-                    self.error_toast(ctx, NoticeKey::PlaybackFailed, Some(detail));
+                    self.error_toast(ctx, &NoticeKey::PlaybackFailed, Some(detail.as_str()));
                 }
             }
         }
     }
 
     /// Тост ошибки по ключу каталога: `detail` — техническая вставка (ADR-0030).
-    fn error_toast(&mut self, ctx: &egui::Context, key: NoticeKey, detail: Option<String>) {
+    fn error_toast(&mut self, ctx: &egui::Context, key: &NoticeKey, detail: Option<&str>) {
         let language = self.session.effective_language();
-        self.toast
-            .error(ctx, notice_text(language, &key, detail.as_deref()));
+        self.toast.error(ctx, notice_text(language, key, detail));
     }
 }
 
@@ -1267,7 +1266,7 @@ impl eframe::App for OrbitApp<'_> {
             } else if self.session.show_help
                 && let Err(err) = self.session.set_help_visible(false)
             {
-                self.error_toast(ctx, NoticeKey::SettingNotSaved, Some(err));
+                self.error_toast(ctx, &NoticeKey::SettingNotSaved, Some(err.as_str()));
             }
         }
 
@@ -1296,7 +1295,7 @@ impl eframe::App for OrbitApp<'_> {
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Space))
             && let Err(err) = self.session.toggle_playback()
         {
-            self.error_toast(ctx, NoticeKey::PlaybackFailed, Some(err));
+            self.error_toast(ctx, &NoticeKey::PlaybackFailed, Some(err.as_str()));
         }
 
         // Скрытое окно на macOS не рисуется: анализ уже выключен `mark_hidden`,

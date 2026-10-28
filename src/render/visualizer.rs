@@ -83,7 +83,7 @@ impl VisualizerModel {
         let time = time as f32;
         match target {
             Some(target) if target.is_finite() => {
-                band_targets(target, time, &self.phases, &mut self.targets)
+                band_targets(target, time, &self.phases, &mut self.targets);
             }
             _ => idle_targets(time, &self.phases, &mut self.targets),
         }

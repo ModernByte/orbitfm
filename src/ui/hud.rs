@@ -232,6 +232,7 @@ pub(crate) struct PanelHeaderState<'a> {
 /// Шапка выпадающей панели: бренд, поиск и режим поиска. В отличие от HUD
 /// стола здесь нет now-playing и раскладок: панель живёт под бар-виджетом и
 /// открывается ради станций.
+#[allow(clippy::needless_pass_by_value)] // пучок аргументов с `&mut`-полями
 pub(crate) fn panel_header(
     ui: &mut egui::Ui,
     palette: &Palette,

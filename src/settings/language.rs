@@ -109,25 +109,24 @@ impl Language {
 
     /// `System` превращается в конкретный язык, который есть в каталоге.
     pub fn resolve(self) -> Self {
-        self.resolve_from(
-            env::var("LC_ALL").ok(),
-            env::var("LC_MESSAGES").ok(),
-            env::var("LANG").ok(),
-        )
+        let lc_all = env::var("LC_ALL").ok();
+        let lc_messages = env::var("LC_MESSAGES").ok();
+        let lang = env::var("LANG").ok();
+        self.resolve_from(lc_all.as_deref(), lc_messages.as_deref(), lang.as_deref())
     }
 
     fn resolve_from(
         self,
-        lc_all: Option<String>,
-        lc_messages: Option<String>,
-        lang: Option<String>,
+        lc_all: Option<&str>,
+        lc_messages: Option<&str>,
+        lang: Option<&str>,
     ) -> Self {
         if self != Self::System {
             return self;
         }
-        resolve_tag(lc_all.as_deref())
-            .or_else(|| resolve_tag(lc_messages.as_deref()))
-            .or_else(|| resolve_tag(lang.as_deref()))
+        resolve_tag(lc_all)
+            .or_else(|| resolve_tag(lc_messages))
+            .or_else(|| resolve_tag(lang))
             .unwrap_or(Self::English)
     }
 }
@@ -202,11 +201,7 @@ mod tests {
     #[test]
     fn system_resolution_uses_lc_all_then_messages_then_lang() {
         let resolve = |lc_all: Option<&str>, lc_messages: Option<&str>, lang: Option<&str>| {
-            Language::System.resolve_from(
-                lc_all.map(str::to_owned),
-                lc_messages.map(str::to_owned),
-                lang.map(str::to_owned),
-            )
+            Language::System.resolve_from(lc_all, lc_messages, lang)
         };
         assert_eq!(
             resolve(Some("ru_RU.UTF-8"), Some("de_DE"), Some("fr_FR")),
@@ -231,7 +226,7 @@ mod tests {
     #[test]
     fn explicit_language_is_not_resolved_from_environment() {
         assert_eq!(
-            Language::Russian.resolve_from(None, None, Some("de_DE".to_owned())),
+            Language::Russian.resolve_from(None, None, Some("de_DE")),
             Language::Russian
         );
     }

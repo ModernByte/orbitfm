@@ -19,6 +19,7 @@ const HEAT_ALPHA_MIN: f32 = 0.16;
 const HEAT_ALPHA_MAX: f32 = 0.40;
 
 /// Что красит карту: глобальные счётчики стран или конкретные станции.
+#[derive(Clone, Copy)]
 pub(crate) enum HeatSource<'a> {
     /// Счётчики Radio Browser по всем странам (режим «Плотность»).
     Counts(&'a HashMap<String, u32>),

@@ -1071,6 +1071,7 @@ pub(crate) enum EmptyMark {
     Filter,
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct EmptyState<'a> {
     pub mark: EmptyMark,
     pub title: &'a str,
@@ -1359,8 +1360,7 @@ pub(crate) fn avatar(
             .trim()
             .chars()
             .next()
-            .map(|c| c.to_uppercase().to_string())
-            .unwrap_or_else(|| "?".to_owned());
+            .map_or_else(|| "?".to_owned(), |c| c.to_uppercase().to_string());
         ui.painter().text(
             center,
             egui::Align2::CENTER_CENTER,

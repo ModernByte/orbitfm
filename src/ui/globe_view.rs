@@ -237,6 +237,7 @@ pub(crate) struct GlobeResponse {
     pub clicked_empty: bool,
 }
 
+#[allow(clippy::needless_pass_by_value)] // пучок аргументов с `&mut`-полем
 pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) -> GlobeResponse {
     let mut response = GlobeResponse::default();
 
@@ -499,6 +500,7 @@ fn country_at_position<'a>(
     geo.country_at_sphere_point(f64::from(point.x), f64::from(point.y), f64::from(point.z))
 }
 
+#[derive(Clone, Copy)]
 struct CountryHighlight<'a> {
     markers: &'a [GlobeMarker],
     counts: Option<&'a HashMap<String, u32>>,

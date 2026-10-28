@@ -162,12 +162,9 @@ async fn handle_connection(
         return Ok(());
     }
 
-    let line = match std::str::from_utf8(payload) {
-        Ok(line) => line,
-        Err(_) => {
-            write_response(&mut write_half, "error команда должна быть в UTF-8").await?;
-            return Ok(());
-        }
+    let Ok(line) = std::str::from_utf8(payload) else {
+        write_response(&mut write_half, "error команда должна быть в UTF-8").await?;
+        return Ok(());
     };
 
     let command = match IpcCommand::parse(line) {
@@ -180,12 +177,12 @@ async fn handle_connection(
 
     let (reply, reply_rx) = oneshot::channel();
     let request = IpcRequest { command, reply };
-    match timeout(ENQUEUE_TIMEOUT, sender.send(request)).await {
-        Ok(Ok(())) => {}
-        Ok(Err(_)) | Err(_) => {
-            write_response(&mut write_half, "error основной процесс недоступен").await?;
-            return Ok(());
-        }
+    let delivered = timeout(ENQUEUE_TIMEOUT, sender.send(request))
+        .await
+        .is_ok_and(|queued| queued.is_ok());
+    if !delivered {
+        write_response(&mut write_half, "error основной процесс недоступен").await?;
+        return Ok(());
     }
 
     wake();

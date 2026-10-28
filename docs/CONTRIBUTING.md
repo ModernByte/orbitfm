@@ -17,7 +17,7 @@
 
 - **Edition:** 2024
 - **Форматирование:** `rustfmt` (стандартные настройки)
-- **Линтинг:** `clippy` с уровнем `pedantic` (где уместно) + `cargo deny`
+- **Линтинг:** `clippy` с подмножеством `pedantic`, зафиксированным в `[lints.clippy]` (`Cargo.toml`). Группа целиком не включается: на текущем объёме она даёт лавину, которая блокирует точечные правки. CI поднимает предупреждения в ошибки флагом `-D warnings`, поэтому подавление ставится только с причиной на месте.
 - **Именование:**
   - Модули и файлы — `snake_case`
   - Типы — `PascalCase`
@@ -30,11 +30,19 @@
 ### Обязательные проверки перед коммитом
 
 ```bash
-cargo fmt --check
-cargo clippy -- -D warnings
-cargo test
-cargo deny check
+cargo fmt --all --check
+cargo clippy --all-targets -- -D warnings
+cargo clippy --all-targets --no-default-features -- -D warnings
+cargo test --all-targets
 ```
+
+CI на Linux исполняет ровно эти четыре шага; macOS повторяет их и добавляет
+release-сборку, Windows — `fmt`/`clippy`/`check`, отдельный джоб валидирует
+desktop-метаданные, скрипты упаковки и вендинг Flatpak-крейтов
+(`python3 packaging/linux/check-flatpak-sources.py`). Сборка без фичи `tray`
+проверяется потому, что платформенные `dead_code`-сюрпризы видны только в этом
+cfg-пути. Проверки цепочки поставок (`cargo deny`) появятся вместе с `deny.toml`
+в 0.13.0-rc.2.
 
 ## 3. Структура репозитория
 

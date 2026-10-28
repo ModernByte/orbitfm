@@ -87,6 +87,7 @@ pub(crate) fn start(
 /// Цикл потока-владельца: ждёт снимки, сворачивает очередь до последнего и
 /// обновляет SNI-item. `update` блокирует этот поток до dbus-ответа, поэтому он
 /// никогда не вызывается из UI-цикла.
+#[allow(clippy::needless_pass_by_value)] // каналы переходят в поток-владелец
 fn serve(
     app_id: &'static str,
     title: &'static str,
@@ -206,7 +207,7 @@ impl Tray for OrbitTray {
             }),
             MenuItem::Separator,
             standard(text::toggle_label(&self.snapshot), |tray| {
-                tray.send(TrayCommand::Toggle)
+                tray.send(TrayCommand::Toggle);
             }),
             MenuItem::Separator,
             MenuItem::Checkmark(CheckmarkItem {
@@ -217,18 +218,18 @@ impl Tray for OrbitTray {
             }),
             standard(catalog.tray.stop, |tray| tray.send(TrayCommand::Stop)),
             standard(catalog.tray.previous, |tray| {
-                tray.send(TrayCommand::Previous)
+                tray.send(TrayCommand::Previous);
             }),
             standard(catalog.tray.next, |tray| tray.send(TrayCommand::Next)),
             standard(catalog.tray.radio_roulette, |tray| {
-                tray.send(TrayCommand::Roulette)
+                tray.send(TrayCommand::Roulette);
             }),
             MenuItem::Separator,
             standard(catalog.tray.volume_up, |tray| {
-                tray.send(TrayCommand::VolumeUp)
+                tray.send(TrayCommand::VolumeUp);
             }),
             standard(catalog.tray.volume_down, |tray| {
-                tray.send(TrayCommand::VolumeDown)
+                tray.send(TrayCommand::VolumeDown);
             }),
             MenuItem::Separator,
             MenuItem::RadioGroup(RadioGroup {
@@ -251,7 +252,7 @@ impl Tray for OrbitTray {
             }),
             MenuItem::Separator,
             standard(catalog.tray.settings, |tray| {
-                tray.send(TrayCommand::Settings)
+                tray.send(TrayCommand::Settings);
             }),
             standard(catalog.tray.quit, |tray| tray.send(TrayCommand::Quit)),
         ]

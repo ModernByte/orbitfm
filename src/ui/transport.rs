@@ -78,6 +78,7 @@ pub(crate) struct TransportState<'a> {
     pub language: Language,
 }
 
+#[allow(clippy::needless_pass_by_value)] // пучок аргументов с `&mut`-полем
 pub(crate) fn show(
     ui: &mut egui::Ui,
     palette: &Palette,
@@ -182,7 +183,7 @@ pub(crate) fn show(
                         ui,
                         palette,
                         texture,
-                        current.map(|station| station.name.as_str()).unwrap_or("?"),
+                        current.map_or("?", |station| station.name.as_str()),
                         44.0,
                     );
                     // Подпись режем по остатку своей зоны: контролы уже вынесены
@@ -440,7 +441,7 @@ impl egui::Widget for RouletteButton<'_> {
                         text_color,
                     )
                 } else {
-                    galley.clone()
+                    galley
                 };
                 ui.painter().galley(
                     pos2(rect.left() + 30.0, rect.center().y - painted.size().y * 0.5),
@@ -480,6 +481,7 @@ pub(crate) struct PanelFooterState<'a> {
 /// Подвал панели бар-виджета: одна строка без визуализатора и громкости.
 /// Громкость и оформление остаются в модальном окне настроек, которое
 /// открывается шестернёй в шапке.
+#[allow(clippy::needless_pass_by_value)] // пучок аргументов с `&mut`-полем
 pub(crate) fn panel_footer(
     ui: &mut egui::Ui,
     palette: &Palette,
@@ -524,7 +526,7 @@ pub(crate) fn panel_footer(
                         ui,
                         palette,
                         texture,
-                        current.map(|station| station.name.as_str()).unwrap_or("?"),
+                        current.map_or("?", |station| station.name.as_str()),
                         34.0,
                     );
                     let name_chars =

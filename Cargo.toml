@@ -79,6 +79,20 @@ tray-icon = { version = "0.26.1", default-features = false, optional = true }
 [dev-dependencies]
 tempfile = "3"
 
+[lints.clippy]
+# Подмножество `pedantic`, а не группа целиком: на ~33k LOC blanket-включение
+# даёт лавину, которая блокирует точечные правки. Уровень `warn`, а CI поднимает
+# их в ошибки флагом `-D warnings` (docs/CONTRIBUTING.md).
+match_same_arms = "warn"
+map_unwrap_or = "warn"
+manual_let_else = "warn"
+needless_borrow = "warn"
+needless_pass_by_value = "warn"
+redundant_clone = "warn"
+semicolon_if_nothing_returned = "warn"
+single_match_else = "warn"
+useless_vec = "warn"
+
 [features]
 default = ["tray"]
 # На каждой платформе собирается только её зависимость: ksni на Linux,

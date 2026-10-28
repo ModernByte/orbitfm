@@ -369,7 +369,7 @@ mod tests {
 
         // Кадр сразу после публикации: без reduce motion здесь был бы ноль.
         pass(&ctx, 0.001, |ctx| {
-            toast.draw(ctx, &palette, TEST_OFFSET, true)
+            toast.draw(ctx, &palette, TEST_OFFSET, true);
         });
         assert_eq!(toast.entries[0].shown, 1.0, "reduce motion — сразу видно");
         assert_eq!(
@@ -380,7 +380,7 @@ mod tests {
 
         // Срок вышел: запись снята в том же кадре, цикла ухода нет.
         pass(&ctx, TOAST_DURATION + 0.001, |ctx| {
-            toast.draw(ctx, &palette, TEST_OFFSET, true)
+            toast.draw(ctx, &palette, TEST_OFFSET, true);
         });
         assert!(toast.entries.is_empty(), "reduce motion не держит слой");
     }

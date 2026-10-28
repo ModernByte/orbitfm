@@ -551,10 +551,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("settings.json");
         fs::write(&path, br#"{"volume":7.5}"#).unwrap();
-        assert!(
-            (SettingsStore::load(path.clone()).unwrap().settings().volume - 1.0).abs()
-                < f64::EPSILON
-        );
+        assert!((SettingsStore::load(path).unwrap().settings().volume - 1.0).abs() < f64::EPSILON);
 
         let mut store = SettingsStore::ephemeral();
         store.set_volume(f64::NAN).unwrap();

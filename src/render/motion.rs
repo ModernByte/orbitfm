@@ -628,13 +628,12 @@ impl StyleFeatures {
         let sparkle = 0.40 * self.centroid + 0.35 * self.high_share + 0.25 * self.flux;
         let march = 0.40 * beat.confidence + 0.45 * beat.regularity + 0.15 * self.mid_share;
         match style {
-            MotionStyle::SoftPulse => soft,
+            MotionStyle::SoftPulse | MotionStyle::Auto => soft,
             MotionStyle::GrooveSway => groove,
             MotionStyle::BassDrop => bass_drop,
             MotionStyle::AmbientDrift => ambient,
             MotionStyle::SparkleTwitch => sparkle,
             MotionStyle::BeatMarch => march,
-            MotionStyle::Auto => soft,
         }
     }
 

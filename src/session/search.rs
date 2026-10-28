@@ -157,7 +157,7 @@ impl super::Session {
             return;
         }
         if let Some(tag) = self.search.context.genre.clone() {
-            self.start_genre_search(tag);
+            self.start_genre_search(&tag);
             return;
         }
         if self.search.error.is_some() {
@@ -182,7 +182,7 @@ impl super::Session {
         }
     }
 
-    pub(crate) fn start_genre_search(&mut self, tag: String) {
+    pub(crate) fn start_genre_search(&mut self, tag: &str) {
         let tag = tag.trim().to_lowercase();
         if tag.is_empty() {
             return;
@@ -457,7 +457,7 @@ impl super::Session {
                         self.notify_info(NoticeKey::RouletteStarted { station: label });
                     }
                     Err(err) => {
-                        self.notify_error_detail(NoticeKey::RouletteFailed, err.to_string())
+                        self.notify_error_detail(NoticeKey::RouletteFailed, err.to_string());
                     }
                 }
             }

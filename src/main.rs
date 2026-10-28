@@ -93,7 +93,7 @@ fn main() -> Result<()> {
         .build()
         .context("не удалось создать async runtime")?;
 
-    let result = route_command(&runtime, command, explicit);
+    let result = route_command(&runtime, &command, explicit);
     drop(runtime);
     result
 }
@@ -136,7 +136,7 @@ fn parse_invocation() -> Result<Invocation> {
 
 fn route_command(
     runtime: &tokio::runtime::Runtime,
-    command: IpcCommand,
+    command: &IpcCommand,
     explicit: bool,
 ) -> Result<()> {
     let wire = command.to_wire();
@@ -150,7 +150,7 @@ fn route_command(
     }
 
     if !matches!(
-        &command,
+        command,
         IpcCommand::Toggle
             | IpcCommand::Show
             | IpcCommand::Panel
@@ -161,7 +161,7 @@ fn route_command(
         bail!("OrbitFM не запущен");
     }
 
-    launch(runtime, &command, explicit)
+    launch(runtime, command, explicit)
 }
 
 fn launch(runtime: &tokio::runtime::Runtime, command: &IpcCommand, explicit: bool) -> Result<()> {

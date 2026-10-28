@@ -101,20 +101,17 @@ impl StationLibrary {
     ///
     /// Возвращает `true`, если станция теперь в избранном.
     pub fn toggle_favorite(&mut self, station: &Station) -> Result<bool, LibraryError> {
-        let favorite = match self
+        let favorite = if let Some(index) = self
             .data
             .favorites
             .iter()
             .position(|saved| saved.stationuuid == station.stationuuid)
         {
-            Some(index) => {
-                self.data.favorites.remove(index);
-                false
-            }
-            None => {
-                self.data.favorites.push(station.clone());
-                true
-            }
+            self.data.favorites.remove(index);
+            false
+        } else {
+            self.data.favorites.push(station.clone());
+            true
         };
         self.save()?;
         Ok(favorite)

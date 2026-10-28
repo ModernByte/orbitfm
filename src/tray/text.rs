@@ -53,7 +53,7 @@ mod tests {
         assert_eq!(now_playing_label(&playing), "Now playing: WFMU");
         let paused = TraySnapshot {
             playing: false,
-            ..playing.clone()
+            ..playing
         };
         assert_eq!(now_playing_label(&paused), "Paused: WFMU");
         assert_eq!(

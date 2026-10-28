@@ -789,12 +789,11 @@ fn category_hint(strings: &i18n::SettingsText, category: SettingsCategory) -> &'
 /// не зависит, поэтому соответствие развёрнуто здесь (ADR-0030).
 fn mode_label(labels: &i18n::LabelText, mode: WindowMode) -> &'static str {
     match mode {
-        WindowMode::Focus => labels.mode_focus,
-        WindowMode::Overlay => labels.mode_overlay,
-        WindowMode::Listening => labels.mode_listening,
         // Panel не входит в `WindowMode::ALL`: переключатель раскладок его
         // не предлагает, и эта ветка нужна только для полноты match.
-        WindowMode::Panel => labels.mode_focus,
+        WindowMode::Focus | WindowMode::Panel => labels.mode_focus,
+        WindowMode::Overlay => labels.mode_overlay,
+        WindowMode::Listening => labels.mode_listening,
     }
 }
 

@@ -33,7 +33,7 @@ pub struct PlaybackInfo {
 }
 
 /// Команды, приходящие от системы.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MediaCommand {
     Play,
     Pause,
@@ -160,6 +160,9 @@ fn capabilities(info: &PlaybackInfo) -> Capabilities {
     }
 }
 
+// `PlatformEvent` — чужой enum без `Copy`: match по значению здесь читаемее,
+// чем ссылки на каждом из тестовых вызовов.
+#[allow(clippy::needless_pass_by_value)]
 fn map_event(event: PlatformEvent) -> Option<MediaCommand> {
     match event {
         PlatformEvent::Play => Some(MediaCommand::Play),
