@@ -76,16 +76,12 @@ impl Slot {
     /// Публикует снимок. До `attach` копит последний, после — обновляет пункты
     /// на главном потоке: меню macOS нельзя трогать ни из какого другого.
     pub(crate) fn publish(&mut self, snapshot: &TraySnapshot) -> bool {
-        match self.menu.as_ref() {
-            Some(menu) => {
-                menu.apply(snapshot);
-                true
-            }
-            None => {
-                self.pending = Some(snapshot.clone());
-                true
-            }
+        if let Some(menu) = self.menu.as_ref() {
+            menu.apply(snapshot);
+        } else {
+            self.pending = Some(snapshot.clone());
         }
+        true
     }
 
     /// Создаёт иконку и меню. `false` — создать не удалось: приложение

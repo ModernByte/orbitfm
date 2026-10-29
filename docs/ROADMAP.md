@@ -514,11 +514,20 @@ ADR-0038 в 0.15. Инварианты: один GUI-процесс и один 
 повторная проверка сверялась по имени, а не по описанию.
 
 - [x] CI (красный бейдж): трей-линты macOS — `TrayCommand::Show` помечен
-      SNI-only, `icon::SIZES` используется через `MENU_BAR_SIZE` вместо дубля
-      `48` в `macos.rs`; clippy отдельным шагом с `--no-default-features`
-      (cfg-путь без фичи `tray` раньше не собирался нигде); подмножество
-      `pedantic` в `[lints.clippy]`; пиннинг Actions по SHA + dependabot;
-      toolchain 1.98.1 вместо плавающего `stable`
+      SNI-only, а `icon::SIZES` теперь читается и из macOS-бэкенда
+      (`ICON_SIZE = icon::SIZES[SIZES.len() - 1]`, то есть 48 живёт в одном
+      месте, а не продублированной константой); clippy отдельным шагом с
+      `--no-default-features` (cfg-путь без фичи `tray` раньше не собирался
+      нигде); подмножество `pedantic` в `[lints.clippy]`; пиннинг Actions по
+      SHA + dependabot; toolchain 1.98.1 вместо плавающего `stable`
+- [x] CI-6: то же подмножество доведено до зелёного на всей матрице — три
+      срабатывания в коде, который Linux-прогон физически не видит
+      (`single_match_else` в `src/tray/macos.rs`, `map_unwrap_or` в не-Linux
+      ветке `src/ipc/socket.rs`, `needless_pass_by_value` в
+      `src/media/host_window.rs`). Кросс-проверка с этой машины невозможна:
+      сборка под `aarch64-apple-darwin` падает на C-коде `aws-lc-sys` без
+      macOS SDK, поэтому вывод зафиксирован в CONTRIBUTING как правило
+      матрицы, а не как локальная проверка
 - [x] Вендинг Flatpak: четыре недостающие записи дописаны, чекер вынесен в
       `packaging/linux/check-flatpak-sources.py` и сверяет `Cargo.lock` с
       `flatpak-cargo-sources.json` в обе стороны по `sha256` (дайджест совпадает
