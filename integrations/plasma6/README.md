@@ -10,6 +10,20 @@ kbuildsycoca6 --noincremental
 Затем ПКМ по панели → «Добавить виджеты» → OrbitFM. На Wayland при
 необходимости перезапустите Plasma.
 
+## Установка из релиза (.plasmoid)
+
+В разделе Releases лежит готовый `OrbitFM-<версия>-plasma.plasmoid`:
+
+```
+kpackagetool6 -t Plasma/Applet -i OrbitFM-0.16.0-rc.1-plasma.plasmoid
+```
+
+Или в режиме редактирования панели: «Добавить виджеты» → «Установить из
+файла». Архив вызывает `orbitfm` из `PATH`, поэтому команда должна быть
+доступна; установщик `orbitfm integration install plasma6` подставляет
+абсолютный путь сам. Обновление — `kpackagetool6 -t Plasma/Applet -u`,
+удаление — `kpackagetool6 -t Plasma/Applet -r org.modernbyte.orbitfm`.
+
 ## Управление
 
 Компактный вид — стеклянная пилюля с иконкой, названием станции и точкой

@@ -344,6 +344,19 @@ jobs:
           name: OrbitFM-macos-dmg
           path: release
 
+      # Виджет Plasma 6 распространяется ещё и как .plasmoid для установки
+      # через «Добавить виджеты → Установить из файла». Архив собирается из
+      # тех же исходников, что и прямая установка; внутрь попадает команда
+      # `orbitfm` из PATH.
+      - name: Build Plasma plasmoid
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          python3 packaging/linux/build-plasmoid.py \
+            "release/OrbitFM-${VERSION}-plasma.plasmoid"
+          unzip -l "release/OrbitFM-${VERSION}-plasma.plasmoid"
+
       - name: Build SHA256SUMS
         env:
           VERSION: ${{ needs.version.outputs.version }}
@@ -351,8 +364,8 @@ jobs:
           set -euo pipefail
           cd release
           mapfile -t files < <(find . -maxdepth 1 -type f -printf '%f\n' | sort)
-          if [[ ${#files[@]} -ne 3 ]]; then
-            echo "ожидалось 3 артефакта (AppImage, MSI, DMG), найдено ${#files[@]}: ${files[*]}" >&2
+          if [[ ${#files[@]} -ne 4 ]]; then
+            echo "ожидалось 4 артефакта (AppImage, MSI, DMG, .plasmoid), найдено ${#files[@]}: ${files[*]}" >&2
             exit 1
           fi
           for f in "${files[@]}"; do

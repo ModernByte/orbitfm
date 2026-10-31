@@ -621,7 +621,7 @@ struct StatusCan {
 }
 
 /// Локализованные подписи из `i18n::catalog`: QML/JS не дублируют каталог
-/// на 11 языках (ADR-0037).
+/// на 16 языках (ADR-0037).
 #[derive(Debug, serde::Serialize)]
 struct StatusUi {
     play_pause: &'static str,

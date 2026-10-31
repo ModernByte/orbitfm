@@ -694,7 +694,7 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
   модальное окно 760×544 с колонкой категорий: `Appearance` (тема
   `System`/`Dark`/`Light` — `controls::dropdown`, шесть пресетов акцента (`Orbit`, `Emerald`,
   `Amber`, `Violet`, `Rose`, `Ocean`) — круглые свотчи, тумблер визуализатора, число столбцов — dropdown), `Language`
-  (dropdown, `System` и десять языков), `Audio` (громкость), `Motion` (`Off`/`Low`/`Normal`/`High`
+  (dropdown, `System` и шестнадцать языков), `Audio` (громкость), `Motion` (`Off`/`Low`/`Normal`/`High`
   и стиль — dropdown, `Reduce motion` и перевороты — тумблеры), `Window` (режим окна — dropdown,
   `Show help` — тумблер) и `About` (версия, лицензия, app-id, «Выход»). Изменение применяется сразу и
   сохраняется через `SettingsStore`; ошибка записи показывается тостом и не прерывает

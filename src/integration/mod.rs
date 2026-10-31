@@ -25,7 +25,7 @@ const HOST_NAME: &str = "org.modernbyte.orbitfm";
 const CHROME_EXTENSION_ID: &str = "lfhmfgjblkebbalfdlbmnalghhjplfbg";
 const FIREFOX_EXTENSION_ID: &str = "orbitfm@modernbyte";
 const TARGET_LIST: &str = "plasma6, gnome, omarchy, waybar, polybar, i3blocks, swaybar, \
-i3status-rust, xfce, cinnamon, mate, lxqt, chrome, firefox, all";
+i3status-rust, xfce, cinnamon, mate, lxqt, chrome, firefox";
 
 const HELP: &str = "\
 Управление интеграциями оболочек и баров.
@@ -35,9 +35,9 @@ const HELP: &str = "\
   orbitfm integration install <цель> [--force]
   orbitfm integration uninstall <цель> [--force]
 
-Цели:
+Цели (ставятся по одной):
   plasma6, gnome, omarchy, waybar, polybar, i3blocks, swaybar,
-  i3status-rust, xfce, cinnamon, mate, lxqt, chrome, firefox, all
+  i3status-rust, xfce, cinnamon, mate, lxqt, chrome, firefox
 
 Установка идёт в каталоги пользователя и пишет квитанцию
 $XDG_DATA_HOME/orbitfm/integrations/<цель>.json. Конфиги оболочек
@@ -185,9 +185,6 @@ pub(crate) fn parse(args: &[String]) -> Result<Command> {
 }
 
 fn parse_scope(value: &str) -> Result<Scope> {
-    if value == "all" {
-        return Ok(Scope::All);
-    }
     Target::parse(value)
         .map(Scope::One)
         .ok_or_else(|| anyhow!("неизвестная цель интеграции: {value}\nЦели: {TARGET_LIST}"))
@@ -1137,6 +1134,10 @@ fn print_instructions(layout: &Layout, report: &InstallReport) -> Result<()> {
             println!("Подключение Plasma 6:");
             println!("  1. Перезапустите Plasma или выполните kbuildsycoca6 --noincremental.");
             println!("  2. ПКМ по панели → «Добавить виджеты» → OrbitFM.");
+            println!(
+                "  Альтернатива: .plasmoid из релиза — kpackagetool6 -t Plasma/Applet -i \
+                 OrbitFM-<версия>-plasma.plasmoid (вызывает orbitfm из PATH)."
+            );
         }
         Target::Gnome => {
             println!("Подключение GNOME Shell:");
@@ -1433,6 +1434,12 @@ mod tests {
         ));
 
         let args = ["install".to_owned(), "bogus".to_owned()];
+        assert!(parse(&args).is_err());
+
+        // Массовая установка убрана: у каждой оболочки свои шаги и проверки.
+        let args = ["install".to_owned(), "all".to_owned()];
+        assert!(parse(&args).is_err());
+        let args = ["uninstall".to_owned(), "all".to_owned()];
         assert!(parse(&args).is_err());
 
         let args = ["status".to_owned()];
