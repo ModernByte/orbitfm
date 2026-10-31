@@ -126,6 +126,8 @@ pub(crate) const CATALOG: Catalog = Catalog {
         visualizer: "Visualisierung",
         viz_bars: "Balken",
         bars: "{count} Balken",
+        allow_http_artwork: "HTTP-Cover erlauben",
+        allow_http_artwork_hint: "Sender-Symbole über unverschlüsseltes HTTP laden, wenn HTTPS fehlt; das Bild kann unterwegs verändert werden.",
         system_language: "System",
         language_hint: "Änderungen wirken sofort; kein Neustart nötig.",
         volume: "Lautstärke",

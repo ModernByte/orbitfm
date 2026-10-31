@@ -149,6 +149,9 @@ pub(crate) struct SettingsText {
     pub visualizer: &'static str,
     pub viz_bars: &'static str,
     pub bars: &'static str,
+    /// Opt-in загрузки обложек по HTTP (ADR-0025, п. 11).
+    pub allow_http_artwork: &'static str,
+    pub allow_http_artwork_hint: &'static str,
     pub system_language: &'static str,
     pub language_hint: &'static str,
     pub volume: &'static str,

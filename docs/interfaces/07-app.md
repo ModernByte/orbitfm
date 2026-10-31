@@ -229,7 +229,7 @@ presentation-слоем позже — в `logic()` следующего кад�
    берётся из `i18n::catalog(effective_language())` по ключу `NoticeKey` (ADR-0030).
 3. `poll_favicons` — `FaviconCache::begin_frame`/`poll`, затем `take_fetches` →
    задачи `ArtworkFetcher::fetch` в `Session::runtime` (сеть, DNS и перепроверка
-   хоппов — внутри `services::artwork`, ADR-0025 ред. 2); пока кэш занят — repaint
+   хоппов — внутри `services::artwork`, ADR-0025 ред. 3); пока кэш занят — repaint
    через 120 мс.
 4. Размер окна: `inner_rect` из ввода → `Session::set_window_size` (геометрия нужна,
    чтобы следующий показ собрал `ViewportBuilder` до создания окна).

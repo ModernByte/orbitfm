@@ -9,6 +9,7 @@
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -91,9 +92,10 @@ impl std::fmt::Display for FetchCause {
 /// Настройки политики цели.
 #[derive(Debug, Default)]
 pub(crate) struct Policy {
-    /// Разрешить `http` как конечную цель. По умолчанию — только `https`
-    /// (ADR-0025, п. 11); пользовательский opt-in появляется в 0.14.
-    allow_http: bool,
+    /// Разрешить `http` как конечную цель, включая понижающий редирект.
+    /// По умолчанию — только `https` (ADR-0025, п. 11); пользовательский opt-in
+    /// `artwork_allow_http` переключает флаг на лету.
+    allow_http: AtomicBool,
     /// Тестовый шов: разрешить приватные адреса, чтобы прогонять хопп-цикл по
     /// loopback-макету. Поле существует только в тестовой сборке — в релизном
     /// бинаре обойти политику из кода приложения нельзя.
@@ -108,6 +110,10 @@ impl Policy {
             return true;
         }
         ssrf::is_public_destination(address)
+    }
+
+    fn allows_http(&self) -> bool {
+        self.allow_http.load(Ordering::Relaxed)
     }
 }
 
@@ -143,11 +149,26 @@ impl ArtworkFetcher {
         Self::with_policy(Policy::default())
     }
 
+    /// Фетчер с пользовательским opt-in HTTP-обложек (ADR-0025, п. 11).
+    pub(crate) fn with_allow_http(allow_http: bool) -> Self {
+        Self::with_policy(Policy {
+            allow_http: AtomicBool::new(allow_http),
+            #[cfg(test)]
+            allow_private_for_test: false,
+        })
+    }
+
     fn with_policy(policy: Policy) -> Self {
         Self {
             policy: Arc::new(policy),
             clients: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Переключает opt-in на лету: фоновые задачи делят `Arc<Policy>`, поэтому
+    /// новые хоппы видят новое решение без пересоздания фетчера.
+    pub(crate) fn set_allow_http(&self, allow_http: bool) {
+        self.policy.allow_http.store(allow_http, Ordering::Relaxed);
     }
 
     /// Загружает байты favicon по ссылке станции, перепроверяя цель на каждом
@@ -201,10 +222,11 @@ impl ArtworkFetcher {
     }
 
     /// Ярус 1 плюс беззвучный `http → https` при HTTPS-only политике
-    /// (семантика `ClientBuilder::https_only(true)`).
+    /// (семантика `ClientBuilder::https_only(true)`); с opt-in схема
+    /// сохраняется.
     fn entry_point(&self, url: &Url) -> Result<Url, FetchCause> {
         let mut url = self.validate(url)?;
-        if url.scheme() == "http" && !self.policy.allow_http {
+        if url.scheme() == "http" && !self.policy.allows_http() {
             url.set_scheme("https")
                 .map_err(|_| FetchCause::Policy(PolicyReject::UnsupportedScheme))?;
         }
@@ -242,12 +264,13 @@ impl ArtworkFetcher {
         inspect(response).await
     }
 
-    /// Редирект принимается только если новый URL проходит ярус 1 и не
-    /// понижает протокол при HTTPS-only политике.
+    /// Редирект принимается только если новый URL проходит ярус 1; при
+    /// HTTPS-only политике понижение протокола отклоняется, а с opt-in
+    /// `http` разрешён наравне с точкой входа.
     fn follow(&self, from: &Url, location: &str) -> Result<Url, FetchCause> {
         let joined = from.join(location).map_err(|_| FetchCause::Unparseable)?;
         let url = self.validate(&joined)?;
-        if url.scheme() == "http" && !self.policy.allow_http {
+        if url.scheme() == "http" && !self.policy.allows_http() {
             return Err(FetchCause::Policy(PolicyReject::UnsupportedScheme));
         }
         Ok(url)
@@ -256,29 +279,7 @@ impl ArtworkFetcher {
     /// Резолвит цель и проверяет **все** полученные адреса: приватный хоть в
     /// одном ответе — отказ (all-or-nothing).
     async fn resolve(&self, url: &Url, remaining: Duration) -> Result<Vec<SocketAddr>, FetchCause> {
-        let port = url
-            .port_or_known_default()
-            .ok_or(FetchCause::Policy(PolicyReject::ZeroPort))?;
-        let addresses = match url.host() {
-            Some(Host::Ipv4(ip)) => vec![SocketAddr::new(IpAddr::V4(ip), port)],
-            Some(Host::Ipv6(ip)) => vec![SocketAddr::new(IpAddr::V6(ip), port)],
-            Some(Host::Domain(name)) => {
-                let authority = format!("{name}:{port}");
-                let lookup = tokio::time::timeout(
-                    DNS_TIMEOUT.min(remaining),
-                    tokio::net::lookup_host(&authority),
-                )
-                .await
-                .map_err(|_| FetchCause::DnsTimeout)?
-                .map_err(|_| FetchCause::NoAddresses)?;
-                let collected: Vec<SocketAddr> = lookup.collect();
-                if collected.is_empty() {
-                    return Err(FetchCause::NoAddresses);
-                }
-                collected
-            }
-            None => return Err(FetchCause::Policy(PolicyReject::MissingHost)),
-        };
+        let addresses = resolve_addresses(url, remaining).await?;
         gate(&self.policy, &addresses)?;
         Ok(addresses)
     }
@@ -324,6 +325,34 @@ fn gate(policy: &Policy, addresses: &[SocketAddr]) -> Result<(), FetchCause> {
         Ok(())
     } else {
         Err(FetchCause::Policy(PolicyReject::PrivateAddress))
+    }
+}
+
+/// Резолвит цель в набор адресов с бюджетом `remaining`; IP-literal не ходит
+/// в DNS. Общий шаг яруса 2 для фетчера и вердикта публикации.
+async fn resolve_addresses(url: &Url, remaining: Duration) -> Result<Vec<SocketAddr>, FetchCause> {
+    let port = url
+        .port_or_known_default()
+        .ok_or(FetchCause::Policy(PolicyReject::ZeroPort))?;
+    match url.host() {
+        Some(Host::Ipv4(ip)) => Ok(vec![SocketAddr::new(IpAddr::V4(ip), port)]),
+        Some(Host::Ipv6(ip)) => Ok(vec![SocketAddr::new(IpAddr::V6(ip), port)]),
+        Some(Host::Domain(name)) => {
+            let authority = format!("{name}:{port}");
+            let lookup = tokio::time::timeout(
+                DNS_TIMEOUT.min(remaining),
+                tokio::net::lookup_host(&authority),
+            )
+            .await
+            .map_err(|_| FetchCause::DnsTimeout)?
+            .map_err(|_| FetchCause::NoAddresses)?;
+            let collected: Vec<SocketAddr> = lookup.collect();
+            if collected.is_empty() {
+                return Err(FetchCause::NoAddresses);
+            }
+            Ok(collected)
+        }
+        None => Err(FetchCause::Policy(PolicyReject::MissingHost)),
     }
 }
 
@@ -429,6 +458,26 @@ pub(crate) fn publishable(reference: &str) -> Option<&str> {
     ssrf::parse_publishable(reference).map(|_| reference)
 }
 
+/// Асинхронный вердикт яруса 2 для строки, публикуемой наружу (ADR-0025,
+/// п. 12): ярус 1, затем резолв и та же all-or-nothing проверка адресов, что
+/// у фетчера. `false` — ссылку нельзя отдавать DE-фетчеру: он пошёл бы по
+/// приватному адресу, который мы сами никогда не запросим. Байты не читаются,
+/// соединение не открывается.
+pub(crate) async fn public_verdict(reference: &str) -> bool {
+    let Ok(url) = Url::parse(reference) else {
+        return false;
+    };
+    if ssrf::classify(&url).is_err() {
+        return false;
+    }
+    match resolve_addresses(&url, DNS_TIMEOUT).await {
+        Ok(addresses) => addresses
+            .iter()
+            .all(|address| ssrf::is_public_destination(address.ip())),
+        Err(_) => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -478,7 +527,7 @@ mod tests {
 
     fn test_policy() -> Policy {
         Policy {
-            allow_http: true,
+            allow_http: AtomicBool::new(true),
             allow_private_for_test: true,
         }
     }
@@ -660,13 +709,56 @@ mod tests {
         assert_eq!(upgraded.host_str(), Some("cdn.example.com"));
 
         let strict = ArtworkFetcher::with_policy(Policy {
-            allow_http: true,
+            allow_http: AtomicBool::new(true),
             ..Policy::default()
         });
         let kept = strict
             .entry_point(&Url::parse("http://cdn.example.com/i.png").unwrap())
             .unwrap();
         assert_eq!(kept.scheme(), "http");
+    }
+
+    /// Пользовательский opt-in переключается без пересоздания фетчера: фоновые
+    /// задачи делят `Arc<Policy>`, поэтому новый хопп видит новый режим.
+    #[test]
+    fn opt_in_http_switches_at_runtime() {
+        let fetcher = ArtworkFetcher::new();
+        let endpoint = Url::parse("http://cdn.example.com/i.png").unwrap();
+        assert_eq!(fetcher.entry_point(&endpoint).unwrap().scheme(), "https");
+
+        fetcher.set_allow_http(true);
+        assert_eq!(fetcher.entry_point(&endpoint).unwrap().scheme(), "http");
+        let from = Url::parse("https://cdn.example.com/i.png").unwrap();
+        assert!(
+            fetcher
+                .follow(&from, "http://cdn.example.com/j.png")
+                .is_ok(),
+            "с opt-in понижающий редирект разрешён"
+        );
+
+        fetcher.set_allow_http(false);
+        assert_eq!(fetcher.entry_point(&endpoint).unwrap().scheme(), "https");
+        assert_eq!(
+            fetcher
+                .follow(&from, "http://cdn.example.com/j.png")
+                .unwrap_err(),
+            FetchCause::Policy(PolicyReject::UnsupportedScheme)
+        );
+    }
+
+    /// Вердикт публикации не открывает соединений: публичный literal решается
+    /// локально, приватный и синтаксически негодный отклоняются ярусом 1.
+    #[tokio::test]
+    async fn public_verdict_decides_without_touching_the_network() {
+        assert!(public_verdict("https://93.184.216.34/icon.png").await);
+        assert!(public_verdict("http://93.184.216.34:8080/icon.png").await);
+        assert!(!public_verdict("http://127.0.0.1/icon.png").await);
+        assert!(!public_verdict("https://10.0.0.5/icon.png").await);
+        assert!(!public_verdict("https://169.254.169.254/latest/meta-data/").await);
+        assert!(!public_verdict("https://localhost/icon.png").await);
+        assert!(!public_verdict("file:///etc/passwd").await);
+        assert!(!public_verdict("не url").await);
+        assert!(!public_verdict("").await);
     }
 
     #[test]
@@ -809,8 +901,8 @@ mod tests {
             100.0 * served as f64 / stations.len() as f64
         );
         // Отдельно: ссылки, которые политика подняла с http на https. Это и
-        // есть цена HTTPS-only — если тут «не 2xx» больше половины, opt-in
-        // `artwork_allow_http` нужен не в 0.14, а сейчас.
+        // есть цена HTTPS-only; opt-in `artwork_allow_http` возвращает ровно
+        // эту долю покрытия ценой доверия байтам, пришедшим по 80 порту.
         if !http_origin.is_empty() {
             println!("изначально http (подняты до https):");
             for (cause, count) in &http_origin {

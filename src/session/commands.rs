@@ -197,6 +197,14 @@ impl super::Session {
             .map_err(|err| err.to_string())
     }
 
+    /// Opt-in HTTP-обложек (ADR-0025, п. 11): Core только сохраняет настройку,
+    /// политику фетчера переключает presentation-слой.
+    pub(crate) fn set_artwork_allow_http(&mut self, allow: bool) -> Result<(), String> {
+        self.settings
+            .set_artwork_allow_http(allow)
+            .map_err(|err| err.to_string())
+    }
+
     /// Переключает анализ под текущую видимость окна. Зовётся на границах
     /// прогона UI: в простое без окна эфирные фильтры не тратят CPU.
     pub(crate) fn settle_analysis(&mut self) {

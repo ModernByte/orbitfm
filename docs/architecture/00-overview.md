@@ -100,7 +100,7 @@ egui.
 | Избранное и история    | serde_json + XDG                 | Небольшой JSON в `$XDG_DATA_HOME`, атомарная запись (ADR-0013) |
 | Темы и акцент          | serde_json + XDG                 | Настройки оформления в `$XDG_CONFIG_HOME`, атомарная запись (ADR-0014) |
 | UX «Orbital Desk»      | egui + существующий render/geo   | Focus-раскладка, режимы Country/GlobalGenre, контур страны; без новых зависимостей в MVP (ADR-0015) |
-| Favicon-аватары        | reqwest + image (JPEG/PNG/WebP)  | Асинхронный кэш `FaviconCache` в presentation-слое, сетевой путь — в `services::artwork` с политикой цели в два яруса; ICO и SVG отклоняются (ADR-0016 ред. 2, ADR-0025 ред. 2) |
+| Favicon-аватары        | reqwest + image (JPEG/PNG/WebP)  | Асинхронный кэш `FaviconCache` в presentation-слое, сетевой путь — в `services::artwork` с политикой цели в два яруса; публикация обложки наружу ждёт вердикта яруса 2 в `session::publish_gate`; ICO и SVG отклоняются (ADR-0016 ред. 2, ADR-0025 ред. 3) |
 | Флаги стран            | epaint `color_fonts` + системный Noto Color Emoji | Цветной флаг-эмодзи в тултипе глобуса; feature включается прямой зависимостью, деградация без шрифта (ADR-0017) |
 | Интеграция с Noctalia  | plugin.toml + Luau               | docs.noctalia.dev                                           |
 | Иконка в системном трее | ksni (SNI/StatusNotifierItem)  | Прямая работа с D-Bus без Qt; опциональная фича `tray` (ADR-0020) |

@@ -126,6 +126,8 @@ pub(crate) const CATALOG: Catalog = Catalog {
         visualizer: "Визуализатор",
         viz_bars: "Полосы",
         bars: "{count} полос",
+        allow_http_artwork: "Разрешить HTTP-обложки",
+        allow_http_artwork_hint: "Загружать иконки станций по HTTP, если HTTPS недоступен: по пути её можно подменить.",
         system_language: "Системный",
         language_hint: "Изменения применяются сразу, перезапуск не нужен.",
         volume: "Громкость",

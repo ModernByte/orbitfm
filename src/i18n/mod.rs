@@ -230,6 +230,8 @@ mod tests {
                 visualizer,
                 viz_bars,
                 bars,
+                allow_http_artwork,
+                allow_http_artwork_hint,
                 system_language,
                 language_hint,
                 volume,

@@ -8,7 +8,7 @@ use std::fmt;
 use crate::audio::{AudioEvent, PlaybackState};
 use crate::geo::Country;
 use crate::media::{MediaCommand, PlaybackInfo};
-use crate::services::{RadioError, Station, publishable};
+use crate::services::{RadioError, Station};
 use crate::ui::single_line;
 use crate::ui::station_filter::filtered_results;
 
@@ -374,9 +374,15 @@ impl super::Session {
             PlaybackState::Playing | PlaybackState::Buffering | PlaybackState::Reconnecting
         );
         let fallback_url = self.current_url.clone().unwrap_or_default();
-        // Публикуем только ссылки, прошедшие ярус 1: приватный literal не должен
-        // уходить наружу DE-фетчеру обложек (ADR-0025, п. 12).
-        let published_fallback = publishable(&fallback_url).unwrap_or_default().to_owned();
+        // Публикуем только ссылки, прошедшие ярус 1 и подтверждённые ярусом 2:
+        // приватный адрес не должен уходить наружу DE-фетчеру обложек
+        // (ADR-0025, п. 12). Вердикт яруса 2 считается в фоне, поэтому первый
+        // кадр может отдать пустое поле — это лучше, чем непроверенный адрес.
+        let published_fallback = if self.publish_gate.permits(&fallback_url) {
+            fallback_url.clone()
+        } else {
+            String::new()
+        };
         let (base_title, artist, art_url, url) = match &self.current_station {
             Some(station) => (
                 single_line(&station.name),
@@ -384,14 +390,14 @@ impl super::Session {
                 station
                     .favicon
                     .as_deref()
-                    .and_then(publishable)
+                    .filter(|reference| self.publish_gate.permits(reference))
                     .map(str::to_owned),
                 if station.url_resolved.trim().is_empty() {
                     published_fallback
+                } else if self.publish_gate.permits(&station.url_resolved) {
+                    station.url_resolved.clone()
                 } else {
-                    publishable(&station.url_resolved)
-                        .map(str::to_owned)
-                        .unwrap_or_default()
+                    String::new()
                 },
             ),
             None => (fallback_url, None, None, published_fallback),

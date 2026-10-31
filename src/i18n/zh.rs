@@ -126,6 +126,8 @@ pub(crate) const CATALOG: Catalog = Catalog {
         visualizer: "频谱",
         viz_bars: "柱状",
         bars: "{count} 条柱",
+        allow_http_artwork: "允许 HTTP 封面",
+        allow_http_artwork_hint: "当 HTTPS 不可用时通过明文 HTTP 加载电台图标；图片可能在传输途中被篡改。",
         system_language: "跟随系统",
         language_hint: "更改立即生效，无需重启。",
         volume: "音量",

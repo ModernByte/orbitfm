@@ -63,6 +63,8 @@ pub(crate) enum UiAction {
     ToggleSpectrum(bool),
     /// Число столбцов визуализатора: 16, 24 или 32 (ADR-0019).
     SetVizBars(u8),
+    /// Opt-in загрузки обложек по HTTP (ADR-0025, п. 11).
+    SetArtworkAllowHttp(bool),
     /// Реактивность аудио-движения глобуса (ADR-0028).
     SetMotion(MotionReactivity),
     /// Характер движения: Auto или один из шести стилей.

@@ -13,6 +13,7 @@ pub(crate) mod markers;
 pub(crate) mod notice;
 pub(crate) mod park;
 pub(crate) mod playback;
+pub(crate) mod publish_gate;
 pub(crate) mod search;
 pub(crate) mod tray;
 pub(crate) mod window;
@@ -39,6 +40,7 @@ use markers::GlobeMarker;
 pub(crate) use notice::{Notice, NoticeKey};
 pub(crate) use park::ParkOutcome;
 pub(crate) use playback::StationStartError;
+use publish_gate::PublishGate;
 use search::SearchState;
 pub(crate) use window::{UiIntent, WINDOW_TITLE, WindowMode, WindowState};
 use world::WorldBaseline;
@@ -158,6 +160,9 @@ pub(crate) struct Session {
     pub(crate) tray_snapshot: Option<TraySnapshot>,
     /// Публикатор кадров `events` (ADR-0039).
     pub(crate) status: StatusFeed,
+    /// Вердикты яруса 2 для ссылок, уходящих в MPRIS/SMTC/Now Playing
+    /// (ADR-0025, п. 12).
+    pub(crate) publish_gate: PublishGate,
 }
 
 impl Session {
@@ -186,6 +191,7 @@ impl Session {
         let spectrum_enabled = audio.spectrum_enabled();
         let language = stored.language.resolve();
         let show_help = stored.help_visible;
+        let publish_gate = PublishGate::new(runtime.clone(), wake.clone());
         let mut session = Self {
             audio,
             audio_events,
@@ -219,6 +225,7 @@ impl Session {
             notices: VecDeque::new(),
             tray_snapshot: None,
             status,
+            publish_gate,
         };
         // Снимок мира уходит в фон сразу: карта стран должна закраситься до
         // первого выбора в панели.

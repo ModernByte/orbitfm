@@ -152,6 +152,8 @@ impl<'a> OrbitApp<'a> {
             false
         };
         let visualizer = VisualizerModel::new(usize::from(session.settings.settings().viz_bars));
+        let artwork =
+            ArtworkFetcher::with_allow_http(session.settings.settings().artwork_allow_http);
         Self {
             session,
             globe_ready,
@@ -162,7 +164,7 @@ impl<'a> OrbitApp<'a> {
             station_callout: CalloutState::default(),
             visualizer,
             favicons: FaviconCache::new(),
-            artwork: ArtworkFetcher::new(),
+            artwork,
             favicon_was_busy: false,
             toast: Toast::default(),
             transitions: Transitions::new(),
@@ -193,7 +195,7 @@ impl<'a> OrbitApp<'a> {
 
     /// Фоновые favicon-загрузки: очередь → сетевая политика → декод → текстура.
     /// Сеть, DNS и перепроверка хоппов живут в `services::artwork`; здесь только
-    /// оркестрация задач (ADR-0016 ред. 2, ADR-0025 ред. 2).
+    /// оркестрация задач (ADR-0016 ред. 2, ADR-0025 ред. 3).
     fn poll_favicons(&mut self, ctx: &egui::Context) {
         self.favicons.begin_frame();
         self.favicons.poll(ctx);
@@ -901,6 +903,17 @@ impl<'a> OrbitApp<'a> {
                 }
                 let bars = self.session.settings.settings().viz_bars;
                 self.visualizer = VisualizerModel::new(usize::from(bars));
+            }
+            UiAction::SetArtworkAllowHttp(allow) => {
+                if let Err(err) = self.session.set_artwork_allow_http(allow) {
+                    self.error_toast(ctx, &NoticeKey::SettingNotSaved, Some(err.as_str()));
+                }
+                self.artwork.set_allow_http(allow);
+                if allow {
+                    // Отказы под HTTPS-политикой получают второй шанс: кэш не
+                    // хранит причину, поэтому забываем их целиком.
+                    self.favicons.retry_failed();
+                }
             }
             UiAction::PreviewVolume(volume) => {
                 if let Err(err) = self.session.preview_volume(volume) {

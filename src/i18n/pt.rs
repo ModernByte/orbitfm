@@ -126,6 +126,8 @@ pub(crate) const CATALOG: Catalog = Catalog {
         visualizer: "Visualizador",
         viz_bars: "Barras",
         bars: "{count} barras",
+        allow_http_artwork: "Permitir capas por HTTP",
+        allow_http_artwork_hint: "Carregar os ícones das estações por HTTP sem cifra quando HTTPS não estiver disponível; a imagem pode ser alterada em trânsito.",
         system_language: "Sistema",
         language_hint: "As alterações aplicam-se de imediato; não é preciso reiniciar.",
         volume: "Volume",

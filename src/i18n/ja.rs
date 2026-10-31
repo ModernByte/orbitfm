@@ -126,6 +126,8 @@ pub(crate) const CATALOG: Catalog = Catalog {
         visualizer: "スペクトル",
         viz_bars: "バー",
         bars: "{count} 本",
+        allow_http_artwork: "HTTP カバーを許可",
+        allow_http_artwork_hint: "HTTPS が使えない場合に放送局アイコンを平文 HTTP で取得します。転送中に画像が改ざんされる可能性があります。",
         system_language: "システム",
         language_hint: "変更は即時反映され、再起動は不要。",
         volume: "音量",

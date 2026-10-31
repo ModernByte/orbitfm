@@ -126,6 +126,8 @@ pub(crate) const CATALOG: Catalog = Catalog {
         visualizer: "스펙트럼",
         viz_bars: "막대",
         bars: "막대 {count}개",
+        allow_http_artwork: "HTTP 커버 허용",
+        allow_http_artwork_hint: "HTTPS를 사용할 수 없을 때 일반 HTTP로 방송국 아이콘을 불러옵니다. 전송 중 이미지가 변조될 수 있습니다.",
         system_language: "시스템",
         language_hint: "변경 즉시 적용되며, 재시작이 필요 없습니다.",
         volume: "볼륨",
