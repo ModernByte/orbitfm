@@ -1,4 +1,4 @@
-//! Асинхронный кэш favicon станций (ADR-0016, ADR-0025 ред. 2).
+//! Асинхронный кэш favicon станций (ADR-0016, ADR-0025 ред. 3).
 //!
 //! Presentation-слой: чистая стейт-машина без сети. Спавн загрузки и
 //! `Context::load_texture` выполняет App-оркестратор; сюда приходят уже
@@ -126,6 +126,13 @@ impl FaviconCache {
         );
         self.queued += 1;
         None
+    }
+
+    /// Забывает неудачные загрузки: после смены сетевой политики (opt-in
+    /// HTTP-обложек) станции получают второй шанс, не дожидаясь вытеснения.
+    pub(crate) fn retry_failed(&mut self) {
+        self.entries
+            .retain(|_, entry| !matches!(entry.state, FaviconState::Failed));
     }
 
     /// Есть незавершённые загрузки — окно стоит перерисовать.
@@ -433,6 +440,35 @@ mod tests {
         assert!(cache.texture("https://a/broken").is_none());
         assert_eq!(cache.queued, 0, "Failed не должен становиться в очередь");
         assert_eq!(cache.stats().failed, 1);
+    }
+
+    /// Смена сетевой политики (opt-in HTTP) забывает отказы: иконка снова
+    /// попадает в очередь под новым поколением, а готовые текстуры остаются.
+    #[test]
+    fn retry_failed_requeues_only_rejected_urls() {
+        let mut cache = FaviconCache::new();
+        let taken = {
+            cache.texture("https://a/broken");
+            cache.take_fetches()
+        };
+        let (url, generation) = taken[0].clone();
+        cache
+            .sender
+            .try_send((url, generation, None))
+            .expect("слот свободен");
+        cache.poll(&ctx());
+        let old_generation = cache.entries["https://a/broken"].generation;
+
+        cache.retry_failed();
+        assert!(
+            !cache.entries.contains_key("https://a/broken"),
+            "отказ забыт, а не оставлен навсегда"
+        );
+        assert!(cache.texture("https://a/broken").is_none());
+        let entry = &cache.entries["https://a/broken"];
+        assert!(matches!(entry.state, FaviconState::Queued));
+        assert!(entry.generation > old_generation, "поколение новое");
+        assert_eq!(cache.take_fetches().len(), 1, "URL снова в очереди");
     }
 
     #[test]

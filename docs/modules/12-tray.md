@@ -23,7 +23,7 @@ ADR-0026 «macOS: меню-бар и Now Playing при скрытом окне�
 | Живёт в `src/tray/` | Не живёт в `src/tray/` |
 |---|---|
 | Регистрация SNI-item, меню `com.canonical.dbusmenu`, pixmap иконки, поток-владелец, каналы снимков и команд | Решение, что означает команда (`Session::execute_tray_command`), состояние эфира, станции, темы, языка, окно |
-| `TrayCommand` / `TraySnapshot` / `TrayHandle` / `spawn` — контракт слоя | `IpcCommand`-протокол (`src/ipc/`), MPRIS-метаданные (`src/media/`), egui (`src/ui/`), каталог строк (`src/i18n/`) |
+| `TrayCommand` / `TraySnapshot` / `TrayStation` / `TrayHandle` / `spawn` — контракт слоя | `IpcCommand`-протокол (`src/ipc/`), MPRIS-метаданные (`src/media/`), egui (`src/ui/`), каталог строк (`src/i18n/`) |
 
 Модуль не знает ни про egui, ни про `Station`: наружу идут только доменные
 типы-сообщения (`docs/interfaces/11-tray.md`). Обратная зависимость тоже
@@ -38,10 +38,10 @@ ADR-0026 «macOS: меню-бар и Now Playing при скрытом окне�
 
 | Файл | Ответственность | Наружу (`pub(crate)`) |
 |------|-----------------|------------------------|
-| `mod.rs` | Контракт слоя: типы-сообщения, `TrayHandle`, точка входа и её no-op-заглушка; на macOS — «неподключённый» `Slot` и отложенный `attach` | `VOLUME_STEP`, `TrayCommand`, `TraySnapshot`, `TrayHandle::{publish, attach, commands}`, `spawn` |
+| `mod.rs` | Контракт слоя: типы-сообщения (`TrayCommand`, `TraySnapshot`, `TrayStation`), `TrayHandle`, точка входа и её no-op-заглушка; на macOS — «неподключённый» `Slot` и отложенный `attach` | `VOLUME_STEP`, `TrayCommand`, `TrayStation`, `TraySnapshot`, `TrayHandle::{publish, attach, commands}`, `spawn` |
 | `sni.rs` | Реализация `ksni::Tray`, поток-владелец, меню, деградация (`#[cfg(all(target_os = "linux", feature = "tray"))]`) | `OrbitTray`, `start` — только для `mod.rs` |
 | `macos.rs` | Элемент строки меню на `tray-icon`/`muda`: `Slot`, сборка меню, стабильные `MenuId`, глобальный `MenuEvent` (`#[cfg(all(target_os = "macos", feature = "tray"))]`) | `Slot::{new, publish, attach}` — только для `mod.rs` |
-| `text.rs` | Общие подписи «сейчас играет» и Show/Hide для обоих бэкендов | `now_playing_label`, `nothing_playing`, `toggle_label` |
+| `text.rs` | Общие подписи обоих бэкендов: карточка станции, Show/Hide, громкость с процентом, избранное, обрезка длинных названий | `now_playing_label`, `nothing_playing`, `toggle_label`, `card_lines`, `station_name`, `station_details`, `station_tags`, `station_summary`, `volume_label`, `favorite_label` |
 | `icon.rs` | Платформенно-нейтральный RGBA-растеризатор орбитального знака 22/32/48; Linux-адаптер конвертирует в ARGB32, macOS — в `tray_icon::Icon` | `SIZES`, `rgba` — для `sni.rs`/`macos.rs` |
 
 `mod.rs` компилируется всегда, чтобы `src/session/` не обрастал `cfg`-ветками:
@@ -91,12 +91,14 @@ ADR-0026 «macOS: меню-бар и Now Playing при скрытом окне�
 | `Id`, `IconName` | `app_id` = `org.modernbyte.OrbitFM` |
 | `Title`, `ToolTip.title` | `WINDOW_TITLE` = `OrbitFM` |
 | `Category` | `ApplicationStatus` |
-| `Status` | `Active`, если окно видно или идёт эфир |
+| `Status` | Всегда `Active`: иконка живёт, пока жив процесс. Noctalia v5 скрывает пассивные элементы, поэтому остановка эфира и закрытое окно её больше не убирают (ADR-0020, ревизия 0.16) |
 | `ToolTip.description` | `station` из снимка, иначе `text.tray.nothing_playing` на языке снимка |
 | `IconPixmap` | `sni.rs::ICONS` — 22/32/48, RGBA из `icon::rgba`, переставленный в ARGB32 network byte order |
 | `IconThemePath` | первый существующий `.../icons/hicolor` (XDG_DATA_HOME, затем `/usr/share`), иначе пусто |
 | `Menu` | `/MenuBar`, собирается из снимка на каждое обновление |
-| Первый пункт меню | неактивная витрина: шаблон `text.tray.now_playing` или `text.tray.paused` с `{station}`, либо `text.tray.nothing_playing` — из `station`, `playing` и `language` |
+| Карточка станции | 1–3 неактивные строки: `text.tray.now_playing` или `paused` с `{station}`, либо `text.tray.nothing_playing`; затем `страна · NN kbps` и теги — из `station`, `playing`, `language` |
+| Групповой заголовок громкости | неактивная строка `Volume · NN%` из `volume_percent` |
+| Подменю «О станции» | `common.add_favorite`/`remove_favorite` по `favorite` и `text.tray.open_homepage`; без станции подменю неактивно, без `homepage` — неактивен пункт |
 | `ItemIsMenu` | `false` (константа `MENU_ON_ACTIVATE` по умолчанию) — только тогда хост вызывает `Activate` |
 
 Иконка рисуется процедурно (диск планеты, наклонённое кольцо, точка эфира —
@@ -107,13 +109,33 @@ ADR-0026 «macOS: меню-бар и Now Playing при скрытом окне�
 тёмную тему строки меню (ADR-0026).
 
 Подписи меню — из `i18n::catalog` языка снимка, группа `text.tray` (ADR-0030);
-общие строки «сейчас играет» и Show/Hide собирает `text.rs` для обоих бэкендов.
-Порядок пунктов SNI: неактивная
-первая строка · разделитель · `show_window`/`hide_window` · разделитель ·
-`play_pause` (чекмарк) · `stop` · `previous` · `next` · `radio_roulette` ·
-разделитель · `volume_up` · `volume_down` · разделитель · радиогруппа тем ·
-разделитель · `settings` · `quit`. Меню macOS повторяет тот же порядок и те же
-подписи; выбранная тема и `play_pause` — чекбоксы. Подписи темы даёт
+карточку, строку громкости и избранное собирает `text.rs` для обоих бэкендов.
+Порядок пунктов SNI (ADR-0020, ревизия 0.16) — сгруппированный, с
+freedesktop-иконками:
+
+1. карточка станции (1–3 неактивные строки) · разделитель;
+2. `show_window`/`hide_window` (`view-fullscreen`/`view-restore-symbolic`) ·
+   разделитель;
+3. неактивный заголовок `playback`; `play_pause` (чекмарк,
+   `media-playback-pause`/`start-symbolic`), `stop`, `previous`, `next`,
+   `radio_roulette` (`media-playback-stop`, `media-skip-backward/forward`,
+   `media-playlist-shuffle-symbolic`) · разделитель;
+4. неактивный заголовок `Volume · NN%`; `volume_up`
+   (`audio-volume-high-symbolic`), `volume_down`
+   (`audio-volume-low-symbolic`) · разделитель;
+5. подменю `appearance` (`preferences-desktop-theme-symbolic`): радиогруппа
+   System/Dark/Light · разделитель;
+6. подменю `about_station` (`help-about-symbolic`): избранное
+   (`emblem-favorite-symbolic`, подпись по состоянию `favorite`) и
+   `open_homepage` (`web-browser-symbolic`) · разделитель;
+7. `settings` (`preferences-system-symbolic`) · `quit`
+   (`application-exit-symbolic`).
+
+Меню macOS повторяет тот же порядок и те же подписи. Сведения о станции — одна
+строка `страна · битрейт · теги` под заголовком: когда показывать нечего, она
+снимается с меню и возвращается на своё место при появлении данных. Выбранная
+тема, `play_pause` и избранное — чекбоксы; стабильные `MenuId` не меняются,
+новые — `orbitfm.favorite-toggle` и `orbitfm.homepage`. Подписи темы даёт
 `i18n::theme_label`: presentation-слой (`ui::palette`) модулю трея по-прежнему
 недоступен.
 
@@ -123,6 +145,11 @@ ADR-0026 «macOS: меню-бар и Now Playing при скрытом окне�
 отсутствие трея — не ошибка, а штатное состояние окружения. `ksni::Error` —
 `#[non_exhaustive]` с тремя вариантами (`Dbus`, `Watcher`, `WontShow`), поэтому
 `match` обязан иметь catch-all; он есть, и любая ошибка превращается в `warn!`.
+
+Открытие homepage исполняет Core, а не трей: адрес проверяется на `http(s)`,
+отсутствие userinfo и пробелов при длине ≤ 2048 байт, затем запускается
+`xdg-open` (Linux) или `open` (macOS) без shell. Невалидный адрес — `warn!`,
+команда не исполняется.
 
 - `watcher_offline` возвращает `true`: хост мог уйти временно (перезапуск
   оболочки), а `false` закрыл бы соединение и выключил трей до конца жизни
@@ -141,30 +168,44 @@ ADR-0026 «macOS: меню-бар и Now Playing при скрытом окне�
 
 ## 6. Текущие ограничения
 
-- `Volume Up/Down` не показывают текущую громкость: у SNI нет витрины для неё.
+- Громкость в меню — заголовок `Volume · NN%` и шаги ±10 %: слайдера у SNI нет,
+  dbusmenu не рисует ползунки.
+- `Status::Active` — сознательное отклонение от спецификации SNI: элемент всегда
+  считается активным, иначе Noctalia v5 скрывает иконку при `stopped` и
+  закрытом окне (ADR-0020, ревизия 0.16).
 - Flatpak/sandbox: признак, при котором нужен `disable_dbus_name(true)`, в коде
   не зашит — он должен быть уточнён live-проверкой flatpak-сборки (ADR-0020 п. 8).
 - `ksni::current_xdg_activation_token()` существует, но не потребляется: eframe
   0.37 + winit 0.30.13 не читают токен, поэтому показ окна из трея по-прежнему
   зависит от композитора (фокус на Wayland не гарантируется).
-- Разные dbusmenu-хосты по-разному реагируют на `Category`/`ItemIsMenu` —
-  проверено на Noctalia, другие хосты (KDE, waybar) не тестировались.
+- Подменю, чекмарки и freedesktop-иконки хосты dbusmenu поддерживают по-разному:
+  без иконок остаются читаемые подписи. Проверено на Noctalia, другие хосты
+  (KDE, waybar) не тестировались.
 - macOS-трей проверен компиляцией и unit-тестами; live-приёмка (template-иконка
   в светлой/тёмной теме, меню, Cmd-W/Cmd-Q, Quit) требует живого Mac и входит в
   матрицу ADR-0026.
 
 ## 7. Тестирование
 
-Unit-тесты покрывают контракт, не касаясь D-Bus и AppKit: `mod.rs` — значения
-`Default` (тема и язык) и сравнение снимков, где смена языка — тоже изменение;
-`sni.rs` — `Status` по снимку, тултип, состав и состояние меню (заголовок-витрина
-неактивна, чекмарк `play_pause`, выбранная тема), равенство всех подписей
-каталогу на каждом языке, правило «одно действие = одна команда + одно
-пробуждение» и байтовый порядок пикселей; `macos.rs` — каждый `MenuId`
-переводится в свою `TrayCommand`, ID уникальны, чужие ID игнорируются;
-`text.rs` — заголовок Now playing/Paused/Nothing playing и Show/Hide по
-видимости; `icon.rs` — все размерности RGBA, непрозрачное ядро планеты и пустые
-углы, выход орбиты за диск, наличие точки эфира.
+Unit-тесты покрывают контракт, не касаясь D-Bus и AppKit:
+
+- `mod.rs` — значения `Default` и сравнение снимков, где смена языка и
+  громкости — тоже изменение;
+- `sni.rs` — `icon_stays_active_while_the_process_lives`,
+  `menu_groups_playback_volume_appearance_and_station`,
+  `menu_card_shows_the_current_station_without_being_a_command`,
+  `menu_actions_publish_their_commands`, равенство всех подписей каталогу на
+  каждом языке, правило «одно действие = одна команда + одно пробуждение» и
+  байтовый порядок пикселей;
+- `macos.rs` — каждый `MenuId` переводится в свою `TrayCommand`, ID уникальны,
+  чужие ID игнорируются;
+- `text.rs` — `card_shows_name_meta_and_tags`, `details_skip_empty_parts`,
+  `tags_drop_empty_segments`, `long_labels_are_clipped_by_chars`,
+  `summary_joins_meta_and_tags_for_the_macos_menu`,
+  `volume_and_favorite_labels_follow_the_state`,
+  `toggle_label_follows_the_window`, `station_name_falls_back_to_nothing_playing`;
+- `icon.rs` — все размерности RGBA, непрозрачное ядро планеты и пустые углы,
+  выход орбиты за диск, наличие точки эфира.
 
 Живая проверка — ADR-0020, «Проверка реализации».
 

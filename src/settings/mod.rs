@@ -62,6 +62,18 @@ impl AccentColor {
         Self::Cyan,
     ];
 
+    /// Имя акцента в `status --json`: попап и бар-виджеты повторяют палитру.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Blue => "blue",
+            Self::Green => "green",
+            Self::Amber => "amber",
+            Self::Violet => "violet",
+            Self::Rose => "rose",
+            Self::Cyan => "cyan",
+        }
+    }
+
     pub fn rgb(self) -> [u8; 3] {
         match self {
             Self::Blue => [108, 176, 255],
@@ -205,6 +217,9 @@ pub struct Settings {
     pub allow_flips: bool,
     /// Reduce motion: геометрия и качка неподвижны, эфир продолжается.
     pub reduce_motion: bool,
+    /// Opt-in загрузки обложек по HTTP (ADR-0025, п. 11); по умолчанию только
+    /// HTTPS, а http-ссылка беззвучно повторяется как https.
+    pub artwork_allow_http: bool,
 }
 
 /// Доступные варианты числа столбцов визуализатора.
@@ -228,6 +243,7 @@ impl Default for Settings {
             motion_style: MotionStyle::Auto,
             allow_flips: false,
             reduce_motion: false,
+            artwork_allow_http: false,
         }
     }
 }
@@ -376,6 +392,15 @@ impl SettingsStore {
         self.save()
     }
 
+    /// Opt-in HTTP-обложек (ADR-0025, п. 11): по умолчанию выключен.
+    pub fn set_artwork_allow_http(&mut self, allow: bool) -> Result<(), SettingsError> {
+        if self.settings.artwork_allow_http == allow {
+            return Ok(());
+        }
+        self.settings.artwork_allow_http = allow;
+        self.save()
+    }
+
     pub fn set_motion_style(&mut self, style: MotionStyle) -> Result<(), SettingsError> {
         if self.settings.motion_style == style {
             return Ok(());
@@ -511,6 +536,10 @@ mod tests {
         assert_eq!(store.settings().motion_style, MotionStyle::Auto);
         assert!(!store.settings().allow_flips);
         assert!(!store.settings().reduce_motion);
+        assert!(
+            !store.settings().artwork_allow_http,
+            "HTTP-обложки по умолчанию выключены"
+        );
     }
 
     #[test]
@@ -589,6 +618,19 @@ mod tests {
 
         let store = SettingsStore::load(path).unwrap();
         assert!(store.settings().allow_flips);
+    }
+
+    #[test]
+    fn roundtrip_persists_artwork_http_opt_in() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        {
+            let mut store = SettingsStore::load(path.clone()).unwrap();
+            store.set_artwork_allow_http(true).unwrap();
+        }
+
+        let store = SettingsStore::load(path).unwrap();
+        assert!(store.settings().artwork_allow_http);
     }
 
     #[test]

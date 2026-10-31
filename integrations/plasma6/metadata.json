@@ -1,0 +1,19 @@
+{
+    "KPlugin": {
+        "Id": "org.modernbyte.orbitfm",
+        "Name": "OrbitFM",
+        "Description": "Internet radio player controls",
+        "Description[ru]": "Управление интернет-радио OrbitFM",
+        "Icon": "multimedia-player",
+        "Authors": [
+            {
+                "Name": "ModernByte"
+            }
+        ],
+        "License": "MIT",
+        "Version": "@VERSION@",
+        "Website": "https://github.com/ModernByte/orbitfm"
+    },
+    "KPackageStructure": "Plasma/Applet",
+    "X-Plasma-API-Minimum-Version": "6.0"
+}

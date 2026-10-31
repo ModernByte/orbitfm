@@ -105,6 +105,8 @@ pub struct Settings {
     pub volume: f64,
     /// Видимость визуализатора и аудиокольца (ADR-0031).
     pub visualizer_enabled: bool,
+    /// Разрешить favicon по HTTP, если HTTPS недоступен (ADR-0025 ред. 3).
+    pub artwork_allow_http: bool,
     /// Видимость карточки управления глобусом; по умолчанию включена (ADR-0036).
     pub help_visible: bool,
     pub motion: MotionReactivity,
@@ -139,6 +141,7 @@ impl SettingsStore {
     pub fn set_viz_bars(&mut self, bars: u8) -> Result<(), SettingsError>;
     pub fn set_volume(&mut self, volume: f64) -> Result<(), SettingsError>;
     pub fn set_visualizer_enabled(&mut self, enabled: bool) -> Result<(), SettingsError>;
+    pub fn set_artwork_allow_http(&mut self, allow: bool) -> Result<(), SettingsError>;
     pub fn set_help_visible(&mut self, visible: bool) -> Result<(), SettingsError>;
     pub fn set_motion(&mut self, motion: MotionReactivity) -> Result<(), SettingsError>;
     pub fn set_motion_style(&mut self, style: MotionStyle) -> Result<(), SettingsError>;
@@ -166,10 +169,11 @@ pub fn default_path() -> Result<PathBuf, SettingsError>;
 | `ephemeral` | Хранилище в памяти; `save` — no-op, файл не создаётся |
 | `settings` | Возвращает копию `Settings` для применения в GUI |
 | `set_theme` / `set_accent` | Меняет значение и сохраняет; повторная установка того же значения — успех без записи |
-| `set_language` | Меняет язык (`System` или один из 10 языков каталога); сохраняет только при изменении |
+| `set_language` | Меняет язык (`System` или один из 16 языков каталога); сохраняет только при изменении |
 | `set_viz_bars` | Приводит число к ближайшему из `VIZ_BAR_CHOICES` и сохраняет |
 | `set_volume` | Клампит в `0.0..=1.0` (non-finite → `DEFAULT_VOLUME`), сравнение по `f64::EPSILON`, сохраняет только при изменении |
 | `set_visualizer_enabled` | Включает или выключает визуализатор и аудиокольцо; сохраняет только при изменении |
+| `set_artwork_allow_http` | Разрешает или запрещает favicon по HTTP; значение по умолчанию `false`, сохраняет только при изменении. Применение к сетевой политике — `ArtworkFetcher::set_allow_http` (ADR-0025 ред. 3) |
 | `set_help_visible` | Включает или выключает карточку управления глобусом; значение по умолчанию `true`, сохраняет только при изменении. Старый ключ `help_seen` игнорируется (ADR-0036) |
 | `set_motion` / `set_reduce_motion` | Меняет реактивность движения и Reduce motion; сохраняет только при изменении |
 | `set_motion_style` | Меняет характер движения (`Auto` или один из шести стилей); сохраняет только при изменении |
@@ -191,6 +195,7 @@ pub fn default_path() -> Result<PathBuf, SettingsError>;
   "viz_bars": 24,
   "volume": 0.7,
   "visualizer_enabled": true,
+  "artwork_allow_http": false,
   "help_visible": true,
   "motion": "normal",
   "motion_style": "auto",
@@ -249,9 +254,10 @@ Application Core затемняет акцент для текста (ссылк
 - `default_path_falls_back_to_home_for_relative_xdg`
 - `missing_file_uses_defaults`
 - `roundtrip_persists_theme_and_accent`
-- `missing_fields_use_defaults` (все десять остальных полей, включая `language`,
-  `volume`, `visualizer_enabled`)
+- `missing_fields_use_defaults` (все одиннадцать остальных полей, включая
+  `language`, `volume`, `visualizer_enabled`, `artwork_allow_http`)
 - `roundtrip_persists_language_volume_and_visualizer`
+- `roundtrip_persists_artwork_http_opt_in`
 - `unknown_language_code_falls_back_without_touching_other_fields`
 - `invalid_volume_is_sanitized_on_load_and_write`
 - `roundtrip_persists_motion_preferences` (включая `motion_style`)

@@ -34,7 +34,7 @@ impl HostWindow {
         let (sender, receiver) = mpsc::channel();
         let thread = thread::Builder::new()
             .name("orbitfm-smtc".to_owned())
-            .spawn(move || run(sender))
+            .spawn(move || run(&sender))
             .map_err(|err| format!("не удалось запустить поток окна SMTC: {err}"))?;
 
         match receiver.recv_timeout(START_TIMEOUT) {
@@ -75,7 +75,7 @@ impl Drop for HostWindow {
     }
 }
 
-fn run(sender: mpsc::Sender<Result<u64, String>>) {
+fn run(sender: &mpsc::Sender<Result<u64, String>>) {
     let hwnd = match create_window() {
         Ok(hwnd) => hwnd,
         Err(err) => {

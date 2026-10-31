@@ -1,0 +1,76 @@
+/*
+ * Стиль меню OrbitFM для GNOME Shell. Токены те же, что у панели Noctalia:
+ * стеклянная карточка, мягкая рамка, акцент на активном состоянии.
+ * Файл загружается Shell автоматически вместе с расширением.
+ */
+
+.orbitfm-panel-label {
+    font-weight: 600;
+}
+
+.orbitfm-card {
+    padding: 10px 8px;
+    border-radius: 14px;
+    background-color: rgba(13, 18, 32, 0.55);
+    border: 1px solid rgba(120, 160, 255, 0.18);
+}
+
+.orbitfm-art {
+    color: #6cb0ff;
+    background-color: rgba(120, 160, 255, 0.14);
+    border: 1px solid rgba(120, 160, 255, 0.2);
+    border-radius: 11px;
+    padding: 7px;
+}
+
+.orbitfm-title {
+    font-weight: 700;
+    color: #e6eaf5;
+}
+
+.orbitfm-meta {
+    color: #969eb0;
+}
+
+.orbitfm-dot {
+    background-color: #969eb0;
+    border-radius: 4px;
+}
+
+.orbitfm-dot-playing {
+    background-color: #34d399;
+}
+
+.orbitfm-dot-paused {
+    background-color: #ffbe5c;
+}
+
+.orbitfm-dot-loading {
+    background-color: #b294ff;
+}
+
+.orbitfm-dot-error {
+    background-color: #ff8aa5;
+}
+
+.orbitfm-dot-stopped {
+    background-color: #969eb0;
+}
+
+.orbitfm-dot-offline {
+    background-color: #ff8080;
+}
+
+.orbitfm-state-playing .orbitfm-panel-label {
+    color: #68d391;
+}
+
+.orbitfm-state-paused .orbitfm-panel-label,
+.orbitfm-state-loading .orbitfm-panel-label {
+    color: #6cb0ff;
+}
+
+.orbitfm-state-error .orbitfm-panel-label,
+.orbitfm-state-offline .orbitfm-panel-label {
+    color: #ff8080;
+}

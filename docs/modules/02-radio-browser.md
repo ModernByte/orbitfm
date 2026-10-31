@@ -16,10 +16,10 @@
 
 | Файл | Назначение |
 |------|------------|
-| `mod.rs` | Публичный фасад (`RadioBrowserClient`, `RadioError`, `SearchParams`, `Station`, `ArtworkFetcher`, `publishable`) |
+| `mod.rs` | Публичный фасад (`RadioBrowserClient`, `RadioError`, `SearchParams`, `Station`, `ArtworkFetcher`, `publishable`, `public_verdict`) |
 | `discovery.rs` | DNS-discovery `all.api.radio-browser.info`, дедупликация и ротация |
 | `radio_browser.rs` | HTTP-клиент, пул зеркал, failover, кэш, click-tracking |
-| `artwork.rs` | Хопп-цикл артворка: резолв, припинованные клиенты, лимиты, MIME, `tracing` причин отказа |
+| `artwork.rs` | Хопп-цикл артворка: резолв, припинованные клиенты, лимиты, MIME, `tracing` причин отказа; opt-in HTTP и `public_verdict` для гейта публикации |
 | `ssrf.rs` | Ярус 1 (`classify`, `parse_publishable`) и классификатор адреса `is_public_destination` |
 
 ## 3. Публичный интерфейс
@@ -173,21 +173,27 @@ pub struct Station {
   и узость тестового шва (шов ослабляет ровно предикат адреса);
 - ярус 1 и `publishable`: числовые трюки (`0x7f.0.0.1`, `127.1`, `0177.0.0.1`,
   `2130706433`), punycode-канонизация, `router`/`*.local`/`*.internal`,
-  userinfo, порт 0 (и разрешение не-дефолтных портов), чужие схемы.
+  userinfo, порт 0 (и разрешение не-дефолтных портов), чужие схемы;
+- opt-in HTTP: `Policy::allow_http` переключается на лету (`AtomicBool`) и
+  действует на уже существующие клоны фетчера;
+- `public_verdict`: приватный literal отклоняется без сети, синтаксически
+  отвергнутый URL не порождает резолва.
 
 ## 10. Артворк: политика цели в два яруса
 
 Изображения станций — единственный исходящий HTTP-путь, которым управляет не
 пользовательский ввод, а чужой каталог, поэтому он вынесен в `artwork.rs` +
-`ssrf.rs` и подчиняется ADR-0025 (ред. 2). Кратко, без пересказа ADR:
+`ssrf.rs` и подчиняется ADR-0025 (ред. 3). Кратко, без пересказа ADR:
 
 - **ярус 1** — синтаксический, без DNS: `ssrf::classify` (схема, userinfo, порт
   0, типизированный хост, ярлыковые правила) и `ssrf::parse_publishable` для
   публикаций наружу. Синхронный вызов обязателен: `Session::sync_media`
   исполняется на главном потоке и внутри `runtime.block_on` в `park()`.
 - **ярус 2** — разрешённый, асинхронный: `ssrf::is_public_destination` по всем
-  адресам резолва (all-or-nothing) и припинованный клиент. Зовёт только
-  `ArtworkFetcher::fetch`, на каждом хоппе заново.
+  адресам резолва (all-or-nothing), припинованный клиент и `public_verdict`
+  (тот же резолв + классификация без запроса). Зовут `ArtworkFetcher::fetch` —
+  на каждом хоппе заново, и `session::publish_gate` — фоном для публикуемых
+  метаданных.
 - хопп-цикл ручной (`redirect::Policy::none()`), `MAX_ARTWORK_REDIRECTS = 3`,
   общий wall-clock `TOTAL_TIMEOUT = 6 c`, на запрос 6 c, на DNS 3 c.
 - клиенты кэшируются по `host:port` с потолком 16 и TTL 60 c, LRU-вытеснение;
@@ -195,8 +201,15 @@ pub struct Station {
 - MIME 2xx — только `image/png`, `image/jpeg`, `image/webp` и
   `application/octet-stream` (ADR-0025, п. 4); `text/html`, `image/svg+xml` и
   `image/gif` отклоняются. Тело — не более 512 КиБ.
-- `http` как конечная цель отвергается (`Policy::allow_http = false`); opt-in
-  перенесён в 0.14.
+- `http` как конечная цель отвергается по умолчанию; явный opt-in
+  `artwork_allow_http` (тумблер «Разрешить HTTP-обложки», ADR-0025 ред. 3)
+  переключает `Policy::allow_http` в `AtomicBool` на лету — общий для всех
+  клонов фетчера, без перезапуска. Понижение `https → http` в редиректе
+  запрещено при любом значении.
+- публикация `artUrl`/`xesam:url` наружу (MPRIS, Now Playing, SMTC) — гейт
+  `session::publish_gate` (ADR-0025 ред. 3, п. 12): ярус 1 синхронно, затем
+  вердикт яруса 2 из bounded-кэша (64 записи, TTL 60 с, SWR); нет вердикта —
+  поле публикуется пустым, резолв идёт фоном и пробуждает GUI.
 
 ## 11. Связанные ADR
 
@@ -204,4 +217,4 @@ pub struct Station {
 - ADR-0012: Маркеры станций на глобусе (гео-фильтр и поля координат)
 - ADR-0036: один запрос на поиск; список полный, маркеры — подмножество строк
   с координатами (ред. 2026-10-28)
-- ADR-0016 (ред. 2) и ADR-0025 (ред. 2): загрузчик и сетевая политика артворка
+- ADR-0016 (ред. 2) и ADR-0025 (ред. 3): загрузчик и сетевая политика артворка

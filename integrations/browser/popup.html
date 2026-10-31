@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OrbitFM</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <svg class="sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+    <symbol id="i-orbit" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="4.2" fill="none" stroke="currentColor" stroke-width="1.7"></circle>
+      <ellipse cx="12" cy="12" rx="9.5" ry="3.8" fill="none" stroke="currentColor" stroke-width="1.4" transform="rotate(-28 12 12)"></ellipse>
+    </symbol>
+    <symbol id="i-play" viewBox="0 0 24 24">
+      <path d="M8.5 5.4v13.2L19 12z" fill="currentColor"></path>
+    </symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24">
+      <path d="M8 5h3.2v14H8zM12.8 5H16v14h-3.2z" fill="currentColor"></path>
+    </symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24">
+      <path d="M7 7h10v10H7z" fill="currentColor"></path>
+    </symbol>
+    <symbol id="i-prev" viewBox="0 0 24 24">
+      <path d="M6.5 6v12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
+      <path d="M18 6l-8.5 6 8.5 6z" fill="currentColor"></path>
+    </symbol>
+    <symbol id="i-next" viewBox="0 0 24 24">
+      <path d="M17.5 6v12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
+      <path d="M6 6l8.5 6L6 18z" fill="currentColor"></path>
+    </symbol>
+    <symbol id="i-shuffle" viewBox="0 0 24 24">
+      <path d="M4 7h3.2l9.6 10H20M4 17h3.2l9.6-10H20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></path>
+      <path d="M17.2 4.2L20 7l-2.8 2.8M17.2 14.2L20 17l-2.8 2.8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></path>
+    </symbol>
+    <symbol id="i-heart" viewBox="0 0 24 24">
+      <path d="M12 19.6S4.8 15.2 4.8 10.2A3.9 3.9 0 0 1 12 7.4a3.9 3.9 0 0 1 7.2 2.8c0 5-7.2 9.4-7.2 9.4z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"></path>
+    </symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24">
+      <path d="M4 7h8M16 7h4M4 17h4M12 17h8M4 12h2M10 12h10" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"></path>
+      <circle cx="14" cy="7" r="2" fill="none" stroke="currentColor" stroke-width="1.7"></circle>
+      <circle cx="8" cy="12" r="2" fill="none" stroke="currentColor" stroke-width="1.7"></circle>
+      <circle cx="10" cy="17" r="2" fill="none" stroke="currentColor" stroke-width="1.7"></circle>
+    </symbol>
+    <symbol id="i-window" viewBox="0 0 24 24">
+      <rect x="4" y="5" width="16" height="14" rx="2.4" fill="none" stroke="currentColor" stroke-width="1.7"></rect>
+      <path d="M4 9.2h16" fill="none" stroke="currentColor" stroke-width="1.7"></path>
+      <circle cx="7" cy="7.1" r="0.9" fill="currentColor"></circle>
+    </symbol>
+    <symbol id="i-theme-system" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="7.4" fill="none" stroke="currentColor" stroke-width="1.7"></circle>
+      <path d="M12 4.6a7.4 7.4 0 0 1 0 14.8z" fill="currentColor"></path>
+    </symbol>
+    <symbol id="i-theme-dark" viewBox="0 0 24 24">
+      <path d="M19.6 14.6A8 8 0 0 1 9.4 4.4a8.1 8.1 0 1 0 10.2 10.2z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"></path>
+    </symbol>
+    <symbol id="i-theme-light" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="1.7"></circle>
+      <path d="M12 2.8v2.2M12 19v2.2M2.8 12H5M19 12h2.2M5.5 5.5l1.6 1.6M16.9 16.9l1.6 1.6M18.5 5.5l-1.6 1.6M7.1 16.9l-1.6 1.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"></path>
+    </symbol>
+    <symbol id="i-search" viewBox="0 0 24 24">
+      <circle cx="11" cy="11" r="5.8" fill="none" stroke="currentColor" stroke-width="1.7"></circle>
+      <path d="M15.4 15.4L20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"></path>
+    </symbol>
+    <symbol id="i-page" viewBox="0 0 24 24">
+      <path d="M6.5 3.5h7.2L18 7.8v12.7H6.5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"></path>
+      <path d="M13.5 3.5v4.5H18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"></path>
+      <path d="M10 11.4l4.4 2.6-4.4 2.6z" fill="currentColor"></path>
+    </symbol>
+    <symbol id="i-close" viewBox="0 0 24 24">
+      <path d="M6.5 6.5l11 11M17.5 6.5l-11 11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
+    </symbol>
+  </svg>
+
+  <main class="panel">
+    <header class="head">
+      <div class="brand">
+        <span class="logo" aria-hidden="true">
+          <svg class="icon"><use href="#i-orbit"></use></svg>
+        </span>
+        <h1>OrbitFM</h1>
+        <span class="state" id="state-pill" data-kind="connecting">
+          <span class="dot" aria-hidden="true"></span>
+          <span id="state">connecting</span>
+        </span>
+      </div>
+      <div class="head-actions">
+        <button id="window" class="icon-button" type="button" data-command="show" aria-label="Show window" title="Show window">
+          <svg class="icon" aria-hidden="true"><use href="#i-window"></use></svg>
+        </button>
+        <button id="theme" class="icon-button theme-button" type="button" data-mode="system" aria-label="Theme" title="Theme">
+          <svg class="icon theme-system" aria-hidden="true"><use href="#i-theme-system"></use></svg>
+          <svg class="icon theme-dark" aria-hidden="true"><use href="#i-theme-dark"></use></svg>
+          <svg class="icon theme-light" aria-hidden="true"><use href="#i-theme-light"></use></svg>
+        </button>
+        <button id="settings" class="icon-button" type="button" data-command="settings" aria-label="Settings" title="Settings">
+          <svg class="icon" aria-hidden="true"><use href="#i-settings"></use></svg>
+        </button>
+      </div>
+    </header>
+
+    <section class="now" aria-label="Now playing">
+      <div id="monogram" class="monogram is-empty" aria-hidden="true">◍</div>
+      <div class="now-body">
+        <div class="now-head">
+          <span id="now-label" class="eyebrow">Now playing</span>
+          <span id="source-badge" class="badge" hidden>stream</span>
+        </div>
+        <p id="station" class="station" aria-live="polite">&mdash;</p>
+        <div class="now-foot">
+          <p id="meta" class="meta" hidden></p>
+          <span id="viz" class="viz" aria-hidden="true">
+            <span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span>
+          </span>
+        </div>
+      </div>
+      <button id="favorite" class="favorite" type="button" aria-pressed="false" aria-label="Favorite" title="Favorite" hidden>
+        <svg class="icon" aria-hidden="true"><use href="#i-heart"></use></svg>
+      </button>
+    </section>
+
+    <div class="transport" role="group" aria-label="Playback">
+      <button id="previous" class="transport-button" type="button" data-command="previous" aria-label="Previous" title="Previous">
+        <svg class="icon" aria-hidden="true"><use href="#i-prev"></use></svg>
+      </button>
+      <button id="playpause" class="transport-button primary" type="button" data-command="playpause" data-playing="0" aria-label="Play/Pause" title="Play/Pause">
+        <svg class="icon icon-play" aria-hidden="true"><use href="#i-play"></use></svg>
+        <svg class="icon icon-pause" aria-hidden="true"><use href="#i-pause"></use></svg>
+      </button>
+      <button id="stop" class="transport-button" type="button" data-command="stop" aria-label="Stop" title="Stop">
+        <svg class="icon" aria-hidden="true"><use href="#i-stop"></use></svg>
+      </button>
+      <button id="next" class="transport-button" type="button" data-command="next" aria-label="Next" title="Next">
+        <svg class="icon" aria-hidden="true"><use href="#i-next"></use></svg>
+      </button>
+      <button id="roulette" class="transport-button" type="button" data-command="roulette" aria-label="Roulette" title="Roulette">
+        <svg class="icon" aria-hidden="true"><use href="#i-shuffle"></use></svg>
+      </button>
+    </div>
+
+    <div class="volume">
+      <div class="volume-head">
+        <label for="volume" id="volume-label">Volume</label>
+        <span id="volume-value" class="volume-value">0%</span>
+      </div>
+      <div class="volume-row">
+        <button id="volume-down" class="icon-button small" type="button" aria-label="Volume down" title="Volume down">&minus;</button>
+        <input id="volume" type="range" min="0" max="100" step="1" value="0" aria-label="Volume">
+        <button id="volume-up" class="icon-button small" type="button" aria-label="Volume up" title="Volume up">+</button>
+      </div>
+    </div>
+
+    <nav class="tabs" role="tablist" aria-label="OrbitFM panels">
+      <button id="tab-search" class="tab" type="button" role="tab" aria-selected="true" aria-controls="panel-search" data-tab="search">Search</button>
+      <button id="tab-favorites" class="tab" type="button" role="tab" aria-selected="false" aria-controls="panel-favorites" data-tab="favorites">Favorites</button>
+      <button id="tab-history" class="tab" type="button" role="tab" aria-selected="false" aria-controls="panel-history" data-tab="history">History</button>
+    </nav>
+
+    <section id="panel-search" class="tab-panel" role="tabpanel" aria-labelledby="tab-search">
+      <div class="search-box">
+        <svg class="icon search-icon" aria-hidden="true"><use href="#i-search"></use></svg>
+        <input id="query" type="search" maxlength="128" autocomplete="off" spellcheck="false" placeholder="Search stations" aria-label="Search stations">
+        <span id="search-spinner" class="spinner" hidden aria-hidden="true"></span>
+      </div>
+      <p id="search-note" class="note" hidden>
+        <span id="search-note-text"></span>
+        <button id="search-retry" class="link" type="button" hidden>Retry</button>
+      </p>
+      <ul id="search-results" class="results" aria-label="Search results" hidden></ul>
+    </section>
+
+    <section id="panel-favorites" class="tab-panel" role="tabpanel" aria-labelledby="tab-favorites" hidden>
+      <ul id="favorites" class="results" aria-label="Favorites"></ul>
+    </section>
+
+    <section id="panel-history" class="tab-panel" role="tabpanel" aria-labelledby="tab-history" hidden>
+      <ul id="history" class="results" aria-label="History"></ul>
+    </section>
+
+    <section id="page-picker" class="picker" aria-label="Play this page" hidden>
+      <div class="picker-head">
+        <strong id="picker-title">Play this page</strong>
+        <button id="picker-close" class="icon-button small" type="button" aria-label="Close" title="Close">
+          <svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg>
+        </button>
+      </div>
+      <ul id="page-candidates" class="results" aria-label="Page audio"></ul>
+    </section>
+
+    <p id="message" class="message" role="status" hidden></p>
+
+    <footer class="footer">
+      <button id="page" class="page-button" type="button">
+        <svg class="icon" aria-hidden="true"><use href="#i-page"></use></svg>
+        <span id="page-label">Play this page</span>
+      </button>
+      <button id="retry" class="retry" type="button" hidden>Reconnect</button>
+    </footer>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

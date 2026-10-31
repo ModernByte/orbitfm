@@ -62,6 +62,11 @@ root-вьюпорта: цикл завершается, управление в�
      (`GlobeResponse::clicked_point`);
    - `src/app.rs` спрашивает страну у `GeoService::country_at_sphere_point` и создаёт
      `UiAction::SelectCountry`;
+   - точка без валидной страны (океан, территория без ISO) создаёт
+     `UiAction::ClearCountrySelection`, и `apply_action` вызывает
+     `Session::clear_country_selection`: гаснут подсветка, контекст, локальный фильтр,
+     список и маркеры, незавершённый запрос отбрасывается; выделенная станция
+     сохраняется (ADR-0036, ревизия 2026-10-31);
    - решение принимает ядро: `Session::focus_country` мягко доворачивает камеру к центру
      страны (`country_shape().focus_point()`, 650 мс), `Session::start_country_search`
      запрашивает станции через `RadioBrowserClient` с фильтром `countrycode`;
@@ -87,7 +92,9 @@ root-вьюпорта: цикл завершается, управление в�
     с семантикой «любой из», видимость строки фильтров `filters_visible`, `sort`,
     `compact_rows`) хранит `Session::country_filter` и применяет их к результатам без
     сетевых запросов (`ui::station_filter::filtered_results`); повторный запуск поиска при
-    активном контексте (`Session::start_search`) пишет запрос именно в `country_filter.text`.
+    активном контексте (`Session::start_search`) пишет запрос именно в `country_filter.text`
+    и переключает вкладку на `Results`. Клик по маркеру (`Session::select_station`)
+    сбрасывает `country_filter`, чтобы строка выбранной станции не осталась скрытой.
 12. Избранное и история живут в `StationLibrary`, к которому обращается `Session`:
     `Session::toggle_favorite`, `Session::clear_history`, запись в историю при успешном
     `Session::start_station`. UI рисует звёзды и вкладки по срезу состояния.
@@ -222,7 +229,7 @@ presentation-слоем позже — в `logic()` следующего кад�
    берётся из `i18n::catalog(effective_language())` по ключу `NoticeKey` (ADR-0030).
 3. `poll_favicons` — `FaviconCache::begin_frame`/`poll`, затем `take_fetches` →
    задачи `ArtworkFetcher::fetch` в `Session::runtime` (сеть, DNS и перепроверка
-   хоппов — внутри `services::artwork`, ADR-0025 ред. 2); пока кэш занят — repaint
+   хоппов — внутри `services::artwork`, ADR-0025 ред. 3); пока кэш занят — repaint
    через 120 мс.
 4. Размер окна: `inner_rect` из ввода → `Session::set_window_size` (геометрия нужна,
    чтобы следующий показ собрал `ViewportBuilder` до создания окна).

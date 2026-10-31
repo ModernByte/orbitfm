@@ -11,9 +11,13 @@
 //! меню строится сразу с актуальными подписями. После `attach` каждый снимок
 //! обновляет пункты на месте — иконка и `MenuId` не пересоздаются.
 
+use std::cell::Cell;
+
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::warn;
-use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
+use tray_icon::menu::{
+    CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu,
+};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 use super::{TrayCommand, TraySnapshot, icon, text};
@@ -40,6 +44,8 @@ const ID_VOLUME_DOWN: &str = "orbitfm.volume-down";
 const ID_THEME_SYSTEM: &str = "orbitfm.theme.system";
 const ID_THEME_DARK: &str = "orbitfm.theme.dark";
 const ID_THEME_LIGHT: &str = "orbitfm.theme.light";
+const ID_TOGGLE_FAVORITE: &str = "orbitfm.favorite-toggle";
+const ID_OPEN_HOMEPAGE: &str = "orbitfm.homepage";
 const ID_SETTINGS: &str = "orbitfm.settings";
 const ID_QUIT: &str = "orbitfm.quit";
 
@@ -76,16 +82,12 @@ impl Slot {
     /// Публикует снимок. До `attach` копит последний, после — обновляет пункты
     /// на главном потоке: меню macOS нельзя трогать ни из какого другого.
     pub(crate) fn publish(&mut self, snapshot: &TraySnapshot) -> bool {
-        match self.menu.as_ref() {
-            Some(menu) => {
-                menu.apply(snapshot);
-                true
-            }
-            None => {
-                self.pending = Some(snapshot.clone());
-                true
-            }
+        if let Some(menu) = self.menu.as_ref() {
+            menu.apply(snapshot);
+        } else {
+            self.pending = Some(snapshot.clone());
         }
+        true
     }
 
     /// Создаёт иконку и меню. `false` — создать не удалось: приложение
@@ -131,18 +133,28 @@ impl Slot {
 }
 
 /// Подписи и переключатели меню. Пункты создаются один раз со стабильными
-/// `MenuId`; дальше меняются только тексты и состояния.
+/// `MenuId`; дальше меняются только тексты, состояния и наличие строки
+/// сведений о станции.
 struct MenuHandle {
+    menu: Menu,
     header: MenuItem,
+    details: MenuItem,
+    details_shown: Cell<bool>,
     toggle: MenuItem,
+    playback: MenuItem,
     play_pause: CheckMenuItem,
     stop: MenuItem,
     previous: MenuItem,
     next: MenuItem,
     roulette: MenuItem,
+    volume: MenuItem,
     volume_up: MenuItem,
     volume_down: MenuItem,
+    appearance: Submenu,
     themes: [CheckMenuItem; 3],
+    about: Submenu,
+    favorite: CheckMenuItem,
+    homepage: MenuItem,
     settings: MenuItem,
     quit: MenuItem,
 }
@@ -151,26 +163,63 @@ impl MenuHandle {
     fn apply(&self, snapshot: &TraySnapshot) {
         let catalog = i18n::catalog(snapshot.language);
         self.header.set_text(text::now_playing_label(snapshot));
+        self.apply_details(snapshot);
         self.toggle.set_text(text::toggle_label(snapshot));
+        self.playback.set_text(catalog.tray.playback);
         self.play_pause.set_text(catalog.tray.play_pause);
         self.play_pause.set_checked(snapshot.playing);
         self.stop.set_text(catalog.tray.stop);
         self.previous.set_text(catalog.tray.previous);
         self.next.set_text(catalog.tray.next);
         self.roulette.set_text(catalog.tray.radio_roulette);
+        self.volume.set_text(text::volume_label(snapshot));
         self.volume_up.set_text(catalog.tray.volume_up);
         self.volume_down.set_text(catalog.tray.volume_down);
+        self.appearance.set_text(catalog.tray.appearance);
         for (item, mode) in self.themes.iter().zip(ThemeMode::ALL) {
             item.set_text(i18n::theme_label(snapshot.language, mode));
             item.set_checked(snapshot.theme == mode);
         }
+        self.about.set_text(catalog.tray.about_station);
+        self.about.set_enabled(snapshot.station.is_some());
+        self.favorite.set_text(text::favorite_label(snapshot));
+        self.favorite.set_checked(snapshot.favorite);
+        self.homepage.set_text(catalog.tray.open_homepage);
+        self.homepage.set_enabled(
+            snapshot
+                .station
+                .as_ref()
+                .is_some_and(|station| station.homepage.is_some()),
+        );
         self.settings.set_text(catalog.tray.settings);
         self.quit.set_text(catalog.tray.quit);
     }
+
+    /// Строка `страна · битрейт · теги` показывается только когда есть что
+    /// показать: `muda` не умеет скрывать пункты, поэтому он снимается с меню
+    /// и возвращается на своё место.
+    fn apply_details(&self, snapshot: &TraySnapshot) {
+        let summary = snapshot.station.as_ref().and_then(text::station_summary);
+        match (summary, self.details_shown.get()) {
+            (Some(summary), false) => {
+                self.details.set_text(summary);
+                if self.menu.insert(&self.details, 1).is_ok() {
+                    self.details_shown.set(true);
+                }
+            }
+            (Some(summary), true) => self.details.set_text(summary),
+            (None, true) => {
+                if self.menu.remove(&self.details).is_ok() {
+                    self.details_shown.set(false);
+                }
+            }
+            (None, false) => {}
+        }
+    }
 }
 
-/// Строит меню в порядке SNI (ADR-0020, п. 5): витрина, окно, транспорт,
-/// громкость, тема, настройки, выход.
+/// Строит меню в порядке SNI (ADR-0020, ревизия 0.16): карточка, окно,
+/// транспорт, громкость, тема, «О станции», настройки, выход.
 fn build_menu(snapshot: &TraySnapshot) -> Option<(Menu, MenuHandle)> {
     let catalog = i18n::catalog(snapshot.language);
     let header = MenuItem::with_id(
@@ -179,7 +228,13 @@ fn build_menu(snapshot: &TraySnapshot) -> Option<(Menu, MenuHandle)> {
         false,
         None,
     );
+    let details = MenuItem::with_id("orbitfm.details", "", false, None);
+    let details_summary = snapshot.station.as_ref().and_then(text::station_summary);
+    if let Some(summary) = &details_summary {
+        details.set_text(summary);
+    }
     let toggle = MenuItem::with_id(ID_TOGGLE, text::toggle_label(snapshot), true, None);
+    let playback = MenuItem::with_id("orbitfm.playback", catalog.tray.playback, false, None);
     let play_pause = CheckMenuItem::with_id(
         ID_PLAY_PAUSE,
         catalog.tray.play_pause,
@@ -191,6 +246,7 @@ fn build_menu(snapshot: &TraySnapshot) -> Option<(Menu, MenuHandle)> {
     let previous = MenuItem::with_id(ID_PREVIOUS, catalog.tray.previous, true, None);
     let next = MenuItem::with_id(ID_NEXT, catalog.tray.next, true, None);
     let roulette = MenuItem::with_id(ID_ROULETTE, catalog.tray.radio_roulette, true, None);
+    let volume = MenuItem::with_id("orbitfm.volume", text::volume_label(snapshot), false, None);
     let volume_up = MenuItem::with_id(ID_VOLUME_UP, catalog.tray.volume_up, true, None);
     let volume_down = MenuItem::with_id(ID_VOLUME_DOWN, catalog.tray.volume_down, true, None);
     let themes = [
@@ -216,27 +272,60 @@ fn build_menu(snapshot: &TraySnapshot) -> Option<(Menu, MenuHandle)> {
             None,
         ),
     ];
+    let appearance = Submenu::with_items(
+        catalog.tray.appearance,
+        true,
+        &[&themes[0], &themes[1], &themes[2]],
+    )
+    .ok()?;
+    let favorite = CheckMenuItem::with_id(
+        ID_TOGGLE_FAVORITE,
+        text::favorite_label(snapshot),
+        true,
+        snapshot.favorite,
+        None,
+    );
+    let homepage = MenuItem::with_id(
+        ID_OPEN_HOMEPAGE,
+        catalog.tray.open_homepage,
+        snapshot
+            .station
+            .as_ref()
+            .is_some_and(|station| station.homepage.is_some()),
+        None,
+    );
+    let about = Submenu::with_items(
+        catalog.tray.about_station,
+        snapshot.station.is_some(),
+        &[&favorite, &homepage],
+    )
+    .ok()?;
     let settings = MenuItem::with_id(ID_SETTINGS, catalog.tray.settings, true, None);
     let quit = MenuItem::with_id(ID_QUIT, catalog.tray.quit, true, None);
 
     let menu = Menu::new();
-    let appended = menu
-        .append(&header)
+    let mut appended = menu.append(&header);
+    if details_summary.is_some() {
+        appended = appended.and_then(|()| menu.append(&details));
+    }
+    appended = appended
         .and_then(|()| menu.append(&PredefinedMenuItem::separator()))
         .and_then(|()| menu.append(&toggle))
         .and_then(|()| menu.append(&PredefinedMenuItem::separator()))
+        .and_then(|()| menu.append(&playback))
         .and_then(|()| menu.append(&play_pause))
         .and_then(|()| menu.append(&stop))
         .and_then(|()| menu.append(&previous))
         .and_then(|()| menu.append(&next))
         .and_then(|()| menu.append(&roulette))
         .and_then(|()| menu.append(&PredefinedMenuItem::separator()))
+        .and_then(|()| menu.append(&volume))
         .and_then(|()| menu.append(&volume_up))
         .and_then(|()| menu.append(&volume_down))
         .and_then(|()| menu.append(&PredefinedMenuItem::separator()))
-        .and_then(|()| menu.append(&themes[0]))
-        .and_then(|()| menu.append(&themes[1]))
-        .and_then(|()| menu.append(&themes[2]))
+        .and_then(|()| menu.append(&appearance))
+        .and_then(|()| menu.append(&PredefinedMenuItem::separator()))
+        .and_then(|()| menu.append(&about))
         .and_then(|()| menu.append(&PredefinedMenuItem::separator()))
         .and_then(|()| menu.append(&settings))
         .and_then(|()| menu.append(&quit));
@@ -246,16 +335,27 @@ fn build_menu(snapshot: &TraySnapshot) -> Option<(Menu, MenuHandle)> {
     }
 
     let handle = MenuHandle {
+        // `Menu` — Rc-обёртка: клон для хэндла делит то же нативное меню,
+        // поэтому вставка/снятие строки сведений работает и у tray-icon.
+        menu: menu.clone(),
         header,
+        details,
+        details_shown: Cell::new(details_summary.is_some()),
         toggle,
+        playback,
         play_pause,
         stop,
         previous,
         next,
         roulette,
+        volume,
         volume_up,
         volume_down,
+        appearance,
         themes,
+        about,
+        favorite,
+        homepage,
         settings,
         quit,
     };
@@ -290,6 +390,8 @@ fn command_for(id: &MenuId) -> Option<TrayCommand> {
         ID_THEME_SYSTEM => Some(TrayCommand::SetTheme(ThemeMode::System)),
         ID_THEME_DARK => Some(TrayCommand::SetTheme(ThemeMode::Dark)),
         ID_THEME_LIGHT => Some(TrayCommand::SetTheme(ThemeMode::Light)),
+        ID_TOGGLE_FAVORITE => Some(TrayCommand::ToggleFavorite),
+        ID_OPEN_HOMEPAGE => Some(TrayCommand::OpenHomepage),
         ID_SETTINGS => Some(TrayCommand::Settings),
         ID_QUIT => Some(TrayCommand::Quit),
         _ => None,
@@ -341,11 +443,20 @@ mod tests {
             Some(TrayCommand::SetTheme(ThemeMode::Light))
         );
         assert_eq!(
+            command_for(&MenuId::new(ID_TOGGLE_FAVORITE)),
+            Some(TrayCommand::ToggleFavorite)
+        );
+        assert_eq!(
+            command_for(&MenuId::new(ID_OPEN_HOMEPAGE)),
+            Some(TrayCommand::OpenHomepage)
+        );
+        assert_eq!(
             command_for(&MenuId::new(ID_SETTINGS)),
             Some(TrayCommand::Settings)
         );
         assert_eq!(command_for(&MenuId::new(ID_QUIT)), Some(TrayCommand::Quit));
         assert_eq!(command_for(&MenuId::new("orbitfm.header")), None);
+        assert_eq!(command_for(&MenuId::new("orbitfm.details")), None);
         assert_eq!(command_for(&MenuId::new("foreign.item")), None);
     }
 
@@ -363,6 +474,8 @@ mod tests {
             ID_THEME_SYSTEM,
             ID_THEME_DARK,
             ID_THEME_LIGHT,
+            ID_TOGGLE_FAVORITE,
+            ID_OPEN_HOMEPAGE,
             ID_SETTINGS,
             ID_QUIT,
         ];

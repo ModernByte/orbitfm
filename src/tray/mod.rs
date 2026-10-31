@@ -61,20 +61,42 @@ pub(crate) enum TrayCommand {
     VolumeUp,
     VolumeDown,
     SetTheme(ThemeMode),
+    /// Избранное текущей станции (ADR-0020, ревизия 0.16).
+    ToggleFavorite,
+    /// Домашняя страница станции во внешнем браузере; только `http(s)`.
+    OpenHomepage,
     /// Открыть окно настроек (ADR-0031): окно показывается, если спрятано.
     Settings,
     Quit,
 }
 
+/// Карточка станции в меню: внешние данные Radio Browser, не переводятся
+/// (ADR-0030, п. 4).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct TrayStation {
+    pub(crate) name: String,
+    pub(crate) country: String,
+    /// Теги Radio Browser через запятую; пустая строка — тегов нет.
+    pub(crate) tags: String,
+    /// Битрейт в kbps; `0` — неизвестен.
+    pub(crate) bitrate: u32,
+    /// Домашняя страница станции; `None` — открывать нечего.
+    pub(crate) homepage: Option<String>,
+}
+
 /// Что трей показывает прямо сейчас.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct TraySnapshot {
-    /// Окно открыто: определяет пункт «Show/Hide window» и `Status`.
+    /// Окно открыто: определяет пункт «Show/Hide window».
     pub(crate) window_visible: bool,
     /// Станция в эфире (Playing/Buffering/Reconnecting).
     pub(crate) playing: bool,
-    /// Подпись активной станции в тултипе; `None` — «Nothing playing».
-    pub(crate) station: Option<String>,
+    /// Активная станция в карточке; `None` — «Nothing playing».
+    pub(crate) station: Option<TrayStation>,
+    /// Активная станция лежит в избранном: подпись пункта и `About station`.
+    pub(crate) favorite: bool,
+    /// Громкость в процентах: подпись группы громкости.
+    pub(crate) volume_percent: u8,
     /// Текущая тема: активный пункт группы System/Dark/Light.
     pub(crate) theme: ThemeMode,
     /// Разрешённый язык интерфейса: смена языка перестраивает меню (ADR-0030).
@@ -181,6 +203,8 @@ mod tests {
         assert!(!snapshot.window_visible);
         assert!(!snapshot.playing);
         assert_eq!(snapshot.station, None);
+        assert!(!snapshot.favorite);
+        assert_eq!(snapshot.volume_percent, 0);
         assert_eq!(snapshot.theme, ThemeMode::default());
         assert_eq!(snapshot.language, Language::default());
     }
@@ -190,7 +214,15 @@ mod tests {
         let mut hidden = TraySnapshot {
             window_visible: false,
             playing: true,
-            station: Some("WFMU".to_owned()),
+            station: Some(TrayStation {
+                name: "WFMU".to_owned(),
+                country: "US".to_owned(),
+                tags: "eclectic".to_owned(),
+                bitrate: 128,
+                homepage: Some("https://wfmu.org".to_owned()),
+            }),
+            favorite: true,
+            volume_percent: 70,
             theme: ThemeMode::Dark,
             language: Language::French,
         };
@@ -201,5 +233,8 @@ mod tests {
         hidden.window_visible = false;
         hidden.language = Language::German;
         assert_ne!(hidden, same, "смена языка меняет меню");
+        hidden.language = Language::French;
+        hidden.volume_percent = 60;
+        assert_ne!(hidden, same, "громкость видна в подписи группы");
     }
 }

@@ -8,7 +8,7 @@ use std::fmt;
 use crate::audio::{AudioEvent, PlaybackState};
 use crate::geo::Country;
 use crate::media::{MediaCommand, PlaybackInfo};
-use crate::services::{RadioError, Station, publishable};
+use crate::services::{RadioError, Station};
 use crate::ui::single_line;
 use crate::ui::station_filter::filtered_results;
 
@@ -102,7 +102,10 @@ impl super::Session {
             tracing::warn!(error = %err, "не удалось сохранить историю станций");
             self.notify_error_detail(NoticeKey::HistoryNotSaved, err.to_string());
         }
-        self.spawn_click(station.stationuuid);
+        // У внешнего потока нет записи в Radio Browser: click отправлять некуда.
+        if !station.stationuuid.starts_with("url:") {
+            self.spawn_click(station.stationuuid);
+        }
         self.sync_media();
         Ok(())
     }
@@ -112,6 +115,9 @@ impl super::Session {
     pub(crate) fn select_station(&mut self, station: &Station) {
         self.selected_station = Some(station.stationuuid.clone());
         self.reveal_station = Some(station.stationuuid.clone());
+        // Локальный фильтр мог спрятать строку выбранной станции: клик по
+        // маркеру важнее фильтра, иначе прокрутка уйдёт в пустоту.
+        self.country_filter.reset();
         self.library_tab = LibraryTab::Results;
     }
 
@@ -130,12 +136,18 @@ impl super::Session {
         });
     }
 
-    pub(crate) fn toggle_favorite(&mut self, station: &Station) {
+    /// Переключает избранное и отдаёт новое состояние: `true` — станция теперь
+    /// в избранном. Ошибка сохранения не меняет ответ IPC.
+    pub(crate) fn toggle_favorite(&mut self, station: &Station) -> Result<bool, String> {
         match self.library.toggle_favorite(station) {
-            Ok(favorite) => tracing::debug!(favorite, "избранное обновлено"),
+            Ok(favorite) => {
+                tracing::debug!(favorite, "избранное обновлено");
+                Ok(favorite)
+            }
             Err(err) => {
                 tracing::warn!(error = %err, "не удалось сохранить избранное");
                 self.notify_error_detail(NoticeKey::FavoritesNotSaved, err.to_string());
+                Err(err.to_string())
             }
         }
     }
@@ -371,9 +383,15 @@ impl super::Session {
             PlaybackState::Playing | PlaybackState::Buffering | PlaybackState::Reconnecting
         );
         let fallback_url = self.current_url.clone().unwrap_or_default();
-        // Публикуем только ссылки, прошедшие ярус 1: приватный literal не должен
-        // уходить наружу DE-фетчеру обложек (ADR-0025, п. 12).
-        let published_fallback = publishable(&fallback_url).unwrap_or_default().to_owned();
+        // Публикуем только ссылки, прошедшие ярус 1 и подтверждённые ярусом 2:
+        // приватный адрес не должен уходить наружу DE-фетчеру обложек
+        // (ADR-0025, п. 12). Вердикт яруса 2 считается в фоне, поэтому первый
+        // кадр может отдать пустое поле — это лучше, чем непроверенный адрес.
+        let published_fallback = if self.publish_gate.permits(&fallback_url) {
+            fallback_url.clone()
+        } else {
+            String::new()
+        };
         let (base_title, artist, art_url, url) = match &self.current_station {
             Some(station) => (
                 single_line(&station.name),
@@ -381,14 +399,14 @@ impl super::Session {
                 station
                     .favicon
                     .as_deref()
-                    .and_then(publishable)
+                    .filter(|reference| self.publish_gate.permits(reference))
                     .map(str::to_owned),
                 if station.url_resolved.trim().is_empty() {
                     published_fallback
+                } else if self.publish_gate.permits(&station.url_resolved) {
+                    station.url_resolved.clone()
                 } else {
-                    publishable(&station.url_resolved)
-                        .map(str::to_owned)
-                        .unwrap_or_default()
+                    String::new()
                 },
             ),
             None => (fallback_url, None, None, published_fallback),

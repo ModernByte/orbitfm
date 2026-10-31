@@ -1,7 +1,7 @@
 # OrbitFM
 
 **Плеер интернет-радио с 3D-глобусом**  
-Под эгидой [ModernByte](https://github.com/ModernByte) · версия `0.13.0-rc.2`
+Под эгидой [ModernByte](https://github.com/ModernByte) · версия `0.16.0-rc.2`
 
 [![Релиз](https://img.shields.io/github/v/release/ModernByte/orbitfm?include_prereleases)](https://github.com/ModernByte/orbitfm/releases)
 [![Статус CI](https://img.shields.io/github/actions/workflow/status/ModernByte/orbitfm/ci.yml?branch=main)](https://github.com/ModernByte/orbitfm/actions/workflows/ci.yml)
@@ -14,7 +14,7 @@ OrbitFM — плеер интернет-радио, где каталог пок
 и её станции лежат рядом в списке; так же можно искать по жанру или по названию станции. Закрытие окна музыку не
 останавливает: приложение работает одним процессом, живёт в системном трее и принимает команды из терминала и от
 медиа-клавиш. Для экрана есть три режима — от большого рабочего стола с глобусом до компактной капсулы в углу.
-Приоритетная платформа — Linux (Wayland и X11), сборки есть для Windows и macOS; версия `0.13.0-rc.2` —
+Приоритетная платформа — Linux (Wayland и X11), сборки есть для Windows и macOS; версия `0.16.0-rc.2` —
 пре-релиз, отдельные детали ещё могут меняться.
 
 ## Что умеет
@@ -31,19 +31,34 @@ OrbitFM — плеер интернет-радио, где каталог пок
 - **Живая картинка.** Визуализатор на 16, 24 или 32 полосы, орбитальное аудиокольцо в Focus и аудио-реактивная
   планета: глобус дышит и качается в такт эфиру, шесть стилей движения, перевороты камеры. Всё выключается одной
   галкой «Уменьшить движение».
-- **Системный трей.** На Linux — StatusNotifierItem, на macOS — элемент строки меню: Пуск/Пауза, Stop,
-  предыдущая и следующая, радиорулетка, громкость, настройки, выход; колесо мыши по иконке меняет громкость.
-  Первая строка меню: «Сейчас играет: …», «Пауза: …» или «Ничего не играет».
+- **Системный трей.** На Linux — StatusNotifierItem, на macOS — элемент строки меню. Иконка живёт, пока жив
+  процесс, в том числе после остановки музыки при закрытом окне. Меню сгруппировано: карточка станции, показ
+  окна, транспорт, громкость с процентом, подменю темы, «О станции» (избранное и домашняя страница), настройки
+  и выход; колесо мыши по иконке меняет громкость.
+- **Внешние потоки.** `orbitfm play-url` принимает `.m3u`/`.pls`, прямую аудиоссылку и HTML-страницу с аудио
+  (`og:audio`, `<audio>`, `<source>`). Импорт запускается только вручную, HLS отклоняется, локальная сеть
+  разрешена лишь при явной команде; поток становится станцией с историей, избранным и MPRIS.
 - **Медиа-клавиши и системные виджеты.** MPRIS на Linux, System Media Transport Controls на Windows,
   Now Playing на macOS — в том числе при скрытом окне.
-- **11 языков интерфейса** — «Системный» плюс 10 языков, смена без перезапуска.
+- **17 языков интерфейса** — «Системный» плюс 16 языков, смена без перезапуска.
 - **Настройки.** Тема (системная / тёмная / светлая), акцент, язык, громкость, визуализатор, реактивность и стиль
   движения, «Уменьшить движение», компоновка окна. Сохраняются автоматически.
 - **Три режима окна** — Focus / Overlay / Listening, переключение из интерфейса и командой `orbitfm mode …`.
 - **Виджет для панели Noctalia v5** и готовые правила окон для niri и Hyprland.
 - **Машиночитаемый статус для интеграций.** `orbitfm status --json` (схема 1) отдаёт состояние, станцию,
-  громкость, окно, тему, язык, доступные действия и локализованные подписи — на нём строятся плагины
-  оболочек и будущие расширения браузеров.
+  громкость, окно, тему, язык, доступные действия и локализованные подписи; `orbitfm events` отдаёт тот же
+  снимок потоком — на нём строятся плагины оболочек и браузерная панель.
+- **Готовые интеграции оболочек.** Каждая цель ставится отдельной командой `orbitfm integration install <цель>`:
+  плагин Plasma 6, расширение GNOME 45–51, виджет Omarchy/Quickshell и модули Waybar, Polybar, i3blocks,
+  swaybar, i3status-rust, а для XFCE, Cinnamon, MATE и LXQt — скрипт и шаги для штатного апплета вывода команды.
+  Виджет Plasma 6 дополнительно публикуется как `.plasmoid` в разделе Releases. Конфиги оболочек не изменяются:
+  установщик раскладывает файлы, печатает готовый сниппет, а квитанции позволяют обновлять и удалять только
+  свои файлы. Подробные шаги для каждой цели — в разделе «Интеграции оболочек и баров».
+- **Панель в браузере.** `orbitfm integration install chrome|firefox` раскладывает popup и native host для
+  Chrome, Chromium, Brave, Edge, Vivaldi и Firefox. Панель повторяет выпадающую панель Noctalia: карточка
+  станции, транспорт, громкость, тема, избранное, поиск, история и «Play this page» для аудио на открытой
+  вкладке. Скан вкладки выполняется только по клику (`activeTab` + `scripting`); content scripts и фоновых
+  страниц нет, поэтому веб-сайты не получают доступа к плееру. Приложение должно быть уже запущено.
 
 ## Системные требования
 
@@ -54,26 +69,29 @@ OrbitFM — плеер интернет-радио, где каталог пок
 | macOS | 13.0 и новее — это `LSMinimumSystemVersion` собранного `.app`; DMG собирается под архитектуру машины-сборщика, в CI это Apple Silicon (arm64); `libmpv` бандлится в `.app` |
 
 Конкретные версии Windows и Linux-дистрибутивов репозиторий не фиксирует: проверены сборки CI на `windows-latest`
-и `macos-latest`. Для красивой картинки дополнительно нужны **Noto Color Emoji** (цветные флаги стран) и системный
-**CJK-шрифт** для китайского, корейского или японского интерфейса.
+и `macos-latest`. Для красивой картинки дополнительно нужны **Noto Color Emoji** (цветные флаги стран) и системные
+шрифты: **CJK** для китайского, корейского и японского, **деванагари** (например, Noto Sans Devanagari) для хинди
+и **арабский** (Noto Sans Arabic) для арабского интерфейса. Арабский текст отображается справа налево на уровне
+глифов, но egui раскладывает интерфейс слева направо — зеркалирование RTL пока не реализовано.
 
 ## Установка
 
-Готовые сборки — на странице релизов: <https://github.com/ModernByte/orbitfm/releases>. Рядом с пакетами лежит
-файл `SHA256SUMS`, так что перед первым запуском можно сверить контрольную сумму: `sha256sum -c SHA256SUMS`.
+Готовые сборки — на странице релизов: <https://github.com/ModernByte/orbitfm/releases>. В набор входят AppImage,
+MSI, DMG и `.plasmoid` для Plasma 6; рядом лежит файл `SHA256SUMS`, так что перед первым запуском можно сверить
+контрольную сумму: `sha256sum -c SHA256SUMS`.
 
 ### AppImage (Linux x86_64)
 
-Файл называется `OrbitFM-<версия>-x86_64.AppImage`, например `OrbitFM-0.13.0-rc.2-x86_64.AppImage`. Права root и
+Файл называется `OrbitFM-<версия>-x86_64.AppImage`, например `OrbitFM-0.16.0-rc.2-x86_64.AppImage`. Права root и
 установка не нужны — приложение rootless по определению, и `libmpv` с FFmpeg уже внутри:
 
 ```bash
-chmod +x OrbitFM-0.13.0-rc.2-x86_64.AppImage
-./OrbitFM-0.13.0-rc.2-x86_64.AppImage
+chmod +x OrbitFM-0.16.0-rc.2-x86_64.AppImage
+./OrbitFM-0.16.0-rc.2-x86_64.AppImage
 ```
 
 Если FUSE недоступен (контейнеры, минимальные образы) или не нужна интеграция через монтирование, запускайте в
-режиме распаковки: `APPIMAGE_EXTRACT_AND_RUN=1 ./OrbitFM-0.13.0-rc.2-x86_64.AppImage`. Виджету Noctalia и командам
+режиме распаковки: `APPIMAGE_EXTRACT_AND_RUN=1 ./OrbitFM-0.16.0-rc.2-x86_64.AppImage`. Виджету Noctalia и командам
 `orbitfm …` нужен запускаемый `orbitfm` в `PATH` — удобно сделать символьную ссылку на AppImage.
 
 ### Установщики Windows и macOS
@@ -140,6 +158,227 @@ include "./cfg/orbitfm.kdl"   // скопированный wm-configs/orbitfm-n
 обновлении проверяйте документацию Hyprland. Правила niri дополнительно ставят окно под панель Noctalia (якорь к
 правому верхнему углу) вместо центра экрана; отступ `x` при другой раскладке бара подбирается вручную.
 
+## Интеграции оболочек и баров
+
+Каждая интеграция ставится **отдельной командой** — массовой установки нет, потому что у оболочек разные
+шаги подключения и разные проверки:
+
+```bash
+orbitfm integration status                  # что уже установлено во всех целях
+orbitfm integration status waybar           # подробнее об одной цели
+orbitfm integration install plasma6         # плагин Plasma 6
+orbitfm integration install gnome           # расширение GNOME Shell 45–51
+orbitfm integration install omarchy         # виджет Omarchy/Quickshell
+orbitfm integration install waybar          # модуль Waybar
+orbitfm integration install polybar         # модуль Polybar
+orbitfm integration install i3blocks        # секция i3blocks
+orbitfm integration install swaybar         # status_command для swaybar
+orbitfm integration install i3status-rust   # блок i3status-rust
+orbitfm integration install xfce            # XFCE: скрипт и инструкция
+orbitfm integration install cinnamon        # Cinnamon: скрипт и инструкция
+orbitfm integration install mate            # MATE: скрипт и инструкция
+orbitfm integration install lxqt            # LXQt: скрипт и инструкция
+orbitfm integration install chrome          # Chrome/Chromium/Brave/Edge/Vivaldi
+orbitfm integration install firefox         # Firefox
+```
+
+Если файл цели изменён вручную, установщик откажется его перезаписывать; повторная установка с `--force`
+перезапишет файл. Удаление — `orbitfm integration uninstall <цель>`: оно стирает только файлы из квитанции
+`$XDG_DATA_HOME/orbitfm/integrations/<цель>.json` и не трогает ваши конфиги. Каталог файлов цели —
+`$XDG_DATA_HOME/orbitfm/integrations/<цель>/` (обычно `~/.local/share/orbitfm/integrations/<цель>/`); шаги
+подключения и готовый сниппет печатаются после установки и лежат рядом со скриптом. Всем скриптам нужен запущенный
+OrbitFM; второй экземпляр они не запускают.
+
+| Цель | Что ставится | Как включить |
+|------|--------------|--------------|
+| `plasma6` | виджет Plasma 6: компакт-пилюля и полная карточка | `kbuildsycoca6 --noincremental`, затем «Добавить виджеты» → OrbitFM |
+| `gnome` | расширение GNOME Shell 45–51 со `stylesheet.css` | `gnome-extensions enable orbitfm@modernbyte` |
+| `omarchy` | виджет бара Omarchy/Quickshell | `omarchy-shell shell rescanPlugins`, затем включить в конфиге бара |
+| `waybar` | модуль `custom/orbitfm`, скрипт и `style.css` | добавить модуль в `modules-*` и импортировать стиль |
+| `polybar` | модуль `[module/orbitfm]` и скрипт | подключить `module/orbitfm` в `modules-*` |
+| `i3blocks` | секция `[orbitfm]` и скрипт | добавить секцию в конфиг i3blocks |
+| `swaybar` | `status_command` и скрипт | заменить или объединить `status_command` в блоке `bar` |
+| `i3status-rust` | блок `[[block]]` и клики | добавить блок в `config.toml` |
+| `xfce` | скрипт и инструкция | Genmon в `xfce4-panel` |
+| `cinnamon` | скрипт и инструкция | апплет «Вывод команды» |
+| `mate` | скрипт и инструкция | апплет «Команда» |
+| `lxqt` | скрипт и инструкция | плагин «Вывод команды» / «Пользовательская команда» |
+| `chrome` | popup, native host и native-манифест | «Загрузить распакованное расширение» |
+| `firefox` | popup, native host и native-манифест | «Загрузить временное дополнение» |
+
+### Plasma 6
+
+```bash
+orbitfm integration install plasma6
+kbuildsycoca6 --noincremental
+```
+
+Затем ПКМ по панели → «Войти в режим редактирования» → «Добавить виджеты» → **OrbitFM**. На Wayland при
+необходимости перезапустите Plasma. Установщик подставляет абсолютный путь к бинарнику, поэтому этот способ
+предпочтителен для AppImage.
+
+Виджет также публикуется в Releases отдельным архивом `OrbitFM-<версия>-plasma.plasmoid`:
+
+```bash
+kpackagetool6 -t Plasma/Applet -i OrbitFM-0.16.0-rc.2-plasma.plasmoid
+```
+
+Или в графическом интерфейсе: режим редактирования панели → «Добавить виджеты» → «Установить из файла» → выбрать
+`.plasmoid`. Архив вызывает `orbitfm` из `PATH`, поэтому команда должна быть доступна (для AppImage — символическая
+ссылка). Обновление — той же командой с `-u`, удаление — `kpackagetool6 -t Plasma/Applet -r org.modernbyte.orbitfm`.
+
+Компактный вид — стеклянная пилюля с иконкой, названием станции и точкой состояния. Полная карточка: станция,
+транспорт, слайдер громкости, тема, «О станции» и кнопки панели/окна/настроек. ЛКМ — пуск/пауза, ПКМ — панель,
+колесо — громкость.
+
+### GNOME Shell 45–51
+
+```bash
+orbitfm integration install gnome
+gnome-extensions enable orbitfm@modernbyte
+```
+
+Каталог расширения — `~/.local/share/gnome-shell/extensions/orbitfm@modernbyte/`; `stylesheet.css` Shell загружает
+автоматически. На Wayland после установки может понадобиться выйти из сеанса и войти снова — GNOME сканирует
+каталог расширений при старте. Проверка: `gnome-extensions list | grep orbitfm`. Кнопка в панели открывает меню с
+карточкой станции, транспортом, громкостью, темой, избранным и домашней страницей.
+
+### Omarchy и Quickshell
+
+```bash
+orbitfm integration install omarchy
+omarchy-shell shell rescanPlugins
+```
+
+После пересканирования включите виджет OrbitFM в конфигурации бара Omarchy — установщик её не редактирует.
+ЛКМ — пуск/пауза, ПКМ — выпадающая панель, глиф показывает состояние, tooltip — страну, битрейт и громкость.
+
+### Waybar
+
+```bash
+orbitfm integration install waybar
+```
+
+Установлены `config.jsonc`, `style.css` и `orbitfm-bar`. Скопируйте блок `custom/orbitfm` из
+`~/.local/share/orbitfm/integrations/waybar/config.jsonc` в `~/.config/waybar/config.jsonc` (в некоторых
+дистрибутивах — `~/.config/waybar/config`) и добавьте `custom/orbitfm` в нужную секцию `modules-left`,
+`modules-center` или `modules-right`. Правила из `style.css` добавьте в свой `~/.config/waybar/style.css`.
+Перезагрузка: `killall -SIGUSR2 waybar`.
+
+ЛКМ — пуск/пауза, СКМ — стоп, ПКМ — панель, колесо — громкость. Поля `text`, `alt`, `tooltip` и `class` приходят
+из скрипта, поэтому чип сам окрашивается по состоянию `playing`, `paused`, `loading`, `error`, `stopped`.
+
+### Polybar
+
+```bash
+orbitfm integration install polybar
+```
+
+Скопируйте `[module/orbitfm]` из `~/.local/share/orbitfm/integrations/polybar/config.ini` в
+`~/.config/polybar/config.ini` и добавьте `orbitfm` в `modules-left`/`modules-center`/`modules-right`.
+ЛКМ — пуск/пауза, СКМ — стоп, ПКМ — панель, колесо — громкость.
+
+### i3blocks
+
+```bash
+orbitfm integration install i3blocks
+```
+
+Добавьте секцию `[orbitfm]` из `~/.local/share/orbitfm/integrations/i3blocks/config.conf` в
+`~/.config/i3blocks/config` (или подключите файл через `include`). В конфиге i3 должен быть запущен i3blocks:
+`bar { status_command i3blocks }`. Клики приходят через `BLOCK_BUTTON`: ЛКМ — пуск/пауза, СКМ — стоп, ПКМ —
+панель, колесо — громкость.
+
+### swaybar
+
+```bash
+orbitfm integration install swaybar
+```
+
+В `~/.config/sway/config` замените `status_command` в блоке `bar` на строку из
+`~/.local/share/orbitfm/integrations/swaybar/config.sway` либо объедините её с существующим статусом.
+Перезагрузка: `swaymsg reload`. Клики: ЛКМ — пуск/пауза, СКМ — стоп, ПКМ — панель, колесо — громкость.
+
+### i3status-rust
+
+```bash
+orbitfm integration install i3status-rust
+```
+
+Добавьте `[[block]]` и четыре `[[block.click]]` из
+`~/.local/share/orbitfm/integrations/i3status-rust/config.toml` в `~/.config/i3status-rust/config.toml`.
+Блок использует `json = true`; подпись, глиф и состояние приходят от `orbitfm-bar`. ЛКМ — пуск/пауза, ПКМ —
+панель, колесо — громкость.
+
+### XFCE
+
+```bash
+orbitfm integration install xfce
+```
+
+Установите пакет `xfce4-genmon-plugin`, затем ПКМ по панели → «Панель» → «Добавить новые элементы» → **Genmon**.
+В свойствах плагина укажите команду:
+
+```text
+~/.local/share/orbitfm/integrations/xfce/orbitfm-bar genmon
+```
+
+Период обновления — 2 секунды. Левый клик по тексту запускает пуск/паузу; правого клика у Genmon нет, поэтому
+выпадающую панель открывайте ярлыком или горячей клавишей с командой `orbitfm panel`. Полная инструкция лежит в
+`~/.local/share/orbitfm/integrations/xfce/usage.txt`.
+
+### Cinnamon
+
+```bash
+orbitfm integration install cinnamon
+```
+
+ПКМ по панели → «Добавить апплеты» → **«Вывод команды»**; команда —
+`~/.local/share/orbitfm/integrations/cinnamon/orbitfm-bar text`, период 2 секунды. Апплет только показывает текст;
+для управления добавьте ярлыки с командами `orbitfm playpause`, `orbitfm next`, `orbitfm panel` и
+`orbitfm settings`. Инструкция — в `usage.txt` рядом со скриптом.
+
+### MATE
+
+```bash
+orbitfm integration install mate
+```
+
+ПКМ по панели → «Добавить на панель» → **«Команда»**; команда —
+`~/.local/share/orbitfm/integrations/mate/orbitfm-bar text`. Для управления добавьте отдельные кнопки с
+`orbitfm playpause`, `orbitfm next`, `orbitfm panel` и `orbitfm settings`.
+
+### LXQt
+
+```bash
+orbitfm integration install lxqt
+```
+
+ПКМ по панели → «Добавить плагин» → **«Вывод команды»**; команда —
+`~/.local/share/orbitfm/integrations/lxqt/orbitfm-bar text`, период 2 секунды. Управление — плагин
+«Пользовательская команда» или ярлыки с `orbitfm playpause`, `orbitfm next`, `orbitfm panel`, `orbitfm settings`.
+
+### Chrome, Chromium, Brave, Edge и Vivaldi
+
+```bash
+orbitfm integration install chrome
+```
+
+Затем `chrome://extensions` → включите «Режим разработчика» → «Загрузить распакованное расширение» →
+`~/.local/share/orbitfm/integrations/chrome/extension`. Native-манифест установщик пишет в каждый найденный
+Chromium-каталог; ID расширения фиксирован публичным ключом. Подробности, ограничения и разбор ошибок — в
+[вики: Браузерное расширение](docs/wiki/12-Браузерное-расширение.md).
+
+### Firefox
+
+```bash
+orbitfm integration install firefox
+```
+
+`about:debugging#/runtime/this-firefox` → «Загрузить временное дополнение» →
+`~/.local/share/orbitfm/integrations/firefox/extension/manifest.json`. Временное дополнение живёт до перезапуска
+Firefox; постоянная установка требует подписи Mozilla — подписанный XPI в репозитории не публикуется.
+
 ## Быстрый старт
 
 1. Запустите OrbitFM. Если плеер уже работает, новый запуск просто покажет существующее окно — процесс один.
@@ -205,8 +444,10 @@ orbitfm overlay             # капсула Overlay: показать или с
 orbitfm panel               # выпадающая панель: показать или скрыть (её зовёт бар-виджет)
 orbitfm status              # состояние, станция, громкость, окно, режим
 orbitfm status --json       # то же в JSON схемы 1 (для плагинов и скриптов)
+orbitfm events              # поток состояния NDJSON: snapshot, state, keepalive
 orbitfm mode overlay        # focus | overlay | listening | panel
 orbitfm play <stationuuid>  # запустить станцию по UUID из Radio Browser
+orbitfm play-url <url>      # импортировать .m3u, .pls, аудио или страницу с аудио
 orbitfm playpause | orbitfm next | orbitfm previous
 orbitfm roulette            # случайная станция
 orbitfm stop
@@ -214,23 +455,32 @@ orbitfm volume 0.4          # 0.0–1.0
 orbitfm volume-up | orbitfm volume-down
 orbitfm theme dark          # system | dark | light
 orbitfm settings            # открыть настройки (запускает приложение, если нужно)
+orbitfm integration status [цель]            # какие интеграции установлены
+orbitfm integration install <цель>           # плагин, бар-модуль или расширение браузера
+orbitfm integration uninstall <цель>         # удалить только свои файлы
 orbitfm quit                # завершить процесс
 orbitfm --help              # -h: список команд; -V / --version — версия сборки
 ```
 
 ## Язык интерфейса
 
-Язык меняется в **Настройки → Язык**: 11 значений — «Системный» и 10 языков (English, Русский, Français, Deutsch,
-Español, Italiano, Português, 中文, 한국어, 日本語). Переведён весь интерфейс: HUD, панель станций, транспорт, обе
-капсулы, подсказки, настройки, уведомления и меню трея. Названия станций, стран и жанров приходят из Radio Browser
-и остаются как есть, как и служебные строки (CLI, протокол IPC, заголовки окон). «Системный» читает переменные
-окружения по порядку `LC_ALL` → `LC_MESSAGES` → `LANG`; теги вида `ru_RU.UTF-8` или `pt-BR` распознаются,
-`C`/`POSIX` и неизвестная локаль дают английский. Смена языка применяется сразу, перезапуск не нужен.
+Язык меняется в **Настройки → Язык**: 17 значений — «Системный» и 16 языков (English, Русский, Українська,
+Polski, Français, Deutsch, Español, Italiano, Português, Türkçe, العربية, हिन्दी, Bahasa Indonesia, 中文, 한국어,
+日本語). Переведён весь интерфейс: HUD, панель станций, транспорт, обе капсулы, подсказки, настройки, уведомления
+и меню трея. Названия станций, стран и жанров приходят из Radio Browser и остаются как есть, как и служебные
+строки (CLI, протокол IPC, заголовки окон). «Системный» читает переменные окружения по порядку `LC_ALL` →
+`LC_MESSAGES` → `LANG`; теги вида `uk_UA.UTF-8`, `pl_PL` или `pt-BR` распознаются, `C`/`POSIX` и неизвестная
+локаль дают английский. Смена языка применяется сразу, перезапуск не нужен.
 
-**Квадратики вместо азиатских шрифтов.** OrbitFM не вкладывает CJK-шрифты: он просит fontconfig найти подходящий
+**Арабский и RTL.** Арабские строки выводятся справа налево на уровне глифов, но egui 0.37 раскладывает элементы
+слева направо и не зеркалит интерфейс: порядок колонок, выравнивание и направление списков остаются общими для
+всех языков. Это осознанное ограничение пре-релиза, а не ошибка перевода.
+
+**Квадратики вместо азиатских шрифтов.** OrbitFM не вкладывает шрифты: он просит fontconfig найти подходящий
 системный. Если 中文, 한국어 или 日本語 рисуются tofu — нужен установленный шрифт с поддержкой CJK (например,
-Noto Sans CJK вашего дистрибутива); это зависимость от окружения, а не дефект программы. Флаги стран рисуются
-глифами системного **Noto Color Emoji**, который ищется по четырём стандартным путям (`/usr/share/fonts/noto/`,
+Noto Sans CJK вашего дистрибутива); для хинди — шрифт деванагари (Noto Sans Devanagari), для арабского — Noto
+Sans Arabic. Это зависимость от окружения, а не дефект программы. Флаги стран рисуются глифами системного
+**Noto Color Emoji**, который ищется по четырём стандартным путям (`/usr/share/fonts/noto/`,
 `/usr/share/fonts/truetype/noto/`, `/usr/share/fonts/google-noto-emoji/`, `/usr/share/fonts/TTF/`); без него
 интерфейс работает как прежде, только без флагов.
 
@@ -250,10 +500,12 @@ Noto Sans CJK вашего дистрибутива); это зависимос�
   переезд потока. OrbitFM переподключается при обрыве и останавливается, когда попытки исчерпаны; `orbitfm status`
   покажет `playing`, `buffering`, `reconnecting` или `error`.
 - **Вместо обложки — инициалы названия.** Так выглядит сработавшая политика артворка: адрес `favicon` ведёт в
-  приватную или служебную сеть, отдаёт не-изображение по `Content-Type`, весит больше 512 КиБ либо доступен только
-  по `http` — такой адрес поднимается до `https` и остаётся недоступным, если на `https` сервер не отвечает. Plain
-  HTTP позволил бы по дороге подменить байты, уходящие в декодер, поэтому исключений нет. Станция при этом играет
-  нормально — отказ касается только картинки. Причина пишется в лог: `RUST_LOG=debug orbitfm show`.
+  приватную или служебную сеть, не резолвится во внешний адрес, отдаёт не-изображение по `Content-Type`, весит
+  больше 512 КиБ либо доступен только по `http` — такой адрес поднимается до `https` и остаётся недоступным, если
+  на `https` сервер не отвечает. Если станция раздаёт иконку только по HTTP, её можно включить тумблером
+  «Разрешить HTTP-обложки» в настройках («Внешний вид»): plain HTTP позволяет по дороге подменить байты, уходящие в
+  декодер, поэтому по умолчанию он выключен. Станция при этом играет нормально — отказ касается только картинки.
+  Причина пишется в лог: `RUST_LOG=debug orbitfm show`.
 - **Нужен лог для задачи на GitHub.** Логи пишет в stderr тот процесс, который поднял GUI: завершите плеер
   (`orbitfm quit`), затем запустите с подробным фильтром — `RUST_LOG=debug orbitfm show 2> ~/orbitfm.log`.
 - **Overlay и Listening растянулись на весь экран** или **вместо флагов квадратики** — не добавлены правила окон
@@ -296,8 +548,10 @@ Noto Sans CJK вашего дистрибутива); это зависимос�
 - **Обложки грузятся по политике, а не как попало.** Ссылка `favicon` приходит из чужого каталога, поэтому адрес
   проходит два яруса: синтаксический (приватные и служебные диапазоны, `localhost`, `*.local`, `*.internal`,
   одноярлыковые хосты вроде `http://router/`, облачные метаданные) и по адресам DNS — все они обязаны быть
-  публичными, а каждый редирект проверяется заново. Работает только `https`: адрес `http` поднимается до `https` и
-  на этом попытки кончаются — plain HTTP позволил бы по дороге подменить байты, уходящие в декодер.
+  публичными, а каждый редирект проверяется заново. По умолчанию работает только `https`: адрес `http` поднимается
+  до `https`, а явный тумблер «Разрешить HTTP-обложки» — осознанный выбор владельца. Тот же вердикт по DNS решает,
+  попадёт ли адрес в системные метаданные MPRIS/SMTC/Now Playing: он считается фоном и переиспользуется 60 секунд,
+  поэтому домен, резолвящийся во внутреннюю сеть, не попадает в `artUrl`.
 - **Длинная сессия не растёт бесконечно.** Кэш обложек держит не больше 256 записей и не больше восьми загрузок в
   полёте, тело ответа — не больше 512 КиБ, сторона картинки — не больше 512 px.
 - **Артефакты релиза не подписаны.** `SHA256SUMS` — контрольные суммы, а не подпись: сертификатов у проекта нет,
@@ -309,9 +563,21 @@ Noto Sans CJK вашего дистрибутива); это зависимос�
 
 | Уровень | Что за ним стоит |
 |---|---|
-| **Проверено в runtime** | Прогонено вручную на живом окружении: Linux (Wayland и X11, niri, Noctalia), трей, MPRIS, все режимы окна |
+| **Проверено в runtime** | Прогонено вручную на живом окружении: Linux (Wayland и X11, niri, Noctalia), трей, MPRIS, все режимы окна; панель браузера — Chrome for Testing и Firefox |
 | **Собрано и протестировано в CI** | Компилируется, линтится и покрыт автотестами на `windows-latest` и `macos-latest`, но приёмки на живом железе не было: MSI, DMG, Now Playing на macOS, SMTC на Windows |
-| **Заявлено планом** | Записано в ROADMAP и ADR как направление, кода или проверки ещё нет: плагины оболочек (0.14), расширения браузеров (0.15) |
+| **Заявлено планом** | Записано в ROADMAP и ADR как направление, кода или проверки ещё нет: OrbitFM Web Explorer, Android Auto/companion, UPnP/DLNA |
+
+Плагины оболочек 0.16 пока не в первой категории: ассеты проверены статически
+(`qmllint`, `qmlformat`, `node --check`), установщик и бар-скрипт — живым прогоном,
+но сами Plasma 6, GNOME, Omarchy и бары на машине приёмки не запускались;
+подробности — в `docs/modules/16-integrations.md`.
+
+Браузерная панель проверена живым прогоном в Chrome for Testing и Firefox на
+Linux: реальный popup через native host, snapshot и изменения через
+`orbitfm events`, поиск, избранное, история и «Play this page». Brave, Edge,
+Vivaldi и постоянно подписанный Firefox не запускались — для них проверены общий
+код, манифесты и установщик; Windows-манифесты через реестр и macOS-раскладка в
+пакет не входят. Подробности — в `docs/modules/17-browser-companion.md`.
 
 ## Для разработчиков
 
@@ -331,13 +597,15 @@ Noto Sans CJK вашего дистрибутива); это зависимос�
 | [Установка](docs/wiki/01-Установка.md) | AppImage / MSI / DMG, сборка из исходников, Flatpak, контрольные суммы |
 | [Первый запуск](docs/wiki/02-Первый-запуск.md) | Две минуты от иконки до звучащей станции |
 | [Режимы окна](docs/wiki/03-Режимы-окна.md) | Focus / Overlay / Listening и правила окон для niri и Hyprland |
-| [Настройки и язык](docs/wiki/04-Настройки-и-язык.md) | Модальное окно настроек, `settings.json`, 11 языков интерфейса |
+| [Настройки и язык](docs/wiki/04-Настройки-и-язык.md) | Модальное окно настроек, `settings.json`, 17 языков интерфейса |
 | [Управление и горячие клавиши](docs/wiki/05-Управление-и-горячие-клавиши.md) | Мышь, клавиши, медиа-клавиши, команды CLI |
 | [Noctalia](docs/wiki/06-Noctalia.md) | Виджет в баре, git-источник плагина, позиция окна |
 | [Трей и MPRIS](docs/wiki/07-Трей-и-MPRIS.md) | Меню трея целиком и управление при скрытом окне |
 | [Варианты использования](docs/wiki/08-Варианты-использования.md) | Семь готовых сценариев: фон, язык, второй экран, тишина |
 | [Неполадки](docs/wiki/09-Неполадки.md) | Нет звука, квадратики вместо флагов, растянутая капсула, логи |
 | [Глоссарий](docs/wiki/10-Глоссарий.md) | Термины проекта человеческим языком |
+| [Интеграции оболочек](docs/wiki/11-Интеграции-оболочек.md) | Пошаговая установка Plasma 6 (включая `.plasmoid`), GNOME, Omarchy, баров, XFCE/Cinnamon/MATE/LXQt и браузеров |
+| [Браузерное расширение](docs/wiki/12-Браузерное-расширение.md) | Панель OrbitFM в Chrome/Chromium и Firefox, native host |
 
 ## Благодарности
 

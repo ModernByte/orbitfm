@@ -39,6 +39,15 @@ pub(crate) struct CommonText {
     pub live: &'static str,
     pub quit: &'static str,
     pub retry: &'static str,
+    /// Вкладки и пустые состояния попапа (ADR-0037, ревизия 0.16).
+    pub favorites: &'static str,
+    pub history: &'static str,
+    /// Кнопка импорта потока с открытой страницы (ADR-0040).
+    pub play_this_page: &'static str,
+    /// Состояния импорта потока в попапе (ADR-0040).
+    pub no_audio: &'static str,
+    pub importing: &'static str,
+    pub stream_rejected: &'static str,
 }
 
 pub(crate) struct HudText {
@@ -149,6 +158,9 @@ pub(crate) struct SettingsText {
     pub visualizer: &'static str,
     pub viz_bars: &'static str,
     pub bars: &'static str,
+    /// Opt-in загрузки обложек по HTTP (ADR-0025, п. 11).
+    pub allow_http_artwork: &'static str,
+    pub allow_http_artwork_hint: &'static str,
     pub system_language: &'static str,
     pub language_hint: &'static str,
     pub volume: &'static str,
@@ -210,6 +222,48 @@ pub(crate) struct TrayText {
     pub volume_up: &'static str,
     pub volume_down: &'static str,
     pub settings: &'static str,
+    /// Заголовки групп обновлённого меню (ADR-0020, ревизия 0.16).
+    #[cfg_attr(
+        not(any(
+            all(target_os = "linux", feature = "tray"),
+            all(target_os = "macos", feature = "tray")
+        )),
+        allow(dead_code)
+    )]
+    pub playback: &'static str,
+    #[cfg_attr(
+        not(any(
+            all(target_os = "linux", feature = "tray"),
+            all(target_os = "macos", feature = "tray")
+        )),
+        allow(dead_code)
+    )]
+    pub volume: &'static str,
+    #[cfg_attr(
+        not(any(
+            all(target_os = "linux", feature = "tray"),
+            all(target_os = "macos", feature = "tray")
+        )),
+        allow(dead_code)
+    )]
+    pub appearance: &'static str,
+    /// Подменю «О станции»: избранное и домашняя страница.
+    #[cfg_attr(
+        not(any(
+            all(target_os = "linux", feature = "tray"),
+            all(target_os = "macos", feature = "tray")
+        )),
+        allow(dead_code)
+    )]
+    pub about_station: &'static str,
+    #[cfg_attr(
+        not(any(
+            all(target_os = "linux", feature = "tray"),
+            all(target_os = "macos", feature = "tray")
+        )),
+        allow(dead_code)
+    )]
+    pub open_homepage: &'static str,
     #[cfg_attr(
         not(any(
             all(target_os = "linux", feature = "tray"),

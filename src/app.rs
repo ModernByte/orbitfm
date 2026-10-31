@@ -152,6 +152,8 @@ impl<'a> OrbitApp<'a> {
             false
         };
         let visualizer = VisualizerModel::new(usize::from(session.settings.settings().viz_bars));
+        let artwork =
+            ArtworkFetcher::with_allow_http(session.settings.settings().artwork_allow_http);
         Self {
             session,
             globe_ready,
@@ -162,7 +164,7 @@ impl<'a> OrbitApp<'a> {
             station_callout: CalloutState::default(),
             visualizer,
             favicons: FaviconCache::new(),
-            artwork: ArtworkFetcher::new(),
+            artwork,
             favicon_was_busy: false,
             toast: Toast::default(),
             transitions: Transitions::new(),
@@ -193,7 +195,7 @@ impl<'a> OrbitApp<'a> {
 
     /// Фоновые favicon-загрузки: очередь → сетевая политика → декод → текстура.
     /// Сеть, DNS и перепроверка хоппов живут в `services::artwork`; здесь только
-    /// оркестрация задач (ADR-0016 ред. 2, ADR-0025 ред. 2).
+    /// оркестрация задач (ADR-0016 ред. 2, ADR-0025 ред. 3).
     fn poll_favicons(&mut self, ctx: &egui::Context) {
         self.favicons.begin_frame();
         self.favicons.poll(ctx);
@@ -401,12 +403,7 @@ impl<'a> OrbitApp<'a> {
                             // молчит о числе станций.
                             country_counts: Some(session.world.counts())
                                 .filter(|counts| !counts.is_empty()),
-                            selected_country: session
-                                .search
-                                .context
-                                .country
-                                .as_ref()
-                                .filter(|_| !session.search.highlight_hidden),
+                            selected_country: session.search.context.country.as_ref(),
                             country_enabled,
                             backdrop: density == LayoutDensity::Full,
                             ring: &*orbit_ring,
@@ -425,8 +422,9 @@ impl<'a> OrbitApp<'a> {
                 })
                 .inner;
             actions.extend(globe.actions);
-            // Клик мимо маркера и страны гасит только подсветку глобуса: список
-            // станций выбранной страны в панели остаётся (до выбора другой).
+            // Клик мимо маркера и стран снимает выбранную страну целиком:
+            // подсветка, список и маркеры гаснут вместе (ADR-0036, ревизия
+            // 2026-10-31).
             if country_enabled && globe.clicked_empty {
                 let country = globe
                     .clicked_point
@@ -434,7 +432,7 @@ impl<'a> OrbitApp<'a> {
                     .cloned();
                 match country {
                     Some(country) => actions.push(UiAction::SelectCountry(country)),
-                    None => session.hide_country_highlight(),
+                    None => actions.push(UiAction::ClearCountrySelection),
                 }
             }
         }
@@ -842,11 +840,14 @@ impl<'a> OrbitApp<'a> {
                 self.session.select_station(&station);
                 self.play_station(ctx, station);
             }
-            UiAction::ToggleFavorite(station) => self.session.toggle_favorite(&station),
+            UiAction::ToggleFavorite(station) => {
+                let _ = self.session.toggle_favorite(&station);
+            }
             UiAction::SelectCountry(country) => {
                 self.session.focus_country(&country);
                 self.session.start_country_search(country);
             }
+            UiAction::ClearCountrySelection => self.session.clear_country_selection(),
             UiAction::SwitchMode(mode) => self.session.switch_mode(mode),
             UiAction::SelectGenre(tag) => self.session.start_genre_search(&tag),
             UiAction::RunSearch => self.session.start_search(),
@@ -904,6 +905,17 @@ impl<'a> OrbitApp<'a> {
                 }
                 let bars = self.session.settings.settings().viz_bars;
                 self.visualizer = VisualizerModel::new(usize::from(bars));
+            }
+            UiAction::SetArtworkAllowHttp(allow) => {
+                if let Err(err) = self.session.set_artwork_allow_http(allow) {
+                    self.error_toast(ctx, &NoticeKey::SettingNotSaved, Some(err.as_str()));
+                }
+                self.artwork.set_allow_http(allow);
+                if allow {
+                    // Отказы под HTTPS-политикой получают второй шанс: кэш не
+                    // хранит причину, поэтому забываем их целиком.
+                    self.favicons.retry_failed();
+                }
             }
             UiAction::PreviewVolume(volume) => {
                 if let Err(err) = self.session.preview_volume(volume) {

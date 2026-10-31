@@ -14,6 +14,10 @@ pub enum Language {
     English,
     #[serde(rename = "ru")]
     Russian,
+    #[serde(rename = "uk")]
+    Ukrainian,
+    #[serde(rename = "pl")]
+    Polish,
     #[serde(rename = "fr")]
     French,
     #[serde(rename = "de")]
@@ -24,6 +28,14 @@ pub enum Language {
     Italian,
     #[serde(rename = "pt")]
     Portuguese,
+    #[serde(rename = "tr")]
+    Turkish,
+    #[serde(rename = "ar")]
+    Arabic,
+    #[serde(rename = "hi")]
+    Hindi,
+    #[serde(rename = "id")]
+    Indonesian,
     #[serde(rename = "zh")]
     Chinese,
     #[serde(rename = "ko")]
@@ -33,15 +45,21 @@ pub enum Language {
 }
 
 impl Language {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 17] = [
         Self::System,
         Self::English,
         Self::Russian,
+        Self::Ukrainian,
+        Self::Polish,
         Self::French,
         Self::German,
         Self::Spanish,
         Self::Italian,
         Self::Portuguese,
+        Self::Turkish,
+        Self::Arabic,
+        Self::Hindi,
+        Self::Indonesian,
         Self::Chinese,
         Self::Korean,
         Self::Japanese,
@@ -52,11 +70,17 @@ impl Language {
             Self::System => "system",
             Self::English => "en",
             Self::Russian => "ru",
+            Self::Ukrainian => "uk",
+            Self::Polish => "pl",
             Self::French => "fr",
             Self::German => "de",
             Self::Spanish => "es",
             Self::Italian => "it",
             Self::Portuguese => "pt",
+            Self::Turkish => "tr",
+            Self::Arabic => "ar",
+            Self::Hindi => "hi",
+            Self::Indonesian => "id",
             Self::Chinese => "zh",
             Self::Korean => "ko",
             Self::Japanese => "ja",
@@ -69,11 +93,17 @@ impl Language {
             Self::System => "System",
             Self::English => "English",
             Self::Russian => "Русский",
+            Self::Ukrainian => "Українська",
+            Self::Polish => "Polski",
             Self::French => "Français",
             Self::German => "Deutsch",
             Self::Spanish => "Español",
             Self::Italian => "Italiano",
             Self::Portuguese => "Português",
+            Self::Turkish => "Türkçe",
+            Self::Arabic => "العربية",
+            Self::Hindi => "हिन्दी",
+            Self::Indonesian => "Bahasa Indonesia",
             Self::Chinese => "中文",
             Self::Korean => "한국어",
             Self::Japanese => "日本語",
@@ -185,6 +215,12 @@ mod tests {
     #[test]
     fn locale_tags_map_to_primary_languages() {
         assert_eq!(Language::from_tag("ru_RU.UTF-8"), Some(Language::Russian));
+        assert_eq!(Language::from_tag("uk_UA.UTF-8"), Some(Language::Ukrainian));
+        assert_eq!(Language::from_tag("pl_PL"), Some(Language::Polish));
+        assert_eq!(Language::from_tag("tr_TR.UTF-8"), Some(Language::Turkish));
+        assert_eq!(Language::from_tag("ar_SA"), Some(Language::Arabic));
+        assert_eq!(Language::from_tag("hi_IN"), Some(Language::Hindi));
+        assert_eq!(Language::from_tag("id_ID"), Some(Language::Indonesian));
         assert_eq!(Language::from_tag("de_DE@euro"), Some(Language::German));
         assert_eq!(Language::from_tag("fr-FR"), Some(Language::French));
         assert_eq!(Language::from_tag("zh_CN.UTF-8"), Some(Language::Chinese));

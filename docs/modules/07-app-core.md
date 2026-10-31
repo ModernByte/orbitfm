@@ -96,9 +96,11 @@ pub(crate) struct OrbitApp<'a> {
   до 512 px по стороне и 512 КиБ; SVG/GIF/ICO отклоняются (ADR-0025). Границы
   `entries ≤ 256` и `in_flight ≤ 8` — инварианты: вытеснение ступенчатое, результат
   сверяется с поколением записи, слот освобождает RAII-страховка (ADR-0016 ред. 2).
+  `retry_failed` возвращает в очередь `Failed`-записи после включения
+  HTTP-обложек — политика фетчера переключается на лету (ADR-0025 ред. 3).
 - сетевых полей у `OrbitApp` больше нет: исходящий fetch артворка живёт в
   `src/services/artwork.rs` вместе с клиентом, policy-проверками и бюджетами
-  (ADR-0016 ред. 2, ADR-0025 ред. 2); в `app.rs` остаются только очередь задач и
+  (ADR-0016 ред. 2, ADR-0025 ред. 3); в `app.rs` остаются только очередь задач и
   приём результатов.
 - `toast` — стек до трёх сообщений по 3 секунды; переходы слоёв — ADR-0032.
 - `transitions` — `Transitions` (ADR-0032): один вызов `frame` на кадр считает
@@ -114,7 +116,8 @@ pub(crate) struct OrbitApp<'a> {
 `search: SearchState` (строки запросов, `context`, `results`, `generation`, `pending`,
 `empty`, `error`, каналы поиска и рулетки), `markers`, `library_tab`, `country_filter`,
 `panel_open`, `settings_open`, `show_help`, `pending_volume`, `window: WindowState`
-(видимость, размер, `intent`, `quitting`),
+(видимость, размер, `intent`, `quitting`), `publish_gate: PublishGate` (вердикт
+яруса 2 для MPRIS/SMTC/Now Playing, ADR-0025 ред. 3),
 `notices`, `wake`, `commands`, `audio_events`. `visualizer_enabled` — пользовательский
 переключатель визуализатора и кольца; это сохранённая настройка
 (`Settings::visualizer_enabled`, по умолчанию `true`), из которой `Session::new` его и
@@ -364,7 +367,7 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
    `detail` ошибки добавляется как есть (ADR-0030).
 3. `poll_favicons` — `FaviconCache::begin_frame`/`poll`, `take_fetches` → задачи
    `ArtworkFetcher::fetch` в `session.runtime` (проверки цели, MIME и размера — внутри
-   `services::artwork`, ADR-0025 ред. 2), декод в `catch_unwind`, слот страхуется
+   `services::artwork`, ADR-0025 ред. 3), декод в `catch_unwind`, слот страхуется
    `FetchGuard`, repaint через 120 мс, пока кэш занят; по закрытии партии — один
    `debug!` со счётчиками.
 4. Размер окна: `inner_rect` из ввода → `Session::set_window_size([w, h])`.
@@ -435,8 +438,10 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
    `GeoService::country_at_sphere_point`
    (`session.geo`). Попадание создаёт `UiAction::SelectCountry`; клик по
    океану или территории без валидного ISO-кода вызывает
-   `Session::hide_country_highlight`: подсветка гаснет, но список станций и
-   контекст поиска остаются до выбора другой страны. Тот же путь
+   `Session::clear_country_selection`: гаснут подсветка, контекст страны,
+   локальный фильтр, список и маркеры, а незавершённый запрос отбрасывается
+   (ADR-0036, ревизия 2026-10-31). Выделенная станция (`selected_station`)
+   сохраняется, разовый `reveal_station` — нет. Тот же путь
    используется для выбора из HUD. В режиме «Жанр» проверка страны отключена
    (`country_enabled = false`), поэтому клик по суше не меняет контекст.
 6. `apply_action` передаёт решение ядру: `Session::focus_country` (Core) —
@@ -472,7 +477,9 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
      клампятся в зону между `layout.hud`, `layout.transport` и панелью
      станций.
 
-Клик по океану или территории без валидного ISO-кода ничего не меняет. При
+Клик по океану или территории без валидного ISO-кода снимает выбранную страну
+целиком — подсветку, контекст, фильтр, список и маркеры
+(`Session::clear_country_selection`, ADR-0036, ревизия 2026-10-31). При
 `globe_ready = false` вместо глобуса рисуется заглушка `3D globe unavailable`, ввод
 игнорируется.
 
@@ -541,7 +548,7 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
   запускают `RadioBrowserClient::search` с `name`, `limit = 100`, `hide_broken = true`;
   выбранная страна/жанр при этом сбрасываются. Если контекст активен, поле поиска
   применяется локально к уже загруженному списку (`country_filter.text`), без сетевого
-  запроса. Запрос выполняется в tokio-задаче (`Session::begin_search`), результат приходит
+  запроса, и переключает вкладку на `Results` — иначе фильтр остался бы невидимым. Запрос выполняется в tokio-задаче (`Session::begin_search`), результат приходит
   через `mpsc` и будит GUI через `WakeHandle`.
 - Запрос всегда один: `Session::begin_search` не сужает выдачу фильтром
   `has_geo_info`, поэтому список полный, а маркеры — его подмножество с
@@ -592,9 +599,11 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
   `ui::country_map::CountryHeatCache`: тепловая карта стран пересобирается при
   смене выборки, прихода снимка мира или смены метрики; `generation` для этого
   не годится, потому что не меняется при завершении запроса.
-- `search.highlight_hidden` — клик мимо стран на глобусе снимает только
-  подсветку: контекст страны и список станций остаются, а следующий выбор
-  страны или поиск сбрасывает флаг.
+- Клик мимо маркера и стран снимает выбранную страну целиком:
+  `SearchState::clear_country` очищает `context.country`, результаты и
+  незавершённый запрос, `Session::clear_country_selection` добавляет сброс
+  `country_filter`, маркеров и `reveal_station` (ADR-0036, ревизия 2026-10-31).
+  Отдельного флага «подсветка скрыта, а список остался» больше нет.
 - HUD «Страна» вызывает `GeoService::search_countries` (до 6 подсказок) при каждом
   изменении запроса; Enter выбирает первую, клик — выбранную. Оба пути создают
   `UiAction::SelectCountry`, `Session::start_country_search` очищает `country_query` и
@@ -685,7 +694,7 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
   модальное окно 760×544 с колонкой категорий: `Appearance` (тема
   `System`/`Dark`/`Light` — `controls::dropdown`, шесть пресетов акцента (`Orbit`, `Emerald`,
   `Amber`, `Violet`, `Rose`, `Ocean`) — круглые свотчи, тумблер визуализатора, число столбцов — dropdown), `Language`
-  (dropdown, `System` и десять языков), `Audio` (громкость), `Motion` (`Off`/`Low`/`Normal`/`High`
+  (dropdown, `System` и шестнадцать языков), `Audio` (громкость), `Motion` (`Off`/`Low`/`Normal`/`High`
   и стиль — dropdown, `Reduce motion` и перевороты — тумблеры), `Window` (режим окна — dropdown,
   `Show help` — тумблер) и `About` (версия, лицензия, app-id, «Выход»). Изменение применяется сразу и
   сохраняется через `SettingsStore`; ошибка записи показывается тостом и не прерывает

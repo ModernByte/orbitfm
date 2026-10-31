@@ -43,9 +43,7 @@ pub(super) fn default_path() -> Result<PathBuf, IpcError> {
 
     #[cfg(not(target_os = "linux"))]
     {
-        let dir = std::env::var_os("TMPDIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(std::env::temp_dir);
+        let dir = std::env::var_os("TMPDIR").map_or_else(std::env::temp_dir, PathBuf::from);
         Ok(dir.join(SOCKET_FILE))
     }
 }

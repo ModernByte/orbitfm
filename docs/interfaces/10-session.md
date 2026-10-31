@@ -48,6 +48,7 @@ Application Core — слой, который переживает закрыт�
 | `is_quitting` | `pub(crate) fn is_quitting(&self) -> bool` | Признак явного выхода |
 | `status_text` | `pub(crate) fn status_text(&self) -> String` | Строка ответа IPC-команды `status` |
 | `status_json` | `pub(crate) fn status_json(&self) -> String` | Ответ IPC-команды `status --json`: одна строка JSON схемы 1 (ADR-0037) |
+| `publish_status` | `pub(crate) fn publish_status(&self)` | Публикует полный кадр `status_json` в `StatusFeed` подписчикам `events` (ADR-0039); повторы гасит `send_if_modified` |
 | `attach_tray` | `pub(crate) fn attach_tray(&mut self)` | macOS: создать иконку и меню на главном потоке; ошибка — `warn!` и работа без трея. На других платформах — no-op |
 | `park` | `pub(crate) fn park(&mut self) -> ParkOutcome` | Простой без окна: ждёт IPC/MPRIS/трей/аудио/рулетку и исполняет их без UI |
 | `execute` | `pub(crate) fn execute(&mut self, command: &IpcCommand) -> String` | Исполняет IPC-команду и возвращает строку ответа; общее для окна и парковки |
@@ -61,7 +62,7 @@ Application Core — слой, который переживает закрыт�
 | `sync_tray` | `pub(crate) fn sync_tray(&mut self)` | Публикует `TraySnapshot` в SNI, только если снимок изменился |
 | `resolve_station` | `pub(crate) fn resolve_station(&self, station_uuid: &str) -> Result<Station, RadioError>` | Станция по UUID: сначала `search.results`, затем `radio.get_station` с таймаутом `STATION_LOOKUP_TIMEOUT` |
 | `start_station` | `pub(crate) fn start_station(&mut self, station: Station) -> Result<(), StationStartError>` | `audio.play(url_resolved)`, `selected_station`, история, click, MPRIS |
-| `select_station` | `pub(crate) fn select_station(&mut self, station: &Station)` | Клик по маркеру до запуска: `selected_station`, разовый `reveal_station`, вкладка `Results` (ADR-0036) |
+| `select_station` | `pub(crate) fn select_station(&mut self, station: &Station)` | Клик по маркеру до запуска: `selected_station`, разовый `reveal_station`, сброс `country_filter`, вкладка `Results` (ADR-0036) |
 | `take_station_reveal` | `pub(crate) fn take_station_reveal(&mut self) -> Option<String>` | Забирает просьбу прокрутки один раз; `OrbitApp::draw_layers` передаёт UUID строке |
 | `spawn_click` | `pub(crate) fn spawn_click(&self, station_uuid: String)` | Фоновая отправка click в Radio Browser |
 | `stop_playback` | `pub(crate) fn stop_playback(&mut self) -> Result<(), String>` | `audio.stop()` |
@@ -76,12 +77,13 @@ Application Core — слой, который переживает закрыт�
 | `visible_queue` | `pub(crate) fn visible_queue(&self) -> Vec<Station>` | Снапшот текущего видимого списка — очередь prev/next |
 | `visible_queue_len` | `pub(crate) fn visible_queue_len(&self) -> usize` | Число станций в очереди без клонирования; питает `can_go_next`/`can_go_previous` MPRIS |
 | `play_relative` | `pub(crate) fn play_relative(&mut self, step: i8)` | Шаг по снапшоту с циклом; сбой запуска — `NoticeKey::StationWithoutUrl` или `NoticeKey::PlaybackFailed` |
-| `sync_media` | `pub(crate) fn sync_media(&mut self)` | Публикует состояние в MPRIS |
+| `sync_media` | `pub(crate) fn sync_media(&mut self)` | Публикует состояние в MPRIS; URL проходят гейт `publish_gate` (ярус 1 + вердикт яруса 2, ADR-0025 ред. 3), сам вызов синхронен |
 | `toggle_favorite` | `pub(crate) fn toggle_favorite(&mut self, station: &Station)` | Избранное; ошибка — `notify_error_detail(NoticeKey::FavoritesNotSaved, …)` |
 | `clear_history` | `pub(crate) fn clear_history(&mut self)` | Очистка истории; успех — `NoticeKey::HistoryCleared`, ошибка — `NoticeKey::ClearHistoryFailed` |
 | `focus_country` | `pub(crate) fn focus_country(&mut self, country: &Country)` | Перелёт камеры к центру страны |
-| `start_search` | `pub(crate) fn start_search(&mut self)` | Поиск по имени из `search.query` |
+| `start_search` | `pub(crate) fn start_search(&mut self)` | Поиск по имени из `search.query`; при активном контексте — локальный фильтр и вкладка `Results` |
 | `start_country_search` | `pub(crate) fn start_country_search(&mut self, country: Country)` | Список станций страны |
+| `clear_country_selection` | `pub(crate) fn clear_country_selection(&mut self)` | Клик мимо стран: снимает контекст страны, фильтр, список и маркеры; выделенная станция сохраняется (ADR-0036, ревизия 2026-10-31) |
 | `start_genre_search` | `pub(crate) fn start_genre_search(&mut self, tag: String)` | Глобальный поиск по тегу |
 | `switch_mode` | `pub(crate) fn switch_mode(&mut self, mode: SearchMode)` | Смена режима поиска и сброс контекста |
 | `poll_search` | `pub(crate) fn poll_search(&mut self)` | Забор ответа фонового поиска |
@@ -93,6 +95,7 @@ Application Core — слой, который переживает закрыт�
 | `set_language` | `pub(crate) fn set_language(&mut self, language: Language) -> Result<(), String>` | Сохраняет язык, тут же разворачивает `System` в `self.language` и вызывает `sync_tray()`: меню и строки UI меняются без перезапуска (ADR-0030) |
 | `set_viz_bars` | `pub(crate) fn set_viz_bars(&mut self, bars: u8) -> Result<(), String>` | Число столбцов визуализатора (ADR-0019) |
 | `set_visualizer_enabled` | `pub(crate) fn set_visualizer_enabled(&mut self, enabled: bool) -> Result<(), String>` | Пользовательский переключатель визуализатора и кольца: сохраняет настройку (сбой — `NoticeKey::VisualizerNotSaved` и `warn!`), затем меняет аудио-анализ по `analysis_needed`, при отказе движка поле откатывается к его значению (ADR-0028, ADR-0031) |
+| `set_artwork_allow_http` | `pub(crate) fn set_artwork_allow_http(&mut self, allow: bool) -> Result<(), String>` | Сохраняет opt-in HTTP-обложек (ADR-0025 ред. 3); саму политику фетчера и повтор `Failed` переключает presentation-слой через `ArtworkFetcher::set_allow_http` |
 | `set_motion` | `pub(crate) fn set_motion(&mut self, motion: MotionReactivity) -> Result<(), String>` | Сохраняет реактивность движения и пересчитывает необходимость анализа |
 | `set_motion_style` | `pub(crate) fn set_motion_style(&mut self, style: MotionStyle) -> Result<(), String>` | Сохраняет характер движения (`Auto` или один из шести стилей) |
 | `set_allow_flips` | `pub(crate) fn set_allow_flips(&mut self, allow: bool) -> Result<(), String>` | Сохраняет разрешение переворотов камеры (ADR-0028) |
@@ -233,6 +236,8 @@ pub(crate) struct AppServices {
     pub(crate) tray: Option<TrayHandle>,
     pub(crate) library: StationLibrary,
     pub(crate) settings: SettingsStore,
+    /// Публикация кадров `events` (ADR-0039).
+    pub(crate) status: StatusFeed,
     pub(crate) runtime: tokio::runtime::Handle,
 }
 
@@ -281,8 +286,9 @@ pub(crate) const PANEL_TITLE: &str = "OrbitFM · Panel";
 - ошибки возвращаются как `Result<_, String>` (`set_volume`, `preview_volume`,
   `commit_volume`, `stop_playback`, `toggle_playback`, `resume_playback`,
   `set_audio_paused`, `set_theme`, `set_accent`, `set_language`, `set_viz_bars`,
-  `set_visualizer_enabled`, `set_motion`, `set_motion_style`, `set_allow_flips`,
-  `set_reduce_motion`), а не как доменный тип UI; запуск станции —
+  `set_visualizer_enabled`, `set_artwork_allow_http`, `set_motion`,
+  `set_motion_style`, `set_allow_flips`, `set_reduce_motion`), а не как
+  доменный тип UI; запуск станции —
   `Result<(), StationStartError>`;
 - способ сообщить пользователю выбирает вызывающий: UI показывает `Toast`
   (`Notice` по ключу каталога, а также собственные `Err` от методов),
@@ -458,6 +464,7 @@ mode <focus|overlay|listening|panel>
 | Медиа-контролы | `Option<MediaControls>` | `AppServices::media`; `None` — MPRIS недоступен |
 | Трей | `Option<TrayHandle>` | `AppServices::tray` из `tray::spawn`; `None` — SNI-хоста нет или сборка без фичи `tray` |
 | Библиотека и настройки | `StationLibrary`, `SettingsStore` | `AppServices` |
+| Публикатор кадров `events` | `StatusFeed` | `AppServices::status`; получатель `watch` — у IPC-сервера (ADR-0039) |
 | Tokio-рантайм | `tokio::runtime::Handle` | `AppServices::runtime` |
 | Пробуждение GUI | `WakeHandle` | создаётся в `launch`, делится с IPC/MPRIS/треем/поиском |
 | Камера глобуса | `GlobeCamera` | поле `Session` (ADR-0018 п. 2) |
@@ -481,8 +488,9 @@ mode <focus|overlay|listening|panel>
   внутреннее состояние поиска; наружу идут только поля `Session::search`,
   читаемые UI (`query`, `country_query`, `genre_query`, `context`, `results`,
   `pending`, `empty`, `error`, `roulette_pending`, `revision`,
-  `highlight_hidden`, `has_more`, `loading_more`). `Session::hide_country_highlight`
-  — единственный способ снять подсветку, не трогая выборку;
+  `has_more`, `loading_more`). `Session::clear_country_selection` — единственный
+  способ снять выбранную страну: контекст, фильтр, список и маркеры гаснут
+  вместе (ADR-0036, ревизия 2026-10-31);
   `Session::{load_more, country_total}` — единственные входы пагинации:
   `load_more` двигает `offset` по `next_offset`, `country_total` читает мировой
   снимок для подписи «загружено из всего»;

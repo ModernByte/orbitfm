@@ -54,6 +54,8 @@ install -Dm644 packaging/linux/org.modernbyte.OrbitFM.metainfo.xml \
     "$APPDIR/usr/share/metainfo/org.modernbyte.OrbitFM.metainfo.xml"
 install -Dm644 packaging/linux/org.modernbyte.OrbitFM.svg \
     "$APPDIR/usr/share/icons/hicolor/scalable/apps/org.modernbyte.OrbitFM.svg"
+install -Dm644 packaging/linux/org.modernbyte.OrbitFM.png \
+    "$APPDIR/usr/share/icons/hicolor/256x256/apps/org.modernbyte.OrbitFM.png"
 
 ARCH="$ARCH" "$LINUXDEPLOY" \
     --appdir "$APPDIR" \
@@ -64,6 +66,11 @@ ARCH="$ARCH" "$LINUXDEPLOY" \
 # appimagetool ищет устаревшее имя *.appdata.xml, хотя AppStream использует *.metainfo.xml.
 ln -sf org.modernbyte.OrbitFM.metainfo.xml \
     "$APPDIR/usr/share/metainfo/org.modernbyte.OrbitFM.appdata.xml"
+
+# С 31.10.2026 continuous-appimagetool требует PNG в корне AppDir, чтобы
+# создать .DirIcon; SVG в hicolor/scalable он больше не принимает.
+install -Dm644 packaging/linux/org.modernbyte.OrbitFM.png \
+    "$APPDIR/org.modernbyte.OrbitFM.png"
 
 # Метаданные проверяются отдельно (appstreamcli --no-net); appimagetool без сети
 # считает URL недоступными и прерывает сборку.

@@ -37,6 +37,12 @@ impl super::Session {
         loop {
             let next = self.commands.try_recv();
             let Ok(request) = next else { break };
+            // Импорт потока отвечает после резолва: немедленный ответ закрыл бы
+            // соединение раньше, чем станет известен результат (ADR-0040).
+            if matches!(request.command(), IpcCommand::PlayUrl { .. }) {
+                self.begin_play_url(request);
+                continue;
+            }
             let response = self.execute(request.command());
             request.try_respond(response);
         }
@@ -59,6 +65,8 @@ impl super::Session {
             }
             IpcCommand::Status => self.status_text(),
             IpcCommand::StatusJson => self.status_json(),
+            // Подписку обслуживает IPC-сервер: в очередь команд она не попадает.
+            IpcCommand::Events => "error events обслуживается IPC-сервером".to_owned(),
             IpcCommand::ModeQuery => format!("mode {}", self.window_mode().as_str()),
             IpcCommand::SetMode { mode } => {
                 self.set_window_mode((*mode).into());
@@ -123,6 +131,32 @@ impl super::Session {
                 Ok(()) => "ok".to_owned(),
                 Err(err) => format!("error {err}"),
             },
+            IpcCommand::Search { query } => {
+                let generation = self.start_companion_search(query);
+                format!("search {generation}")
+            }
+            IpcCommand::Library => self.library_json(),
+            IpcCommand::Favorite { station_uuid } => {
+                match self.favorite_station(station_uuid.as_deref()) {
+                    Ok(favorite) => format!("favorite {favorite}"),
+                    Err(err) => format!("error {err}"),
+                }
+            }
+            IpcCommand::PlayResult { station_uuid } => {
+                match self.play_companion_result(station_uuid) {
+                    Ok(()) => "ok".to_owned(),
+                    Err(err) => format!("error {err}"),
+                }
+            }
+            IpcCommand::PlayLibrary { station_uuid } => {
+                match self.play_library_station(station_uuid) {
+                    Ok(()) => "ok".to_owned(),
+                    Err(err) => format!("error {err}"),
+                }
+            }
+            // `play-url` перехватывается в `process_commands` и парковке:
+            // ответ приходит после сетевого резолва.
+            IpcCommand::PlayUrl { .. } => "error play-url обслуживается отложенно".to_owned(),
             IpcCommand::Raw(raw) => format!("error неизвестная команда: {raw}"),
         }
     }
@@ -192,6 +226,14 @@ impl super::Session {
     pub(crate) fn set_allow_flips(&mut self, allow: bool) -> Result<(), String> {
         self.settings
             .set_allow_flips(allow)
+            .map_err(|err| err.to_string())
+    }
+
+    /// Opt-in HTTP-обложек (ADR-0025, п. 11): Core только сохраняет настройку,
+    /// политику фетчера переключает presentation-слой.
+    pub(crate) fn set_artwork_allow_http(&mut self, allow: bool) -> Result<(), String> {
+        self.settings
+            .set_artwork_allow_http(allow)
             .map_err(|err| err.to_string())
     }
 

@@ -461,6 +461,22 @@ fn appearance(
         if let Some(index) = bars.inner {
             actions.push(UiAction::SetVizBars(VIZ_BAR_CHOICES[index]));
         }
+        divider(ui, palette, alpha);
+        // Сетевая ручка рядом с иконками: обложки — визуальная часть списка,
+        // но решение про HTTP осознанное, поэтому с пояснением (ADR-0025, п. 11).
+        let allow_http = state.settings.artwork_allow_http;
+        if switch_row(
+            ui,
+            &dim,
+            strings.allow_http_artwork,
+            Some(strings.allow_http_artwork_hint),
+            allow_http,
+            true,
+        )
+        .clicked()
+        {
+            actions.push(UiAction::SetArtworkAllowHttp(!allow_http));
+        }
     });
 }
 

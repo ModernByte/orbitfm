@@ -1,0 +1,47 @@
+/*
+ * Сниппет стиля Waybar для модуля custom/orbitfm.
+ * Токены повторяют стеклянную панель OrbitFM/Noctalia: мягкая рамка,
+ * акцент по состоянию, скругление как у чипа. Добавьте эти правила в свой
+ * style.css после переменных темы; файл не переопределяет остальной бар.
+ */
+
+#custom-orbitfm {
+    min-width: 12px;
+    margin: 0 3px;
+    padding: 0 10px;
+    border: 1px solid rgba(120, 160, 255, 0.18);
+    border-radius: 10px;
+    color: #e6eaf5;
+    background: linear-gradient(180deg, rgba(30, 40, 60, 0.85), rgba(14, 18, 28, 0.92));
+    font-weight: 600;
+}
+
+#custom-orbitfm.playing {
+    color: #68d391;
+    border-color: rgba(104, 211, 145, 0.38);
+    background: rgba(104, 211, 145, 0.14);
+}
+
+#custom-orbitfm.paused {
+    color: #ffbe5c;
+    border-color: rgba(255, 190, 92, 0.38);
+    background: rgba(255, 190, 92, 0.13);
+}
+
+#custom-orbitfm.loading {
+    color: #b294ff;
+    border-color: rgba(178, 148, 255, 0.38);
+    background: rgba(178, 148, 255, 0.13);
+}
+
+#custom-orbitfm.error {
+    color: #ff8aa5;
+    border-color: rgba(255, 138, 165, 0.4);
+    background: rgba(255, 138, 165, 0.14);
+}
+
+#custom-orbitfm.stopped {
+    color: #969eb0;
+    border-color: rgba(120, 160, 255, 0.14);
+    background: rgba(255, 255, 255, 0.04);
+}

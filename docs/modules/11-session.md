@@ -48,12 +48,13 @@ Core не принимают `&egui::Context` — детали в `docs/interfac
 | `audio` | `AudioEngine` | Владелец libmpv-потока; при уничтожении `Session` останавливает аудио-поток (`impl Drop for AudioEngine`) |
 | `audio_events` | `broadcast::Receiver<AudioEvent>` | Подписка `audio.subscribe()` в `Session::new`; вторая подписка в `main` только будит GUI |
 | `commands` | `mpsc::Receiver<IpcRequest>` | Очередь IPC из `IpcServer::commands()` |
+| `status` | `StatusFeed` | Публикатор полных кадров схемы 1 подписчикам `events` (ADR-0039); создаётся в `main`, получатель — у IPC-сервера |
 | `geo` | `GeoService` | Границы стран, `country_shape`, `country_at_sphere_point` |
 | `radio` | `RadioBrowserClient` | Клонируется в фоновые задачи поиска, рулетки и click |
 | `media` | `Option<MediaControls>` | `None`, когда MPRIS недоступен (нет D-Bus); тогда очередь команд нет |
 | `tray` | `Option<TrayHandle>` | `None`, когда SNI-хоста нет или сборка без фичи `tray`; сам `Option` меняется и в рантайме: мёртвый трей `sync_tray` выключает ветку |
 | `library` | `StationLibrary` | Избранное и история (до 20 записей, `HISTORY_LIMIT`) |
-| `settings` | `SettingsStore` | Тема, акцент, язык, `viz_bars`, `volume`, `visualizer_enabled`, признаки движения, `help_visible`; `Session::new` восстанавливает из него громкость |
+| `settings` | `SettingsStore` | Тема, акцент, язык, `viz_bars`, `volume`, `visualizer_enabled`, `artwork_allow_http`, признаки движения, `help_visible`; `Session::new` восстанавливает из него громкость |
 | `runtime` | `tokio::runtime::Handle` | `block_on` для коротких аудио-операций и `spawn` для сетевых задач |
 | `wake` | `WakeHandle` | Разделяемый слот пробуждения: `Arc<Mutex<Option<Notifier>>>` |
 
@@ -100,6 +101,7 @@ Listening — `Off`. `motion_reactivity()`, `analysis_needed()` и `sync_analysi
 | `pending_volume` | `Option<f64>` | Громкость перетаскивания, ещё не записанная на диск: `preview_volume` ставит, `commit_volume` и `set_volume` снимают, `end_window` дописывает в настройки через `flush_pending_volume` |
 | `notices` | `VecDeque<Notice>` | Очередь сообщений Core → пользователю; `Notice` — ключ причины плюс незапереводимый `detail` (`src/session/notice.rs`, ADR-0030); `take_notices()` забирает всю очередь через `std::mem::take` |
 | `tray_snapshot` | `Option<TraySnapshot>` | Последний опубликованный треем снимок: `sync_tray` шлёт в SNI только изменение |
+| `publish_gate` | `PublishGate` | Bounded-кэш вердиктов яруса 2 для `artUrl`/`xesam:url` (ADR-0025 ред. 3): `permits` читает готовое решение, при отсутствии ставит проверку в фон и пробуждает кадр |
 
 `size: Option<...>` — `None` только до первого `begin_window` (то есть на самом
 первом показе процесса): тогда `restore_size()` отдаёт `WINDOW_SIZE` (1100×800).
@@ -128,8 +130,9 @@ MPRIS и `TraySnapshot` (ADR-0026), а `window_visible()` читают `status`,
 | `mod.rs` | Ядро: владение подсистемами, пробуждение, окно настроек и язык, `status`, `status --json`, исследование видимости для macOS, ре-экспорт контрактов пакета | `Session`, `AppServices`, `Notice`, `NoticeKey`, `ParkOutcome`, `WakeHandle`, `LibraryTab`, `StationStartError`; наружу из `window.rs` — `UiIntent`, `WindowMode`, `WindowState`, `WINDOW_TITLE` |
 | `notice.rs` | Типизированные сообщения пользователю: ядро называет причину, строку берёт каталог `i18n` (ADR-0030) | `Notice { Info(NoticeKey), Error { key, detail } }`, `NoticeKey` |
 | `window.rs` | Состояние окна: режим (`WindowMode`), геометрия и заголовки по режиму, намерения UI (`Show`/`Hide`/`Close`), признак перезапуска, видимость без пересоздания вьюпорта (ADR-0018, ADR-0021, ADR-0026) | `WindowMode` (+ `ALL`/`default_size`/`min_size`/`title`/`as_str`/`is_borderless`), `UiIntent`, `WindowState` (+ `mark_hidden`/`mark_shown`), `WINDOW_SIZE`, `WINDOW_MIN_SIZE`, `WINDOW_TITLE`, `OVERLAY_SIZE`, `OVERLAY_MIN_SIZE`, `OVERLAY_TITLE`, `LISTENING_SIZE`, `LISTENING_MIN_SIZE`, `LISTENING_TITLE`, `PANEL_SIZE`, `PANEL_MIN_SIZE`, `PANEL_TITLE` |
-| `commands.rs` | Разбор `IpcCommand` (общий для окна и парковки), `impl From<WindowModeArg> for WindowMode`, `impl From<ThemeArg> for ThemeMode`, диспетчеризация команд управления (ADR-0037) и настроек оформления, языка и движения | `Session::{execute, process_commands, set_theme, set_accent, set_language, set_viz_bars, set_visualizer_enabled, set_motion, set_motion_style, set_allow_flips, set_reduce_motion, settle_analysis, set_help_visible}` |
-| `playback.rs` | Аудио-события, запуск/остановка, выбор станции, громкость commit-on-release, избранное, история, очередь `prev`/`next`, витрина MPRIS | `Session::{process_audio_events, apply_audio_event, resolve_station, start_station, select_station, take_station_reveal, spawn_click, toggle_favorite, clear_history, focus_country, set_volume, preview_volume, commit_volume, flush_pending_volume, set_audio_paused, resume_playback, toggle_playback, stop_playback, process_media_commands, execute_media_command, visible_queue, visible_queue_len, play_relative, sync_media}` |
+| `commands.rs` | Разбор `IpcCommand` (общий для окна и парковки), `impl From<WindowModeArg> for WindowMode`, `impl From<ThemeArg> for ThemeMode`, диспетчеризация команд управления (ADR-0037) и настроек оформления, языка и движения | `Session::{execute, process_commands, set_theme, set_accent, set_language, set_viz_bars, set_visualizer_enabled, set_artwork_allow_http, set_motion, set_motion_style, set_allow_flips, set_reduce_motion, settle_analysis, set_help_visible}` |
+| `playback.rs` | Аудио-события, запуск/остановка, выбор станции, громкость commit-on-release, избранное, история, очередь `prev`/`next`, витрина MPRIS через гейт публикации | `Session::{process_audio_events, apply_audio_event, resolve_station, start_station, select_station, take_station_reveal, spawn_click, toggle_favorite, clear_history, focus_country, set_volume, preview_volume, commit_volume, flush_pending_volume, set_audio_paused, resume_playback, toggle_playback, stop_playback, process_media_commands, execute_media_command, visible_queue, visible_queue_len, play_relative, sync_media}` |
+| `publish_gate.rs` | Вердикт яруса 2 для публикуемых метаданных (ADR-0025 ред. 3): bounded-кэш `url → публичный/нет`, TTL 60 с, stale-while-revalidate; резолв фоном, пробуждение кадра | `PublishGate` (+ `new`/`permits`), приватные `Verdict`, `refresh`, `evict` |
 | `search.rs` | Поиск по имени/стране/жанру с поколениями ответов и рулетка | `SearchMode`, `SearchContext`, `SearchState`, `SearchResponse`, `STATION_LOOKUP_TIMEOUT`, `Session::{start_search, start_country_search, start_genre_search, switch_mode, poll_search, start_roulette, poll_roulette, apply_roulette}` |
 | `markers.rs` | Агрегация станций с координатами в маркеры глобуса | `GlobeMarker`, `build_markers` (+ `#[cfg(test)] sample_station`, `geo_station`) |
 | `heat.rs` | Метрики тепловой карты стран (ADR-0035): нормировка в `0,15..=1` по выборке станций и по глобальным счётчикам | `CountryMetric` (+ `ALL`/`is_on`), `intensities`, `densities` |
@@ -229,17 +232,21 @@ MPRIS `Next`/`Previous`.
 Правила метаданных: `title` — `single_line(station.name)`, а если он пуст и трек
 есть — `WINDOW_TITLE`; `artist` — «`state, country`», при отсутствии одного из
 полей — то, что осталось, при отсутствии обоих — `single_line(tags)`, дальше
-`None`; `art_url` — `station.favicon`, но только если адрес проходит ярус 1
-политики артворка (`services::publishable`), иначе пустая строка; `url` —
-`url_resolved` под тем же условием (если непустой после `trim`), иначе
-`current_url`, иначе пустая строка; `volume` — `audio.volume()`; `can_go_next`/`can_go_previous` —
+`None`; `art_url` — `station.favicon`, но только если адрес проходит гейт
+`publish_gate.permits`: ярус 1 (`services::publishable`) синхронно и свежий
+публичный вердикт яруса 2 из кэша; нет вердикта — пустая строка, резолв идёт
+фоном (ADR-0025 ред. 3, п. 12); `url` — `url_resolved` под тем же гейтом
+(если непустой после `trim`), иначе `current_url` под гейтом, иначе пустая
+строка; `volume` — `audio.volume()`; `can_go_next`/`can_go_previous` —
 `visible_queue_len() > 0`, то есть число станций в очереди без клонирования.
 Без `current_station` заголовок — URL потока
 (пустой URL при наличии трека даёт `WINDOW_TITLE`), `artist` и `art_url` — `None`.
 Ошибка `set_playback` только логируется.
 `sync_media()` вызывается каждый `tick()`, при `end_window()`, после `start_station()`
 и после каждого события в `park()`; `MediaControls::set_playback` дедуплицирует
-неизменившиеся данные.
+неизменившиеся данные. Сам `sync_media()` синхронен: `PublishGate` только читает
+кэш и максимум запускает фоновую задачу, поэтому DNS не попадает ни в кадр, ни
+в `block_on` парка.
 
 ### 4.7. Поиск
 
@@ -249,10 +256,11 @@ MPRIS `Next`/`Previous`.
 
 | Метод | Поведение |
 |-------|-----------|
-| `start_search` | `search.query.trim()` пуста — no-op; контекст активен → запрос кладётся в `country_filter.text` (локальный фильтр, без сети); `search.pending` → no-op; иначе контекст очищается и запускается `SearchParams { name, limit = 100, hide_broken = true }` |
+| `start_search` | `search.query.trim()` пуста — no-op; контекст активен → запрос кладётся в `country_filter.text` (локальный фильтр, без сети), вкладка переключается на `Results`; `search.pending` → no-op; иначе контекст очищается и запускается `SearchParams { name, limit = 100, hide_broken = true }` |
 | `start_country_search(country)` | активирует страну, `country_filter.reset()`, запрос `country_code = <ISO alpha-2>`, `limit = 100`, `hide_broken = true`, затем `country_query.clear()`; выдача полная, без `has_geo_info` |
 | `start_genre_search(tag)` | `tag.trim().to_lowercase()` пуст — no-op; активирует жанр, `country_filter.reset()`, `tag`, `limit = 200`, `hide_broken = true`, затем `genre_query.clear()` |
-| `switch_mode(mode)` | если режим не изменился — no-op; иначе `invalidate_search()`, очистка результатов, маркеров и фильтров, `library_tab = Results` |
+| `clear_country_selection()` | клик мимо маркера и стран: `SearchState::clear_country` снимает `context.country`, отбрасывает запрос и очищает результаты, затем сбрасываются `country_filter`, маркеры и `reveal_station`, вкладка — `Results`; `selected_station` сохраняется (ADR-0036, ревизия 2026-10-31) |
+| `switch_mode(mode)` | если режим не изменился — no-op; иначе `SearchState::invalidate()`, очистка результатов, маркеров и фильтров, `library_tab = Results` |
 | `load_more()` | no-op при `pending`/`loading_more`/активном `rx`/`has_more = false`; клонирует `last_params`, ставит `offset = next_offset`, помечает `loading_more` и спавнит `radio.search` с `append: true` |
 | `country_total()` | мировой счётчик станций выбранной страны (`world.counts()[ISO]`), `None` без страны/снимка; подпись «загружено из всего» и `page_has_more` |
 
@@ -347,7 +355,8 @@ total)`: пустая страница всегда закрывает паги�
 
 Выделение станции (ADR-0036 § 2–3) живёт в `Session::selected_station`:
 `start_station` ставит UUID при любом пути запуска, `select_station` — при клике
-по маркеру, вместе с разовым `reveal_station` и переключением вкладки
+по маркеру, вместе с разовым `reveal_station`, сбросом `country_filter`
+(фильтр не должен прятать строку выбранной станции) и переключением вкладки
 `Results`. `take_station_reveal` забирает просьбу один раз; presentation рисует
 accent-строку списка и белое кольцо маркера поверх пульса эфира.
 
@@ -425,6 +434,10 @@ for WindowMode` и `impl From<ThemeArg> for ThemeMode`: `src/ipc/` не знае
 `serde_json`: `app`, `version` из `CARGO_PKG_VERSION`, `state`, `station`
 (полные метаданные или `null`), `volume` с округлением до тысячных, `window`,
 `theme`, `language`, `can` и локализованный `ui` из `i18n::catalog` (ADR-0037).
+`publish_status()` отправляет этот же кадр в `StatusFeed`; `send_if_modified`
+гасит повторы, поэтому вызов безопасен на каждом тике. Публикация идёт из
+`Session::new`, `tick`, `begin_window`, `end_window`, `mark_hidden`,
+`mark_shown` и после каждого события `park()` — подписчики видят и скрытое окно.
 Текстовый `format_status` не меняется; `window.visible` на macOS отражает
 `mark_hidden`, а не только закрытие вьюпорта. Настройки оформления, языка и движения идут через
 `SettingsStore` и возвращают `Result<(), String>`: `set_theme`, `set_accent`,
@@ -433,7 +446,10 @@ for WindowMode` и `impl From<ThemeArg> for ThemeMode`: `src/ipc/` не знае
 `set_visualizer_enabled`
 сохраняет настройку (сбой — `warn!` и `NoticeKey::VisualizerNotSaved`), затем
 вызывает `sync_analysis()` и меняет пользовательский переключатель, а не
-состояние анализа напрямую; `set_help_visible(visible)` меняет
+состояние анализа напрямую;
+`set_artwork_allow_http(allow)` только сохраняет opt-in (ADR-0025 ред. 3) —
+политику фетчера и повтор `Failed` переключает presentation-слой, потому что
+`ArtworkFetcher` живёт в `OrbitApp`; `set_help_visible(visible)` меняет
 `Session::show_help` и сразу сохраняет выбор в `Settings::help_visible`
 (ошибка возвращается вызывающему — UI показывает `NoticeKey::SettingNotSaved`).
 Перекрашиванием `egui` занимается presentation: после `set_theme`/
@@ -588,7 +604,9 @@ Unit-тесты лежат в модулах: `mod.rs` — молчание `Wak
 размера в `Focus`; `commands.rs` — префикс `error` у неизвестной команды,
 round-trip протокола, `WindowModeArg → WindowMode` и `ThemeArg → ThemeMode`;
 `playback.rs` — приоритет
-локации над тегами в MPRIS;
+локации над тегами в MPRIS; `publish_gate.rs` — вердикт приходит на следующем
+кадре и пробуждает его, приватная цель не публикуется даже после резолва,
+синтаксический отказ яруса 1 не порождает фонового резолва;
 `search.rs` — сброс контекста при смене режима, отбрасывание устаревшего ответа,
 подпись рулетки, параметры запроса страны; `markers.rs` — группировка по
 координатам, пропуск невалидных и `(0, 0)`, дедупликация по UUID, популярность =

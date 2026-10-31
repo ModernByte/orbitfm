@@ -102,8 +102,10 @@ About }`; порядок навигации — `ALL`, иконки — `Moon`, 
 - **Appearance** — тема (`dropdown` по `ThemeMode::ALL`), акцент (шесть круглых
   свотчей в `SWATCH_SLOT`), `switch_row` визуализатора
   (`UiAction::ToggleSpectrum`), число полос (`dropdown` из `VIZ_BAR_CHOICES`,
-  недоступен при выключенном визуализаторе).
-- **Language** — `dropdown` по `Language::ALL`: `System` и 10 языков с нативными
+  недоступен при выключенном визуализаторе), `switch_row` «Разрешить
+  HTTP-обложки» (`UiAction::SetArtworkAllowHttp`, подсказка о подмене по пути,
+  ADR-0025 ред. 3).
+- **Language** — `dropdown` по `Language::ALL`: `System` и 16 языков с нативными
   именами, пояснение `language_hint`.
 - **Audio** — громкость на всю ширину карточки (`widgets::volume_slider_width`)
   с процентом справа и пояснениями `audio_hint` и `volume_hint`.

@@ -4,17 +4,23 @@
 //! сюда не проникают. Каждый язык — литерал [`Catalog`], поэтому пропущенное
 //! поле не собирается, а неизвестный язык честно падает в английский.
 
+mod ar;
 mod catalog;
 mod de;
 mod en;
 mod es;
 mod fr;
+mod hi;
+mod id;
 mod it;
 mod ja;
 mod ko;
 mod labels;
+mod pl;
 mod pt;
 mod ru;
+mod tr;
+mod uk;
 mod zh;
 
 pub(crate) use catalog::{Catalog, LabelText, SettingsText};
@@ -29,11 +35,17 @@ pub(crate) fn catalog(language: Language) -> &'static Catalog {
     match language {
         Language::System | Language::English => &en::CATALOG,
         Language::Russian => &ru::CATALOG,
+        Language::Ukrainian => &uk::CATALOG,
+        Language::Polish => &pl::CATALOG,
         Language::French => &fr::CATALOG,
         Language::German => &de::CATALOG,
         Language::Spanish => &es::CATALOG,
         Language::Italian => &it::CATALOG,
         Language::Portuguese => &pt::CATALOG,
+        Language::Turkish => &tr::CATALOG,
+        Language::Arabic => &ar::CATALOG,
+        Language::Hindi => &hi::CATALOG,
+        Language::Indonesian => &id::CATALOG,
         Language::Chinese => &zh::CATALOG,
         Language::Korean => &ko::CATALOG,
         Language::Japanese => &ja::CATALOG,
@@ -116,6 +128,12 @@ mod tests {
                 live,
                 quit,
                 retry,
+                favorites,
+                history,
+                play_this_page,
+                no_audio,
+                importing,
+                stream_rejected,
             }
         );
         assert_group_non_empty!(
@@ -230,6 +248,8 @@ mod tests {
                 visualizer,
                 viz_bars,
                 bars,
+                allow_http_artwork,
+                allow_http_artwork_hint,
                 system_language,
                 language_hint,
                 volume,
@@ -275,6 +295,11 @@ mod tests {
                 volume_up,
                 volume_down,
                 settings,
+                playback,
+                volume,
+                appearance,
+                about_station,
+                open_homepage,
                 quit,
             }
         );
