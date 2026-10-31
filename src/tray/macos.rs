@@ -335,7 +335,9 @@ fn build_menu(snapshot: &TraySnapshot) -> Option<(Menu, MenuHandle)> {
     }
 
     let handle = MenuHandle {
-        menu,
+        // `Menu` — Rc-обёртка: клон для хэндла делит то же нативное меню,
+        // поэтому вставка/снятие строки сведений работает и у tray-icon.
+        menu: menu.clone(),
         header,
         details,
         details_shown: Cell::new(details_summary.is_some()),

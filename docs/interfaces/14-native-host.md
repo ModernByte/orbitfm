@@ -276,7 +276,7 @@ connectNative("org.modernbyte.orbitfm")
 
 ## 12. Ревизии
 
-- 2026-10-31 (0.16.0-rc.1): allowlist дополнен `search`, `library`,
+- 2026-10-31 (0.16.0-rc.2): allowlist дополнен `search`, `library`,
   `favorite`, `play-result`, `play-library`, `play-url`; `quit`, `play`, `mode`
   и `Raw` остаются запрещёнными. Поток `events` может нести кадр `search`
   (интерфейс 13, ревизия 0.16). Расширение получает `activeTab` и `scripting`

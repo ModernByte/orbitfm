@@ -176,7 +176,7 @@ HTTP-обмены: редиректы, циклы, размер тела, отн
 
 ## 10. Живая приёмка
 
-2026-10-31, Linux x86_64, 0.16.0-rc.1, `python3 -m http.server` на
+2026-10-31, Linux x86_64, 0.16.0-rc.2, `python3 -m http.server` на
 `127.0.0.1:8765`:
 
 - `orbitfm play-url` для `playlist.m3u`, `playlist.pls` и `page.html` с

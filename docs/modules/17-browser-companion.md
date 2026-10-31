@@ -197,7 +197,7 @@ orbitfm integration install firefox   # Firefox
 
 ## 8. Живая приёмка
 
-2026-10-31, Linux x86_64, niri/Wayland, 0.16.0-rc.1, запущенный экземпляр
+2026-10-31, Linux x86_64, niri/Wayland, 0.16.0-rc.2, запущенный экземпляр
 OrbitFM и локальный `python3 -m http.server` на `127.0.0.1:8765`:
 
 - **Chrome for Testing 153** (CDP на `9224`, `--load-extension` и
@@ -227,7 +227,7 @@ OrbitFM и локальный `python3 -m http.server` на `127.0.0.1:8765`:
   стрелками, станция объявляется через `aria-live="polite"`, визуализатор
   `aria-hidden`; эмуляция `prefers-reduced-motion: reduce` через CDP дала
   `animation-duration: 0s` и статичные полосы.
-- **Установщик**: 14 целей 0.16.0-rc.1, Chrome/Firefox — 6 файлов и
+- **Установщик**: 14 целей 0.16.0-rc.2, Chrome/Firefox — 6 файлов и
   native-манифест (7 записей в квитанции), GNOME/Waybar — 4 файла; статусы
   и квитанции совпадают.
 
@@ -241,7 +241,7 @@ OrbitFM и локальный `python3 -m http.server` на `127.0.0.1:8765`:
 3. бейдж состояния и сообщения импорта дублировали английские строки в JS —
    добавлены аддитивные `ui.state_*`, `ui.no_audio`, `ui.importing`,
    `ui.stream_rejected`, `ui.close`, тема в `aria-label` берётся из
-   `ui.theme_*` (0.16.0-rc.1).
+   `ui.theme_*` (0.16.0-rc.2).
 
 Ограничение доказательности: Firefox в этом прогоне не перезапускался (API
 попапа не менялись с проверки 0.15); Brave, Edge, Vivaldi, Windows и macOS не
