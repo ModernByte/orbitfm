@@ -33,9 +33,9 @@
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
-    <release version="0.15.0-rc.1" date="2026-10-31">
+    <release version="0.15.0-rc.2" date="2026-10-31">
       <description>
-        <p>OrbitFM 0.15.0-rc.1 — интеграции с оболочками и браузерами поверх
+        <p>OrbitFM 0.15.0-rc.2 — интеграции с оболочками и браузерами поверх
         0.13.0-rc.2. Команда `orbitfm events` отдаёт состояние потоком NDJSON
         без опроса, а `orbitfm integration` раскладывает по каталогам
         пользователя плагины Plasma 6, GNOME, Omarchy и модули Waybar, Polybar,

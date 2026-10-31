@@ -7,7 +7,18 @@
 
 ## [Unreleased]
 
-## [0.15.0-rc.1] - 2026-10-31
+## [0.15.0-rc.2] - 2026-10-31
+
+Тег `v0.15.0-rc.1` не дошёл до публикации: continuous-appimagetool,
+обновившийся 31.10.2026, перестал принимать SVG в корне AppDir и остановил
+Linux-джоб после успешных сборок macOS и Windows. Содержимое функций не
+менялось — исправлена только упаковка, версия повышена до rc.2.
+
+### Исправлено
+- AppImage: в `packaging/linux` добавлена иконка 256×256 PNG, а
+  `build-appimage.sh` кладёт её в `usr/share/icons/hicolor/256x256/apps`
+  и в корень AppDir, откуда appimagetool создаёт `.DirIcon`. Сборка
+  проверена локально с continuous-appimagetool build 340 (2026-10-31)
 
 ### Добавлено
 - `orbitfm events` — подписка на состояние по тому же IPC-сокету (ADR-0039,

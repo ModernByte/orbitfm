@@ -276,7 +276,7 @@ Chrome и Firefox принимают в `manifest.json` версию из 1–4 
 
 ## Реализация
 
-- 0.15.0-rc.1: `src/native_host.rs` (фрейминг, allowlist, конверт, события,
+- 0.15.0-rc.2: `src/native_host.rs` (фрейминг, allowlist, конверт, события,
   лимиты), маршрут `native-host` в `src/main.rs`;
 - `src/integration/{mod,assets}.rs`: цели `chrome`/`firefox`, раскладка
   расширения, native-манифесты, детект браузеров, квитанции, wrapper;
