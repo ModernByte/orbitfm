@@ -12,7 +12,9 @@ use crate::i18n;
 /// Пределы подписей карточки: длинные названия и теги Radio Browser не должны
 /// растягивать меню на весь экран.
 const NAME_LIMIT: usize = 48;
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))] // карточка SNI
 const DETAILS_LIMIT: usize = 64;
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))] // карточка SNI
 const TAGS_LIMIT: usize = 56;
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))] // строка меню macOS
 const SUMMARY_LIMIT: usize = 80;
@@ -32,6 +34,7 @@ pub(crate) fn now_playing_label(snapshot: &TraySnapshot) -> String {
 }
 
 /// Строки карточки станции в меню: имя, `страна · битрейт`, теги.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))] // карточка SNI
 pub(crate) fn card_lines(snapshot: &TraySnapshot) -> Vec<String> {
     let Some(station) = &snapshot.station else {
         return vec![nothing_playing(snapshot)];
@@ -47,6 +50,7 @@ pub(crate) fn card_lines(snapshot: &TraySnapshot) -> Vec<String> {
 }
 
 /// Имя станции для тултипа; без станции — заглушка.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))] // тултип SNI
 pub(crate) fn station_name(snapshot: &TraySnapshot) -> String {
     snapshot.station.as_ref().map_or_else(
         || nothing_playing(snapshot),
