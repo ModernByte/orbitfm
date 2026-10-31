@@ -1,0 +1,33 @@
+# OrbitFM для Omarchy
+
+Виджет бара Omarchy (Quickshell). Установка:
+
+```
+orbitfm integration install omarchy
+omarchy-shell shell rescanPlugins
+```
+
+После пересканирования включите виджет OrbitFM в конфигурации бара
+Omarchy. Установщик не редактирует ваш конфиг бара.
+
+## Управление
+
+- ЛКМ — пуск/пауза.
+- ПКМ — выпадающая панель OrbitFM (`orbitfm panel`).
+
+Название станции видно в баре, громкость — в подсказке. Подписи приходят
+из `orbitfm status --json` (`ui`), поэтому виджет не дублирует переводы
+приложения.
+
+## Как это работает
+
+Виджет раз в 2 секунды запускает `orbitfm status --json` через Quickshell
+`Process` и разбирает строку JSON. Команды передаются тому же бинарнику.
+Если OrbitFM не запущен, виджет показывает «OrbitFM» и не создаёт второй
+процесс.
+
+Удаление:
+
+```
+orbitfm integration uninstall omarchy
+```

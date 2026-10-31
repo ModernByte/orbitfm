@@ -19,9 +19,10 @@
 
 | Файл | Назначение |
 |------|------------|
-| `mod.rs` | Публичный фасад (`IpcServer`, `IpcCommand`, `WindowModeArg`, `IpcError`, `IpcRequest`, `WakeFn`) |
+| `mod.rs` | Публичный фасад (`IpcServer`, `IpcCommand`, `WindowModeArg`, `IpcError`, `IpcRequest`, `StatusFeed`, `WakeFn`) |
 | `protocol.rs` | Разбор/сериализация команд, лимиты, ошибки |
-| `client.rs` | Одноразовый клиент: подключение, отправка, чтение ответа |
+| `client.rs` | Клиент: одноразовый запрос и долгоживущая подписка `events` |
+| `events.rs` | `StatusFeed`, конверт NDJSON, keepalive и бюджеты подписок (ADR-0039) |
 | `socket.rs` | Unix-транспорт: путь сокета, bind, проверка «зомби», права `0600`, удаление при Drop |
 | `pipe.rs` | Windows-транспорт: named pipe `\\.\pipe\orbitfm`, первый экземпляр и accept-loop |
 | `server.rs` | Accept-loop, очередь запросов, ответы через oneshot |
@@ -51,8 +52,25 @@ impl IpcServer {
     /// Отправляет команду уже работающему экземпляру.
     pub async fn send_to_existing(command: &str) -> Result<String, IpcError>;
 
+    /// Подписывается на поток событий работающего экземпляра (ADR-0039).
+    pub async fn subscribe_to_existing() -> Result<(), IpcError>;
+
     /// Принимает соединения до сигнала shutdown, затем дожидается ответов.
-    pub async fn run(self, wake: WakeFn, shutdown: tokio::sync::oneshot::Receiver<()>);
+    pub async fn run(
+        self,
+        wake: WakeFn,
+        status: tokio::sync::watch::Receiver<Option<String>>,
+        shutdown: tokio::sync::oneshot::Receiver<()>,
+    );
+}
+
+/// Публикатор полного кадра `status --json` для подписок `events`.
+pub struct StatusFeed { /* watch::Sender<Option<String>> */ }
+
+impl StatusFeed {
+    pub fn new() -> Self;
+    pub fn subscribe(&self) -> tokio::sync::watch::Receiver<Option<String>>;
+    pub fn publish(&self, status: String);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,11 +145,17 @@ panel
 overlay
 play <stationuuid>
 stop
-status
+status [--json]
+events
 mode [focus|overlay|listening|panel]
 quit
 volume <0.0..=1.0>
 ```
+
+- `events` — долгоживущая read-only подписка: первая строка `snapshot`, далее
+  полные `state`, на простое — `keepalive` каждые 15 с; не попадает в очередь
+  команд и обслуживается сервером напрямую из `StatusFeed` (ADR-0039,
+  `docs/interfaces/13-events.md`)
 
 - Ответ: `ok`, `error <сообщение>`, многострочный `status` или одна строка `mode <режим>`
 - `status` возвращает `status <state>`, при наличии станции — `stationuuid <uuid>` и
@@ -174,8 +198,11 @@ volume <0.0..=1.0>
 | Дренаж соединений при shutdown | 1 с |
 
 Дополнительно одновременно обслуживается не более 64 соединений; лишние отклоняются.
-Таймауты защищают от зависшего клиента и от блокировки accept-loop. Каждое соединение
-обрабатывается отдельной задачей, поэтому медленный клиент не мешает остальным.
+Из них подписок `events` — не более 16, поэтому one-shot командам всегда остаётся
+не меньше 48 слотов (ADR-0039). Keepalive подписки — 15 с тишины. Таймауты защищают
+от зависшего клиента и от блокировки accept-loop. Каждое соединение обрабатывается
+отдельной задачей, поэтому медленный клиент не мешает остальным; медленная подписка
+не блокирует Core благодаря `watch`.
 
 ## 7. Жизненный цикл
 
@@ -186,7 +213,8 @@ volume <0.0..=1.0>
      из команды, ADR-0021 п. 5);
    - `panel`/`overlay` → запуск GUI сразу в своей поверхности (`Panel`/`Overlay`,
      ADR-0033);
-   - остальные команды → ошибка `OrbitFM не запущен`.
+   - `events` и остальные команды → ошибка `OrbitFM не запущен`; подписка не
+     поднимает GUI (ADR-0039).
 3. При запуске вызывается `IpcServer::try_bind()`.
 4. Если пришёл `AlreadyRunning` (гонка) — команда повторно отправляется живому процессу.
 5. `commands()` передаёт очередь в `Session` (`run_session`, ADR-0018), `run(wake)`

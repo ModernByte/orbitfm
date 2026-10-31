@@ -48,6 +48,7 @@ Core не принимают `&egui::Context` — детали в `docs/interfac
 | `audio` | `AudioEngine` | Владелец libmpv-потока; при уничтожении `Session` останавливает аудио-поток (`impl Drop for AudioEngine`) |
 | `audio_events` | `broadcast::Receiver<AudioEvent>` | Подписка `audio.subscribe()` в `Session::new`; вторая подписка в `main` только будит GUI |
 | `commands` | `mpsc::Receiver<IpcRequest>` | Очередь IPC из `IpcServer::commands()` |
+| `status` | `StatusFeed` | Публикатор полных кадров схемы 1 подписчикам `events` (ADR-0039); создаётся в `main`, получатель — у IPC-сервера |
 | `geo` | `GeoService` | Границы стран, `country_shape`, `country_at_sphere_point` |
 | `radio` | `RadioBrowserClient` | Клонируется в фоновые задачи поиска, рулетки и click |
 | `media` | `Option<MediaControls>` | `None`, когда MPRIS недоступен (нет D-Bus); тогда очередь команд нет |
@@ -249,10 +250,11 @@ MPRIS `Next`/`Previous`.
 
 | Метод | Поведение |
 |-------|-----------|
-| `start_search` | `search.query.trim()` пуста — no-op; контекст активен → запрос кладётся в `country_filter.text` (локальный фильтр, без сети); `search.pending` → no-op; иначе контекст очищается и запускается `SearchParams { name, limit = 100, hide_broken = true }` |
+| `start_search` | `search.query.trim()` пуста — no-op; контекст активен → запрос кладётся в `country_filter.text` (локальный фильтр, без сети), вкладка переключается на `Results`; `search.pending` → no-op; иначе контекст очищается и запускается `SearchParams { name, limit = 100, hide_broken = true }` |
 | `start_country_search(country)` | активирует страну, `country_filter.reset()`, запрос `country_code = <ISO alpha-2>`, `limit = 100`, `hide_broken = true`, затем `country_query.clear()`; выдача полная, без `has_geo_info` |
 | `start_genre_search(tag)` | `tag.trim().to_lowercase()` пуст — no-op; активирует жанр, `country_filter.reset()`, `tag`, `limit = 200`, `hide_broken = true`, затем `genre_query.clear()` |
-| `switch_mode(mode)` | если режим не изменился — no-op; иначе `invalidate_search()`, очистка результатов, маркеров и фильтров, `library_tab = Results` |
+| `clear_country_selection()` | клик мимо маркера и стран: `SearchState::clear_country` снимает `context.country`, отбрасывает запрос и очищает результаты, затем сбрасываются `country_filter`, маркеры и `reveal_station`, вкладка — `Results`; `selected_station` сохраняется (ADR-0036, ревизия 2026-10-31) |
+| `switch_mode(mode)` | если режим не изменился — no-op; иначе `SearchState::invalidate()`, очистка результатов, маркеров и фильтров, `library_tab = Results` |
 | `load_more()` | no-op при `pending`/`loading_more`/активном `rx`/`has_more = false`; клонирует `last_params`, ставит `offset = next_offset`, помечает `loading_more` и спавнит `radio.search` с `append: true` |
 | `country_total()` | мировой счётчик станций выбранной страны (`world.counts()[ISO]`), `None` без страны/снимка; подпись «загружено из всего» и `page_has_more` |
 
@@ -347,7 +349,8 @@ total)`: пустая страница всегда закрывает паги�
 
 Выделение станции (ADR-0036 § 2–3) живёт в `Session::selected_station`:
 `start_station` ставит UUID при любом пути запуска, `select_station` — при клике
-по маркеру, вместе с разовым `reveal_station` и переключением вкладки
+по маркеру, вместе с разовым `reveal_station`, сбросом `country_filter`
+(фильтр не должен прятать строку выбранной станции) и переключением вкладки
 `Results`. `take_station_reveal` забирает просьбу один раз; presentation рисует
 accent-строку списка и белое кольцо маркера поверх пульса эфира.
 
@@ -425,6 +428,10 @@ for WindowMode` и `impl From<ThemeArg> for ThemeMode`: `src/ipc/` не знае
 `serde_json`: `app`, `version` из `CARGO_PKG_VERSION`, `state`, `station`
 (полные метаданные или `null`), `volume` с округлением до тысячных, `window`,
 `theme`, `language`, `can` и локализованный `ui` из `i18n::catalog` (ADR-0037).
+`publish_status()` отправляет этот же кадр в `StatusFeed`; `send_if_modified`
+гасит повторы, поэтому вызов безопасен на каждом тике. Публикация идёт из
+`Session::new`, `tick`, `begin_window`, `end_window`, `mark_hidden`,
+`mark_shown` и после каждого события `park()` — подписчики видят и скрытое окно.
 Текстовый `format_status` не меняется; `window.visible` на macOS отражает
 `mark_hidden`, а не только закрытие вьюпорта. Настройки оформления, языка и движения идут через
 `SettingsStore` и возвращают `Result<(), String>`: `set_theme`, `set_accent`,

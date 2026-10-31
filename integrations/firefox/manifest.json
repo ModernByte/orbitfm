@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "OrbitFM",
+  "description": "Control the OrbitFM internet radio player from the browser panel.",
+  "version": "@BROWSER_VERSION@",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "orbitfm@modernbyte",
+      "strict_min_version": "109.0"
+    }
+  },
+  "action": {
+    "default_title": "OrbitFM",
+    "default_popup": "popup.html"
+  },
+  "permissions": ["nativeMessaging"]
+}

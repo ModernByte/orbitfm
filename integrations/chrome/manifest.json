@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "OrbitFM",
+  "description": "Control the OrbitFM internet radio player from the browser panel.",
+  "version": "@BROWSER_VERSION@",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxs0FaSgxgV1UsZWinYVrk01RNJSORnvtxRL1gSLY1GnVRWIDzLSVFgGP/iWcoRnsKhMWvIElrDdR4cgK9DFvj19ml9KQHINoOPiWA7T8sEiyBDx+kQ0W/IiBKS8BVUSB9p21BoRacCW2XZ8wrkXmUAIvZscvBPq1Iz/GHjYSYbiwiGRxk7a0e7uEVxYOB4Fo+Cc50jUJmCMJnalDib1qmQnud+EfLXd8waPZ0pxDI0EfE7ku351Md2bTEFoITyuhErSvDoJPcC1saDWs18RspqRnxJyw+uBYZPKJxeKEQAZfiDL7s6uLxIBXvrBySPf9xccHyzxe7FS3xbbqumM0PQIDAQAB",
+  "action": {
+    "default_title": "OrbitFM",
+    "default_popup": "popup.html"
+  },
+  "permissions": ["nativeMessaging"]
+}

@@ -1,0 +1,21 @@
+[[block]]
+block = "custom"
+command = "@BAR_SCRIPT@ i3status-rust"
+interval = 2
+json = true
+
+[[block.click]]
+button = "left"
+cmd = "@ORBITFM@ playpause"
+
+[[block.click]]
+button = "right"
+cmd = "@ORBITFM@ panel"
+
+[[block.click]]
+button = "up"
+cmd = "@ORBITFM@ volume-up"
+
+[[block.click]]
+button = "down"
+cmd = "@ORBITFM@ volume-down"

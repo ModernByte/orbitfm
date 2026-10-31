@@ -25,7 +25,7 @@ use tokio::sync::{broadcast, mpsc};
 
 use crate::audio::{AudioEngine, AudioEvent, PlaybackState};
 use crate::geo::GeoService;
-use crate::ipc::{IpcRequest, WakeFn};
+use crate::ipc::{IpcRequest, StatusFeed, WakeFn};
 use crate::library::StationLibrary;
 use crate::media::MediaControls;
 use crate::render::GlobeCamera;
@@ -103,6 +103,8 @@ pub(crate) struct AppServices {
     pub(crate) tray: Option<TrayHandle>,
     pub(crate) library: StationLibrary,
     pub(crate) settings: SettingsStore,
+    /// Публикация полного кадра подписчикам `events` (ADR-0039).
+    pub(crate) status: StatusFeed,
     pub(crate) runtime: tokio::runtime::Handle,
 }
 
@@ -154,6 +156,8 @@ pub(crate) struct Session {
     /// блокировала бы поток трея dbus-ответом без всякой надобности
     /// (ADR-0020, п. 4).
     pub(crate) tray_snapshot: Option<TraySnapshot>,
+    /// Публикатор кадров `events` (ADR-0039).
+    pub(crate) status: StatusFeed,
 }
 
 impl Session {
@@ -170,6 +174,7 @@ impl Session {
             tray,
             library,
             settings,
+            status,
             runtime,
         } = services;
         let stored = settings.settings();
@@ -213,10 +218,14 @@ impl Session {
             window: WindowState::shown(),
             notices: VecDeque::new(),
             tray_snapshot: None,
+            status,
         };
         // Снимок мира уходит в фон сразу: карта стран должна закраситься до
         // первого выбора в панели.
         session.start_world();
+        // Первый кадр публикуется до появления окна: подписка `events`,
+        // пришедшая на старте, получает snapshot, а не ждёт кадра UI (ADR-0039).
+        session.publish_status();
         session
     }
 
@@ -233,6 +242,7 @@ impl Session {
         self.sync_media();
         self.sync_tray();
         self.spectrum_enabled = self.audio.spectrum_enabled();
+        self.publish_status();
     }
 
     pub(crate) fn take_intent(&mut self) -> Option<UiIntent> {
@@ -292,6 +302,7 @@ impl Session {
     /// Показ окна: `launch` вызывает перед каждым прогоном UI.
     pub(crate) fn begin_window(&mut self, size: [f32; 2]) {
         self.window.begin(size);
+        self.publish_status();
     }
 
     /// Закрытие root-вьюпорта: окно скрыто, процесс и воспроизведение живы.
@@ -301,6 +312,7 @@ impl Session {
         self.flush_pending_volume();
         self.sync_media();
         self.sync_tray();
+        self.publish_status();
     }
 
     pub(crate) fn set_window_size(&mut self, size: [f32; 2]) {
@@ -408,6 +420,7 @@ impl Session {
         self.settle_analysis();
         self.sync_media();
         self.sync_tray();
+        self.publish_status();
     }
 
     /// Окно снова видимо: анализ возвращается, витрины отражают показ.
@@ -417,6 +430,7 @@ impl Session {
         self.settle_analysis();
         self.sync_media();
         self.sync_tray();
+        self.publish_status();
     }
 
     /// Создаёт macOS-иконку в строке меню, когда run loop уже запущен
@@ -470,6 +484,12 @@ impl Session {
             self.visible_queue_len() > 0,
         );
         serde_json::to_string(&payload).unwrap_or_else(|err| format!("error {err}"))
+    }
+
+    /// Публикует полный кадр подписчикам `events` (ADR-0039). Повтор кадра
+    /// не будит клиентов, поэтому вызов безопасен на каждом тике UI.
+    pub(crate) fn publish_status(&self) {
+        self.status.publish(self.status_json());
     }
 }
 

@@ -1,0 +1,17 @@
+{
+    "schemaVersion": 1,
+    "id": "io.github.modernbyte.orbitfm",
+    "name": "OrbitFM",
+    "version": "@VERSION@",
+    "author": "ModernByte",
+    "license": "MIT",
+    "description": "Internet radio player controls for the Omarchy bar",
+    "kinds": ["bar-widget"],
+    "entryPoints": {
+        "barWidget": "BarWidget.qml"
+    },
+    "barWidget": {
+        "displayName": "OrbitFM",
+        "description": "Control the OrbitFM internet radio player"
+    }
+}

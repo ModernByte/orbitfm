@@ -1,7 +1,7 @@
 # Интерфейсы OrbitFM
 
 **Организация:** ModernByte  
-**Дата:** 2026-10-24
+**Дата:** 2026-10-31
 
 Этот каталог содержит формальные контракты между модулями и внешними системами.
 
@@ -20,6 +20,9 @@
 | `09-settings.md` | Контракт настроек оформления (`SettingsStore`, тема и акцент) |
 | `10-session.md` | Контракт Application Core (`Session`, `Notice`, `UiIntent`, `ParkOutcome`, жизненный цикл окна по ADR-0018) |
 | `11-tray.md` | Контракт системного трея (`TrayHandle`, `TrayCommand`, `TraySnapshot`, SNI по ADR-0020) |
+| `12-i18n.md` | Контракт локализации (`Language`, каталог строк, `TrayText` по ADR-0030) |
+| `13-events.md` | Поток событий состояния `orbitfm events`: конверт `ev: 1`, NDJSON (ADR-0039) |
+| `14-native-host.md` | Native messaging host для расширений Chromium и Firefox: фрейминг, allowlist, конверт `{"ok":…}` (ADR-0038) |
 
 ## Принципы
 

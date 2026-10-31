@@ -401,12 +401,7 @@ impl<'a> OrbitApp<'a> {
                             // молчит о числе станций.
                             country_counts: Some(session.world.counts())
                                 .filter(|counts| !counts.is_empty()),
-                            selected_country: session
-                                .search
-                                .context
-                                .country
-                                .as_ref()
-                                .filter(|_| !session.search.highlight_hidden),
+                            selected_country: session.search.context.country.as_ref(),
                             country_enabled,
                             backdrop: density == LayoutDensity::Full,
                             ring: &*orbit_ring,
@@ -425,8 +420,9 @@ impl<'a> OrbitApp<'a> {
                 })
                 .inner;
             actions.extend(globe.actions);
-            // Клик мимо маркера и страны гасит только подсветку глобуса: список
-            // станций выбранной страны в панели остаётся (до выбора другой).
+            // Клик мимо маркера и стран снимает выбранную страну целиком:
+            // подсветка, список и маркеры гаснут вместе (ADR-0036, ревизия
+            // 2026-10-31).
             if country_enabled && globe.clicked_empty {
                 let country = globe
                     .clicked_point
@@ -434,7 +430,7 @@ impl<'a> OrbitApp<'a> {
                     .cloned();
                 match country {
                     Some(country) => actions.push(UiAction::SelectCountry(country)),
-                    None => session.hide_country_highlight(),
+                    None => actions.push(UiAction::ClearCountrySelection),
                 }
             }
         }
@@ -847,6 +843,7 @@ impl<'a> OrbitApp<'a> {
                 self.session.focus_country(&country);
                 self.session.start_country_search(country);
             }
+            UiAction::ClearCountrySelection => self.session.clear_country_selection(),
             UiAction::SwitchMode(mode) => self.session.switch_mode(mode),
             UiAction::SelectGenre(tag) => self.session.start_genre_search(&tag),
             UiAction::RunSearch => self.session.start_search(),

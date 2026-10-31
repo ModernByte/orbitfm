@@ -101,12 +101,37 @@ pub(crate) struct SearchState {
     pub(crate) last_params: Option<SearchParams>,
     /// Сколько строк уже запрошено у API: offset следующей страницы.
     pub(crate) next_offset: u32,
-    /// Клик по пустому месту глобуса снял выделение страны, но список станций
-    /// остаётся: контекст поиска не трогаем, гаснет только подсветка.
-    pub(crate) highlight_hidden: bool,
     /// Номер изменения выборки: тепловая карта стран пересобирается по нему,
     /// а не по указателю `Vec`, который может переиспользоваться.
     pub(crate) revision: u64,
+}
+
+impl SearchState {
+    /// Отбрасывает незавершённый поиск: его ответ больше не применится.
+    fn invalidate(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
+        self.rx = None;
+        self.pending = false;
+        self.empty = false;
+        self.error = None;
+        self.has_more = false;
+        self.loading_more = false;
+        self.last_params = None;
+        self.next_offset = 0;
+    }
+
+    /// Снимает выбранную страну вместе с её выборкой: клик мимо стран гасит
+    /// подсветку, список и маркеры (ADR-0036, ревизия 2026-10-31). `true` —
+    /// страна действительно была выбрана.
+    fn clear_country(&mut self) -> bool {
+        if self.context.country.take().is_none() {
+            return false;
+        }
+        self.invalidate();
+        self.results.clear();
+        self.revision = self.revision.wrapping_add(1);
+        true
+    }
 }
 
 /// Результат фонового поиска с номером поколения. Список и маркеры строятся
@@ -133,7 +158,10 @@ impl super::Session {
         }
 
         if self.search.context.is_active() {
+            // Локальный фильтр действует только на видимый список: поиск из
+            // HUD обязан привести пользователя на вкладку результатов.
             self.country_filter.text = query;
+            self.library_tab = LibraryTab::Results;
             return;
         }
         if self.search.pending {
@@ -168,18 +196,22 @@ impl super::Session {
     pub(crate) fn start_country_search(&mut self, country: Country) {
         let iso_a2 = country.iso_a2.clone();
         self.search.context.activate_country(country);
-        self.search.highlight_hidden = false;
         self.country_filter.reset();
         self.begin_search(country_search_params(&iso_a2));
         self.search.country_query.clear();
     }
 
-    /// Снимает подсветку выбранной страны по клику мимо: контекст поиска и
-    /// список станций остаются до выбора другой страны.
-    pub(crate) fn hide_country_highlight(&mut self) {
-        if self.search.context.country.is_some() {
-            self.search.highlight_hidden = true;
+    /// Клик мимо маркера и стран снимает выбранную страну целиком: гаснет
+    /// подсветка, очищаются контекст, локальный фильтр, список и маркеры.
+    /// Панель возвращается к вводной подсказке (ADR-0036, ревизия 2026-10-31).
+    pub(crate) fn clear_country_selection(&mut self) {
+        if !self.search.clear_country() {
+            return;
         }
+        self.country_filter.reset();
+        self.markers.clear();
+        self.reveal_station = None;
+        self.library_tab = LibraryTab::Results;
     }
 
     pub(crate) fn start_genre_search(&mut self, tag: &str) {
@@ -204,26 +236,12 @@ impl super::Session {
             return;
         }
 
-        self.invalidate_search();
+        self.search.invalidate();
         self.search.results.clear();
         self.markers.clear();
         self.search.revision = self.search.revision.wrapping_add(1);
-        self.search.highlight_hidden = false;
         self.country_filter.reset();
         self.library_tab = LibraryTab::Results;
-    }
-
-    /// Отбрасывает незавершённый поиск: его ответ больше не применится.
-    fn invalidate_search(&mut self) {
-        self.search.generation = self.search.generation.wrapping_add(1);
-        self.search.rx = None;
-        self.search.pending = false;
-        self.search.empty = false;
-        self.search.error = None;
-        self.search.has_more = false;
-        self.search.loading_more = false;
-        self.search.last_params = None;
-        self.search.next_offset = 0;
     }
 
     fn begin_search(&mut self, params: SearchParams) {
@@ -568,6 +586,46 @@ mod tests {
         context.activate_country(germany());
         assert_eq!(context.mode, SearchMode::Country);
         assert!(context.genre.is_none(), "страна сбрасывает жанр");
+    }
+
+    #[test]
+    fn clearing_country_drops_context_results_and_pending_search() {
+        let mut search = SearchState {
+            pending: true,
+            error: Some("boom".to_owned()),
+            has_more: true,
+            loading_more: true,
+            next_offset: 100,
+            ..SearchState::default()
+        };
+        search.context.activate_country(germany());
+        search.results.push(sample_station());
+        let generation = search.generation;
+        let revision = search.revision;
+
+        assert!(search.clear_country());
+
+        assert!(search.context.country.is_none(), "страна снята");
+        assert!(search.results.is_empty(), "список страны очищен");
+        assert!(!search.pending && search.rx.is_none(), "поиск отброшен");
+        assert!(search.error.is_none());
+        assert!(!search.has_more && !search.loading_more);
+        assert_eq!(search.next_offset, 0);
+        assert!(search.generation > generation);
+        assert!(
+            search.revision > revision,
+            "тепловая карта пересобирается по ревизии"
+        );
+        assert!(!search.clear_country(), "повторный клик мимо — no-op");
+    }
+
+    #[test]
+    fn clearing_country_keeps_genre_context() {
+        let mut search = SearchState::default();
+        search.context.activate_genre("jazz".to_owned());
+
+        assert!(!search.clear_country(), "страны нет — нечего снимать");
+        assert_eq!(search.context.genre.as_deref(), Some("jazz"));
     }
 
     #[test]

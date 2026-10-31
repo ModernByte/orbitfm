@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OrbitFM</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main class="panel">
+    <header class="head">
+      <h1>OrbitFM</h1>
+      <span id="state" class="state" data-kind="connecting">connecting</span>
+    </header>
+
+    <p id="station" class="station">&mdash;</p>
+
+    <div class="volume">
+      <label for="volume" id="volume-label">Volume</label>
+      <input id="volume" type="range" min="0" max="100" step="1" value="0">
+    </div>
+
+    <div class="controls">
+      <button id="previous" data-command="previous" type="button">Previous</button>
+      <button id="playpause" data-command="playpause" type="button">Play/Pause</button>
+      <button id="next" data-command="next" type="button">Next</button>
+      <button id="stop" data-command="stop" type="button">Stop</button>
+      <button id="roulette" data-command="roulette" type="button">Roulette</button>
+      <button id="window" data-command="show" type="button">Show</button>
+      <button id="panel" data-command="panel" type="button">Panel</button>
+      <button id="overlay" data-command="overlay" type="button">Overlay</button>
+    </div>
+
+    <div class="row">
+      <label for="theme">Theme</label>
+      <select id="theme">
+        <option value="system">System</option>
+        <option value="dark">Dark</option>
+        <option value="light">Light</option>
+      </select>
+      <button id="settings" data-command="settings" type="button">Settings</button>
+    </div>
+
+    <p id="message" class="message" hidden></p>
+    <button id="retry" class="retry" type="button" hidden>Reconnect</button>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

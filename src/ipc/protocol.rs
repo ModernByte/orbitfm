@@ -86,6 +86,8 @@ pub enum IpcCommand {
     Status,
     /// `status --json`: машиночитаемый снимок для интеграций (ADR-0037).
     StatusJson,
+    /// `events`: поток снимков состояния NDJSON (ADR-0039).
+    Events,
     Quit,
     Volume {
         level: f64,
@@ -165,6 +167,10 @@ impl IpcCommand {
                     "status: ожидается --json, получено {other}"
                 ))),
             },
+            "events" => {
+                reject_extra_args(parts.next())?;
+                Ok(Self::Events)
+            }
             "playpause" => {
                 reject_extra_args(parts.next())?;
                 Ok(Self::PlayPause)
@@ -259,6 +265,7 @@ impl IpcCommand {
             Self::Stop => "stop".to_owned(),
             Self::Status => "status".to_owned(),
             Self::StatusJson => "status --json".to_owned(),
+            Self::Events => "events".to_owned(),
             Self::Quit => "quit".to_owned(),
             Self::Volume { level } => format!("volume {level}"),
             Self::ModeQuery => "mode".to_owned(),
@@ -304,6 +311,8 @@ pub enum IpcError {
     CommandTooLong,
     #[error("таймаут IPC: {0}")]
     Timeout(String),
+    #[error("сервер отклонил подписку: {0}")]
+    Subscription(String),
     #[error("не удалось определить путь сокета: {0}")]
     #[cfg_attr(
         windows,
@@ -333,6 +342,13 @@ mod tests {
         assert_eq!(IpcCommand::StatusJson.to_wire(), "status --json");
         assert!(IpcCommand::parse("status --xml").is_err());
         assert!(IpcCommand::parse("status --json extra").is_err());
+    }
+
+    #[test]
+    fn parses_events_subscription() {
+        assert_eq!(IpcCommand::parse("events").unwrap(), IpcCommand::Events);
+        assert_eq!(IpcCommand::Events.to_wire(), "events");
+        assert!(IpcCommand::parse("events now").is_err());
     }
 
     #[test]
@@ -464,6 +480,7 @@ mod tests {
                 mode: WindowModeArg::Listening,
             },
             IpcCommand::StatusJson,
+            IpcCommand::Events,
             IpcCommand::PlayPause,
             IpcCommand::Next,
             IpcCommand::Previous,

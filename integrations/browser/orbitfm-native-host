@@ -1,0 +1,3 @@
+#!/bin/sh
+# Запускается браузером через native messaging; кадры идут через stdin/stdout.
+exec @ORBITFM@ native-host

@@ -43,6 +43,9 @@ pub(crate) enum UiAction {
     SelectStation(Station),
     ToggleFavorite(Station),
     SelectCountry(Country),
+    /// Клик мимо маркера и стран: снять выбранную страну вместе со списком
+    /// и маркерами (ADR-0036, ревизия 2026-10-31).
+    ClearCountrySelection,
     SwitchMode(SearchMode),
     SelectGenre(String),
     RunSearch,

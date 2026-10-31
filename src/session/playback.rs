@@ -112,6 +112,9 @@ impl super::Session {
     pub(crate) fn select_station(&mut self, station: &Station) {
         self.selected_station = Some(station.stationuuid.clone());
         self.reveal_station = Some(station.stationuuid.clone());
+        // Локальный фильтр мог спрятать строку выбранной станции: клик по
+        // маркеру важнее фильтра, иначе прокрутка уйдёт в пустоту.
+        self.country_filter.reset();
         self.library_tab = LibraryTab::Results;
     }
 

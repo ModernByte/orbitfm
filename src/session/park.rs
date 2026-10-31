@@ -64,6 +64,8 @@ impl super::Session {
             }
             self.sync_media();
             self.sync_tray();
+            // Подписки `events` получают изменения и без окна (ADR-0039).
+            self.publish_status();
             if self.is_quitting() {
                 return ParkOutcome::Quit;
             }

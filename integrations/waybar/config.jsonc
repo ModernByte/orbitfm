@@ -1,0 +1,10 @@
+"custom/orbitfm": {
+    "exec": "@BAR_SCRIPT@ waybar",
+    "interval": 2,
+    "return-type": "json",
+    "tooltip": true,
+    "on-click": "@ORBITFM@ playpause",
+    "on-click-right": "@ORBITFM@ panel",
+    "on-scroll-up": "@ORBITFM@ volume-up",
+    "on-scroll-down": "@ORBITFM@ volume-down"
+}

@@ -11,6 +11,8 @@
 * [Варианты использования](08-Варианты-использования.md)
 * [Неполадки](09-Неполадки.md)
 * [Глоссарий](10-Глоссарий.md)
+* [Интеграции оболочек](11-Интеграции-оболочек.md)
+* [Браузерное расширение](12-Браузерное-расширение.md)
 
-Версия: `0.13.0-rc.2` · [Релизы](https://github.com/ModernByte/orbitfm/releases) ·
+Версия: `0.15.0-rc.1` · [Релизы](https://github.com/ModernByte/orbitfm/releases) ·
 [README](https://github.com/ModernByte/orbitfm/blob/main/README.md)

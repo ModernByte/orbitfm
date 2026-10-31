@@ -435,8 +435,10 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
    `GeoService::country_at_sphere_point`
    (`session.geo`). Попадание создаёт `UiAction::SelectCountry`; клик по
    океану или территории без валидного ISO-кода вызывает
-   `Session::hide_country_highlight`: подсветка гаснет, но список станций и
-   контекст поиска остаются до выбора другой страны. Тот же путь
+   `Session::clear_country_selection`: гаснут подсветка, контекст страны,
+   локальный фильтр, список и маркеры, а незавершённый запрос отбрасывается
+   (ADR-0036, ревизия 2026-10-31). Выделенная станция (`selected_station`)
+   сохраняется, разовый `reveal_station` — нет. Тот же путь
    используется для выбора из HUD. В режиме «Жанр» проверка страны отключена
    (`country_enabled = false`), поэтому клик по суше не меняет контекст.
 6. `apply_action` передаёт решение ядру: `Session::focus_country` (Core) —
@@ -472,7 +474,9 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
      клампятся в зону между `layout.hud`, `layout.transport` и панелью
      станций.
 
-Клик по океану или территории без валидного ISO-кода ничего не меняет. При
+Клик по океану или территории без валидного ISO-кода снимает выбранную страну
+целиком — подсветку, контекст, фильтр, список и маркеры
+(`Session::clear_country_selection`, ADR-0036, ревизия 2026-10-31). При
 `globe_ready = false` вместо глобуса рисуется заглушка `3D globe unavailable`, ввод
 игнорируется.
 
@@ -541,7 +545,7 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
   запускают `RadioBrowserClient::search` с `name`, `limit = 100`, `hide_broken = true`;
   выбранная страна/жанр при этом сбрасываются. Если контекст активен, поле поиска
   применяется локально к уже загруженному списку (`country_filter.text`), без сетевого
-  запроса. Запрос выполняется в tokio-задаче (`Session::begin_search`), результат приходит
+  запроса, и переключает вкладку на `Results` — иначе фильтр остался бы невидимым. Запрос выполняется в tokio-задаче (`Session::begin_search`), результат приходит
   через `mpsc` и будит GUI через `WakeHandle`.
 - Запрос всегда один: `Session::begin_search` не сужает выдачу фильтром
   `has_geo_info`, поэтому список полный, а маркеры — его подмножество с
@@ -592,9 +596,11 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
   `ui::country_map::CountryHeatCache`: тепловая карта стран пересобирается при
   смене выборки, прихода снимка мира или смены метрики; `generation` для этого
   не годится, потому что не меняется при завершении запроса.
-- `search.highlight_hidden` — клик мимо стран на глобусе снимает только
-  подсветку: контекст страны и список станций остаются, а следующий выбор
-  страны или поиск сбрасывает флаг.
+- Клик мимо маркера и стран снимает выбранную страну целиком:
+  `SearchState::clear_country` очищает `context.country`, результаты и
+  незавершённый запрос, `Session::clear_country_selection` добавляет сброс
+  `country_filter`, маркеров и `reveal_station` (ADR-0036, ревизия 2026-10-31).
+  Отдельного флага «подсветка скрыта, а список остался» больше нет.
 - HUD «Страна» вызывает `GeoService::search_countries` (до 6 подсказок) при каждом
   изменении запроса; Enter выбирает первую, клик — выбранную. Оба пути создают
   `UiAction::SelectCountry`, `Session::start_country_search` очищает `country_query` и

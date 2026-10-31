@@ -1,0 +1,5 @@
+bar {
+    # Замените существующий status_command или объедините с i3status:
+    status_command @BAR_SCRIPT@ swaybar
+    # Клики: ЛКМ — playpause, ПКМ — панель, колесо — громкость.
+}

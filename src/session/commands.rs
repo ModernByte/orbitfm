@@ -59,6 +59,8 @@ impl super::Session {
             }
             IpcCommand::Status => self.status_text(),
             IpcCommand::StatusJson => self.status_json(),
+            // Подписку обслуживает IPC-сервер: в очередь команд она не попадает.
+            IpcCommand::Events => "error events обслуживается IPC-сервером".to_owned(),
             IpcCommand::ModeQuery => format!("mode {}", self.window_mode().as_str()),
             IpcCommand::SetMode { mode } => {
                 self.set_window_mode((*mode).into());

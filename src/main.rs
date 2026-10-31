@@ -9,9 +9,11 @@ mod app;
 mod audio;
 mod geo;
 mod i18n;
+mod integration;
 mod ipc;
 mod library;
 mod media;
+mod native_host;
 mod render;
 mod services;
 mod session;
@@ -22,7 +24,7 @@ mod ui;
 use app::OrbitApp;
 use audio::AudioEngine;
 use geo::GeoService;
-use ipc::{IpcCommand, IpcError, IpcServer};
+use ipc::{IpcCommand, IpcError, IpcServer, StatusFeed};
 use library::StationLibrary;
 use media::MediaControls;
 use services::RadioBrowserClient;
@@ -50,6 +52,14 @@ OrbitFM — 3D Interactive Global Radio Player
   overlay              Показать/скрыть капсулу Overlay (CLI)
   status               Состояние приложения
   status --json        Состояние приложения в JSON (для интеграций)
+  events               Поток состояния NDJSON (подписка для интеграций)
+  integration status [цель]
+                       Состояние интеграций оболочек и баров
+  integration install <цель> [--force]
+                       Установить интеграцию в каталоги пользователя
+  integration uninstall <цель> [--force]
+                       Удалить файлы интеграции по квитанции
+  native-host          stdio-хост для расширений браузеров (служебная)
   mode [режим]         Текущий режим окна или focus/overlay/listening/panel
   play <uuid>          Воспроизвести станцию по UUID (Radio Browser)
   playpause            Пуск/пауза
@@ -76,14 +86,19 @@ OrbitFM — 3D Interactive Global Radio Player
 enum Invocation {
     Help,
     Version,
+    Integration(integration::Command),
+    NativeHost,
     Command { command: IpcCommand, explicit: bool },
 }
 
 fn main() -> Result<()> {
     init_tracing();
 
-    let Invocation::Command { command, explicit } = parse_invocation()? else {
-        return Ok(());
+    let (command, explicit) = match parse_invocation()? {
+        Invocation::Help | Invocation::Version => return Ok(()),
+        Invocation::Integration(command) => return integration::run(command),
+        Invocation::NativeHost => return native_host::run(),
+        Invocation::Command { command, explicit } => (command, explicit),
     };
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -116,6 +131,13 @@ fn parse_invocation() -> Result<Invocation> {
             println!("orbitfm {}", env!("CARGO_PKG_VERSION"));
             Ok(Invocation::Version)
         }
+        Some("integration") => integration::parse(&args[1..]).map(Invocation::Integration),
+        Some("native-host") => {
+            if args.len() > 1 {
+                bail!("native-host не принимает аргументов: его запускает браузер");
+            }
+            Ok(Invocation::NativeHost)
+        }
         _ => {
             let explicit = !args.is_empty();
             let wire = if explicit {
@@ -139,6 +161,19 @@ fn route_command(
     command: &IpcCommand,
     explicit: bool,
 ) -> Result<()> {
+    // Подписка живёт до отключения клиента, поэтому у неё отдельный путь:
+    // `send_to_existing` ждёт один ответ и закрыл бы поток (ADR-0039).
+    if matches!(command, IpcCommand::Events) {
+        return match runtime.block_on(IpcServer::subscribe_to_existing()) {
+            Ok(()) => Ok(()),
+            Err(IpcError::NotRunning) => bail!("OrbitFM не запущен"),
+            Err(err @ IpcError::SocketPath(_)) => {
+                Err(err).context("не удалось определить путь IPC-сокета")
+            }
+            Err(err) => Err(err).context("не удалось подписаться на события OrbitFM"),
+        };
+    }
+
     let wire = command.to_wire();
     match runtime.block_on(IpcServer::send_to_existing(&wire)) {
         Ok(response) => return handle_response(&response, explicit),
@@ -242,8 +277,10 @@ fn launch(runtime: &tokio::runtime::Runtime, command: &IpcCommand, explicit: boo
         }
     });
 
+    let status = StatusFeed::new();
+    let status_rx = status.subscribe();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-    let mut server_task = runtime.spawn(server.run(wake.waker(), shutdown_rx));
+    let mut server_task = runtime.spawn(server.run(wake.waker(), status_rx, shutdown_rx));
 
     let services = AppServices {
         audio,
@@ -253,6 +290,7 @@ fn launch(runtime: &tokio::runtime::Runtime, command: &IpcCommand, explicit: boo
         tray,
         library,
         settings,
+        status,
         runtime: runtime.handle().clone(),
     };
     // При незапущенном экземпляре `mode <режим>` задаёт режим первого окна (ADR-0021 п. 5),

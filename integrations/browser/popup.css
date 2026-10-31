@@ -1,0 +1,170 @@
+:root {
+  color-scheme: light dark;
+  --bg: #11151c;
+  --panel: #171d27;
+  --text: #e8edf6;
+  --muted: #93a0b4;
+  --line: #2a3444;
+  --button: #222c3b;
+  --button-hover: #2d3a4d;
+  --accent: #62a8ff;
+  --danger: #ff8d8d;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #eef2f8;
+    --panel: #ffffff;
+    --text: #1a2433;
+    --muted: #5c6b80;
+    --line: #d8e0ec;
+    --button: #eef3fa;
+    --button-hover: #e1e9f5;
+    --accent: #1f6fdb;
+    --danger: #b3261e;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.panel {
+  width: 320px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--panel);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 16px;
+  letter-spacing: 0.01em;
+}
+
+.state {
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.state[data-kind="playing"] {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.state[data-kind="error"],
+.state[data-kind="offline"] {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.station {
+  margin: 0;
+  min-height: 2.4em;
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.volume {
+  display: grid;
+  gap: 4px;
+}
+
+label {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.controls {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+button,
+select {
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--button);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled),
+select:hover:not(:disabled) {
+  background: var(--button-hover);
+}
+
+button:disabled,
+select:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+button:focus-visible,
+select:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+#playpause {
+  font-weight: 600;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.row select {
+  flex: 1;
+}
+
+.row button {
+  flex: 1;
+}
+
+.message {
+  margin: 0;
+  color: var(--danger);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.retry {
+  width: 100%;
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
