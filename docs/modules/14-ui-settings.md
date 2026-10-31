@@ -104,7 +104,7 @@ About }`; порядок навигации — `ALL`, иконки — `Moon`, 
   (`UiAction::ToggleSpectrum`), число полос (`dropdown` из `VIZ_BAR_CHOICES`,
   недоступен при выключенном визуализаторе), `switch_row` «Разрешить
   HTTP-обложки» (`UiAction::SetArtworkAllowHttp`, подсказка о подмене по пути,
-  ADR-0025 ред. 3).
+  ADR-0025 ред. 4).
 - **Language** — `dropdown` по `Language::ALL`: `System` и 16 языков с нативными
   именами, пояснение `language_hint`.
 - **Audio** — громкость на всю ширину карточки (`widgets::volume_slider_width`)

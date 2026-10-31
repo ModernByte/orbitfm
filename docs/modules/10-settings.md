@@ -31,7 +31,7 @@ ADR-0028.
 | `viz_bars` | 16, 24, 32 (иное притягивается к ближайшему) | 24 |
 | `volume` | `0.0..=1.0`, вне диапазона клампится при загрузке и записи | `0.7` |
 | `visualizer_enabled` | визуализатор и аудиокольцо | `true` |
-| `artwork_allow_http` | разрешить favicon по HTTP, если HTTPS недоступен (ADR-0025 ред. 3) | `false` |
+| `artwork_allow_http` | разрешить favicon по HTTP, если HTTPS недоступен (ADR-0025 ред. 4) | `false` |
 | `help_visible` | видимость карточки управления глобусом; `?` в HUD, тумблер окна настроек и `Esc` пишут выбор (ADR-0036) | `true` |
 | `motion` | `off`, `low`, `normal`, `high` | `normal` |
 | `motion_style` | `auto`, `soft-pulse`, `groove-sway`, `bass-drop`, `ambient-drift`, `sparkle-twitch`, `beat-march` | `auto` |
@@ -100,7 +100,7 @@ $HOME/.config/orbitfm/settings.json   (если XDG_CONFIG_HOME не задан/
   дискретный ввод, который пишет сразу (ADR-0031 § 8).
 - Тумблер «Разрешить HTTP-обложки» (`artwork_allow_http`, категория «Внешний
   вид») сохраняет настройку и сразу переключает политику фетчера через
-  `ArtworkFetcher::set_allow_http` (общий `AtomicBool`, ADR-0025 ред. 3).
+  `ArtworkFetcher::set_allow_http` (общий `AtomicBool`, ADR-0025 ред. 4).
   Включение дополнительно возвращает в очередь favicon, помеченные `Failed`,
   поэтому станции с HTTP-only обложкой подхватывают иконку без перезапуска и без
   повторного поиска.

@@ -108,7 +108,7 @@ playwire вызывает колбэк в рабочем потоке D-Bus. К�
 
 Метаданные берутся из текущей станции: `name` → title, `favicon` → artUrl,
 `url_resolved` → `xesam:url`. Оба URL публикуются только после гейта
-`Session::publish_gate` (ADR-0025 ред. 3): ярус 1 синхронно
+`Session::publish_gate` (ADR-0025 ред. 4): ярус 1 синхронно
 (`services::publishable`), затем готовый вердикт яруса 2 из bounded-кэша
 (64 записи, TTL 60 с, stale-while-revalidate). Нет вердикта — поле уходит
 пустым, резолв считается фоном и пробуждает кадр; истёкший вердикт не мигает,

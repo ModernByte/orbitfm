@@ -97,10 +97,10 @@ pub(crate) struct OrbitApp<'a> {
   `entries ≤ 256` и `in_flight ≤ 8` — инварианты: вытеснение ступенчатое, результат
   сверяется с поколением записи, слот освобождает RAII-страховка (ADR-0016 ред. 2).
   `retry_failed` возвращает в очередь `Failed`-записи после включения
-  HTTP-обложек — политика фетчера переключается на лету (ADR-0025 ред. 3).
+  HTTP-обложек — политика фетчера переключается на лету (ADR-0025 ред. 4).
 - сетевых полей у `OrbitApp` больше нет: исходящий fetch артворка живёт в
   `src/services/artwork.rs` вместе с клиентом, policy-проверками и бюджетами
-  (ADR-0016 ред. 2, ADR-0025 ред. 3); в `app.rs` остаются только очередь задач и
+  (ADR-0016 ред. 2, ADR-0025 ред. 4); в `app.rs` остаются только очередь задач и
   приём результатов.
 - `toast` — стек до трёх сообщений по 3 секунды; переходы слоёв — ADR-0032.
 - `transitions` — `Transitions` (ADR-0032): один вызов `frame` на кадр считает
@@ -117,7 +117,7 @@ pub(crate) struct OrbitApp<'a> {
 `empty`, `error`, каналы поиска и рулетки), `markers`, `library_tab`, `country_filter`,
 `panel_open`, `settings_open`, `show_help`, `pending_volume`, `window: WindowState`
 (видимость, размер, `intent`, `quitting`), `publish_gate: PublishGate` (вердикт
-яруса 2 для MPRIS/SMTC/Now Playing, ADR-0025 ред. 3),
+яруса 2 для MPRIS/SMTC/Now Playing, ADR-0025 ред. 4),
 `notices`, `wake`, `commands`, `audio_events`. `visualizer_enabled` — пользовательский
 переключатель визуализатора и кольца; это сохранённая настройка
 (`Settings::visualizer_enabled`, по умолчанию `true`), из которой `Session::new` его и
@@ -367,7 +367,7 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
    `detail` ошибки добавляется как есть (ADR-0030).
 3. `poll_favicons` — `FaviconCache::begin_frame`/`poll`, `take_fetches` → задачи
    `ArtworkFetcher::fetch` в `session.runtime` (проверки цели, MIME и размера — внутри
-   `services::artwork`, ADR-0025 ред. 3), декод в `catch_unwind`, слот страхуется
+   `services::artwork`, ADR-0025 ред. 4), декод в `catch_unwind`, слот страхуется
    `FetchGuard`, repaint через 120 мс, пока кэш занят; по закрытии партии — один
    `debug!` со счётчиками.
 4. Размер окна: `inner_rect` из ввода → `Session::set_window_size([w, h])`.

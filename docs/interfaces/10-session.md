@@ -77,7 +77,7 @@ Application Core — слой, который переживает закрыт�
 | `visible_queue` | `pub(crate) fn visible_queue(&self) -> Vec<Station>` | Снапшот текущего видимого списка — очередь prev/next |
 | `visible_queue_len` | `pub(crate) fn visible_queue_len(&self) -> usize` | Число станций в очереди без клонирования; питает `can_go_next`/`can_go_previous` MPRIS |
 | `play_relative` | `pub(crate) fn play_relative(&mut self, step: i8)` | Шаг по снапшоту с циклом; сбой запуска — `NoticeKey::StationWithoutUrl` или `NoticeKey::PlaybackFailed` |
-| `sync_media` | `pub(crate) fn sync_media(&mut self)` | Публикует состояние в MPRIS; URL проходят гейт `publish_gate` (ярус 1 + вердикт яруса 2, ADR-0025 ред. 3), сам вызов синхронен |
+| `sync_media` | `pub(crate) fn sync_media(&mut self)` | Публикует состояние в MPRIS; URL проходят гейт `publish_gate` (ярус 1 + вердикт яруса 2, ADR-0025 ред. 4), сам вызов синхронен |
 | `toggle_favorite` | `pub(crate) fn toggle_favorite(&mut self, station: &Station)` | Избранное; ошибка — `notify_error_detail(NoticeKey::FavoritesNotSaved, …)` |
 | `clear_history` | `pub(crate) fn clear_history(&mut self)` | Очистка истории; успех — `NoticeKey::HistoryCleared`, ошибка — `NoticeKey::ClearHistoryFailed` |
 | `focus_country` | `pub(crate) fn focus_country(&mut self, country: &Country)` | Перелёт камеры к центру страны |
@@ -95,7 +95,7 @@ Application Core — слой, который переживает закрыт�
 | `set_language` | `pub(crate) fn set_language(&mut self, language: Language) -> Result<(), String>` | Сохраняет язык, тут же разворачивает `System` в `self.language` и вызывает `sync_tray()`: меню и строки UI меняются без перезапуска (ADR-0030) |
 | `set_viz_bars` | `pub(crate) fn set_viz_bars(&mut self, bars: u8) -> Result<(), String>` | Число столбцов визуализатора (ADR-0019) |
 | `set_visualizer_enabled` | `pub(crate) fn set_visualizer_enabled(&mut self, enabled: bool) -> Result<(), String>` | Пользовательский переключатель визуализатора и кольца: сохраняет настройку (сбой — `NoticeKey::VisualizerNotSaved` и `warn!`), затем меняет аудио-анализ по `analysis_needed`, при отказе движка поле откатывается к его значению (ADR-0028, ADR-0031) |
-| `set_artwork_allow_http` | `pub(crate) fn set_artwork_allow_http(&mut self, allow: bool) -> Result<(), String>` | Сохраняет opt-in HTTP-обложек (ADR-0025 ред. 3); саму политику фетчера и повтор `Failed` переключает presentation-слой через `ArtworkFetcher::set_allow_http` |
+| `set_artwork_allow_http` | `pub(crate) fn set_artwork_allow_http(&mut self, allow: bool) -> Result<(), String>` | Сохраняет opt-in HTTP-обложек (ADR-0025 ред. 4); саму политику фетчера и повтор `Failed` переключает presentation-слой через `ArtworkFetcher::set_allow_http` |
 | `set_motion` | `pub(crate) fn set_motion(&mut self, motion: MotionReactivity) -> Result<(), String>` | Сохраняет реактивность движения и пересчитывает необходимость анализа |
 | `set_motion_style` | `pub(crate) fn set_motion_style(&mut self, style: MotionStyle) -> Result<(), String>` | Сохраняет характер движения (`Auto` или один из шести стилей) |
 | `set_allow_flips` | `pub(crate) fn set_allow_flips(&mut self, allow: bool) -> Result<(), String>` | Сохраняет разрешение переворотов камеры (ADR-0028) |

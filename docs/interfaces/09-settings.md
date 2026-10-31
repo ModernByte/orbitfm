@@ -105,7 +105,7 @@ pub struct Settings {
     pub volume: f64,
     /// Видимость визуализатора и аудиокольца (ADR-0031).
     pub visualizer_enabled: bool,
-    /// Разрешить favicon по HTTP, если HTTPS недоступен (ADR-0025 ред. 3).
+    /// Разрешить favicon по HTTP, если HTTPS недоступен (ADR-0025 ред. 4).
     pub artwork_allow_http: bool,
     /// Видимость карточки управления глобусом; по умолчанию включена (ADR-0036).
     pub help_visible: bool,
@@ -173,7 +173,7 @@ pub fn default_path() -> Result<PathBuf, SettingsError>;
 | `set_viz_bars` | Приводит число к ближайшему из `VIZ_BAR_CHOICES` и сохраняет |
 | `set_volume` | Клампит в `0.0..=1.0` (non-finite → `DEFAULT_VOLUME`), сравнение по `f64::EPSILON`, сохраняет только при изменении |
 | `set_visualizer_enabled` | Включает или выключает визуализатор и аудиокольцо; сохраняет только при изменении |
-| `set_artwork_allow_http` | Разрешает или запрещает favicon по HTTP; значение по умолчанию `false`, сохраняет только при изменении. Применение к сетевой политике — `ArtworkFetcher::set_allow_http` (ADR-0025 ред. 3) |
+| `set_artwork_allow_http` | Разрешает или запрещает favicon по HTTP; значение по умолчанию `false`, сохраняет только при изменении. Применение к сетевой политике — `ArtworkFetcher::set_allow_http` (ADR-0025 ред. 4) |
 | `set_help_visible` | Включает или выключает карточку управления глобусом; значение по умолчанию `true`, сохраняет только при изменении. Старый ключ `help_seen` игнорируется (ADR-0036) |
 | `set_motion` / `set_reduce_motion` | Меняет реактивность движения и Reduce motion; сохраняет только при изменении |
 | `set_motion_style` | Меняет характер движения (`Auto` или один из шести стилей); сохраняет только при изменении |
