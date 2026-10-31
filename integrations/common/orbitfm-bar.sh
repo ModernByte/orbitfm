@@ -151,9 +151,21 @@ tooltip_json() {
     fi
 }
 
+polybar_escape() {
+    printf '%s' "$1" | sed 's/%/%%/g'
+}
+
 mode_plain() {
     refresh || true
     bar_text
+    printf '\n'
+}
+
+mode_polybar() {
+    refresh || true
+    # Polybar трактует %{...} как управляющие последовательности: имя станции
+    # из общей базы не должно менять цвета и отступы чужой панели.
+    polybar_escape "$(bar_text)"
     printf '\n'
 }
 
@@ -172,7 +184,8 @@ mode_i3blocks() {
         5) "$ORBITFM" volume-down >/dev/null 2>&1 ;;
     esac
     refresh || true
-    bar_text
+    # i3bar по умолчанию разбирает full_text как Pango-разметку.
+    xml_escape "$(bar_text)"
     printf '\n'
 }
 
@@ -248,7 +261,8 @@ mode_swaybar() {
 }
 
 case $MODE in
-    text | polybar) mode_plain ;;
+    text) mode_plain ;;
+    polybar) mode_polybar ;;
     waybar) mode_waybar ;;
     i3blocks) mode_i3blocks ;;
     swaybar) mode_swaybar ;;

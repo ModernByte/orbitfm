@@ -81,7 +81,7 @@ tray-icon = { version = "0.26.1", default-features = false, optional = true }
 tempfile = "3"
 
 [lints.clippy]
-# Подмножество `pedantic`, а не группа целиком: на ~33k LOC blanket-включение
+# Подмножество `pedantic`, а не группа целиком: на ~44k LOC blanket-включение
 # даёт лавину, которая блокирует точечные правки. Уровень `warn`, а CI поднимает
 # их в ошибки флагом `-D warnings` (docs/CONTRIBUTING.md).
 match_same_arms = "warn"

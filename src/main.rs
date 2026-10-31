@@ -18,6 +18,9 @@ mod render;
 mod services;
 mod session;
 mod settings;
+mod station_filter;
+mod storage;
+mod text;
 mod tray;
 mod ui;
 

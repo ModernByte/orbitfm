@@ -235,6 +235,10 @@ fn create_mpv() -> Result<Mpv, AudioError> {
         init.set_option("idle", "yes")?;
         init.set_option("vid", "no")?;
         init.set_option("network-timeout", "10")?;
+        // Никаких пользовательских скриптов и yt-dlp: поток запускается только
+        // по проверенному URL, внешние экстракторы не должны его переписывать.
+        init.set_option("load-scripts", "no")?;
+        init.set_option("ytdl", "no")?;
         Ok(())
     })
     .map_err(|err| AudioError::Init(err.to_string()))?;

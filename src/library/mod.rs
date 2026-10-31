@@ -139,20 +139,10 @@ impl StationLibrary {
         let Some(path) = &self.path else {
             return Ok(());
         };
-        let directory = path
-            .parent()
-            .ok_or_else(|| LibraryError::Write(format!("нет каталога для {}", path.display())))?;
-        fs::create_dir_all(directory)
-            .map_err(|err| LibraryError::Write(format!("{}: {err}", directory.display())))?;
         let json = serde_json::to_vec_pretty(&self.data)
             .map_err(|err| LibraryError::Write(err.to_string()))?;
-        let tmp = path.with_file_name(TMP_FILE_NAME);
-        fs::write(&tmp, json)
-            .map_err(|err| LibraryError::Write(format!("{}: {err}", tmp.display())))?;
-        fs::rename(&tmp, path).map_err(|err| {
-            let _ = fs::remove_file(&tmp);
-            LibraryError::Write(format!("{}: {err}", path.display()))
-        })
+        crate::storage::write_atomic(path, TMP_FILE_NAME, &json)
+            .map_err(|err| LibraryError::Write(format!("{}: {err}", path.display())))
     }
 }
 

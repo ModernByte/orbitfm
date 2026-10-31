@@ -967,6 +967,13 @@ impl<'a> OrbitApp<'a> {
                 StationStartError::NoUrl => {
                     self.error_toast(ctx, &NoticeKey::StationWithoutUrl, None);
                 }
+                StationStartError::PrivateUrl => {
+                    self.error_toast(
+                        ctx,
+                        &NoticeKey::PlaybackFailed,
+                        Some("адрес станции не публичный"),
+                    );
+                }
                 StationStartError::Audio(detail) => {
                     self.error_toast(ctx, &NoticeKey::PlaybackFailed, Some(detail.as_str()));
                 }

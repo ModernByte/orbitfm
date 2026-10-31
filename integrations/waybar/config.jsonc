@@ -2,6 +2,7 @@
     "exec": "@BAR_SCRIPT@ waybar",
     "interval": 2,
     "return-type": "json",
+    "escape": true,
     "tooltip": true,
     "on-click": "@ORBITFM@ playpause",
     "on-click-middle": "@ORBITFM@ stop",

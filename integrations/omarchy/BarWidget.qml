@@ -13,9 +13,17 @@ BarWidget {
 
     property var status: ({})
 
-    readonly property string stationName: status.station ? status.station.name : ""
+    readonly property string stationName: status.station ? plain(status.station.name) : ""
     readonly property string idleLabel: status.ui ? status.ui.nothing_playing : "OrbitFM"
     readonly property int volumePercent: Math.round((status.volume || 0) * 100)
+
+    // Имя и страна приходят из общей базы станций: угловые скобки не должны
+    // трактоваться как разметка ни в надписи, ни в подсказке.
+    function plain(value) {
+        if (value === undefined || value === null)
+            return ""
+        return String(value).replace(/</g, "‹").replace(/>/g, "›")
+    }
 
     readonly property string stateGlyph: {
         switch (status.state || "stopped") {
@@ -45,7 +53,7 @@ BarWidget {
             return displayText
         var parts = []
         if (status.station.country)
-            parts.push(status.station.country)
+            parts.push(plain(status.station.country))
         if (status.station.bitrate > 0)
             parts.push(status.station.bitrate + " kbps")
         parts.push(volumePercent + "%")

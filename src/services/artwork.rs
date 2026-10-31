@@ -253,15 +253,22 @@ impl ArtworkFetcher {
     }
 
     /// Один хопп: хопповая валидация → резолв → адресная проверка → запрос.
+    /// Таймаут общий на весь обмен: медленное тело не должно пережить бюджет
+    /// (ADR-0025, п. 2).
     async fn step(&self, url: &Url, remaining: Duration) -> Result<Hop, FetchCause> {
         let addresses = self.resolve(url, remaining).await?;
         let client = self.client_for(url, &addresses)?;
         let timeout = REQUEST_TIMEOUT.min(remaining);
-        let response = tokio::time::timeout(timeout, client.get(url.clone()).send())
-            .await
-            .map_err(|_| FetchCause::Timeout)?
-            .map_err(|_| FetchCause::Transport)?;
-        inspect(response).await
+        tokio::time::timeout(timeout, async {
+            let response = client
+                .get(url.clone())
+                .send()
+                .await
+                .map_err(|_| FetchCause::Transport)?;
+            inspect(response).await
+        })
+        .await
+        .map_err(|_| FetchCause::Timeout)?
     }
 
     /// Редирект принимается только если новый URL проходит ярус 1; при
@@ -361,9 +368,12 @@ fn shared_client() -> Result<Client, FetchCause> {
     builder()?.build().map_err(|_| FetchCause::Transport)
 }
 
+/// Системные прокси отключены: иначе хост-прокси резолвил бы имя сам и
+/// обходил привязку адресов и SSRF-политику (ADR-0025).
 fn builder() -> Result<ClientBuilder, FetchCause> {
     Ok(Client::builder()
         .user_agent(USER_AGENT)
+        .no_proxy()
         .redirect(redirect::Policy::none()))
 }
 

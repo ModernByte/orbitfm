@@ -20,7 +20,7 @@ PlasmoidItem {
     property var volumeControl: null
 
     readonly property string playbackState: status.state || "stopped"
-    readonly property string stationName: status.station ? status.station.name : ""
+    readonly property string stationName: status.station ? plain(status.station.name) : ""
     readonly property string idleLabel: status.ui && status.ui.nothing_playing ? status.ui.nothing_playing : "OrbitFM"
     readonly property string displayText: stationName.length > 0 ? stationName : idleLabel
     readonly property int volumePercent: Math.round((status.volume || 0) * 100)
@@ -37,7 +37,7 @@ PlasmoidItem {
         if (status.station.source === "stream")
             parts.push("stream")
         else if (status.station.country)
-            parts.push(status.station.country)
+            parts.push(plain(status.station.country))
         if (status.station.bitrate > 0)
             parts.push(status.station.bitrate + " kbps")
         return parts.join(" · ")
@@ -47,7 +47,7 @@ PlasmoidItem {
         if (!hasStation || !status.station.tags)
             return ""
         return status.station.tags.split(",")
-            .map(function(tag) { return tag.trim() })
+            .map(function(tag) { return plain(tag.trim()) })
             .filter(function(tag) { return tag.length > 0 })
             .slice(0, 2)
             .join(" · ")
@@ -64,6 +64,14 @@ PlasmoidItem {
     toolTipSubText: stationName.length > 0
         ? stationName + "\n" + uiText("volume") + " · " + volumePercent + "%"
         : displayText
+
+    // Автор текста — станция из общей базы: угловые скобки не должны выглядеть
+    // разметкой ни в AutoText-надписях, ни в подсказке оболочки.
+    function plain(value) {
+        if (value === undefined || value === null)
+            return ""
+        return String(value).replace(/</g, "‹").replace(/>/g, "›")
+    }
 
     function accentFor(name) {
         switch (name) {
@@ -169,6 +177,7 @@ PlasmoidItem {
                     Layout.fillWidth: true
                     Layout.maximumWidth: root.maximumTextWidth
                     text: root.displayText
+                    textFormat: Text.PlainText
                     color: Kirigami.Theme.textColor
                     elide: Text.ElideRight
                     font.pixelSize: Kirigami.Theme.defaultFont.pixelSize
@@ -221,6 +230,7 @@ PlasmoidItem {
                     Text {
                         anchors.centerIn: parent
                         text: root.monogram
+                        textFormat: Text.PlainText
                         color: root.accentTone
                         font.bold: true
                         font.pixelSize: 18
@@ -234,6 +244,7 @@ PlasmoidItem {
                     Text {
                         Layout.fillWidth: true
                         text: root.hasStation ? root.stationName : root.idleLabel
+                        textFormat: Text.PlainText
                         color: Kirigami.Theme.textColor
                         font.bold: true
                         font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 1.15
@@ -244,6 +255,7 @@ PlasmoidItem {
                         Layout.fillWidth: true
                         visible: text.length > 0
                         text: root.stationMeta
+                        textFormat: Text.PlainText
                         color: Kirigami.Theme.disabledTextColor
                         font.pixelSize: Kirigami.Theme.smallFont.pixelSize
                         elide: Text.ElideRight
@@ -253,6 +265,7 @@ PlasmoidItem {
                         Layout.fillWidth: true
                         visible: text.length > 0
                         text: root.stationTags
+                        textFormat: Text.PlainText
                         color: Kirigami.Theme.disabledTextColor
                         font.pixelSize: Kirigami.Theme.smallFont.pixelSize
                         elide: Text.ElideRight

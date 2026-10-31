@@ -8,9 +8,9 @@ use std::fmt;
 use crate::audio::{AudioEvent, PlaybackState};
 use crate::geo::Country;
 use crate::media::{MediaCommand, PlaybackInfo};
-use crate::services::{RadioError, Station};
-use crate::ui::single_line;
-use crate::ui::station_filter::filtered_results;
+use crate::services::{RadioError, Station, StationSource, publishable};
+use crate::station_filter::filtered_results;
+use crate::text::single_line;
 
 use super::LibraryTab;
 use super::WINDOW_TITLE;
@@ -21,6 +21,8 @@ use super::notice::NoticeKey;
 pub(crate) enum StationStartError {
     /// В записи станции пустой `url_resolved`.
     NoUrl,
+    /// Станция из общей базы ведёт на приватный или служебный адрес.
+    PrivateUrl,
     /// Отказ аудио-ядра; техническая подробность не переводится.
     Audio(String),
 }
@@ -29,6 +31,7 @@ impl fmt::Display for StationStartError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NoUrl => f.write_str("station has no url_resolved"),
+            Self::PrivateUrl => f.write_str("station url is not public"),
             Self::Audio(err) => f.write_str(err),
         }
     }
@@ -87,6 +90,13 @@ impl super::Session {
         let url = station.url_resolved.trim().to_owned();
         if url.is_empty() {
             return Err(StationStartError::NoUrl);
+        }
+        // Запись Radio Browser — общая база, а не явный выбор пользователя:
+        // её ссылка не должна уводить mpv на loopback или в LAN (ADR-0025).
+        // Внешний поток (`url:`) приходит из явного `play-url` и проверяется
+        // собственной политикой импорта (ADR-0040).
+        if station.source == StationSource::Radio && publishable(&url).is_none() {
+            return Err(StationStartError::PrivateUrl);
         }
 
         self.runtime
@@ -367,6 +377,10 @@ impl super::Session {
         if let Err(err) = self.start_station(queue[next].clone()) {
             match err {
                 StationStartError::NoUrl => self.notify_error(NoticeKey::StationWithoutUrl),
+                StationStartError::PrivateUrl => self.notify_error_detail(
+                    NoticeKey::PlaybackFailed,
+                    "адрес станции не публичный".to_owned(),
+                ),
                 StationStartError::Audio(detail) => {
                     self.notify_error_detail(NoticeKey::PlaybackFailed, detail);
                 }

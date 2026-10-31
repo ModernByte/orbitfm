@@ -34,9 +34,9 @@ use crate::media::MediaControls;
 use crate::render::GlobeCamera;
 use crate::services::{RadioBrowserClient, Station};
 use crate::settings::{AccentColor, Language, MotionReactivity, SettingsStore, ThemeMode};
+use crate::station_filter::CountryFilterState;
+use crate::text::single_line;
 use crate::tray::{TrayHandle, TraySnapshot};
-use crate::ui::single_line;
-use crate::ui::station_filter::CountryFilterState;
 
 use companion::CompanionSearchState;
 use markers::GlobeMarker;
@@ -592,16 +592,18 @@ struct StatusStation {
 
 impl StatusStation {
     fn new(station: &Station, favorite: bool) -> Self {
+        // Метаданные недоверенные: управляющие символы не должны дойти ни до
+        // терминала (bar-виджеты), ни до QML/JS панелей.
         Self {
-            uuid: station.stationuuid.clone(),
-            name: station.name.clone(),
-            country: station.country.clone(),
-            countrycode: station.countrycode.clone(),
-            tags: station.tags.clone(),
-            favicon: station.favicon.clone(),
-            homepage: station.homepage.clone(),
+            uuid: single_line(&station.stationuuid),
+            name: single_line(&station.name),
+            country: single_line(&station.country),
+            countrycode: single_line(&station.countrycode),
+            tags: single_line(&station.tags),
+            favicon: station.favicon.as_deref().map(single_line),
+            homepage: station.homepage.as_deref().map(single_line),
             bitrate: station.bitrate,
-            codec: station.codec.clone(),
+            codec: single_line(&station.codec),
             source: station.source.as_str(),
             favorite,
         }
@@ -960,6 +962,30 @@ mod tests {
         assert_eq!(value["language"], "en");
         assert_eq!(value["can"]["previous"], true);
         assert_eq!(value["can"]["next"], true);
+    }
+
+    #[test]
+    fn status_json_sanitizes_untrusted_metadata() {
+        let mut station = markers::sample_station();
+        station.name = "Evil\u{1B}[2JFM".to_owned();
+        station.tags = "jazz\u{202E}rock".to_owned();
+        station.country = "Germany\u{7F}".to_owned();
+        let payload = build_status_payload(
+            &PlaybackState::Playing,
+            0.3,
+            true,
+            WindowMode::Focus,
+            Some(&station),
+            ThemeMode::System,
+            AccentColor::Green,
+            Language::English,
+            true,
+            true,
+        );
+        let value = status_value(&payload);
+        assert_eq!(value["station"]["name"], "Evil [2JFM");
+        assert_eq!(value["station"]["tags"], "jazz rock");
+        assert_eq!(value["station"]["country"], "Germany");
     }
 
     #[test]

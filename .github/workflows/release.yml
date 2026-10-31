@@ -4,10 +4,10 @@ on:
   push:
     tags: ["v*"]
 
-# contents: write — ровно минимум для softprops/action-gh-release (создание
-# релиза и загрузка ассетов). Ничего шире не выдаём.
+# Права записи нужны только job `release` (создание релиза и загрузка
+# ассетов); сборка артефактов работает с contents: read.
 permissions:
-  contents: write
+  contents: read
 
 # Релиз не отменяем: cancel-in-progress между загрузкой ассетов и публикацией
 # оставил бы висячий draft/недоопубликованный релиз.
@@ -322,6 +322,8 @@ jobs:
     name: Опубликовать релиз
     needs: [version, linux, windows, macos]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

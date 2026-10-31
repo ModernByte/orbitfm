@@ -5,8 +5,8 @@
 //! вызовы `Session`, а наружу публикуется [`TraySnapshot`].
 
 use crate::audio::PlaybackState;
+use crate::text::single_line;
 use crate::tray::{TrayCommand, TraySnapshot, TrayStation, VOLUME_STEP};
-use crate::ui::single_line;
 
 use super::notice::NoticeKey;
 

@@ -8,8 +8,6 @@ use tokio::net::windows::named_pipe::{
 
 use super::protocol::IpcError;
 
-const PIPE_PATH: &str = r"\\.\pipe\orbitfm";
-
 pub(super) type Stream = NamedPipeServer;
 pub(super) type ClientStream = NamedPipeClient;
 
@@ -22,8 +20,26 @@ pub(super) struct Listener {
 /// На Windows отдельного ресурса для очистки нет: pipe исчезает при закрытии handle.
 pub(super) struct SocketGuard;
 
+/// Имя канала включает хеш профиля пользователя: два пользователя одной
+/// машины не должны бороться за один экземпляр. Хеш, а не сам путь, — потому
+/// что имя канала не может содержать обратный слэш.
 pub(super) fn default_path() -> Result<PathBuf, IpcError> {
-    Ok(PathBuf::from(PIPE_PATH))
+    let identity = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("USERNAME"))
+        .unwrap_or_else(|| OsString::from("orbitfm"));
+    Ok(PathBuf::from(format!(
+        r"\\.\pipe\orbitfm-{:016x}",
+        fnv1a64(identity.to_string_lossy().as_bytes())
+    )))
+}
+
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
 }
 
 pub(super) async fn bind(path: &Path) -> Result<(Listener, SocketGuard), IpcError> {
@@ -74,6 +90,12 @@ mod tests {
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
     use super::*;
+
+    #[test]
+    fn fnv1a64_matches_known_vectors() {
+        assert_eq!(fnv1a64(b""), 0xcbf2_9ce4_8422_2325);
+        assert_eq!(fnv1a64(b"a"), 0xaf63_dc4c_8601_ec8c);
+    }
 
     #[tokio::test]
     async fn named_pipe_round_trips_a_line() {

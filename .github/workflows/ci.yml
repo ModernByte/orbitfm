@@ -95,6 +95,45 @@ jobs:
       - name: cargo deny check
         run: bash packaging/cargo-deny-check.sh
 
+  # Заявленный `rust-version = "1.95"` проверяется не словом, а компилятором:
+  # без этого job MSRV дрейфует молча, стоит зависимости поднять требования.
+  msrv:
+    name: MSRV 1.95
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Install system dependencies
+        run: |
+          sudo timeout 120 apt-get update \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=30 \
+            -o Acquire::ForceIPv4=true \
+            || echo "apt-get update не завершился вовремя; используются текущие списки"
+          sudo apt-get install -y --no-install-recommends \
+            libgl1-mesa-dev \
+            libmpv-dev \
+            libwayland-dev \
+            libx11-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxkbcommon-dev \
+            libxrandr-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: 1.95.0
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: msrv
+
+      - name: Check on minimum supported Rust
+        run: cargo check --all-targets --locked
+
   macos:
     name: macOS (build/test)
     runs-on: macos-latest
@@ -191,6 +230,15 @@ jobs:
         env:
           RUSTFLAGS: -L native=${{ github.workspace }}\build\mpv-lib
         run: cargo build --release --locked
+
+      # Тесты на Windows шли только проверкой компиляции: платформенный
+      # контракт (pipe, пути, MPRIS-заглушки) должен исполняться, иначе
+      # «покрыт автотестами на windows-latest» — неправда.
+      - name: Test
+        shell: pwsh
+        env:
+          RUSTFLAGS: -L native=${{ github.workspace }}\build\mpv-lib
+        run: cargo test --all-targets --locked
 
       - name: Stage application and runtime DLLs
         shell: msys2 {0}

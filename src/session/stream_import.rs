@@ -101,7 +101,7 @@ fn stream_station(resolved: &ResolvedStream) -> Station {
     let name = resolved
         .title
         .as_deref()
-        .map(crate::ui::single_line)
+        .map(crate::text::single_line)
         .filter(|title| !title.is_empty())
         .or_else(|| file_name(&resolved.url))
         .unwrap_or_else(|| FALLBACK_NAME.to_owned());

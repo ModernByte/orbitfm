@@ -519,8 +519,8 @@ Sans Arabic. Это зависимость от окружения, а не де
 - **Как выйти полностью.** Закрытие окна — не выход. Выход: «Выход» в меню трея, «Выход» в секции «Окно» настроек
   или `orbitfm quit`.
 - **Где настройки и библиотека.** Логика одна для всех ОС: сначала XDG-переменные, иначе домашний каталог;
-  IPC-транспорт — `$XDG_RUNTIME_DIR/orbitfm.sock` на Linux, `\\.\pipe\orbitfm` на Windows, сокет в `$TMPDIR` на
-  macOS.
+  IPC-транспорт — `$XDG_RUNTIME_DIR/orbitfm.sock` на Linux, `\\.\pipe\orbitfm-<хеш профиля>` на Windows,
+  `$TMPDIR/orbitfm-<uid>/orbitfm.sock` на macOS.
 
   ```text
   $XDG_CONFIG_HOME/orbitfm/settings.json   (обычно ~/.config/orbitfm/settings.json)
@@ -539,11 +539,17 @@ Sans Arabic. Это зависимость от окружения, а не де
 Полная модель угроз — в [SECURITY.md](SECURITY.md); здесь то, что полезно знать, не открывая документ.
 
 - **Управлять плеером может любой процесс вашего пользователя.** Команды идут по локальному транспорту: сокет
-  `$XDG_RUNTIME_DIR/orbitfm.sock` с правами `0600` на Linux, `\\.\pipe\orbitfm` на Windows. Разграничения прав нет
+  `$XDG_RUNTIME_DIR/orbitfm.sock` с правами `0600` на Linux, `$TMPDIR/orbitfm-<uid>/orbitfm.sock` на macOS,
+  `\\.\pipe\orbitfm-<хеш профиля>` на Windows. Каталог сокета принадлежит пользователю и закрыт от остальных;
+  имя канала Windows своё у каждого профиля. Разграничения прав между процессами одного пользователя нет
   и быть не может — это приложение пользовательской сессии, а не сервис. Никаких сетевых портов OrbitFM не
   слушает вообще.
+- **Станции — недоверенные данные.** Имя, страна и теги из общей базы очищаются от управляющих
+  последовательностей и двунаправленных символов, а панели и бары получают их без права разметки: имя
+  станции не может перекрасить чужой бар или подменить строку терминала.
 - **Наружу уходит только необходимое:** запросы к зеркалам Radio Browser (поиск, карточка станции), счётчик кликов
-  провайдера при запуске станции, сам поток и адрес обложки. Телеметрии, аналитики, фоновых опросов и обновлений
+  провайдера при запуске станции, сам поток и адрес обложки; резолв ссылки по явному `play-url` читает плейлист или
+  страницу, но не больше 1 МиБ. Телеметрии, аналитики, фоновых опросов и обновлений
   «с собой» нет; User-Agent — `OrbitFM/1.0 (ModernByte; Linux; Rust)`.
 - **Обложки грузятся по политике, а не как попало.** Ссылка `favicon` приходит из чужого каталога, поэтому адрес
   проходит два яруса: синтаксический (приватные и служебные диапазоны, `localhost`, `*.local`, `*.internal`,
@@ -702,8 +708,9 @@ ModernByte собирал OrbitFM из чужой хорошей работы и
 [docs/VERSIONMAP.md](docs/VERSIONMAP.md), изменения — в [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 **(ж) Сообщить о нарушении прав или о проблеме.** Единственный канал проекта — GitHub:
-[задачи репозитория](https://github.com/ModernByte/orbitfm/issues) (шаблоны: баг, предложение, ADR). Отдельного
-контакта для правообладателей и SECURITY-адреса в репозитории нет.
+[задачи репозитория](https://github.com/ModernByte/orbitfm/issues) (шаблоны: баг, предложение, ADR).
+Об уязвимостях сообщайте приватно, как описано в [SECURITY.md](SECURITY.md), раздел 11; отдельного
+контакта для правообладателей нет.
 
 ### Disclaimer (English)
 
@@ -737,8 +744,8 @@ belong to their owners; mentioning them implies no affiliation, endorsement or s
 `settings.json`, `library.json`, the IPC protocol and window-mode behaviour is not guaranteed.
 
 **(g) Reporting infringement or problems.** The project's only channel is GitHub:
-[repository issues](https://github.com/ModernByte/orbitfm/issues). There is no dedicated rights-holder contact and
-no SECURITY contact.
+[repository issues](https://github.com/ModernByte/orbitfm/issues). Report vulnerabilities privately as
+described in [SECURITY.md](SECURITY.md), section 11; there is no dedicated rights-holder contact.
 
 This text is not legal advice; consult your own lawyer if any part is unclear where you live.
 

@@ -269,7 +269,7 @@ pub(crate) fn search_frame(
 }
 
 fn clip(value: &str, limit: usize) -> String {
-    let line = crate::ui::single_line(value);
+    let line = crate::text::single_line(value);
     if line.chars().count() <= limit {
         line
     } else {

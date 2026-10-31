@@ -1,8 +1,13 @@
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::ErrorKind;
-use std::os::unix::fs::{FileTypeExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+#[cfg(all(unix, not(target_os = "linux")))]
+use std::fs::DirBuilder;
+#[cfg(all(unix, not(target_os = "linux")))]
+use std::os::unix::fs::DirBuilderExt;
 
 use tokio::net::{UnixListener, UnixStream};
 use tokio::time::timeout;
@@ -31,28 +36,46 @@ pub(super) async fn connect(path: &Path) -> std::io::Result<ClientStream> {
 }
 
 /// Путь сокета по ADR-0005.
+///
+/// На всех Unix каталог сокета обязан принадлежать текущему пользователю и
+/// быть закрытым от группы и остальных: иначе чужой процесс мог бы заранее
+/// создать сокет или lock-файл. На Linux это XDG_RUNTIME_DIR, на остальных
+/// Unix — приватный подкаталог `orbitfm-<uid>` в TMPDIR (сам TMPDIR может быть
+/// общедоступным `/tmp`).
 pub(super) fn default_path() -> Result<PathBuf, IpcError> {
     #[cfg(target_os = "linux")]
     {
         let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
             .ok_or_else(|| IpcError::SocketPath("переменная XDG_RUNTIME_DIR не задана".into()))?;
         let dir = PathBuf::from(runtime_dir);
-        validate_runtime_dir(&dir)?;
+        validate_socket_dir(&dir, "XDG_RUNTIME_DIR")?;
         Ok(dir.join(SOCKET_FILE))
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(all(unix, not(target_os = "linux")))]
     {
-        let dir = std::env::var_os("TMPDIR").map_or_else(std::env::temp_dir, PathBuf::from);
+        let base = std::env::var_os("TMPDIR").map_or_else(std::env::temp_dir, PathBuf::from);
+        if !base.is_absolute() {
+            return Err(IpcError::SocketPath(format!(
+                "TMPDIR должен быть абсолютным путём: {}",
+                base.display()
+            )));
+        }
+        let dir = base.join(format!("orbitfm-{}", current_uid()));
+        match DirBuilder::new().mode(0o700).create(&dir) {
+            Ok(()) => {}
+            Err(err) if err.kind() == ErrorKind::AlreadyExists => {}
+            Err(err) => return Err(IpcError::Io(err)),
+        }
+        validate_socket_dir(&dir, "каталог сокета")?;
         Ok(dir.join(SOCKET_FILE))
     }
 }
 
-#[cfg(target_os = "linux")]
-fn validate_runtime_dir(dir: &Path) -> Result<(), IpcError> {
+fn validate_socket_dir(dir: &Path, label: &str) -> Result<(), IpcError> {
     if !dir.is_absolute() {
         return Err(IpcError::SocketPath(format!(
-            "XDG_RUNTIME_DIR должен быть абсолютным путём: {}",
+            "{label} должен быть абсолютным путём: {}",
             dir.display()
         )));
     }
@@ -60,7 +83,14 @@ fn validate_runtime_dir(dir: &Path) -> Result<(), IpcError> {
     let metadata = fs::metadata(dir).map_err(IpcError::Io)?;
     if !metadata.is_dir() {
         return Err(IpcError::SocketPath(format!(
-            "XDG_RUNTIME_DIR не является каталогом: {}",
+            "{label} не является каталогом: {}",
+            dir.display()
+        )));
+    }
+
+    if metadata.uid() != current_uid() {
+        return Err(IpcError::SocketPath(format!(
+            "{label} принадлежит другому пользователю: {}",
             dir.display()
         )));
     }
@@ -68,12 +98,18 @@ fn validate_runtime_dir(dir: &Path) -> Result<(), IpcError> {
     let mode = metadata.permissions().mode() & 0o777;
     if mode & 0o077 != 0 {
         return Err(IpcError::SocketPath(format!(
-            "XDG_RUNTIME_DIR должен иметь права 0700: {} ({mode:o})",
+            "{label} должен иметь права 0700: {} ({mode:o})",
             dir.display()
         )));
     }
 
     Ok(())
+}
+
+/// Effective UID текущего процесса: каталог сокета — только свой.
+fn current_uid() -> u32 {
+    // SAFETY: `geteuid` не имеет предусловий и не может отказать.
+    unsafe { libc::geteuid() }
 }
 
 /// Занимает сокет. «Зомби»-файл от завершившегося процесса удаляется.
@@ -210,5 +246,36 @@ impl Drop for SocketGuard {
                 "не удалось удалить файл сокета"
             ),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dir_with_mode(mode: u32) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(mode)).expect("chmod");
+        dir
+    }
+
+    #[test]
+    fn socket_dir_must_be_private_and_owned() {
+        let public = dir_with_mode(0o755);
+        assert!(
+            validate_socket_dir(public.path(), "TESTDIR").is_err(),
+            "каталог, доступный группе и остальным, не годится"
+        );
+
+        let private = dir_with_mode(0o700);
+        validate_socket_dir(private.path(), "TESTDIR").expect("0700 и владелец — свой");
+    }
+
+    #[test]
+    fn socket_dir_must_be_absolute() {
+        assert!(matches!(
+            validate_socket_dir(Path::new("relative/dir"), "TESTDIR"),
+            Err(IpcError::SocketPath(_))
+        ));
     }
 }

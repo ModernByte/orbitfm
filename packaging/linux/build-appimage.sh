@@ -24,22 +24,37 @@ export APPIMAGE_EXTRACT_AND_RUN=1
 LINUXDEPLOY="${LINUXDEPLOY:-$TOOLS_DIR/linuxdeploy.AppImage}"
 APPIMAGETOOL="${APPIMAGETOOL:-$TOOLS_DIR/appimagetool.AppImage}"
 
+# continuous-ассеты обновляются без смены URL, поэтому скачанный инструмент
+# сверяется с зафиксированным дайджестом. Обновление хеша — осознанная правка
+# вместе с проверкой нового AppImage; свои сборки задаются через env.
+LINUXDEPLOY_SHA256="${LINUXDEPLOY_SHA256:-8aea8da0f7f7039d2a2cecb14657d752a222a5e1d3825caeef186c82f751cdd1}"
+APPIMAGETOOL_SHA256="${APPIMAGETOOL_SHA256:-ac7fd56feade6002c2f57db39587113275d351fce911a5fbb29ea84cd0666cab}"
+
 ensure_tool() {
     local path="$1"
     local url="$2"
-    if [[ -x "$path" ]]; then
-        return
+    local expected="$3"
+    if [[ ! -x "$path" ]]; then
+        mkdir -p "$(dirname "$path")"
+        echo "скачивание $(basename "$path")" >&2
+        curl -fL --retry 3 --connect-timeout 20 -o "$path" "$url"
+        chmod +x "$path"
     fi
-    mkdir -p "$(dirname "$path")"
-    echo "скачивание $(basename "$path")" >&2
-    curl -fL --retry 3 --connect-timeout 20 -o "$path" "$url"
-    chmod +x "$path"
+    # Проверяется и закэшированный инструмент: иначе подмена файла в каталоге
+    # tools/ обходила бы пиннинг.
+    if ! echo "$expected  $path" | sha256sum --check --quiet; then
+        echo "$(basename "$path"): SHA256 не совпал с зафиксированным" >&2
+        echo "  обновите дайджест осознанно или задайте LINUXDEPLOY_SHA256/APPIMAGETOOL_SHA256" >&2
+        exit 1
+    fi
 }
 
 ensure_tool "$LINUXDEPLOY" \
-    "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage"
+    "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage" \
+    "$LINUXDEPLOY_SHA256"
 ensure_tool "$APPIMAGETOOL" \
-    "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+    "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage" \
+    "$APPIMAGETOOL_SHA256"
 
 cargo build --release --locked
 

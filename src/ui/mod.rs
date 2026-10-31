@@ -17,7 +17,6 @@ pub(crate) mod orbit_ring;
 pub(crate) mod overlays;
 pub(crate) mod palette;
 pub(crate) mod settings_panel;
-pub(crate) mod station_filter;
 pub(crate) mod station_panel;
 pub(crate) mod station_row;
 pub(crate) mod toast;
@@ -33,6 +32,8 @@ use crate::settings::{AccentColor, Language, MotionReactivity, MotionStyle, Them
 
 /// Режим поиска выбирает ядро, UI только показывает переключатель.
 pub(crate) use crate::session::search::SearchMode;
+/// Нормализация недоверенного текста — общая с IPC и треем (`crate::text`).
+pub(crate) use crate::text::single_line;
 
 /// Действие, которое UI просит выполнить у Application Core.
 #[derive(Debug, Clone)]
@@ -108,10 +109,6 @@ pub(crate) fn playback_label(language: Language, state: &PlaybackState) -> Strin
     }
 }
 
-pub(crate) fn single_line(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
 pub(crate) fn country_label(country: &Country) -> String {
     let name = single_line(&country.name);
     let name = if name.is_empty() {
@@ -176,11 +173,6 @@ mod tests {
         assert_eq!(truncate("коротко", 10), "коротко");
         assert_eq!(truncate("abcdef", 4), "abc…");
         assert_eq!(truncate("абвгде", 4), "абв…");
-    }
-
-    #[test]
-    fn single_line_collapses_whitespace() {
-        assert_eq!(single_line("Radio\n  Nova\tLive"), "Radio Nova Live");
     }
 
     #[test]

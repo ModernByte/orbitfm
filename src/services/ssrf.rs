@@ -132,6 +132,10 @@ fn is_public_ipv6(address: Ipv6Addr) -> bool {
     if segments[0] == 0x0100 {
         return false;
     }
+    // 64:ff9b:1::/48 — local-use NAT64: синтезирует адреса внутренней сети.
+    if segments[0] == 0x0064 && segments[1] == 0xff9b && segments[2] == 0x0001 {
+        return false;
+    }
     if let Some(inner) = v4_inner(address) {
         return is_public_ipv4(inner);
     }
@@ -139,8 +143,9 @@ fn is_public_ipv6(address: Ipv6Addr) -> bool {
     !address.octets()[..10].iter().all(|byte| *byte == 0)
 }
 
-/// Вложенный IPv4: `::ffff:0:0/96` (v4-mapped) и `2002::/16` (6to4).
-/// Рекурсия — ровно один уровень: вложенный адрес классифицируется как v4.
+/// Вложенный IPv4: `::ffff:0:0/96` (v4-mapped), `2002::/16` (6to4) и
+/// `64:ff9b::/96` (well-known NAT64). Рекурсия — ровно один уровень: вложенный
+/// адрес классифицируется как v4.
 fn v4_inner(address: Ipv6Addr) -> Option<Ipv4Addr> {
     if let Some(mapped) = address.to_ipv4_mapped() {
         return Some(mapped);
@@ -148,6 +153,14 @@ fn v4_inner(address: Ipv6Addr) -> Option<Ipv4Addr> {
     let octets = address.octets();
     if octets[0] == 0x20 && octets[1] == 0x02 {
         return Some(Ipv4Addr::new(octets[2], octets[3], octets[4], octets[5]));
+    }
+    // 64:ff9b::/96: последние 32 бита — транслируемый IPv4. Иначе literal
+    // `[64:ff9b::a00:1]` на NAT64-сети достучался бы до 10.0.0.1 в обход
+    // яруса 1.
+    if octets[..4] == [0x00, 0x64, 0xff, 0x9b] && octets[4..12].iter().all(|byte| *byte == 0) {
+        return Some(Ipv4Addr::new(
+            octets[12], octets[13], octets[14], octets[15],
+        ));
     }
     None
 }
@@ -283,14 +296,27 @@ mod tests {
             "100::1",
             "2002:7f00:1::",
             "2002:0808:0808::",
+            "64:ff9b::7f00:1",
+            "64:ff9b::a00:1",
+            "64:ff9b:1::1",
+            "64:ff9b:1:ffff::1",
+            "64:ff9b::808:808",
         ] {
             let verdict = is_public_destination(ip(text));
-            let expected = matches!(text, "::ffff:8.8.8.8" | "2002:0808:0808::");
+            let expected = matches!(
+                text,
+                "::ffff:8.8.8.8" | "2002:0808:0808::" | "64:ff9b::808:808"
+            );
             assert_eq!(
                 verdict, expected,
                 "{text}: публичность {verdict} не {expected}"
             );
         }
+        assert_eq!(
+            verdict("https://[64:ff9b::a00:1]/icon.png"),
+            Err(PolicyReject::PrivateAddress),
+            "NAT64-literal с приватным вложенным адресом"
+        );
     }
 
     #[test]

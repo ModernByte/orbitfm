@@ -23,8 +23,8 @@
 | `protocol.rs` | Разбор/сериализация команд, лимиты, ошибки |
 | `client.rs` | Клиент: одноразовый запрос и долгоживущая подписка `events` |
 | `events.rs` | `StatusFeed`, конверт NDJSON, keepalive и бюджеты подписок (ADR-0039) |
-| `socket.rs` | Unix-транспорт: путь сокета, bind, проверка «зомби», права `0600`, удаление при Drop |
-| `pipe.rs` | Windows-транспорт: named pipe `\\.\pipe\orbitfm`, первый экземпляр и accept-loop |
+| `socket.rs` | Unix-транспорт: путь сокета, проверка каталога (владелец + `0700` на всех Unix), bind, проверка «зомби», права `0600`, удаление при Drop |
+| `pipe.rs` | Windows-транспорт: персональный named pipe `\\.\pipe\orbitfm-<хеш профиля>`, первый экземпляр и accept-loop |
 | `server.rs` | Accept-loop, очередь запросов, ответы через oneshot |
 
 ## 3. Публичный интерфейс
@@ -116,12 +116,14 @@ pub enum IpcCommand {
 | Платформа | Механизм              | Адрес | Статус |
 |-----------|-----------------------|-------|--------|
 | Linux     | Unix Domain Socket    | `$XDG_RUNTIME_DIR/orbitfm.sock` | Реализовано |
-| macOS     | Unix Domain Socket    | `$TMPDIR/orbitfm.sock` (fallback) | Реализовано, CI-тесты |
-| Windows   | Named Pipe            | `\\.\pipe\orbitfm` | Реализовано, CI-компиляция |
+| macOS     | Unix Domain Socket    | `$TMPDIR/orbitfm-<uid>/orbitfm.sock` | Реализовано, CI-тесты |
+| Windows   | Named Pipe            | `\\.\pipe\orbitfm-<fnv1a64 хеш профиля>` | Реализовано, CI-компиляция |
 
 Требования к сокету:
 
-- `XDG_RUNTIME_DIR` обязателен на Linux, должен быть абсолютным каталогом с правами `0700`;
+- `XDG_RUNTIME_DIR` обязателен на Linux, должен быть абсолютным каталогом с правами `0700`,
+  принадлежащим эффективному UID; на прочих Unix каталог `$TMPDIR/orbitfm-<uid>`
+  создаётся с `0700` и проверяется на владельца и group/other-биты;
   при нарушении — `IpcError::SocketPath`
 - права на сокет `0600` выставляются сразу после bind
 - рядом создаётся lock-файл `orbitfm.lock`; эксклюзивная блокировка удерживается на время

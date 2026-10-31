@@ -2,9 +2,9 @@
 
 **Проект:** OrbitFM  
 **Организация:** ModernByte (https://github.com/ModernByte)  
-**Версия документа:** 0.3.0-draft  
-**Статус:** Черновик  
-**Дата:** 2026-10-24  
+**Версия документа:** 0.16  
+**Статус:** Актуально  
+**Дата:** 2026-10-31  
 **Авторы:** Юрий Анатольевич (code_warlord), ModernByte Architecture  
 
 ---
@@ -79,6 +79,9 @@ egui.
 | `session::park` | Припаркованный цикл `select!`: IPC, MPRIS, трей, аудио, ответ рулетки |
 | `session::tray` | Исполнение команд трея и публикация `TraySnapshot` (ADR-0020) |
 | `session::markers` | Агрегация станций с координатами в маркеры глобуса |
+| `session::companion` | Изолированный поиск попапа: поколения, отмена, кадры `search` (ADR-0038, ADR-0039) |
+| `session::stream_import` | `play-url`: отложенный ответ, резолв в tokio, синтетическая станция `url:` (ADR-0040) |
+| `session::publish_gate` | Вердикт ярусов 1–2 для обложки перед публикацией в MPRIS/SMTC (ADR-0025) |
 
 `src/tray/` — доменный сервис SNI-трея: отдельный `std::thread`, процедурная
 иконка и витрина меню; бизнес-логику он не содержит и лишь переводит клики в
@@ -97,10 +100,10 @@ egui.
 | Данные радиостанций    | Radio Browser API                | Сообщество, бесплатно, DNS-discovery                        |
 | Геопространственные данные | geo + geojson                 | Экосистема GeoRust, Point-in-Polygon                        |
 | Медиа-кнопки / MPRIS   | playwire                         | Кроссплатформенный API; Linux — MPRIS v2 через zbus         |
-| Избранное и история    | serde_json + XDG                 | Небольшой JSON в `$XDG_DATA_HOME`, атомарная запись (ADR-0013) |
-| Темы и акцент          | serde_json + XDG                 | Настройки оформления в `$XDG_CONFIG_HOME`, атомарная запись (ADR-0014) |
+| Избранное и история    | serde_json + XDG                 | Небольшой JSON в `$XDG_DATA_HOME`, атомарная и durable запись: `sync_all` + rename + fsync каталога (ADR-0013 ред. 2) |
+| Темы и акцент          | serde_json + XDG                 | Настройки оформления в `$XDG_CONFIG_HOME`, та же запись через `src/storage.rs` (ADR-0014, ADR-0031 ред. 2) |
 | UX «Orbital Desk»      | egui + существующий render/geo   | Focus-раскладка, режимы Country/GlobalGenre, контур страны; без новых зависимостей в MVP (ADR-0015) |
-| Favicon-аватары        | reqwest + image (JPEG/PNG/WebP)  | Асинхронный кэш `FaviconCache` в presentation-слое, сетевой путь — в `services::artwork` с политикой цели в два яруса; публикация обложки наружу ждёт вердикта яруса 2 в `session::publish_gate`; ICO и SVG отклоняются (ADR-0016 ред. 2, ADR-0025 ред. 3) |
+| Favicon-аватары        | reqwest + image (JPEG/PNG/WebP)  | Асинхронный кэш `FaviconCache` в presentation-слое, сетевой путь — в `services::artwork` с политикой цели в два яруса; публикация обложки наружу ждёт вердикта яруса 2 в `session::publish_gate`; ICO и SVG отклоняются (ADR-0016 ред. 2, ADR-0025 ред. 4) |
 | Флаги стран            | epaint `color_fonts` + системный Noto Color Emoji | Цветной флаг-эмодзи в тултипе глобуса; feature включается прямой зависимостью, деградация без шрифта (ADR-0017) |
 | Интеграция с Noctalia  | plugin.toml + Luau               | docs.noctalia.dev                                           |
 | Иконка в системном трее | ksni (SNI/StatusNotifierItem)  | Прямая работа с D-Bus без Qt; опциональная фича `tray` (ADR-0020) |
@@ -125,9 +128,11 @@ egui.
 - Flatpak для Linux x86_64: runtime 25.08, libmpv/libass/libplacebo из исходников,
   vendored cargo-исходники (ADR-0011)
 - Исходная сборка: нативный бинарник для Linux (x86_64)
-- CI: Linux (`fmt`/`clippy`/тесты), macOS (сборка, тесты и release с libmpv из
-  Homebrew), Windows (`fmt`/`clippy`); отдельные джобы собирают MSI (MSYS2 +
-  WiX 5) и DMG (`dylibbundler` + ad-hoc подпись) и публикуют артефакты
+- CI: Linux (`fmt`/`clippy`/тесты), MSRV 1.95, `cargo deny` и еженедельная
+  перепроверка адвизори, macOS (сборка, тесты и release с libmpv из Homebrew),
+  Windows (`fmt`/`clippy`, тесты в MSI-job); отдельные джобы собирают MSI (MSYS2
+  + WiX 5), DMG (`dylibbundler` + ad-hoc подпись) и `.plasmoid` для Plasma 6,
+  затем публикуют артефакты
 - Не реализовано: aarch64 Linux, рантайм-проверка SMTC на Windows и Now Playing
   на macOS; установщики не подписаны сертификатами и не нотаризованы
 - Плагин Noctalia распространяется отдельным каталогом или через каталог плагинов

@@ -9,7 +9,7 @@ use tracing::warn;
 
 use crate::geo::Country;
 use crate::services::{RadioError, SearchParams, Station};
-use crate::ui::single_line;
+use crate::text::single_line;
 
 use super::LibraryTab;
 use super::markers::build_markers;

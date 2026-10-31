@@ -3,18 +3,24 @@
 //! Пользователь вставляет адрес страницы, плейлиста или файла, а модуль
 //! доводит его до воспроизводимого `http(s)`-адреса: разбирает `.m3u`/`.pls`,
 //! вытаскивает `og:audio`/`<audio>`/`<source>` из HTML. HLS не поддерживается
-//! mpv-конфигурацией OrbitFM и отклоняется до воспроизведения. LAN разрешён:
-//! команду запускает только явное действие пользователя, поэтому SSRF-политика
-//! обложек здесь сознательно не применяется.
+//! mpv-конфигурацией OrbitFM и отклоняется до воспроизведения.
+//!
+//! LAN разрешён, потому что команду запускает явное действие пользователя:
+//! если исходная цель локальная, строгая политика не включается. Но публичная
+//! цель не может увести импорт во внутреннюю сеть редиректом, записью
+//! плейлиста или `og:audio` — для неё каждый следующий хопп проверяется как
+//! ярус 2 обложек (ADR-0040, ред. 2).
 
 use std::collections::{HashMap, HashSet};
+use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
 
 use reqwest::header::{CONTENT_LENGTH, CONTENT_TYPE, LOCATION};
 use reqwest::{Client, Response, redirect};
-use url::Url;
+use url::{Host, Url};
 
 use super::USER_AGENT;
+use super::ssrf;
 
 /// Общий бюджет резолва: сервер отвечает клиенту за 10 с, диалог — за 15 с.
 pub(crate) const RESOLVE_BUDGET: Duration = Duration::from_secs(8);
@@ -30,6 +36,8 @@ const MAX_PLAYLIST_LEVELS: usize = 2;
 const MAX_PAGE_HOPS: usize = 3;
 /// Записей, которые просматриваются в плейлисте.
 const MAX_PLAYLIST_ENTRIES: usize = 20;
+/// Бюджет DNS-проверки хоппа в строгом режиме.
+const DNS_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Разрешённый внешний поток: воспроизводимый адрес и метаданные.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,6 +78,8 @@ pub(crate) enum StreamError {
     PlaylistDepth,
     #[error("цикл в плейлисте или странице")]
     PlaylistCycle,
+    #[error("ссылка ведёт во внутреннюю сеть")]
+    PrivateTarget,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,10 +105,14 @@ async fn resolve_inner(input: &str) -> Result<ResolvedStream, StreamError> {
 
     let client = Client::builder()
         .user_agent(USER_AGENT)
+        .no_proxy()
         .redirect(redirect::Policy::none())
         .timeout(REQUEST_TIMEOUT)
         .build()
         .map_err(|err| StreamError::Network(err.to_string()))?;
+    // Публичная цель — строгий режим: все последующие хоппы обязаны остаться
+    // публичными. Локальная цель (явный LAN-адрес) строгого режима не включает.
+    let strict = ensure_public(&current).await.is_ok();
     let started = Instant::now();
     let mut title = None;
     let mut redirects = 0;
@@ -119,7 +133,7 @@ async fn resolve_inner(input: &str) -> Result<ResolvedStream, StreamError> {
         }
 
         let (final_url, response) =
-            fetch_following(&client, current.clone(), &mut redirects).await?;
+            fetch_following(&client, current.clone(), &mut redirects, strict).await?;
         validate(&final_url)?;
         let content_type = header(&response, CONTENT_TYPE);
         let kind = classify(content_type.as_deref(), &final_url);
@@ -243,13 +257,19 @@ fn validate(url: &Url) -> Result<(), StreamError> {
 }
 
 /// Ручной цикл редиректов: `reqwest` не следует `Location` сам, чтобы каждый
-/// новый адрес прошёл [`validate`].
+/// новый адрес прошёл [`validate`]. В строгом режиме перед запросом
+/// проверяется и адресное назначение — публичная страница не должна
+/// редиректить импорт на loopback или в LAN (ADR-0040, ред. 2).
 async fn fetch_following(
     client: &Client,
     mut url: Url,
     redirects: &mut usize,
+    strict: bool,
 ) -> Result<(Url, Response), StreamError> {
     loop {
+        if strict {
+            ensure_public(&url).await?;
+        }
         let response = client
             .get(url.clone())
             .send()
@@ -273,6 +293,34 @@ async fn fetch_following(
         validate(&next)?;
         url = next;
     }
+}
+
+/// Ярус 2 для строгого режима: резолвит хост и требует, чтобы **все** адреса
+/// были публичными. IP-literal не ходит в DNS. Ошибка сети тоже закрывает
+/// импорт: без резолва нельзя утверждать, что цель публична.
+async fn ensure_public(url: &Url) -> Result<(), StreamError> {
+    let port = url.port_or_known_default().ok_or(StreamError::InvalidUrl)?;
+    let addresses: Vec<SocketAddr> = match url.host() {
+        Some(Host::Ipv4(address)) => vec![SocketAddr::new(IpAddr::V4(address), port)],
+        Some(Host::Ipv6(address)) => vec![SocketAddr::new(IpAddr::V6(address), port)],
+        Some(Host::Domain(name)) => {
+            let authority = format!("{name}:{port}");
+            let lookup = tokio::time::timeout(DNS_TIMEOUT, tokio::net::lookup_host(&authority))
+                .await
+                .map_err(|_| StreamError::Timeout)?
+                .map_err(|err| StreamError::Network(err.to_string()))?;
+            lookup.collect()
+        }
+        None => return Err(StreamError::InvalidUrl),
+    };
+    if addresses.is_empty()
+        || !addresses
+            .iter()
+            .all(|address| ssrf::is_public_destination(address.ip()))
+    {
+        return Err(StreamError::PrivateTarget);
+    }
+    Ok(())
 }
 
 fn request_error(err: &reqwest::Error) -> StreamError {
@@ -881,6 +929,54 @@ mod tests {
             StreamError::PlaylistDepth
         );
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn strict_mode_refuses_private_targets_before_connecting() {
+        let client = Client::builder()
+            .user_agent(USER_AGENT)
+            .no_proxy()
+            .redirect(redirect::Policy::none())
+            .timeout(REQUEST_TIMEOUT)
+            .build()
+            .unwrap();
+        // Порт 9 закрыт: до сети дело дойти не должно.
+        let mut redirects = 0;
+        let target = Url::parse("http://127.0.0.1:9/live.mp3").unwrap();
+        assert_eq!(
+            fetch_following(&client, target, &mut redirects, true)
+                .await
+                .unwrap_err(),
+            StreamError::PrivateTarget
+        );
+    }
+
+    #[tokio::test]
+    async fn publicity_check_handles_public_and_private_literals() {
+        let url = |value: &str| Url::parse(value).unwrap();
+        assert!(
+            ensure_public(&url("https://93.184.216.34/live.mp3"))
+                .await
+                .is_ok(),
+            "публичный literal не требует DNS"
+        );
+        assert_eq!(
+            ensure_public(&url("http://127.0.0.1/live"))
+                .await
+                .unwrap_err(),
+            StreamError::PrivateTarget
+        );
+        assert_eq!(
+            ensure_public(&url("http://[64:ff9b::a00:1]/live"))
+                .await
+                .unwrap_err(),
+            StreamError::PrivateTarget,
+            "NAT64 с приватным вложенным адресом"
+        );
+        assert_eq!(
+            ensure_public(&url("http://[::1]/live")).await.unwrap_err(),
+            StreamError::PrivateTarget
+        );
     }
 
     #[test]
