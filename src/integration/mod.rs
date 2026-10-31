@@ -1379,8 +1379,12 @@ fn set_mode(_path: &Path, _mode: u32) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Установка интеграций — только Linux: на других ОС `install_one` законно
+    // отказывает, поэтому установочные тесты и их помощники не компилируются там.
+    #[cfg(target_os = "linux")]
     use tempfile::TempDir;
 
+    #[cfg(target_os = "linux")]
     fn test_layout(dir: &TempDir) -> Layout {
         Layout {
             data_home: dir.path().join("data"),
@@ -1390,10 +1394,12 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "linux")]
     fn fake_binary() -> PathBuf {
         PathBuf::from("/opt/OrbitFM/orbitfm")
     }
 
+    #[cfg(target_os = "linux")]
     fn assert_extension_version(value: &serde_json::Value) {
         let version = value.as_str().expect("version string");
         assert!(
@@ -1450,6 +1456,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn installs_assets_and_receipt() {
         let dir = TempDir::new().expect("temp dir");
         let layout = test_layout(&dir);
@@ -1488,6 +1495,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn gnome_extension_ships_stylesheet() {
         let dir = TempDir::new().expect("temp dir");
         let layout = test_layout(&dir);
@@ -1500,6 +1508,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn second_install_is_idempotent() {
         let dir = TempDir::new().expect("temp dir");
         let layout = test_layout(&dir);
@@ -1511,6 +1520,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn install_refuses_modified_file_without_force() {
         let dir = TempDir::new().expect("temp dir");
         let layout = test_layout(&dir);
@@ -1530,6 +1540,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn uninstall_removes_only_receipt_files() {
         let dir = TempDir::new().expect("temp dir");
         let layout = test_layout(&dir);
@@ -1548,6 +1559,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn uninstall_refuses_modified_file_without_force() {
         let dir = TempDir::new().expect("temp dir");
         let layout = test_layout(&dir);
@@ -1566,6 +1578,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn status_reports_missing_files() {
         let dir = TempDir::new().expect("temp dir");
         let layout = test_layout(&dir);
@@ -1577,6 +1590,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn receipt_path_outside_root_is_rejected() {
         let dir = TempDir::new().expect("temp dir");
         let layout = test_layout(&dir);
@@ -1597,6 +1611,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn installs_chrome_extension_and_native_manifests() {
         let dir = TempDir::new().expect("temp dir");
         let layout = test_layout(&dir);
@@ -1646,6 +1661,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn installs_firefox_native_manifest() {
         let dir = TempDir::new().expect("temp dir");
         let layout = test_layout(&dir);
@@ -1683,6 +1699,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn uninstall_browser_removes_extension_and_manifests() {
         let dir = TempDir::new().expect("temp dir");
         let layout = test_layout(&dir);
