@@ -14,5 +14,5 @@
 * [Интеграции оболочек](11-Интеграции-оболочек)
 * [Браузерное расширение](12-Браузерное-расширение)
 
-Версия: `0.16.0-rc.2` · [Релизы](https://github.com/ModernByte/orbitfm/releases) ·
+Версия: `0.16.0-rc.3` · [Релизы](https://github.com/ModernByte/orbitfm/releases) ·
 [README](https://github.com/ModernByte/orbitfm/blob/main/README.md)

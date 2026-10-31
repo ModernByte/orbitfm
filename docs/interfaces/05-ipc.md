@@ -172,7 +172,7 @@ error <сообщение>
 {
   "schema": 1,
   "app": "orbitfm",
-  "version": "0.16.0-rc.2",
+  "version": "0.16.0-rc.3",
   "state": "playing",
   "station": {
     "uuid": "960cf833-0601-11e8-ae97-52543be04c81",
