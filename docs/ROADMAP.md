@@ -758,8 +758,8 @@ host-компонента — в тонких адаптерах, не в трё
       еженедельные advisories, Windows-тесты
 - [x] Документация: `SECURITY.md`, ADR-0005/0013/0025/0031/0040, живые
       интерфейсы/модули/вики — ADR-0025 ред. 4
-- [ ] Тег `v0.16.0-rc.3` и GitHub Release: AppImage, MSI, DMG, `.plasmoid`
-      и SHA256SUMS
+- [x] Тег `v0.16.0-rc.3` и GitHub Release: AppImage, MSI, DMG, `.plasmoid`
+      и SHA256SUMS — <https://github.com/ModernByte/orbitfm/releases/tag/v0.16.0-rc.3>
 
 ### Без версии в этом репозитории
 
