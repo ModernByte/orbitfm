@@ -4,6 +4,7 @@
     "return-type": "json",
     "tooltip": true,
     "on-click": "@ORBITFM@ playpause",
+    "on-click-middle": "@ORBITFM@ stop",
     "on-click-right": "@ORBITFM@ panel",
     "on-scroll-up": "@ORBITFM@ volume-up",
     "on-scroll-down": "@ORBITFM@ volume-down"

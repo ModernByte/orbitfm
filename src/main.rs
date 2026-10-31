@@ -24,7 +24,7 @@ mod ui;
 use app::OrbitApp;
 use audio::AudioEngine;
 use geo::GeoService;
-use ipc::{IpcCommand, IpcError, IpcServer, StatusFeed};
+use ipc::{IpcCommand, IpcError, IpcServer, SearchFeed, StatusFeed};
 use library::StationLibrary;
 use media::MediaControls;
 use services::RadioBrowserClient;
@@ -62,6 +62,12 @@ OrbitFM — 3D Interactive Global Radio Player
   native-host          stdio-хост для расширений браузеров (служебная)
   mode [режим]         Текущий режим окна или focus/overlay/listening/panel
   play <uuid>          Воспроизвести станцию по UUID (Radio Browser)
+  play-url <url>       Импортировать внешний поток: .m3u, .pls или страница
+  search <запрос>      Поиск для браузерного попапа
+  library              Избранное и история (JSON для расширения)
+  favorite [uuid]      Переключить избранное текущей станции или по UUID
+  play-result <uuid>   Играть станцию из последней выдачи попапа
+  play-library <uuid>  Играть станцию из избранного или истории
   playpause            Пуск/пауза
   next                 Следующая станция
   previous             Предыдущая станция
@@ -81,7 +87,9 @@ OrbitFM — 3D Interactive Global Radio Player
 Без аргументов команда toggle применяется к запущенному экземпляру;
 если он отсутствует, OrbitFM запускается с видимым окном.
 Команда mode без аргумента спрашивает режим; mode <режим> при отсутствии
-запущенного экземпляра запускает OrbitFM сразу в этом режиме.";
+запущенного экземпляра запускает OrbitFM сразу в этом режиме.
+Команды search, library, favorite, play-result, play-library и play-url
+обслуживают браузерное расширение и не запускают новый экземпляр.";
 
 enum Invocation {
     Help,
@@ -279,8 +287,11 @@ fn launch(runtime: &tokio::runtime::Runtime, command: &IpcCommand, explicit: boo
 
     let status = StatusFeed::new();
     let status_rx = status.subscribe();
+    let search = SearchFeed::new();
+    let search_rx = search.subscribe();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-    let mut server_task = runtime.spawn(server.run(wake.waker(), status_rx, shutdown_rx));
+    let mut server_task =
+        runtime.spawn(server.run(wake.waker(), status_rx, search_rx, shutdown_rx));
 
     let services = AppServices {
         audio,
@@ -291,6 +302,7 @@ fn launch(runtime: &tokio::runtime::Runtime, command: &IpcCommand, explicit: boo
         library,
         settings,
         status,
+        search,
         runtime: runtime.handle().clone(),
     };
     // При незапущенном экземпляре `mode <режим>` задаёт режим первого окна (ADR-0021 п. 5),

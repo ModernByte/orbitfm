@@ -10,12 +10,15 @@
 use tokio::sync::{broadcast, mpsc};
 
 use crate::audio::AudioEvent;
-use crate::ipc::IpcRequest;
+use crate::ipc::{IpcCommand, IpcRequest};
 use crate::media::{MediaCommand, MediaControls};
+use crate::services::stream::{ResolvedStream, StreamError};
 use crate::services::{RadioError, Station};
 use crate::tray::{TrayCommand, TrayHandle};
 
 use super::UiIntent;
+use super::companion::CompanionResponse;
+use super::stream_import::PendingStream;
 
 /// Что делать главному циклу после простоя.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +38,10 @@ enum Parked {
     /// Ответ фоновой задачи рулетки: `None` — задача исчезла. `Station` велика,
     /// поэтому значение варианта убрано в `Box`.
     Roulette(Box<Option<Result<Station, RadioError>>>),
+    /// Завершился резолв `play-url`: клиент ждёт ответа с открытым соединением.
+    Stream(Option<Result<ResolvedStream, StreamError>>),
+    /// Ответ поиска попапа: `None` — фоновая задача исчезла.
+    CompanionSearch(Option<CompanionResponse>),
     /// IPC-сервер закрыл очередь: держать процесс без смысла нечем.
     QueueClosed,
 }
@@ -50,16 +57,28 @@ impl super::Session {
                 &mut self.media,
                 &mut self.tray,
                 &mut self.search.roulette_rx,
+                &mut self.pending_stream,
+                &mut self.companion.rx,
             ));
             match event {
                 Parked::Ipc(request) => {
-                    let response = self.execute(request.command());
-                    request.try_respond(response);
+                    // Импорт потока не блокирует простой: ответ уйдёт после
+                    // резолва, а окно при этом может оставаться скрытым.
+                    if matches!(request.command(), IpcCommand::PlayUrl { .. }) {
+                        self.begin_play_url(request);
+                    } else {
+                        let response = self.execute(request.command());
+                        request.try_respond(response);
+                    }
                 }
                 Parked::Audio(event) => self.apply_audio_event(event),
                 Parked::Media(command) => self.execute_media_command(command),
                 Parked::Tray(command) => self.execute_tray_command(command),
                 Parked::Roulette(outcome) => self.apply_roulette(*outcome),
+                Parked::Stream(outcome) => self.finish_stream_import(outcome),
+                Parked::CompanionSearch(response) => {
+                    self.apply_companion_response(response);
+                }
                 Parked::QueueClosed => self.quit(),
             }
             self.sync_media();
@@ -82,6 +101,8 @@ async fn wait_on(
     media: &mut Option<MediaControls>,
     tray: &mut Option<TrayHandle>,
     roulette: &mut Option<mpsc::UnboundedReceiver<Result<Station, RadioError>>>,
+    stream: &mut Option<PendingStream>,
+    companion: &mut Option<mpsc::UnboundedReceiver<CompanionResponse>>,
 ) -> Parked {
     loop {
         let event = tokio::select! {
@@ -100,6 +121,8 @@ async fn wait_on(
             },
             command = tray_recv(tray) => Parked::Tray(command),
             outcome = roulette_recv(roulette) => Parked::Roulette(Box::new(outcome)),
+            outcome = stream_recv(stream) => Parked::Stream(outcome),
+            response = companion_recv(companion) => Parked::CompanionSearch(response),
         };
         return event;
     }
@@ -134,6 +157,26 @@ async fn roulette_recv(
     roulette: &mut Option<mpsc::UnboundedReceiver<Result<Station, RadioError>>>,
 ) -> Option<Result<Station, RadioError>> {
     match roulette {
+        Some(receiver) => receiver.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Результат резолва `play-url`; без активного импорта ветка не готова никогда.
+async fn stream_recv(
+    pending: &mut Option<PendingStream>,
+) -> Option<Result<ResolvedStream, StreamError>> {
+    match pending {
+        Some(pending) => pending.rx.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Ответ поиска попапа; без запущенного поиска ветка не готова никогда.
+async fn companion_recv(
+    companion: &mut Option<mpsc::UnboundedReceiver<CompanionResponse>>,
+) -> Option<CompanionResponse> {
+    match companion {
         Some(receiver) => receiver.recv().await,
         None => std::future::pending().await,
     }

@@ -5,7 +5,7 @@
 //! вызовы `Session`, а наружу публикуется [`TraySnapshot`].
 
 use crate::audio::PlaybackState;
-use crate::tray::{TrayCommand, TraySnapshot, VOLUME_STEP};
+use crate::tray::{TrayCommand, TraySnapshot, TrayStation, VOLUME_STEP};
 use crate::ui::single_line;
 
 use super::notice::NoticeKey;
@@ -69,8 +69,49 @@ impl super::Session {
                     self.notify_error_detail(NoticeKey::ThemeNotSaved, err);
                 }
             }
+            TrayCommand::ToggleFavorite => {
+                if let Some(station) = self.active_station().cloned() {
+                    let _ = self.toggle_favorite(&station);
+                }
+            }
+            TrayCommand::OpenHomepage => self.open_station_homepage(),
             TrayCommand::Settings => self.open_settings(),
             TrayCommand::Quit => self.quit(),
+        }
+    }
+
+    /// Домашняя страница активной станции — во внешнем браузере. Ссылки других
+    /// схем не запускаются: в меню попадают только `http(s)` (ADR-0020,
+    /// ревизия 0.16). Процесс запускается без shell, URL — единственный аргумент.
+    fn open_station_homepage(&mut self) {
+        let Some(homepage) = self
+            .active_station()
+            .and_then(|station| station.homepage.clone())
+        else {
+            return;
+        };
+        if !is_web_url(&homepage) {
+            tracing::warn!(
+                homepage,
+                "домашняя страница станции не является http(s)-ссылкой"
+            );
+            return;
+        }
+        let program = if cfg!(target_os = "macos") {
+            "open"
+        } else {
+            "xdg-open"
+        };
+        match std::process::Command::new(program).arg(&homepage).spawn() {
+            Ok(mut child) => {
+                // xdg-open/open завершаются быстро; без wait() остаётся зомби.
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, "не удалось открыть домашнюю страницу станции");
+            }
         }
     }
 
@@ -91,19 +132,94 @@ impl super::Session {
             state,
             PlaybackState::Playing | PlaybackState::Buffering | PlaybackState::Reconnecting
         );
-        let station = match state {
-            PlaybackState::Stopped | PlaybackState::Error(_) => None,
-            _ => self
-                .current_station
-                .as_ref()
-                .map(|station| single_line(&station.name)),
-        };
+        let active = self.active_station();
+        let station = active.map(|station| TrayStation {
+            name: single_line(&station.name),
+            country: single_line(&station.country),
+            tags: single_line(&station.tags),
+            bitrate: station.bitrate,
+            homepage: station
+                .homepage
+                .as_deref()
+                .map(single_line)
+                .filter(|url| is_web_url(url)),
+        });
+        let favorite = active.is_some_and(|station| self.library.is_favorite(&station.stationuuid));
         TraySnapshot {
             window_visible: self.window.visible,
             playing,
             station,
+            favorite,
+            volume_percent: volume_percent(self.audio.volume()),
             theme: self.settings.settings().theme,
             language: self.language,
         }
+    }
+}
+
+fn volume_percent(volume: f64) -> u8 {
+    (volume.clamp(0.0, 1.0) * 100.0).round() as u8
+}
+
+/// Разрешена только веб-ссылка с непустым хостом: меню не должно уметь
+/// запускать `file:`, `javascript:` или URL с userinfo.
+fn is_web_url(url: &str) -> bool {
+    let trimmed = url.trim();
+    if trimmed.len() > 2048
+        || trimmed != url
+        || trimmed
+            .chars()
+            .any(|ch| ch.is_control() || ch.is_whitespace())
+    {
+        return false;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    let rest = lower
+        .strip_prefix("https://")
+        .or_else(|| lower.strip_prefix("http://"));
+    let Some(rest) = rest else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    !authority.is_empty() && !authority.contains('@')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn homepage_accepts_only_web_urls() {
+        for url in [
+            "http://wfmu.org",
+            "https://wfmu.org/shows?day=1#top",
+            "HTTPS://example.com/stream",
+        ] {
+            assert!(is_web_url(url), "{url}");
+        }
+        for url in [
+            "",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "ftp://example.com",
+            "https://",
+            "http:///path",
+            " https://example.com",
+            "https://example.com/ bad",
+            "https://user@example.com",
+            "https://example.com/\nnext",
+        ] {
+            assert!(!is_web_url(url), "{url}");
+        }
+    }
+
+    #[test]
+    fn volume_percent_rounds_and_clamps() {
+        assert_eq!(volume_percent(0.0), 0);
+        assert_eq!(volume_percent(0.704), 70);
+        assert_eq!(volume_percent(0.705), 71);
+        assert_eq!(volume_percent(1.0), 100);
+        assert_eq!(volume_percent(1.5), 100);
+        assert_eq!(volume_percent(-0.2), 0);
     }
 }

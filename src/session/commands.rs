@@ -37,6 +37,12 @@ impl super::Session {
         loop {
             let next = self.commands.try_recv();
             let Ok(request) = next else { break };
+            // Импорт потока отвечает после резолва: немедленный ответ закрыл бы
+            // соединение раньше, чем станет известен результат (ADR-0040).
+            if matches!(request.command(), IpcCommand::PlayUrl { .. }) {
+                self.begin_play_url(request);
+                continue;
+            }
             let response = self.execute(request.command());
             request.try_respond(response);
         }
@@ -125,6 +131,32 @@ impl super::Session {
                 Ok(()) => "ok".to_owned(),
                 Err(err) => format!("error {err}"),
             },
+            IpcCommand::Search { query } => {
+                let generation = self.start_companion_search(query);
+                format!("search {generation}")
+            }
+            IpcCommand::Library => self.library_json(),
+            IpcCommand::Favorite { station_uuid } => {
+                match self.favorite_station(station_uuid.as_deref()) {
+                    Ok(favorite) => format!("favorite {favorite}"),
+                    Err(err) => format!("error {err}"),
+                }
+            }
+            IpcCommand::PlayResult { station_uuid } => {
+                match self.play_companion_result(station_uuid) {
+                    Ok(()) => "ok".to_owned(),
+                    Err(err) => format!("error {err}"),
+                }
+            }
+            IpcCommand::PlayLibrary { station_uuid } => {
+                match self.play_library_station(station_uuid) {
+                    Ok(()) => "ok".to_owned(),
+                    Err(err) => format!("error {err}"),
+                }
+            }
+            // `play-url` перехватывается в `process_commands` и парковке:
+            // ответ приходит после сетевого резолва.
+            IpcCommand::PlayUrl { .. } => "error play-url обслуживается отложенно".to_owned(),
             IpcCommand::Raw(raw) => format!("error неизвестная команда: {raw}"),
         }
     }

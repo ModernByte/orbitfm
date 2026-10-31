@@ -128,8 +128,13 @@ Wildcard не используется: браузер запускает хос
 ```
 
 `response` — строка ответа IPC. Для `status --json` это компактный JSON
-схемы 1 (его нужно разобрать ещё раз), для остальных команд — человекочитаемая
-строка.
+схемы 1 (его нужно разобрать ещё раз), для `search <id>` — `search <id>`, для
+`favorite` — `favorite true|false`, для `library` — JSON избранного и истории,
+для остальных команд — человекочитаемая строка. Если ответ IPC начинается
+(после пробелов) с `error `, native host передаёт его как есть в успешном
+конверте: клиент обязан трактовать такую строку как ошибку команды
+(`docs/interfaces/05-ipc.md` §4). Попап делает это в общей обработке ответа и
+показывает текст в панели.
 
 | Код | Когда |
 |-----|-------|
@@ -152,14 +157,32 @@ Wildcard не используется: браузер запускает хос
 | `toggle`, `show`, `hide` | `quit` |
 | `panel`, `overlay` | `play <stationuuid>` |
 | `status`, `status --json` | `mode`, `mode <focus\|overlay\|listening\|panel>` |
-| `playpause`, `stop`, `next`, `previous`, `roulette` | неизвестная команда |
+| `playpause`, `stop`, `next`, `previous`, `roulette` | неизвестная команда (`Raw`) |
 | `volume <0.0…1.0>`, `volume-up`, `volume-down` | |
 | `theme <system\|dark\|light>`, `settings` | |
+| `search <запрос>`, `library`, `favorite [uuid]` | |
+| `play-result <uuid>`, `play-library <uuid>` | |
+| `play-url <url>` | |
 
 `quit` запрещён, чтобы popup не завершал процесс; `play` — чтобы расширение не
 запускало произвольный поток по UUID; `mode` — чтобы компоновка окна не
-переключалась из браузера. Все разрешённые команды выполняются только у
-работающего экземпляра.
+переключалась из браузера. `play-result` играет только строку последней выдачи
+своего поиска, `play-library` — только элемент избранного/истории, `play-url` —
+только явно выбранный пользователем URL страницы (ADR-0040). Все разрешённые
+команды выполняются только у работающего экземпляра.
+
+### 6.1. Разрешения расширения
+
+| Разрешение | Зачем |
+|------------|-------|
+| `nativeMessaging` | порт к хосту |
+| `activeTab` | временный доступ к активной вкладке по клику «Play this page» |
+| `scripting` | однократный скан вкладки: `og:audio`, `<audio src>`, `<source src>` |
+
+`host_permissions`, `content_scripts`, фоновые скрипты и
+`externally_connectable` не запрашиваются: страница не имеет пути к порту, а
+скан выполняется только по клику. Без `scripting` кандидатом остаётся URL
+активной вкладки.
 
 ## 7. Поток событий
 
@@ -170,6 +193,7 @@ Popup отправляет `{"command":"events"}` один раз:
 ← {"id": 1, "ok": true, "response": "events"}
 ← {"ok": true, "event": {"ev": 1, "type": "snapshot", "status": { … }}}
 ← {"ok": true, "event": {"ev": 1, "type": "state", "status": { … }}}
+← {"ok": true, "event": {"ev": 1, "type": "search", "id": 7, …}}
 ← {"ok": true, "event": {"ev": 1, "type": "keepalive"}}
 ```
 
@@ -250,10 +274,20 @@ connectNative("org.modernbyte.orbitfm")
   прав.
 - Сетевого входа нет: хост не принимает соединений и не проксирует трафик.
 
-## 12. Ссылки
+## 12. Ревизии
+
+- 2026-10-31 (0.16.0-rc.1): allowlist дополнен `search`, `library`,
+  `favorite`, `play-result`, `play-library`, `play-url`; `quit`, `play`, `mode`
+  и `Raw` остаются запрещёнными. Поток `events` может нести кадр `search`
+  (интерфейс 13, ревизия 0.16). Расширение получает `activeTab` и `scripting`
+  для скана активной вкладки по клику; `host_permissions` и фоновых скриптов
+  нет. Ответ IPC, начинающийся с `error `, клиент трактует как ошибку.
+
+## 13. Ссылки
 
 - ADR-0038 — браузерное расширение и native messaging host
 - ADR-0037 — единая поверхность интеграции
 - ADR-0039 — поток событий состояния
+- ADR-0040 — импорт внешних потоков и «Play this page»
 - `docs/interfaces/05-ipc.md`, `docs/interfaces/13-events.md`
 - `docs/modules/17-browser-companion.md`

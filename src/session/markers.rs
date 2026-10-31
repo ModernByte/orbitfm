@@ -109,6 +109,7 @@ pub(crate) fn sample_station() -> Station {
         codec: "MP3".to_owned(),
         geo_lat: None,
         geo_long: None,
+        source: crate::services::StationSource::Radio,
     }
 }
 

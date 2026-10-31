@@ -8,5 +8,5 @@
     "default_title": "OrbitFM",
     "default_popup": "popup.html"
   },
-  "permissions": ["nativeMessaging"]
+  "permissions": ["nativeMessaging", "activeTab", "scripting"]
 }

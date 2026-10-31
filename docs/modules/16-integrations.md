@@ -39,14 +39,18 @@ Linux-оболочки.
 | `src/integration/assets.rs` | Таблица встроенных ассетов: путь установки, содержимое, исполняемость, режим подстановки, `asset|generated` |
 | `integrations/common/orbitfm-bar.sh` | Мост для баров: чтение `orbitfm status`, форматы text/waybar/polybar/i3blocks/swaybar/i3status-rust/genmon, клики |
 | `integrations/common/bar-README.md` | Общая справка по бару |
-| `integrations/{plasma6,gnome,omarchy}/` | Метаданные и код виджетов оболочек |
-| `integrations/{waybar,polybar,i3blocks,swaybar,i3status-rust}/` | Готовые сниппеты конфигураций |
+| `integrations/{plasma6,gnome,omarchy}/` | Метаданные и код виджетов: Plasmoid, GNOME Shell extension с `stylesheet.css`, Quickshell `BarWidget` |
+| `integrations/{waybar,polybar,i3blocks,swaybar,i3status-rust}/` | Сниппеты конфигураций; у Waybar — ещё `style.css` с токенами панели |
 | `integrations/{xfce,cinnamon,mate,lxqt}/usage.txt` | Инструкции для апплетов вывода команды |
 | `integrations/browser/` | Общий popup и wrapper native host (модуль 17) |
 | `integrations/{chrome,firefox}/` | Манифесты и README браузерных целей |
 
 Для бар-целей установка — `orbitfm-bar` (0755), файл конфигурации и `README.md`
-(0644); для оболочек — метаданные, код виджета и `README.md`. Браузерные цели
+(0644); Waybar дополнительно получает `style.css`. Для оболочек — метаданные,
+код виджета и `README.md`; GNOME дополнительно получает `stylesheet.css`,
+который Shell загружает из каталога расширения автоматически. Итого: Plasma 6 и
+Omarchy — 3 файла, GNOME и Waybar — 4, Polybar, i3blocks, swaybar,
+i3status-rust и апплеты XFCE/Cinnamon/MATE/LXQt — 3. Браузерные цели
 (`chrome`, `firefox`) устанавливают шесть файлов расширения и дополнительно
 native-манифест в каждый обнаруженный браузер; их раскладка и протокол описаны
 в модуле 17.
@@ -68,6 +72,15 @@ native-манифест в каждый обнаруженный браузер;
 Omarchy читают `ui` из `orbitfm status --json` (ADR-0037). Бар-скрипт для
 пустого эфира берёт `ui.nothing_playing` из того же JSON, поэтому язык бара
 совпадает с языком приложения.
+
+Оформление виджетов следует токенам выпадающей панели Noctalia: стеклянная
+карточка с мягкой рамкой, монограмма станции, точка состояния и акцент из
+`status.accent` (ADR-0037, ревизия 0.16). Plasma 6 показывает компакт-пилюлю и
+полную карточку с транспортом, слайдером громкости, темой, избранным и
+homepage; GNOME — карточку в меню индикатора и собственный `stylesheet.css`;
+Omarchy — глиф состояния и tooltip без сторонних API Quickshell. Бар-скрипт
+отдаёт Waybar `text`/`alt`/`tooltip`/`class`, swaybar — цвет панели, остальным
+— глиф и имя; `Volume · NN%` есть в tooltip всех режимов.
 
 ## 4. Квитанция и инспекция
 
@@ -134,10 +147,12 @@ Omarchy читают `ui` из `orbitfm status --json` (ADR-0037). Бар-скр
 Бар-скрипт поддерживает режимы `text`, `polybar`, `waybar`, `i3blocks`,
 `swaybar`, `i3status-rust`, `genmon`. Интервал опроса — 2 с, переопределяется
 `ORBITFM_BAR_INTERVAL`. Клики Waybar/Polybar/i3blocks/swaybar: ЛКМ —
-`playpause`, ПКМ — `panel`, колесо — `volume-up`/`volume-down`. XFCE genmon
-поддерживает только клик по тексту; для Cinnamon/MATE/LXQt управление выносится
-на отдельные кнопки/ярлыки, потому что их апплеты вывода команды кликов не
-обрабатывают.
+`playpause`, средняя — `stop`, ПКМ — `panel`, колесо — `volume-up`/`volume-down`.
+Глифы состояния: ▶ играет, ⏸ пауза, … буферизация/переподключение, ⚠ ошибка,
+◍ остановлено или станции нет; классы — `playing`, `paused`, `loading`, `error`,
+`stopped`. XFCE genmon поддерживает только клик по тексту; для
+Cinnamon/MATE/LXQt управление выносится на отдельные кнопки/ярлыки, потому что
+их апплеты вывода команды кликов не обрабатывают.
 
 `swaybar` — поток i3bar: заголовок `{"version":1,"click_events":true}`, затем
 бесконечный массив кадров; клики приходят в stdin и складываются фоновым
@@ -162,8 +177,8 @@ Omarchy читают `ui` из `orbitfm status --json` (ADR-0037). Бар-скр
 Живая приёмка 2026-10-31 (niri/Wayland, Linux x86_64):
 
 - установка `all` во временный корень и в подставной XDG (Plasma, GNOME,
-  Omarchy, бары) — по 3 файла на цель, квитанции читаются, `status` показывает
-  `установлено`;
+  Omarchy, бары) — по 3–4 файла на цель (GNOME и Waybar — 4), квитанции
+  читаются, `status` показывает `установлено`;
 - повторная установка идемпотентна; ручная правка и симлинк отклоняются,
   `--force` восстанавливает файл, `/etc/hostname` не изменился;
 - удаление изменённого файла без `--force` отклоняется, с `--force` проходит;
@@ -178,6 +193,10 @@ Omarchy читают `ui` из `orbitfm status --json` (ADR-0037). Бар-скр
 Браузерные цели проверены отдельно: установщик в подставном `HOME` ставит
 6 файлов расширения и native-манифесты для обнаруженных браузеров, `uninstall`
 удаляет их по квитанции; протокол и живая приёмка Chrome/Firefox — в модуле 17.
+Локальная установка `integration install all` для 0.16.0-rc.1 разложила все
+14 целей в реальный `$HOME`: Chrome/Firefox — по 6 файлов и native-манифесту
+(7 записей в квитанции), GNOME/Waybar — по 4 файла, `status` подтвердил
+«установлено».
 
 Ограничение доказательности: Plasma 6, GNOME Shell, Omarchy/Quickshell,
 Waybar, Polybar, i3blocks, swaybar, i3status-rust, XFCE, Cinnamon, MATE и LXQt

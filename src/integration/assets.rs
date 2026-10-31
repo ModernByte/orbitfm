@@ -66,7 +66,7 @@ static PLASMA6: [Asset; 3] = [
     ),
 ];
 
-static GNOME: [Asset; 3] = [
+static GNOME: [Asset; 4] = [
     asset(
         "metadata.json",
         include_str!("../../integrations/gnome/metadata.json"),
@@ -80,6 +80,14 @@ static GNOME: [Asset; 3] = [
         false,
         Escape::Quote,
         true,
+    ),
+    // Shell загружает stylesheet.css из каталога расширения автоматически.
+    asset(
+        "stylesheet.css",
+        include_str!("../../integrations/gnome/stylesheet.css"),
+        false,
+        Escape::None,
+        false,
     ),
     asset(
         "README.md",
@@ -114,7 +122,7 @@ static OMARCHY: [Asset; 3] = [
     ),
 ];
 
-static WAYBAR: [Asset; 3] = [
+static WAYBAR: [Asset; 4] = [
     asset("orbitfm-bar", BAR_SCRIPT, true, Escape::Shell, true),
     asset(
         "config.jsonc",
@@ -122,6 +130,13 @@ static WAYBAR: [Asset; 3] = [
         false,
         Escape::Shell,
         true,
+    ),
+    asset(
+        "style.css",
+        include_str!("../../integrations/waybar/style.css"),
+        false,
+        Escape::None,
+        false,
     ),
     asset("README.md", BAR_README, false, Escape::None, false),
 ];

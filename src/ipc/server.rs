@@ -96,11 +96,13 @@ impl IpcServer {
 
     /// Принимает соединения до сигнала shutdown, затем дожидается ответов.
     ///
-    /// `status` — канал публикации состояния для подписок `events` (ADR-0039).
+    /// `status` и `search` — каналы публикации кадров для подписок `events`
+    /// (ADR-0039, ревизия 0.16).
     pub async fn run(
         self,
         wake: WakeFn,
         status: watch::Receiver<Option<String>>,
+        search: watch::Receiver<Option<String>>,
         mut shutdown: oneshot::Receiver<()>,
     ) {
         let Self {
@@ -138,13 +140,21 @@ impl IpcServer {
                     let sender = sender.clone();
                     let wake = Arc::clone(&wake);
                     let status = status.clone();
+                    let search = search.clone();
                     let stop = stop_rx.clone();
                     let event_permits = Arc::clone(&event_permits);
                     connections.spawn(async move {
                         let _permit = permit;
-                        if let Err(err) =
-                            handle_connection(stream, sender, wake, status, event_permits, stop)
-                                .await
+                        if let Err(err) = handle_connection(
+                            stream,
+                            sender,
+                            wake,
+                            status,
+                            search,
+                            event_permits,
+                            stop,
+                        )
+                        .await
                         {
                             warn!(error = %err, "IPC-соединение завершилось с ошибкой");
                         }
@@ -171,6 +181,7 @@ async fn handle_connection(
     sender: mpsc::Sender<IpcRequest>,
     wake: WakeFn,
     status: watch::Receiver<Option<String>>,
+    search: watch::Receiver<Option<String>>,
     event_permits: Arc<Semaphore>,
     stop: watch::Receiver<bool>,
 ) -> Result<(), IpcError> {
@@ -217,7 +228,8 @@ async fn handle_connection(
             return Ok(());
         };
         let _permit = permit;
-        return match events::stream(&mut write_half, status, stop, events::KEEPALIVE).await {
+        return match events::stream(&mut write_half, status, search, stop, events::KEEPALIVE).await
+        {
             Ok(()) => Ok(()),
             Err(err) if is_disconnect(&err) => Ok(()),
             Err(err) => Err(IpcError::Io(err)),
@@ -294,6 +306,12 @@ mod tests {
         (feed, receiver)
     }
 
+    fn search_channel() -> (events::SearchFeed, watch::Receiver<Option<String>>) {
+        let feed = events::SearchFeed::new();
+        let receiver = feed.subscribe();
+        (feed, receiver)
+    }
+
     #[tokio::test]
     async fn serves_request_and_returns_app_response() {
         let (_dir, path) = temp_socket();
@@ -307,8 +325,9 @@ mod tests {
         });
 
         let (_feed, status) = status_channel("{\"schema\":1}");
+        let (_search_feed, search) = search_channel();
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-        let task = tokio::spawn(server.run(wake, status, shutdown_rx));
+        let task = tokio::spawn(server.run(wake, status, search, shutdown_rx));
         let client_path = path.clone();
         let client = tokio::spawn(async move { client::send(&client_path, "status").await });
 
@@ -334,10 +353,11 @@ mod tests {
         let mut server = IpcServer::try_bind_at(&path).await.expect("bind");
         let mut commands = server.commands();
         let (feed, status) = status_channel("{\"schema\":1,\"state\":\"stopped\"}");
+        let (_search_feed, search) = search_channel();
 
         let wake: WakeFn = Arc::new(|| {});
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-        let task = tokio::spawn(server.run(wake, status, shutdown_rx));
+        let task = tokio::spawn(server.run(wake, status, search, shutdown_rx));
 
         let mut stream = UnixStream::connect(&path).await.expect("connect");
         stream.write_all(b"events\n").await.expect("subscribe");
@@ -375,10 +395,11 @@ mod tests {
         let mut server = IpcServer::try_bind_at(&path).await.expect("bind");
         let mut commands = server.commands();
         let (_feed, status) = status_channel("{\"schema\":1}");
+        let (_search_feed, search) = search_channel();
 
         let wake: WakeFn = Arc::new(|| {});
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-        let task = tokio::spawn(server.run(wake, status, shutdown_rx));
+        let task = tokio::spawn(server.run(wake, status, search, shutdown_rx));
 
         let mut subscribers = Vec::new();
         for _ in 0..events::MAX_SUBSCRIBERS {
@@ -419,8 +440,9 @@ mod tests {
 
         let wake: WakeFn = Arc::new(|| {});
         let (_feed, status) = status_channel("{\"schema\":1}");
+        let (_search_feed, search) = search_channel();
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-        let task = tokio::spawn(server.run(wake, status, shutdown_rx));
+        let task = tokio::spawn(server.run(wake, status, search, shutdown_rx));
 
         let client_path = path.clone();
         let client = tokio::spawn(async move { client::send(&client_path, "quit").await });
@@ -445,8 +467,9 @@ mod tests {
 
         let wake: WakeFn = Arc::new(|| {});
         let (_feed, status) = status_channel("{\"schema\":1}");
+        let (_search_feed, search) = search_channel();
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-        let task = tokio::spawn(server.run(wake, status, shutdown_rx));
+        let task = tokio::spawn(server.run(wake, status, search, shutdown_rx));
 
         let mut stream = UnixStream::connect(&path).await.expect("connect");
         let payload = vec![b'a'; MAX_COMMAND_BYTES + 1024];

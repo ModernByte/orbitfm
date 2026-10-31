@@ -227,8 +227,10 @@ async fn forward_events(mut subscription: EventSubscription, sender: &mpsc::Send
     let _ = sender.send(json!({"ok": true, "event": null})).await;
 }
 
-/// Allowlist ADR-0038: расширение не может завершить процесс, включить
-/// произвольный поток или переключить режим окна.
+/// Allowlist ADR-0038: расширение не может завершить процесс, играть станцию
+/// по произвольному UUID из каталога или переключить режим окна. Играть
+/// разрешено только результат своего поиска (`play-result`), элемент
+/// библиотеки (`play-library`) и явно выбранный URL страницы (`play-url`).
 fn forbidden(command: &IpcCommand) -> Option<(&'static str, &'static str)> {
     match command {
         IpcCommand::Quit => Some(("forbidden", "команда quit запрещена")),
@@ -359,6 +361,13 @@ mod tests {
             "settings",
             "panel",
             "overlay",
+            "search lofi jazz",
+            "library",
+            "favorite",
+            "favorite 9604b0f1-aaaa",
+            "play-result 9604b0f1-aaaa",
+            "play-library 9604b0f1-aaaa",
+            "play-url https://example.org/live.m3u",
         ] {
             assert!(forbidden(&command(raw)).is_none(), "{raw}");
         }

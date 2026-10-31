@@ -31,8 +31,22 @@ pub(crate) enum TrayCommand {
     VolumeUp,
     VolumeDown,
     SetTheme(ThemeMode),
+    /// Избранное текущей станции (ADR-0020, ревизия 0.16).
+    ToggleFavorite,
+    /// Домашняя страница станции во внешнем браузере; только `http(s)`.
+    OpenHomepage,
     Settings,
     Quit,
+}
+
+/// Карточка станции в меню: внешние данные Radio Browser, не переводятся.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct TrayStation {
+    pub(crate) name: String,
+    pub(crate) country: String,
+    pub(crate) tags: String,
+    pub(crate) bitrate: u32,
+    pub(crate) homepage: Option<String>,
 }
 
 /// Что трей показывает прямо сейчас.
@@ -40,7 +54,9 @@ pub(crate) enum TrayCommand {
 pub(crate) struct TraySnapshot {
     pub(crate) window_visible: bool,
     pub(crate) playing: bool,
-    pub(crate) station: Option<String>,
+    pub(crate) station: Option<TrayStation>,
+    pub(crate) favorite: bool,
+    pub(crate) volume_percent: u8,
     pub(crate) theme: ThemeMode,
     pub(crate) language: Language,
 }
@@ -76,8 +92,8 @@ pub(crate) fn spawn(
 | Элемент | Сигнатура | Поведение |
 |---------|-----------|-----------|
 | `VOLUME_STEP` | `pub(crate) const f64 = 0.1` | Единый шаг для `VolumeUp`/`VolumeDown` (колесо и меню): 10 шагов от `0.0` до `1.0` |
-| `TrayCommand` | `enum`, 12 вариантов, `Copy + Eq` | Ровно один вариант на каждое действие пользователя; `Hide` нет — окно прячут тем же `Toggle`, что Noctalia-виджет и IPC; `Settings` открывает окно настроек (ADR-0031) |
-| `TraySnapshot` | `struct`, 5 полей, `Default + Eq` | Снимок витрины; `Default` — окно скрыто, эфира нет, тема и язык дефолтные. `Eq` нужен `sync_tray`: публикуется только изменение, и смена языка — тоже изменение |
+| `TrayCommand` | `enum`, 14 вариантов, `Copy + Eq` | Ровно один вариант на каждое действие пользователя; `Hide` нет — окно прячут тем же `Toggle`, что Noctalia-виджет и IPC; `Settings` открывает окно настроек (ADR-0031); `ToggleFavorite` и `OpenHomepage` — подменю «О станции» (ред. 0.16) |
+| `TraySnapshot` | `struct`, 7 полей, `Default + Eq` | Снимок витрины; `Default` — окно скрыто, эфира нет, громкость 0 %, тема и язык дефолтные. `Eq` нужен `sync_tray`: публикуется только изменение, и смена языка — тоже изменение |
 | `TrayHandle` | `struct` | Владелец обеих очередей живого трея; `None` в `Session::tray` означает «трея нет» |
 | `TrayHandle::publish` | `fn publish(&self, snapshot: &TraySnapshot) -> bool` | Non-blocking отправка снимка в поток-владелец; `false` — канал закрыт, трей умер |
 | `TrayHandle::commands` | `UnboundedReceiver<TrayCommand>` | Единственный путь команд наружу из dbus-потока |
@@ -99,7 +115,9 @@ pub(crate) fn spawn(
 | `Previous` / `Next` | `StandardItem` `previous` / `next` | `play_relative(∓1)` по видимой очереди |
 | `Roulette` | `StandardItem` `radio_roulette` | `start_roulette()`; ответ придёт в `tick()` или в `Parked::Roulette` |
 | `VolumeUp` / `VolumeDown` | колесо (`Scroll`) и пункты `volume_up` / `volume_down` | `nudge_volume(±VOLUME_STEP)` с `clamp` к `0.0..=1.0` |
-| `SetTheme(mode)` | `RadioGroup` с подписями `i18n::theme_label` | `set_theme(mode)` в `SettingsStore` |
+| `SetTheme(mode)` | `RadioGroup` внутри подменю `appearance`, подписи `i18n::theme_label` | `set_theme(mode)` в `SettingsStore` |
+| `ToggleFavorite` | `StandardItem` в подменю `about_station`, подпись `common.add_favorite`/`remove_favorite` | `toggle_favorite(active_station)`; без станции пункт недоступен |
+| `OpenHomepage` | `StandardItem` в подменю `about_station`, подпись `tray.open_homepage` | `open_station_homepage()`: только `http(s)` с непустым хостом и без userinfo, запуск `xdg-open`/`open` без shell и без новых зависимостей |
 | `Settings` | `StandardItem` `settings` | `open_settings()`: в `Listening` сначала переводит окно в `Overlay`, затем открывает окно настроек и показывает окно, если оно было скрыто |
 | `Quit` | `StandardItem` `quit` | `window.quit()` |
 
@@ -112,17 +130,29 @@ pub(crate) fn spawn(
 
 | Поле снимка | Что показывает хост |
 |-------------|---------------------|
-| `window_visible` | подпись пункта `show_window` / `hide_window` |
-| `playing` | `Status::Active`, если `playing` или `window_visible`, иначе `Status::Passive`; чекмарк `play_pause`; выбор между шаблонами `now_playing` и `paused` в первой строке меню |
-| `station` | `ToolTip.description`; подстановка `{station}` в первую (неактивную) строку меню через `i18n::fill`; `None` → `nothing_playing` |
-| `theme` | `selected` в `RadioGroup` System / Dark / Light, подписи — `i18n::theme_label` |
+| `Status` | всегда `Active`, пока жив процесс: Noctalia v5 скрывает пассивные элементы, а иконка должна оставаться после закрытия окна без эфира (ред. 0.16) |
+| `window_visible` | подпись и иконка пункта `show_window`/`hide_window` (`view-fullscreen`/`view-restore-symbolic`) |
+| `playing` | чекмарк `play_pause`, иконка `media-playback-pause`/`start-symbolic`, неактивная карточка |
+| `station` | карточка: имя, `страна · NN kbps`, до 2 тегов; `ToolTip.description` — имя; `None` → `nothing_playing` и «Nothing playing» в карточке |
+| `favorite` | подпись пункта в подменю `about_station`: `common.add_favorite` или `common.remove_favorite` |
+| `volume_percent` | строка группы громкости `Volume · NN%`; громкость публикуется при каждом изменении |
+| `theme` | `selected` в `RadioGroup` System / Dark / Light внутри подменю `appearance` |
 | `language` | язык всех подписей меню и заглушки тултипа: `i18n::catalog(language)`; смена языка меняет снимок, поэтому меню перестраивается без перезапуска (ADR-0030) |
 
 `playing` — то же определение, что у MPRIS и `status`: `Playing`, `Buffering`
 или `Reconnecting` (`src/session/tray.rs`). Язык в снимке всегда разрешённый —
-`Session` резолвит `System` при старте и при смене настройки. Название станции и
-`ToolTip.title` не переводятся (ADR-0030 п. 4). Громкости в снимке нет: у SNI нет
-витрины для неё, а `Volume Up/Down` — действие, а не состояние.
+`Session` резолвит `System` при старте и при смене настройки. Название станции,
+страна, теги и `ToolTip.title` не переводятся (ADR-0030 п. 4). `volume_percent`
+округляется из `f64` в `u8` и попадает в снимок, поэтому `Volume Up/Down`
+теперь видимы в меню; отдельного пункта-слайдера у SNI нет.
+
+Меню (ред. 0.16) сгруппировано: карточка станции (неактивные строки) ·
+разделитель · окно · разделитель · `playback` + транспорт · разделитель ·
+`volume` + громкость · разделитель · подменю `appearance` · разделитель ·
+подменю `about_station` (избранное, homepage) · разделитель · настройки ·
+выход. На macOS тот же порядок и подписи: `Submenu`, чекбоксы темы,
+`play_pause` и избранного, стабильные строковые `MenuId`
+(`orbitfm.favorite-toggle`, `orbitfm.homepage`).
 
 ## 4. Инварианты потоков и блокировок
 
@@ -178,16 +208,21 @@ pub(crate) fn spawn(
 
 `src/tray/mod.rs` — `snapshot_defaults_to_hidden_and_idle`,
 `snapshots_compare_by_content`; `src/tray/sni.rs` —
-`status_is_active_only_when_something_happens`, `tooltip_shows_the_station_or_silence`,
-`menu_offers_window_playback_volume_theme_settings_and_quit`,
-`menu_header_shows_the_current_stream_without_being_a_command`,
+`icon_stays_active_while_the_process_lives`,
+`tooltip_shows_the_station_or_silence`,
+`menu_groups_playback_volume_appearance_and_station`,
+`menu_card_shows_the_current_station_without_being_a_command`,
 `every_label_comes_from_the_catalog_for_the_snapshot_language`,
 `theme_radio_marks_the_current_mode`, `play_pause_check_follows_the_stream`,
-`clicks_publish_a_command_and_wake_the_core`,
+`menu_actions_publish_their_commands`, `clicks_publish_a_command_and_wake_the_core`,
 `icon_sizes_match_the_specification_and_byte_order`, `theme_path_is_empty_or_a_hicolor_root`;
 `src/tray/macos.rs` — `every_menu_id_maps_to_its_command`, `ids_are_unique`;
-`src/tray/text.rs` — `header_reflects_the_stream`,
-`toggle_label_follows_the_window`;
+`src/tray/text.rs` — `card_shows_name_meta_and_tags`, `details_skip_empty_parts`,
+`tags_drop_empty_segments`, `long_labels_are_clipped_by_chars`,
+`summary_joins_meta_and_tags_for_the_macos_menu`,
+`volume_and_favorite_labels_follow_the_state`,
+`toggle_label_follows_the_window`,
+`station_name_falls_back_to_nothing_playing`;
 `src/tray/icon.rs` — `every_size_produces_a_full_rgba_buffer`,
 `planet_core_is_opaque_and_corners_are_empty`, `orbit_reaches_beyond_the_planet`,
 `live_dot_is_part_of_the_mark`.

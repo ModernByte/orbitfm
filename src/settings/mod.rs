@@ -62,6 +62,18 @@ impl AccentColor {
         Self::Cyan,
     ];
 
+    /// Имя акцента в `status --json`: попап и бар-виджеты повторяют палитру.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Blue => "blue",
+            Self::Green => "green",
+            Self::Amber => "amber",
+            Self::Violet => "violet",
+            Self::Rose => "rose",
+            Self::Cyan => "cyan",
+        }
+    }
+
     pub fn rgb(self) -> [u8; 3] {
         match self {
             Self::Blue => [108, 176, 255],

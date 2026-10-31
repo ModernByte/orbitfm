@@ -683,6 +683,7 @@ mod tests {
             codec: "AAC".to_owned(),
             geo_lat: None,
             geo_long: None,
+            source: crate::services::StationSource::Radio,
         }
     }
 

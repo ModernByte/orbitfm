@@ -116,6 +116,12 @@ mod tests {
                 live,
                 quit,
                 retry,
+                favorites,
+                history,
+                play_this_page,
+                no_audio,
+                importing,
+                stream_rejected,
             }
         );
         assert_group_non_empty!(
@@ -277,6 +283,11 @@ mod tests {
                 volume_up,
                 volume_down,
                 settings,
+                playback,
+                volume,
+                appearance,
+                about_station,
+                open_homepage,
                 quit,
             }
         );

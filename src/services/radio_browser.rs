@@ -39,6 +39,26 @@ pub struct SearchParams {
     pub has_geo_info: bool,
 }
 
+/// Источник станции: каталог Radio Browser или внешний поток, добавленный
+/// командой `play-url` (ADR-0040). Поле аддитивно: старые `library.json`
+/// читаются как радиостанции.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StationSource {
+    #[default]
+    Radio,
+    Stream,
+}
+
+impl StationSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Radio => "radio",
+            Self::Stream => "stream",
+        }
+    }
+}
+
 /// Станция в том виде, в котором её отдаёт Radio Browser.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Station {
@@ -72,6 +92,8 @@ pub struct Station {
     pub geo_lat: Option<f64>,
     #[serde(default)]
     pub geo_long: Option<f64>,
+    #[serde(default)]
+    pub source: StationSource,
 }
 
 /// Сколько стран просит `/json/countrycodes`: в базе их ~250, запас на вырост.
@@ -533,6 +555,7 @@ mod tests {
             codec: "MP3".to_owned(),
             geo_lat: None,
             geo_long: None,
+            source: StationSource::Radio,
         }
     }
 

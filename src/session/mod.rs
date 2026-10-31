@@ -8,6 +8,7 @@
 //! трей продолжают работать.
 
 pub(crate) mod commands;
+pub(crate) mod companion;
 pub(crate) mod heat;
 pub(crate) mod markers;
 pub(crate) mod notice;
@@ -15,6 +16,7 @@ pub(crate) mod park;
 pub(crate) mod playback;
 pub(crate) mod publish_gate;
 pub(crate) mod search;
+pub(crate) mod stream_import;
 pub(crate) mod tray;
 pub(crate) mod window;
 pub(crate) mod world;
@@ -26,22 +28,24 @@ use tokio::sync::{broadcast, mpsc};
 
 use crate::audio::{AudioEngine, AudioEvent, PlaybackState};
 use crate::geo::GeoService;
-use crate::ipc::{IpcRequest, StatusFeed, WakeFn};
+use crate::ipc::{IpcRequest, SearchFeed, StatusFeed, WakeFn};
 use crate::library::StationLibrary;
 use crate::media::MediaControls;
 use crate::render::GlobeCamera;
 use crate::services::{RadioBrowserClient, Station};
-use crate::settings::{Language, MotionReactivity, SettingsStore, ThemeMode};
+use crate::settings::{AccentColor, Language, MotionReactivity, SettingsStore, ThemeMode};
 use crate::tray::{TrayHandle, TraySnapshot};
 use crate::ui::single_line;
 use crate::ui::station_filter::CountryFilterState;
 
+use companion::CompanionSearchState;
 use markers::GlobeMarker;
 pub(crate) use notice::{Notice, NoticeKey};
 pub(crate) use park::ParkOutcome;
 pub(crate) use playback::StationStartError;
 use publish_gate::PublishGate;
 use search::SearchState;
+use stream_import::PendingStream;
 pub(crate) use window::{UiIntent, WINDOW_TITLE, WindowMode, WindowState};
 use world::WorldBaseline;
 
@@ -107,6 +111,8 @@ pub(crate) struct AppServices {
     pub(crate) settings: SettingsStore,
     /// Публикация полного кадра подписчикам `events` (ADR-0039).
     pub(crate) status: StatusFeed,
+    /// Публикация кадров `search` для попапа (ADR-0039, ревизия 0.16).
+    pub(crate) search: SearchFeed,
     pub(crate) runtime: tokio::runtime::Handle,
 }
 
@@ -140,6 +146,10 @@ pub(crate) struct Session {
     /// выбирает станцию, которой может не быть на экране.
     pub(crate) reveal_station: Option<String>,
     pub(crate) search: SearchState,
+    /// Поиск попапа: своё поколение и выдача, не связанные с панелью окна.
+    pub(crate) companion: CompanionSearchState,
+    /// Незавершённый `play-url`: ответ клиенту ждёт сетевой резолвер.
+    pub(crate) pending_stream: Option<PendingStream>,
     pub(crate) markers: Vec<GlobeMarker>,
     /// Глобальный снимок Radio Browser: счётчики стран и мировой топ для
     /// тепловой карты (ADR-0035).
@@ -160,6 +170,8 @@ pub(crate) struct Session {
     pub(crate) tray_snapshot: Option<TraySnapshot>,
     /// Публикатор кадров `events` (ADR-0039).
     pub(crate) status: StatusFeed,
+    /// Публикатор кадров `search` для подписок `events`.
+    pub(crate) search_feed: SearchFeed,
     /// Вердикты яруса 2 для ссылок, уходящих в MPRIS/SMTC/Now Playing
     /// (ADR-0025, п. 12).
     pub(crate) publish_gate: PublishGate,
@@ -180,6 +192,7 @@ impl Session {
             library,
             settings,
             status,
+            search,
             runtime,
         } = services;
         let stored = settings.settings();
@@ -213,6 +226,8 @@ impl Session {
             selected_station: None,
             reveal_station: None,
             search: SearchState::default(),
+            companion: CompanionSearchState::default(),
+            pending_stream: None,
             markers: Vec::new(),
             world: WorldBaseline::default(),
             library_tab: LibraryTab::default(),
@@ -225,6 +240,7 @@ impl Session {
             notices: VecDeque::new(),
             tray_snapshot: None,
             status,
+            search_feed: search,
             publish_gate,
         };
         // Снимок мира уходит в фон сразу: карта стран должна закраситься до
@@ -243,6 +259,8 @@ impl Session {
         self.process_media_commands();
         self.process_tray_commands();
         self.poll_search();
+        self.poll_companion_search();
+        self.poll_stream_import();
         self.poll_roulette();
         self.poll_world();
         self.start_world();
@@ -480,15 +498,20 @@ impl Session {
     /// Ответ на IPC-команду `status --json` (ADR-0037): одна строка JSON,
     /// схема 1. Поля только добавляются; удаление и переименование — schema 2.
     pub(crate) fn status_json(&self) -> String {
+        let station = self.active_station();
+        let favorite =
+            station.is_some_and(|station| self.library.is_favorite(&station.stationuuid));
         let payload = build_status_payload(
             &self.audio.state(),
             self.audio.volume(),
             self.window.visible,
             self.window.mode,
-            self.active_station(),
+            station,
             self.settings.settings().theme,
+            self.settings.settings().accent,
             self.language,
             self.visible_queue_len() > 0,
+            favorite,
         );
         serde_json::to_string(&payload).unwrap_or_else(|err| format!("error {err}"))
     }
@@ -546,6 +569,7 @@ struct StatusPayload {
     volume: f64,
     window: StatusWindow,
     theme: &'static str,
+    accent: &'static str,
     language: &'static str,
     can: StatusCan,
     ui: StatusUi,
@@ -562,10 +586,12 @@ struct StatusStation {
     homepage: Option<String>,
     bitrate: u32,
     codec: String,
+    source: &'static str,
+    favorite: bool,
 }
 
 impl StatusStation {
-    fn new(station: &Station) -> Self {
+    fn new(station: &Station, favorite: bool) -> Self {
         Self {
             uuid: station.stationuuid.clone(),
             name: station.name.clone(),
@@ -576,6 +602,8 @@ impl StatusStation {
             homepage: station.homepage.clone(),
             bitrate: station.bitrate,
             codec: station.codec.clone(),
+            source: station.source.as_str(),
+            favorite,
         }
     }
 }
@@ -607,11 +635,39 @@ struct StatusUi {
     nothing_playing: &'static str,
     volume_up: &'static str,
     volume_down: &'static str,
+    search: &'static str,
+    no_match: &'static str,
+    retry: &'static str,
+    close: &'static str,
+    favorites: &'static str,
+    history: &'static str,
+    play_this_page: &'static str,
+    no_audio: &'static str,
+    importing: &'static str,
+    stream_rejected: &'static str,
+    add_favorite: &'static str,
+    remove_favorite: &'static str,
+    now_playing: &'static str,
+    volume: &'static str,
+    theme: &'static str,
+    theme_system: &'static str,
+    theme_dark: &'static str,
+    theme_light: &'static str,
+    about_station: &'static str,
+    open_homepage: &'static str,
+    state_playing: &'static str,
+    state_paused: &'static str,
+    state_buffering: &'static str,
+    state_reconnecting: &'static str,
+    state_stopped: &'static str,
+    state_error: &'static str,
 }
 
 impl StatusUi {
     fn new(language: Language) -> Self {
-        let tray = &crate::i18n::catalog(language).tray;
+        let catalog = crate::i18n::catalog(language);
+        let tray = &catalog.tray;
+        let common = &catalog.common;
         Self {
             play_pause: tray.play_pause,
             stop: tray.stop,
@@ -624,6 +680,32 @@ impl StatusUi {
             nothing_playing: tray.nothing_playing,
             volume_up: tray.volume_up,
             volume_down: tray.volume_down,
+            search: common.search,
+            no_match: common.no_match,
+            retry: common.retry,
+            close: common.close,
+            favorites: common.favorites,
+            history: common.history,
+            play_this_page: common.play_this_page,
+            no_audio: common.no_audio,
+            importing: common.importing,
+            stream_rejected: common.stream_rejected,
+            add_favorite: common.add_favorite,
+            remove_favorite: common.remove_favorite,
+            now_playing: catalog.transport.now_playing,
+            volume: catalog.transport.volume,
+            theme: catalog.settings.theme,
+            theme_system: catalog.labels.theme_system,
+            theme_dark: catalog.labels.theme_dark,
+            theme_light: catalog.labels.theme_light,
+            about_station: tray.about_station,
+            open_homepage: tray.open_homepage,
+            state_playing: catalog.labels.playback_on_air,
+            state_paused: catalog.labels.playback_paused,
+            state_buffering: catalog.labels.playback_buffering,
+            state_reconnecting: catalog.labels.playback_reconnecting,
+            state_stopped: catalog.labels.playback_stopped,
+            state_error: catalog.labels.playback_error,
         }
     }
 }
@@ -642,21 +724,24 @@ fn build_status_payload(
     mode: WindowMode,
     station: Option<&Station>,
     theme: ThemeMode,
+    accent: AccentColor,
     language: Language,
     can_skip: bool,
+    favorite: bool,
 ) -> StatusPayload {
     StatusPayload {
         schema: STATUS_SCHEMA,
         app: "orbitfm",
         version: env!("CARGO_PKG_VERSION"),
         state: state.as_str(),
-        station: station.map(StatusStation::new),
+        station: station.map(|station| StatusStation::new(station, favorite)),
         volume: round_volume(volume),
         window: StatusWindow {
             visible: window_visible,
             mode: mode.as_str(),
         },
         theme: theme.as_str(),
+        accent: accent.as_str(),
         language: language.code(),
         can: StatusCan {
             previous: can_skip,
@@ -812,7 +897,9 @@ mod tests {
             WindowMode::Panel,
             None,
             ThemeMode::Dark,
+            AccentColor::Violet,
             Language::Russian,
+            false,
             false,
         );
         let json = serde_json::to_string(&payload).expect("снимок сериализуется");
@@ -842,12 +929,17 @@ mod tests {
             WindowMode::Focus,
             Some(&station),
             ThemeMode::System,
+            AccentColor::Green,
             Language::English,
+            true,
             true,
         );
         let value = status_value(&payload);
         assert_eq!(value["state"], "playing");
         assert_eq!(value["station"]["uuid"], station.stationuuid);
+        assert_eq!(value["station"]["source"], "radio");
+        assert_eq!(value["station"]["favorite"], true);
+        assert_eq!(value["accent"], "green");
         assert_eq!(value["station"]["name"], station.name);
         assert_eq!(value["station"]["country"], station.country);
         assert_eq!(value["station"]["countrycode"], station.countrycode);
@@ -880,11 +972,14 @@ mod tests {
                 WindowMode::Focus,
                 None,
                 ThemeMode::Light,
+                AccentColor::Blue,
                 language,
+                false,
                 false,
             );
             let value = status_value(&payload);
-            let tray = &crate::i18n::catalog(language).tray;
+            let catalog = crate::i18n::catalog(language);
+            let tray = &catalog.tray;
             assert_eq!(value["ui"]["play_pause"], tray.play_pause);
             assert_eq!(value["ui"]["stop"], tray.stop);
             assert_eq!(value["ui"]["previous"], tray.previous);
@@ -896,6 +991,23 @@ mod tests {
             assert_eq!(value["ui"]["nothing_playing"], tray.nothing_playing);
             assert_eq!(value["ui"]["volume_up"], tray.volume_up);
             assert_eq!(value["ui"]["volume_down"], tray.volume_down);
+            assert_eq!(value["ui"]["about_station"], tray.about_station);
+            assert_eq!(value["ui"]["open_homepage"], tray.open_homepage);
+            assert_eq!(value["ui"]["theme_system"], catalog.labels.theme_system);
+            assert_eq!(value["ui"]["theme_dark"], catalog.labels.theme_dark);
+            assert_eq!(value["ui"]["theme_light"], catalog.labels.theme_light);
+            assert_eq!(value["ui"]["close"], catalog.common.close);
+            assert_eq!(value["ui"]["no_audio"], catalog.common.no_audio);
+            assert_eq!(value["ui"]["importing"], catalog.common.importing);
+            assert_eq!(
+                value["ui"]["stream_rejected"],
+                catalog.common.stream_rejected
+            );
+            assert_eq!(value["ui"]["state_playing"], catalog.labels.playback_on_air);
+            assert_eq!(
+                value["ui"]["state_stopped"],
+                catalog.labels.playback_stopped
+            );
             assert_eq!(value["theme"], "light");
         }
     }
@@ -909,7 +1021,9 @@ mod tests {
             WindowMode::Focus,
             None,
             ThemeMode::Dark,
+            AccentColor::Amber,
             Language::English,
+            false,
             false,
         );
         let value = status_value(&payload);

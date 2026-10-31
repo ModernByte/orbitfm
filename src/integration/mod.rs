@@ -1450,6 +1450,7 @@ mod tests {
 
         assert!(report.root.join("orbitfm-bar").is_file());
         assert!(report.root.join("config.jsonc").is_file());
+        assert!(report.root.join("style.css").is_file());
         assert!(report.root.join("README.md").is_file());
         assert!(report.receipt_path.is_file());
 
@@ -1461,7 +1462,7 @@ mod tests {
                 .expect("receipt json");
         assert_eq!(receipt.schema, RECEIPT_SCHEMA);
         assert_eq!(receipt.target, "waybar");
-        assert_eq!(receipt.files.len(), 3);
+        assert_eq!(receipt.files.len(), 4);
         assert!(
             receipt
                 .files
@@ -1477,6 +1478,18 @@ mod tests {
 
         let inspection = inspect(&layout, Target::Waybar).expect("inspect");
         assert_eq!(inspection.state, InstalledState::Installed);
+    }
+
+    #[test]
+    fn gnome_extension_ships_stylesheet() {
+        let dir = TempDir::new().expect("temp dir");
+        let layout = test_layout(&dir);
+        let report = install_one(&layout, Target::Gnome, false, &fake_binary()).expect("install");
+
+        assert!(report.root.join("extension.js").is_file());
+        assert!(report.root.join("metadata.json").is_file());
+        assert!(report.root.join("stylesheet.css").is_file());
+        assert_eq!(report.files.len(), 4, "три ассета и README");
     }
 
     #[test]

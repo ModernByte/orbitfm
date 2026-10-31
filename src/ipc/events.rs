@@ -48,6 +48,30 @@ impl StatusFeed {
     }
 }
 
+/// Публикатор результатов companion-поиска (ADR-0039, ревизия 0.16).
+///
+/// В отличие от [`StatusFeed`] кадр не повторяется новому подписчику: попап
+/// получает только ответы на свои запросы, а не чужую прошлую выдачу.
+pub(crate) struct SearchFeed {
+    sender: watch::Sender<Option<String>>,
+}
+
+impl SearchFeed {
+    pub(crate) fn new() -> Self {
+        let (sender, _) = watch::channel(None);
+        Self { sender }
+    }
+
+    pub(crate) fn subscribe(&self) -> watch::Receiver<Option<String>> {
+        self.sender.subscribe()
+    }
+
+    /// Публикует кадр `search`; новый id всегда меняет значение.
+    pub(crate) fn publish(&self, frame: String) {
+        self.sender.send_replace(Some(frame));
+    }
+}
+
 /// Один кадр NDJSON. `status` уже сериализован `serde_json`, поэтому строка
 /// собирается без повторного разбора.
 pub(crate) fn frame(kind: &str, status: Option<&str>) -> String {
@@ -65,6 +89,7 @@ pub(crate) fn frame(kind: &str, status: Option<&str>) -> String {
 pub(super) async fn stream<W>(
     writer: &mut W,
     status: watch::Receiver<Option<String>>,
+    mut search: watch::Receiver<Option<String>>,
     mut stop: watch::Receiver<bool>,
     keepalive: Duration,
 ) -> Result<(), std::io::Error>
@@ -90,6 +115,14 @@ where
                 let state = status.borrow_and_update().clone();
                 let Some(state) = state else { continue };
                 write_line(writer, &frame("state", Some(&state))).await?;
+            }
+            changed = search.changed() => {
+                if changed.is_err() {
+                    return Ok(());
+                }
+                let event = search.borrow_and_update().clone();
+                let Some(event) = event else { continue };
+                write_line(writer, &event).await?;
             }
             _ = tokio::time::sleep(keepalive) => {
                 write_line(writer, &frame("keepalive", None)).await?;
@@ -152,9 +185,18 @@ mod tests {
         feed.publish("{\"schema\":1}".to_owned());
         let (stop_tx, stop_rx) = watch::channel(false);
         let status = feed.subscribe();
+        let search_feed = SearchFeed::new();
+        let search = search_feed.subscribe();
         let (mut client, mut server) = tokio::io::duplex(4096);
         let task = tokio::spawn(async move {
-            stream(&mut server, status, stop_rx, Duration::from_millis(30)).await
+            stream(
+                &mut server,
+                status,
+                search,
+                stop_rx,
+                Duration::from_millis(30),
+            )
+            .await
         });
 
         let mut reader = BufReader::new(&mut client);
@@ -186,9 +228,18 @@ mod tests {
         let feed = StatusFeed::new();
         let (stop_tx, stop_rx) = watch::channel(false);
         let status = feed.subscribe();
+        let search_feed = SearchFeed::new();
+        let search = search_feed.subscribe();
         let (mut client, mut server) = tokio::io::duplex(4096);
         let task = tokio::spawn(async move {
-            stream(&mut server, status, stop_rx, Duration::from_secs(60)).await
+            stream(
+                &mut server,
+                status,
+                search,
+                stop_rx,
+                Duration::from_secs(60),
+            )
+            .await
         });
 
         let mut reader = BufReader::new(&mut client);
@@ -204,6 +255,50 @@ mod tests {
         line.clear();
         reader.read_line(&mut line).await.expect("snapshot");
         assert!(line.contains("\"type\":\"snapshot\""), "{line}");
+
+        stop_tx.send(true).expect("stop");
+        drop(reader);
+        drop(client);
+        let _ = task.await;
+    }
+
+    #[tokio::test]
+    async fn stream_forwards_search_frames_without_replaying_old_ones() {
+        let feed = StatusFeed::new();
+        feed.publish("{\"schema\":1}".to_owned());
+        let search_feed = SearchFeed::new();
+        search_feed.publish("{\"ev\":1,\"type\":\"search\",\"id\":1}".to_owned());
+        let (stop_tx, stop_rx) = watch::channel(false);
+        let status = feed.subscribe();
+        let search = search_feed.subscribe();
+        let (mut client, mut server) = tokio::io::duplex(4096);
+        let task = tokio::spawn(async move {
+            stream(
+                &mut server,
+                status,
+                search,
+                stop_rx,
+                Duration::from_secs(60),
+            )
+            .await
+        });
+
+        let mut reader = BufReader::new(&mut client);
+        let mut line = String::new();
+        reader.read_line(&mut line).await.expect("snapshot");
+        assert!(line.contains("\"type\":\"snapshot\""), "{line}");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), reader.read_line(&mut line))
+                .await
+                .is_err(),
+            "прошлый кадр поиска не переигрывается"
+        );
+
+        search_feed.publish("{\"ev\":1,\"type\":\"search\",\"id\":2}".to_owned());
+        line.clear();
+        reader.read_line(&mut line).await.expect("search");
+        assert!(line.contains("\"type\":\"search\""), "{line}");
+        assert!(line.contains("\"id\":2"), "{line}");
 
         stop_tx.send(true).expect("stop");
         drop(reader);

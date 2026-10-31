@@ -840,7 +840,9 @@ impl<'a> OrbitApp<'a> {
                 self.session.select_station(&station);
                 self.play_station(ctx, station);
             }
-            UiAction::ToggleFavorite(station) => self.session.toggle_favorite(&station),
+            UiAction::ToggleFavorite(station) => {
+                let _ = self.session.toggle_favorite(&station);
+            }
             UiAction::SelectCountry(country) => {
                 self.session.focus_country(&country);
                 self.session.start_country_search(country);

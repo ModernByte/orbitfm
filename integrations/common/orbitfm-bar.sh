@@ -79,11 +79,31 @@ load_nothing() {
     [ -n "$nothing" ] || nothing=OrbitFM
 }
 
+state_glyph() {
+    case $state in
+        playing) printf '▶' ;;
+        paused) printf '⏸' ;;
+        buffering | reconnecting) printf '…' ;;
+        error) printf '⚠' ;;
+        *) printf '◍' ;;
+    esac
+}
+
+state_color() {
+    case $state in
+        playing) printf '#68d391' ;;
+        paused) printf '#ffbe5c' ;;
+        buffering | reconnecting) printf '#b294ff' ;;
+        error) printf '#ff8aa5' ;;
+        *) printf '#969eb0' ;;
+    esac
+}
+
 bar_text() {
     if [ -n "$name" ]; then
-        printf '%s' "$name"
+        printf '%s %s' "$(state_glyph)" "$name"
     else
-        printf '%s' "${nothing:-OrbitFM}"
+        printf '%s %s' "$(state_glyph)" "${nothing:-OrbitFM}"
     fi
 }
 
@@ -116,7 +136,7 @@ state_class() {
 
 tooltip_text() {
     if [ -n "$name" ]; then
-        printf 'OrbitFM\n%s\n%s · %s%%' "$name" "$state" "$(volume_percent)"
+        printf 'OrbitFM\n%s\nVolume · %s%%' "$name" "$(volume_percent)"
     else
         printf 'OrbitFM\n%s' "${nothing:-OrbitFM}"
     fi
@@ -124,8 +144,8 @@ tooltip_text() {
 
 tooltip_json() {
     if [ -n "$name" ]; then
-        printf 'OrbitFM\\n%s\\n%s · %s%%' \
-            "$(json_escape "$name")" "$state" "$(volume_percent)"
+        printf 'OrbitFM\\n%s\\nVolume · %s%%' \
+            "$(json_escape "$name")" "$(volume_percent)"
     else
         printf 'OrbitFM\\n%s' "$(json_escape "${nothing:-OrbitFM}")"
     fi
@@ -139,13 +159,14 @@ mode_plain() {
 
 mode_waybar() {
     refresh || true
-    printf '{"text":"%s","tooltip":"%s","class":"%s"}\n' \
-        "$(json_escape "$(bar_text)")" "$(tooltip_json)" "$(state_class)"
+    printf '{"text":"%s","alt":"%s","tooltip":"%s","class":"%s"}\n' \
+        "$(json_escape "$(bar_text)")" "$(state_glyph)" "$(tooltip_json)" "$(state_class)"
 }
 
 mode_i3blocks() {
     case ${BLOCK_BUTTON:-} in
         1) "$ORBITFM" playpause >/dev/null 2>&1 ;;
+        2) "$ORBITFM" stop >/dev/null 2>&1 ;;
         3) "$ORBITFM" panel >/dev/null 2>&1 ;;
         4) "$ORBITFM" volume-up >/dev/null 2>&1 ;;
         5) "$ORBITFM" volume-down >/dev/null 2>&1 ;;
@@ -210,6 +231,7 @@ mode_swaybar() {
                     sed -n 's/.*"button"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p')
                 case $button in
                     1) "$ORBITFM" playpause >/dev/null 2>&1 ;;
+                    2) "$ORBITFM" stop >/dev/null 2>&1 ;;
                     3) "$ORBITFM" panel >/dev/null 2>&1 ;;
                     4) "$ORBITFM" volume-up >/dev/null 2>&1 ;;
                     5) "$ORBITFM" volume-down >/dev/null 2>&1 ;;
@@ -219,8 +241,8 @@ mode_swaybar() {
         fi
 
         refresh || true
-        printf '[{"name":"orbitfm","instance":"orbitfm","full_text":"%s","short_text":"%s"}],\n' \
-            "$(json_escape "$(bar_text)")" "$(json_escape "$(bar_text)")"
+        printf '[{"name":"orbitfm","instance":"orbitfm","full_text":"%s","short_text":"%s","color":"%s","markup":"none"}],\n' \
+            "$(json_escape "$(bar_text)")" "$(json_escape "$(bar_text)")" "$(state_color)"
         sleep "$INTERVAL"
     done
 }

@@ -53,6 +53,12 @@ Windows. Named pipe занимает первый экземпляр как пр
 | `status` | Текущее состояние | — |
 | `status --json` | Снимок состояния в JSON, схема 1 (ADR-0037) | — |
 | `events` | Поток снимков состояния NDJSON, конверт `ev: 1` (ADR-0039) | — |
+| `search <запрос>` | Поиск для companion-попапа; запрос — остаток строки, ≤128 символов; ответ `search <id>`, результаты — кадром `search` в `events` (ред. 0.16) | остаток строки |
+| `library` | Избранное и история для попапа: JSON `{"favorites":[…20],"history":[…20]}` (ред. 0.16) | — |
+| `favorite [uuid]` | Переключить избранное текущей станции или станции из эфира/выдачи/библиотеки; ответ `favorite true\|false` (ред. 0.16) | UUID, необязательно |
+| `play-result <uuid>` | Играть станцию только из последней выдачи companion-поиска (ред. 0.16) | UUID |
+| `play-library <uuid>` | Играть станцию только из избранного или истории, без сети (ред. 0.16) | UUID |
+| `play-url <url>` | Импортировать внешний поток: `.m3u`, `.pls`, страница или аудио; только `http(s)`, без пробелов, ≤2048 байт (ADR-0040) | URL |
 | `mode` | Текущий режим окна | — |
 | `mode <режим>` | Переключить режим окна | `focus`, `overlay`, `listening` или `panel` |
 | `theme <режим>` | Установить тему интерфейса (ADR-0037) | `system`, `dark`, `light` |
@@ -66,6 +72,17 @@ Windows. Named pipe занимает первый экземпляр как пр
 `mode <режим>` и неизвестная тема у `theme` отклоняются как `error <сообщение>`.
 `status` принимает только необязательный `--json`; любой другой аргумент —
 `error некорректный аргумент команды: …`.
+
+`search` — единственная команда, которая берёт остаток строки целиком, поэтому
+запрос может содержать пробелы; пустой запрос и запрос длиннее 128 символов
+отклоняются. `favorite` без аргумента работает с текущей станцией; с аргументом
+ищет UUID в текущем эфире, последней выдаче попапа, избранном и истории.
+`play-result` и `play-library` принимают ровно один UUID и не делают сетевых
+запросов: первый играет только строку последней выдачи, второй — только
+элемент библиотеки. `play-url` принимает ровно один `http(s)`-адрес без
+пробелов; резолв идёт в tokio-задаче, ответ приходит после `start_station`
+(бюджет резолвера 8 с, ответа — 10 с), повторный импорт до завершения
+получает `error импорт уже выполняется` (ADR-0040).
 
 На Этапе 3 `play <uuid>` полностью подключён: Application Core ищет станцию в результатах
 последнего поиска, затем в кэше/каталоге Radio Browser (таймаут 8 с), запускает
@@ -118,6 +135,14 @@ mode overlay
 mode focus
 ```
 
+или для companion-команд (ред. 0.16):
+```
+search 7
+favorite true
+```
+`library` отвечает одной строкой JSON:
+`{"favorites":[{"uuid":…,"name":…,"country":…,"countrycode":…,"tags":…,"bitrate":128,"source":"radio"}],"history":[…]}`.
+
 `status` принимает значения `stopped`, `playing`, `paused`, `buffering`, `reconnecting`,
 `error`. Текст ошибки в статус не включается. `volume` печатается с двумя знаками после
 запятой. Строки `stationuuid` и `name` присутствуют, пока состояние не `stopped`/`error`
@@ -143,7 +168,7 @@ error <сообщение>
 {
   "schema": 1,
   "app": "orbitfm",
-  "version": "0.13.0-rc.1",
+  "version": "0.16.0-rc.1",
   "state": "playing",
   "station": {
     "uuid": "960cf833-0601-11e8-ae97-52543be04c81",
@@ -154,11 +179,14 @@ error <сообщение>
     "favicon": "https://example.org/favicon.png",
     "homepage": "https://somafm.com",
     "bitrate": 128,
-    "codec": "MP3"
+    "codec": "MP3",
+    "source": "radio",
+    "favorite": false
   },
   "volume": 0.42,
   "window": { "visible": true, "mode": "focus" },
   "theme": "dark",
+  "accent": "blue",
   "language": "en",
   "can": { "previous": true, "next": true },
   "ui": {
@@ -166,7 +194,21 @@ error <сообщение>
     "next": "Next", "radio_roulette": "Radio Roulette",
     "settings": "Settings…", "show_window": "Show window",
     "hide_window": "Hide window", "nothing_playing": "Nothing playing",
-    "volume_up": "Volume Up", "volume_down": "Volume Down"
+    "volume_up": "Volume Up", "volume_down": "Volume Down",
+    "search": "Search", "no_match": "Nothing found", "retry": "Retry",
+    "close": "Close",
+    "favorites": "Favorites", "history": "History",
+    "play_this_page": "Play this page",
+    "no_audio": "No audio found on this page.",
+    "importing": "Importing stream…",
+    "stream_rejected": "The stream was rejected.",
+    "add_favorite": "Add to favorites", "remove_favorite": "Remove from favorites",
+    "now_playing": "Now playing", "volume": "Volume", "theme": "Theme",
+    "theme_system": "System", "theme_dark": "Dark", "theme_light": "Light",
+    "about_station": "About station", "open_homepage": "Open homepage",
+    "state_playing": "on air", "state_paused": "paused",
+    "state_buffering": "buffering", "state_reconnecting": "reconnecting",
+    "state_stopped": "stopped", "state_error": "error"
   }
 }
 ```
@@ -177,9 +219,21 @@ error <сообщение>
   root-вьюпорта (ADR-0026): `hide` даёт `false` при живом процессе.
 - `volume` округляется до тысячных, чтобы серия `volume-up` не давала
   `0.30000000000000004`.
-- `ui` — локализованные подписи из каталога i18n (`TrayText`) для действующего
-  языка: оболочки не дублируют каталог на 11 языках. Неизвестный язык клиента не
-  влияет — язык берётся из настроек приложения.
+- `ui` — локализованные подписи из каталога i18n (`TrayText`, `CommonText`,
+  `TransportText`, `SettingsText`) для действующего языка: оболочки не
+  дублируют каталог на 11 языках. Неизвестный язык клиента не влияет — язык
+  берётся из настроек приложения. `ui.state_*` — подписи состояний
+  воспроизведения для бейджа попапа, `ui.close` — кнопка закрытия
+  выбора страницы.
+- `accent` — токен акцента интерфейса (`blue`, `green`, `amber`, `violet`,
+  `rose`, `cyan`): попап и виджеты панелей красят акцент, не дублируя палитру.
+- `station.source` — `radio` (каталог Radio Browser) или `stream` (внешний
+  поток из `play-url`, ADR-0040); `station.favorite` — лежит ли станция в
+  избранном прямо сейчас.
+- `library` не входит в `status`: это отдельный ответ с избранным и историей,
+  по 20 компактных записей на список (`uuid`, `name`, `country`,
+  `countrycode`, `tags`, `bitrate`, `source`); длинные поля обрезаны, поэтому
+  ответ гарантированно меньше 64 КиБ.
 - `station.favicon` и `station.homepage` — **сырые значения каталога Radio
   Browser**, какие в нём и лежат. Политика артворка (ADR-0025, ред. 2) проверяет
   адрес цели загрузки и метаданные MPRIS/SMTC/Now Playing, но не переписывает
@@ -203,12 +257,15 @@ error <сообщение>
 ```json
 {"ev":1,"type":"snapshot","status":{ … }}
 {"ev":1,"type":"state","status":{ … }}
+{"ev":1,"type":"search","id":7,"query":"lofi","results":[…],"error":null}
 {"ev":1,"type":"keepalive"}
 ```
 
 - первая строка — всегда `snapshot` с полным объектом схемы 1;
 - `state` — полный кадр после изменения; одинаковые кадры не публикуются,
   промежуточные при медленном чтении схлопываются;
+- `search` — ответ на `search <запрос>`: поколение, запрос, до 20 компактных
+  станций и ошибка; новому подписчику не переигрывается (ред. 0.16);
 - `keepalive` — через 15 секунд тишины;
 - `events` не принимает команды и не входит в cold-start allowlist;
 - одновременно не более 16 подписок, остальные слоты из 64 остаются one-shot
@@ -300,6 +357,19 @@ pub enum IpcCommand {
     /// `volume-up`/`volume-down` — шаг громкости ±0.1 (ADR-0037).
     VolumeUp,
     VolumeDown,
+    /// `search <запрос>` — поиск попапа; ответ `search <id>`, кадр `search`
+    /// уходит в поток `events` (ред. 0.16).
+    Search { query: String },
+    /// `library` — избранное и история попапа (JSON, ≤64 КиБ).
+    Library,
+    /// `favorite [uuid]` — избранное текущей или известной станции.
+    Favorite { station_uuid: Option<String> },
+    /// `play-result <uuid>` — только из последней выдачи попапа.
+    PlayResult { station_uuid: String },
+    /// `play-library <uuid>` — только из избранного/истории.
+    PlayLibrary { station_uuid: String },
+    /// `play-url <url>` — импорт внешнего потока (ADR-0040).
+    PlayUrl { url: String },
     Quit,
     Volume { level: f64 },
     Raw(String),
@@ -338,6 +408,18 @@ impl StatusFeed {
     pub fn publish(&self, status: String);
 }
 
+/// Публикатор кадров `search`; latest-wins, новому подписчику не повторяется
+/// (ADR-0039, ревизия 0.16).
+pub struct SearchFeed { /* watch::Sender<Option<String>> */ }
+
+impl SearchFeed {
+    pub fn new() -> Self;
+    pub fn subscribe(&self) -> tokio::sync::watch::Receiver<Option<String>>;
+    /// Публикует готовый кадр `{"ev":1,"type":"search",…}`; каждый `id` меняет
+    /// значение канала, даже если запрос и результаты совпали.
+    pub fn publish(&self, frame: String);
+}
+
 /// Пробуждает GUI-цикл после постановки команды в очередь.
 pub type WakeFn = std::sync::Arc<dyn Fn() + Send + Sync>;
 
@@ -371,6 +453,7 @@ impl IpcServer {
         self,
         wake: WakeFn,
         status: tokio::sync::watch::Receiver<Option<String>>,
+        search: tokio::sync::watch::Receiver<Option<String>>,
         shutdown: tokio::sync::oneshot::Receiver<()>,
     );
 }
@@ -404,9 +487,12 @@ Application Core (`src/session/commands.rs`). Точно так же `ThemeArg` 
 | Экземпляр не запущен, команда `settings` | Запускается новый процесс с открытым окном настроек (ADR-0037) |
 | `try_bind` вернул `AlreadyRunning` во время запуска | Команда повторно отправляется до 5 раз с интервалом 50 мс |
 | Экземпляр не запущен, `playpause`/`next`/`previous`/`roulette`/`theme`/`volume-up`/`volume-down`/`status`/`status --json`/`events` | Ошибка `OrbitFM не запущен`, код возврата 1: управляющая команда не поднимает GUI |
+| Экземпляр не запущен, `search`/`library`/`favorite`/`play-result`/`play-library`/`play-url` | Ошибка `OrbitFM не запущен`, код возврата 1: импорт и поиск попапа не поднимают GUI (ADR-0040) |
 | Ответ начинается с `error` | Текст ошибки выводится в stderr, код возврата 1 |
 | `status --json` | Строка JSON печатается как есть, без разбора клиентом |
 | `events` | Кадры NDJSON печатаются по мере поступления до EOF/Ctrl-C (ADR-0039) |
+| `search` | Печатается `search <id>`; результаты приходят кадром `search` в `events` |
+| `play-url` | Ответ приходит после резолва (до 8 с) и запуска станции; при ошибке — `error …` |
 | `quit` | Сервер отвечает `ok`, затем окно закрывается и процесс завершается |
 
 Гонка «экземпляр появился между проверкой и `try_bind`» обрабатывается повторной

@@ -1,7 +1,7 @@
 # OrbitFM
 
 **Плеер интернет-радио с 3D-глобусом**  
-Под эгидой [ModernByte](https://github.com/ModernByte) · версия `0.15.0-rc.2`
+Под эгидой [ModernByte](https://github.com/ModernByte) · версия `0.16.0-rc.1`
 
 [![Релиз](https://img.shields.io/github/v/release/ModernByte/orbitfm?include_prereleases)](https://github.com/ModernByte/orbitfm/releases)
 [![Статус CI](https://img.shields.io/github/actions/workflow/status/ModernByte/orbitfm/ci.yml?branch=main)](https://github.com/ModernByte/orbitfm/actions/workflows/ci.yml)
@@ -14,7 +14,7 @@ OrbitFM — плеер интернет-радио, где каталог пок
 и её станции лежат рядом в списке; так же можно искать по жанру или по названию станции. Закрытие окна музыку не
 останавливает: приложение работает одним процессом, живёт в системном трее и принимает команды из терминала и от
 медиа-клавиш. Для экрана есть три режима — от большого рабочего стола с глобусом до компактной капсулы в углу.
-Приоритетная платформа — Linux (Wayland и X11), сборки есть для Windows и macOS; версия `0.15.0-rc.2` —
+Приоритетная платформа — Linux (Wayland и X11), сборки есть для Windows и macOS; версия `0.16.0-rc.1` —
 пре-релиз, отдельные детали ещё могут меняться.
 
 ## Что умеет
@@ -31,9 +31,13 @@ OrbitFM — плеер интернет-радио, где каталог пок
 - **Живая картинка.** Визуализатор на 16, 24 или 32 полосы, орбитальное аудиокольцо в Focus и аудио-реактивная
   планета: глобус дышит и качается в такт эфиру, шесть стилей движения, перевороты камеры. Всё выключается одной
   галкой «Уменьшить движение».
-- **Системный трей.** На Linux — StatusNotifierItem, на macOS — элемент строки меню: Пуск/Пауза, Stop,
-  предыдущая и следующая, радиорулетка, громкость, настройки, выход; колесо мыши по иконке меняет громкость.
-  Первая строка меню: «Сейчас играет: …», «Пауза: …» или «Ничего не играет».
+- **Системный трей.** На Linux — StatusNotifierItem, на macOS — элемент строки меню. Иконка живёт, пока жив
+  процесс, в том числе после остановки музыки при закрытом окне. Меню сгруппировано: карточка станции, показ
+  окна, транспорт, громкость с процентом, подменю темы, «О станции» (избранное и домашняя страница), настройки
+  и выход; колесо мыши по иконке меняет громкость.
+- **Внешние потоки.** `orbitfm play-url` принимает `.m3u`/`.pls`, прямую аудиоссылку и HTML-страницу с аудио
+  (`og:audio`, `<audio>`, `<source>`). Импорт запускается только вручную, HLS отклоняется, локальная сеть
+  разрешена лишь при явной команде; поток становится станцией с историей, избранным и MPRIS.
 - **Медиа-клавиши и системные виджеты.** MPRIS на Linux, System Media Transport Controls на Windows,
   Now Playing на macOS — в том числе при скрытом окне.
 - **11 языков интерфейса** — «Системный» плюс 10 языков, смена без перезапуска.
@@ -49,9 +53,10 @@ OrbitFM — плеер интернет-радио, где каталог пок
   swaybar, i3status-rust; для XFCE, Cinnamon, MATE и LXQt печатаются шаги для штатного апплета вывода команды.
   Конфиги оболочек не изменяются, квитанции позволяют обновлять и удалять только свои файлы.
 - **Панель в браузере.** `orbitfm integration install chrome|firefox` раскладывает popup и native host для
-  Chrome, Chromium, Brave, Edge, Vivaldi и Firefox: станция, транспорт, громкость, тема и показ окна без
-  опроса — через `orbitfm events`. Content scripts и фоновых страниц нет, поэтому веб-сайты не получают
-  доступа к плееру; приложение должно быть уже запущено.
+  Chrome, Chromium, Brave, Edge, Vivaldi и Firefox. Панель повторяет выпадающую панель Noctalia: карточка
+  станции, транспорт, громкость, тема, избранное, поиск, история и «Play this page» для аудио на открытой
+  вкладке. Скан вкладки выполняется только по клику (`activeTab` + `scripting`); content scripts и фоновых
+  страниц нет, поэтому веб-сайты не получают доступа к плееру. Приложение должно быть уже запущено.
 
 ## Системные требования
 
@@ -72,16 +77,16 @@ OrbitFM — плеер интернет-радио, где каталог пок
 
 ### AppImage (Linux x86_64)
 
-Файл называется `OrbitFM-<версия>-x86_64.AppImage`, например `OrbitFM-0.15.0-rc.2-x86_64.AppImage`. Права root и
+Файл называется `OrbitFM-<версия>-x86_64.AppImage`, например `OrbitFM-0.16.0-rc.1-x86_64.AppImage`. Права root и
 установка не нужны — приложение rootless по определению, и `libmpv` с FFmpeg уже внутри:
 
 ```bash
-chmod +x OrbitFM-0.15.0-rc.2-x86_64.AppImage
-./OrbitFM-0.15.0-rc.2-x86_64.AppImage
+chmod +x OrbitFM-0.16.0-rc.1-x86_64.AppImage
+./OrbitFM-0.16.0-rc.1-x86_64.AppImage
 ```
 
 Если FUSE недоступен (контейнеры, минимальные образы) или не нужна интеграция через монтирование, запускайте в
-режиме распаковки: `APPIMAGE_EXTRACT_AND_RUN=1 ./OrbitFM-0.15.0-rc.2-x86_64.AppImage`. Виджету Noctalia и командам
+режиме распаковки: `APPIMAGE_EXTRACT_AND_RUN=1 ./OrbitFM-0.16.0-rc.1-x86_64.AppImage`. Виджету Noctalia и командам
 `orbitfm …` нужен запускаемый `orbitfm` в `PATH` — удобно сделать символьную ссылку на AppImage.
 
 ### Установщики Windows и macOS
@@ -216,6 +221,7 @@ orbitfm status --json       # то же в JSON схемы 1 (для плаги�
 orbitfm events              # поток состояния NDJSON: snapshot, state, keepalive
 orbitfm mode overlay        # focus | overlay | listening | panel
 orbitfm play <stationuuid>  # запустить станцию по UUID из Radio Browser
+orbitfm play-url <url>      # импортировать .m3u, .pls, аудио или страницу с аудио
 orbitfm playpause | orbitfm next | orbitfm previous
 orbitfm roulette            # случайная станция
 orbitfm stop
@@ -327,19 +333,19 @@ Noto Sans CJK вашего дистрибутива); это зависимос�
 |---|---|
 | **Проверено в runtime** | Прогонено вручную на живом окружении: Linux (Wayland и X11, niri, Noctalia), трей, MPRIS, все режимы окна; панель браузера — Chrome for Testing и Firefox |
 | **Собрано и протестировано в CI** | Компилируется, линтится и покрыт автотестами на `windows-latest` и `macos-latest`, но приёмки на живом железе не было: MSI, DMG, Now Playing на macOS, SMTC на Windows |
-| **Заявлено планом** | Записано в ROADMAP и ADR как направление, кода или проверки ещё нет: Stream Discovery, вторая итерация браузерного пакета |
+| **Заявлено планом** | Записано в ROADMAP и ADR как направление, кода или проверки ещё нет: OrbitFM Web Explorer, Android Auto/companion, UPnP/DLNA |
 
-Плагины оболочек 0.15 пока не в первой категории: ассеты проверены статически
+Плагины оболочек 0.16 пока не в первой категории: ассеты проверены статически
 (`qmllint`, `qmlformat`, `node --check`), установщик и бар-скрипт — живым прогоном,
 но сами Plasma 6, GNOME, Omarchy и бары на машине приёмки не запускались;
 подробности — в `docs/modules/16-integrations.md`.
 
-Браузерная панель 0.15 проверена живым прогоном в Chrome for Testing 153 и
-Firefox 159 на Linux: реальный popup через native host, snapshot и изменения
-через `orbitfm events`, round-trip громкости. Brave, Edge, Vivaldi и постоянно
-подписанный Firefox не запускались — для них проверены общий код, манифесты и
-установщик; Windows-манифесты через реестр и macOS-раскладка в пакет не входят.
-Подробности — в `docs/modules/17-browser-companion.md`.
+Браузерная панель проверена живым прогоном в Chrome for Testing и Firefox на
+Linux: реальный popup через native host, snapshot и изменения через
+`orbitfm events`, поиск, избранное, история и «Play this page». Brave, Edge,
+Vivaldi и постоянно подписанный Firefox не запускались — для них проверены общий
+код, манифесты и установщик; Windows-манифесты через реестр и macOS-раскладка в
+пакет не входят. Подробности — в `docs/modules/17-browser-companion.md`.
 
 ## Для разработчиков
 

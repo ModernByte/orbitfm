@@ -2,6 +2,10 @@ use thiserror::Error;
 
 /// Верхняя граница длины одной команды.
 pub const MAX_COMMAND_BYTES: usize = 4096;
+/// Предел поискового запроса companion-попапа (ADR-0038, ревизия 0.16).
+pub const MAX_SEARCH_CHARS: usize = 128;
+/// Предел длины URL в `play-url`: длиннее не нужен ни одному каталогу.
+pub const MAX_PLAY_URL_BYTES: usize = 2048;
 
 /// Аргумент глагола `mode` — целевой режим окна (ADR-0021 п. 5).
 ///
@@ -122,6 +126,30 @@ pub enum IpcCommand {
     VolumeUp,
     /// `volume-down`: громкость на один шаг вниз.
     VolumeDown,
+    /// `search <запрос>`: поиск для companion-попапа; ответ — кадр `search`
+    /// в потоке событий (ADR-0038, ревизия 0.16).
+    Search {
+        query: String,
+    },
+    /// `library`: избранное и история для попапа.
+    Library,
+    /// `favorite [uuid]`: переключить избранное текущей станции или станции из
+    /// выдачи/библиотеки.
+    Favorite {
+        station_uuid: Option<String>,
+    },
+    /// `play-result <uuid>`: играть станцию только из последней выдачи попапа.
+    PlayResult {
+        station_uuid: String,
+    },
+    /// `play-library <uuid>`: играть станцию только из избранного или истории.
+    PlayLibrary {
+        station_uuid: String,
+    },
+    /// `play-url <url>`: импорт внешнего потока (ADR-0040), только явный вызов.
+    PlayUrl {
+        url: String,
+    },
     /// Неизвестная команда сохраняется для расширения протокола.
     Raw(String),
 }
@@ -207,6 +235,45 @@ impl IpcCommand {
                 reject_extra_args(parts.next())?;
                 Ok(Self::VolumeDown)
             }
+            "search" => {
+                let query = rest_of_line(line, name);
+                if query.is_empty() {
+                    return Err(IpcError::InvalidArgument(
+                        "search: ожидается поисковый запрос".into(),
+                    ));
+                }
+                if query.chars().count() > MAX_SEARCH_CHARS {
+                    return Err(IpcError::InvalidArgument(format!(
+                        "search: запрос длиннее {MAX_SEARCH_CHARS} символов"
+                    )));
+                }
+                Ok(Self::Search {
+                    query: query.to_owned(),
+                })
+            }
+            "library" => {
+                reject_extra_args(parts.next())?;
+                Ok(Self::Library)
+            }
+            "favorite" => {
+                let station_uuid = parts.next().map(str::to_owned);
+                reject_extra_args(parts.next())?;
+                Ok(Self::Favorite { station_uuid })
+            }
+            "play-result" => {
+                let station_uuid = required_uuid(parts.next(), "play-result")?;
+                reject_extra_args(parts.next())?;
+                Ok(Self::PlayResult { station_uuid })
+            }
+            "play-library" => {
+                let station_uuid = required_uuid(parts.next(), "play-library")?;
+                reject_extra_args(parts.next())?;
+                Ok(Self::PlayLibrary { station_uuid })
+            }
+            "play-url" => {
+                let url = parse_play_url(line, name)?;
+                Ok(Self::PlayUrl { url })
+            }
             "quit" => {
                 reject_extra_args(parts.next())?;
                 Ok(Self::Quit)
@@ -280,6 +347,15 @@ impl IpcCommand {
             Self::Settings => "settings".to_owned(),
             Self::VolumeUp => "volume-up".to_owned(),
             Self::VolumeDown => "volume-down".to_owned(),
+            Self::Search { query } => format!("search {query}"),
+            Self::Library => "library".to_owned(),
+            Self::Favorite { station_uuid } => match station_uuid {
+                Some(uuid) => format!("favorite {uuid}"),
+                None => "favorite".to_owned(),
+            },
+            Self::PlayResult { station_uuid } => format!("play-result {station_uuid}"),
+            Self::PlayLibrary { station_uuid } => format!("play-library {station_uuid}"),
+            Self::PlayUrl { url } => format!("play-url {url}"),
             Self::Raw(raw) => raw.clone(),
         }
     }
@@ -291,6 +367,53 @@ fn reject_extra_args(extra: Option<&str>) -> Result<(), IpcError> {
             "лишний аргумент: {value}"
         ))),
         None => Ok(()),
+    }
+}
+
+/// Остаток строки после имени команды: запрос поиска может содержать пробелы.
+fn rest_of_line<'a>(line: &'a str, name: &str) -> &'a str {
+    line[name.len()..].trim()
+}
+
+fn required_uuid(value: Option<&str>, verb: &str) -> Result<String, IpcError> {
+    let uuid =
+        value.ok_or_else(|| IpcError::InvalidArgument(format!("{verb}: ожидается stationuuid")))?;
+    if uuid.chars().any(char::is_whitespace) {
+        return Err(IpcError::InvalidArgument(format!(
+            "{verb}: stationuuid не содержит пробелов"
+        )));
+    }
+    Ok(uuid.to_owned())
+}
+
+/// `play-url` принимает ровно один `http(s)`-адрес без пробелов: остальное
+/// отклоняется до сетевого резолвера (ADR-0040).
+fn parse_play_url(line: &str, name: &str) -> Result<String, IpcError> {
+    let rest = rest_of_line(line, name);
+    if rest.is_empty() {
+        return Err(IpcError::InvalidArgument(
+            "play-url: ожидается http(s)-URL".into(),
+        ));
+    }
+    if rest.split_whitespace().count() != 1 {
+        return Err(IpcError::InvalidArgument(
+            "play-url: URL не содержит пробелов".into(),
+        ));
+    }
+    if rest.len() > MAX_PLAY_URL_BYTES {
+        return Err(IpcError::InvalidArgument(format!(
+            "play-url: URL длиннее {MAX_PLAY_URL_BYTES} байт"
+        )));
+    }
+    let lower = rest.to_ascii_lowercase();
+    let host = lower
+        .strip_prefix("https://")
+        .or_else(|| lower.strip_prefix("http://"));
+    match host {
+        Some(host) if !host.is_empty() => Ok(rest.to_owned()),
+        _ => Err(IpcError::InvalidArgument(
+            "play-url: поддерживаются только http:// и https://".into(),
+        )),
     }
 }
 
@@ -460,6 +583,95 @@ mod tests {
     }
 
     #[test]
+    fn parses_companion_search_with_spaces() {
+        assert_eq!(
+            IpcCommand::parse("search  jazz   lounge ").unwrap(),
+            IpcCommand::Search {
+                query: "jazz   lounge".to_owned()
+            }
+        );
+        assert_eq!(
+            IpcCommand::Search {
+                query: "lofi beats".to_owned()
+            }
+            .to_wire(),
+            "search lofi beats"
+        );
+        assert!(IpcCommand::parse("search").is_err());
+        assert!(IpcCommand::parse("search   ").is_err());
+        let long = "я".repeat(MAX_SEARCH_CHARS + 1);
+        assert!(IpcCommand::parse(&format!("search {long}")).is_err());
+        let limit = "я".repeat(MAX_SEARCH_CHARS);
+        assert!(IpcCommand::parse(&format!("search {limit}")).is_ok());
+    }
+
+    #[test]
+    fn parses_library_and_favorite() {
+        assert_eq!(IpcCommand::parse("library").unwrap(), IpcCommand::Library);
+        assert_eq!(IpcCommand::Library.to_wire(), "library");
+        assert!(IpcCommand::parse("library now").is_err());
+
+        assert_eq!(
+            IpcCommand::parse("favorite").unwrap(),
+            IpcCommand::Favorite { station_uuid: None }
+        );
+        assert_eq!(
+            IpcCommand::parse("favorite uuid-1").unwrap(),
+            IpcCommand::Favorite {
+                station_uuid: Some("uuid-1".to_owned())
+            }
+        );
+        assert_eq!(
+            IpcCommand::Favorite {
+                station_uuid: Some("uuid-1".to_owned())
+            }
+            .to_wire(),
+            "favorite uuid-1"
+        );
+        assert!(IpcCommand::parse("favorite a b").is_err());
+    }
+
+    #[test]
+    fn parses_play_result_and_play_library() {
+        assert_eq!(
+            IpcCommand::parse("play-result uuid-1").unwrap(),
+            IpcCommand::PlayResult {
+                station_uuid: "uuid-1".to_owned()
+            }
+        );
+        assert_eq!(
+            IpcCommand::parse("play-library uuid-2").unwrap(),
+            IpcCommand::PlayLibrary {
+                station_uuid: "uuid-2".to_owned()
+            }
+        );
+        assert!(IpcCommand::parse("play-result").is_err());
+        assert!(IpcCommand::parse("play-library").is_err());
+        assert!(IpcCommand::parse("play-result a b").is_err());
+    }
+
+    #[test]
+    fn parses_play_url_strictly() {
+        assert_eq!(
+            IpcCommand::parse("play-url https://example.org/stream.m3u").unwrap(),
+            IpcCommand::PlayUrl {
+                url: "https://example.org/stream.m3u".to_owned()
+            }
+        );
+        assert_eq!(
+            IpcCommand::parse("play-url HTTP://127.0.0.1:8080/a.mp3").unwrap(),
+            IpcCommand::PlayUrl {
+                url: "HTTP://127.0.0.1:8080/a.mp3".to_owned()
+            }
+        );
+        assert!(IpcCommand::parse("play-url").is_err());
+        assert!(IpcCommand::parse("play-url file:///etc/passwd").is_err());
+        assert!(IpcCommand::parse("play-url example.org/stream").is_err());
+        assert!(IpcCommand::parse("play-url https://example.org/a b").is_err());
+        assert!(IpcCommand::parse("play-url https://").is_err());
+    }
+
+    #[test]
     fn keeps_unknown_commands_as_raw() {
         assert_eq!(
             IpcCommand::parse("future-command payload").unwrap(),
@@ -491,6 +703,22 @@ mod tests {
             IpcCommand::Settings,
             IpcCommand::VolumeUp,
             IpcCommand::VolumeDown,
+            IpcCommand::Search {
+                query: "jazz lounge".to_owned(),
+            },
+            IpcCommand::Library,
+            IpcCommand::Favorite {
+                station_uuid: Some("uuid".to_owned()),
+            },
+            IpcCommand::PlayResult {
+                station_uuid: "uuid".to_owned(),
+            },
+            IpcCommand::PlayLibrary {
+                station_uuid: "uuid".to_owned(),
+            },
+            IpcCommand::PlayUrl {
+                url: "https://example.org/live.m3u".to_owned(),
+            },
             IpcCommand::Raw("custom arg".to_owned()),
         ];
         for command in commands {

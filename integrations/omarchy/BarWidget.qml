@@ -9,12 +9,48 @@ BarWidget {
     moduleName: "io.github.modernbyte.orbitfm"
 
     readonly property string orbitfm: "@ORBITFM@"
+    readonly property int maximumTextLength: 28
+
     property var status: ({})
 
     readonly property string stationName: status.station ? status.station.name : ""
     readonly property string idleLabel: status.ui ? status.ui.nothing_playing : "OrbitFM"
-    readonly property string displayText: stationName.length > 0 ? stationName : idleLabel
     readonly property int volumePercent: Math.round((status.volume || 0) * 100)
+
+    readonly property string stateGlyph: {
+        switch (status.state || "stopped") {
+        case "playing":
+            return "▶"
+        case "paused":
+            return "⏸"
+        case "buffering":
+        case "reconnecting":
+            return "…"
+        case "error":
+            return "⚠"
+        default:
+            return "◍"
+        }
+    }
+
+    readonly property string displayText: {
+        var text = stationName.length > 0 ? stationName : (idleLabel || "OrbitFM")
+        if (text.length > maximumTextLength)
+            text = text.slice(0, maximumTextLength - 1) + "…"
+        return stateGlyph + " " + text
+    }
+
+    readonly property string stationDetails: {
+        if (stationName.length === 0)
+            return displayText
+        var parts = []
+        if (status.station.country)
+            parts.push(status.station.country)
+        if (status.station.bitrate > 0)
+            parts.push(status.station.bitrate + " kbps")
+        parts.push(volumePercent + "%")
+        return parts.join(" · ")
+    }
 
     function runCommand(name) {
         action.command = [root.orbitfm, name]
@@ -26,9 +62,9 @@ BarWidget {
 
         bar: root.bar
         text: root.displayText
-        tooltipText: root.stationName.length > 0
-            ? root.stationName + "\n" + root.volumePercent + "%"
-            : root.displayText
+        tooltipText: stationName.length > 0
+            ? stationName + "\n" + stationDetails
+            : displayText
 
         onPressed: function(buttonCode) {
             if (buttonCode === Qt.LeftButton)

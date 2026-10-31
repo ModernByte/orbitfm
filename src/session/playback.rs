@@ -102,7 +102,10 @@ impl super::Session {
             tracing::warn!(error = %err, "не удалось сохранить историю станций");
             self.notify_error_detail(NoticeKey::HistoryNotSaved, err.to_string());
         }
-        self.spawn_click(station.stationuuid);
+        // У внешнего потока нет записи в Radio Browser: click отправлять некуда.
+        if !station.stationuuid.starts_with("url:") {
+            self.spawn_click(station.stationuuid);
+        }
         self.sync_media();
         Ok(())
     }
@@ -133,12 +136,18 @@ impl super::Session {
         });
     }
 
-    pub(crate) fn toggle_favorite(&mut self, station: &Station) {
+    /// Переключает избранное и отдаёт новое состояние: `true` — станция теперь
+    /// в избранном. Ошибка сохранения не меняет ответ IPC.
+    pub(crate) fn toggle_favorite(&mut self, station: &Station) -> Result<bool, String> {
         match self.library.toggle_favorite(station) {
-            Ok(favorite) => tracing::debug!(favorite, "избранное обновлено"),
+            Ok(favorite) => {
+                tracing::debug!(favorite, "избранное обновлено");
+                Ok(favorite)
+            }
             Err(err) => {
                 tracing::warn!(error = %err, "не удалось сохранить избранное");
                 self.notify_error_detail(NoticeKey::FavoritesNotSaved, err.to_string());
+                Err(err.to_string())
             }
         }
     }

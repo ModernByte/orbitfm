@@ -17,7 +17,7 @@ use pipe as transport;
 #[cfg(unix)]
 use socket as transport;
 
-pub(crate) use events::StatusFeed;
+pub(crate) use events::{SearchFeed, StatusFeed};
 pub use protocol::{IpcCommand, IpcError, ThemeArg, WindowModeArg};
 pub(crate) use server::EventSubscription;
 pub use server::{IpcRequest, IpcServer, WakeFn};
