@@ -33,20 +33,28 @@ fn reload_waybar() -> ReloadOutcome {
     if command_succeeds("waybar-msg", &["cmd", "reload"]) {
         return ReloadOutcome::Reloaded;
     }
-    let pids = waybar_pids();
+    match signal_waybar() {
+        0 => ReloadOutcome::Manual,
+        signaled => ReloadOutcome::Signaled(signaled),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn signal_waybar() -> usize {
     let mut signaled = 0;
-    for pid in pids {
+    for pid in waybar_pids() {
         // SAFETY: PID взят из /proc и принадлежит процессу с comm == "waybar";
         // при совпадении имени сигнал безопасен и не завершает процесс.
         if unsafe { libc::kill(pid, libc::SIGUSR2) } == 0 {
             signaled += 1;
         }
     }
-    if signaled == 0 {
-        ReloadOutcome::Manual
-    } else {
-        ReloadOutcome::Signaled(signaled)
-    }
+    signaled
+}
+
+#[cfg(not(target_os = "linux"))]
+fn signal_waybar() -> usize {
+    0
 }
 
 fn command_succeeds(program: &str, args: &[&str]) -> bool {
@@ -81,11 +89,6 @@ fn waybar_pids() -> Vec<i32> {
         }
     }
     pids
-}
-
-#[cfg(not(target_os = "linux"))]
-fn waybar_pids() -> Vec<i32> {
-    Vec::new()
 }
 
 #[cfg(test)]
