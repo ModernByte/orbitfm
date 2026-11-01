@@ -50,14 +50,15 @@ impl super::Session {
                     continue;
                 }
             };
-            self.apply_audio_event(event);
+            self.apply_audio_event(&event);
         }
     }
 
-    pub(crate) fn apply_audio_event(&mut self, event: AudioEvent) {
+    pub(crate) fn apply_audio_event(&mut self, event: &AudioEvent) {
         if let AudioEvent::Started { url } = event {
-            self.current_url = Some(url);
+            self.current_url = Some(url.clone());
         }
+        self.observe_economy(event);
     }
 
     /// Ищет станцию в видимом списке, иначе тянет из Radio Browser по UUID.
@@ -65,6 +66,15 @@ impl super::Session {
         if let Some(station) = self
             .search
             .results
+            .iter()
+            .find(|station| station.stationuuid == station_uuid)
+        {
+            return Ok(station.clone());
+        }
+        // UUID из офлайн-снимка уже есть локально: без сети каталог не нужен.
+        if let Some(station) = self
+            .world
+            .sample()
             .iter()
             .find(|station| station.stationuuid == station_uuid)
         {
@@ -105,6 +115,8 @@ impl super::Session {
 
         self.current_url = Some(url);
         self.current_station = Some(station.clone());
+        // Новая станция снимает ECO и повышенный буфер прошлой (ADR-0043).
+        self.note_station_selected(&station.stationuuid);
         // Запуск из списка или hotkey тоже выбирает станцию: маркер глобуса
         // обязан отозваться тем же выделением (ADR-0036).
         self.selected_station = Some(station.stationuuid.clone());

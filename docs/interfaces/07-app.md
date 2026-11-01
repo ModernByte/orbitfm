@@ -31,14 +31,18 @@ root-вьюпорта: цикл завершается, управление в�
    Маршрутизацией `IpcCommand` и `MediaCommand` занимается `Session`: очередь
    `mpsc::Receiver<IpcRequest>` и приёмник MPRIS принадлежат ядру и обслуживаются как из
    `Session::tick()` (окно открыто), так и из `Session::park()` (окно закрыто).
-4. Держать ресурсы одного прогона: тему и акцент (`palette::configure_style`), системный
-   цветной emoji-шрифт (ADR-0017), `GlobeRenderer`, вставленный в `callback_resources`
-   wgpu-рендерера, `FaviconCache` с его текстурами, `ArtworkFetcher` для иконок
+4. Держать ресурсы одного прогона: тему и акцент (`palette::configure_style`), встроенные
+   fallback-шрифты (`ui::fonts::install`: Latin/Cyrillic, CJK, Arabic, emoji; системный
+   `NotoColorEmoji` остаётся предпочтительным, ADR-0041, ADR-0017), `GlobeRenderer`,
+   вставленный в `callback_resources` wgpu-рендерера, `FaviconCache` с его текстурами
+   и процедурными обложками (`src/ui/procedural.rs`, ADR-0044), `ArtworkFetcher` для иконок
    (`services::artwork`, ADR-0016 ред. 2),
    `SpectrumOverlay`, `motion: MotionMixer`, `orbit_ring: OrbitRing`, `CalloutState`,
-   `VisualizerModel`, `Toast`, `transitions: Transitions` с прогрессами переходов зон
-   (ADR-0032) и `settings_rect` — последний прямоугольник окна настроек, по которому
-   гаснет модалка (ADR-0031, ADR-0032).
+   `station_callout: CalloutState`, `VisualizerModel`, `Toast`, `transitions: Transitions`
+   с прогрессами переходов зон (ADR-0032), `settings_rect` — последний прямоугольник окна
+   настроек, по которому гаснет модалка (ADR-0031, ADR-0032), `settings_category`,
+   `integrations: IntegrationPanel` (снимок и очередь операций, ADR-0042) и
+   `onboarding: onboarding::View` (шаг и отклики мастера, ADR-0041).
 5. Устанавливать `WakeHandle` в начале прогона (`OrbitApp::new` → `wake.install`, замыкание
    зовёт `Context::request_repaint`) и оставлять его снятым после закрытия окна
    (`Session::end_window` → `wake.clear`), чтобы фоновые задачи не будили несуществующий цикл.
@@ -112,6 +116,33 @@ root-вьюпорта: цикл завершается, управление в�
 14. Обслуживать Roulette: `Session::start_roulette` запрашивает случайную станцию с
     координатами, `Session::poll_roulette` запускает её, доворачивает камеру и отдаёт
     `Notice`; отдельной IPC-команды нет.
+15. Показывать мастер первого запуска (ADR-0041): `Session::onboarding_open()` держит
+    модальный слой поверх стола, пока пользователь не нажмёт «Пропустить» или «Готово»;
+    пока он открыт, `Escape` и горячие клавиши стола не срабатывают. Шаги «Язык и тема»,
+    «Ваш рабочий стол» и «Интеграции» дают `UiAction::{SetLanguage, SetTheme,
+    ApplyWindowRules, OpenIntegrations, FinishOnboarding}`. `ApplyWindowRules` вызывает
+    `Session::apply_window_rules`: Hyprland — `hyprctl keyword` с фиксированными
+    аргументами, niri — готовый KDL-сниппет с кнопкой «Копировать», KDE/GNOME/иное — без
+    действий; конфиги пользователя не редактируются. `FinishOnboarding` и
+    `OpenIntegrations` завершают мастер (`Session::finish_onboarding`), второй ещё и
+    открывает категорию `Integrations`. Арабский язык зеркалит раскладку
+    (`Layout::right_to_left`).
+16. Управлять интеграциями из окна настроек (ADR-0042): вкладка `Integrations` показывает
+    группы Bars / Environments / Browsers и состояния `NotInstalled` / `Installed` /
+    `UpdateAvailable` / `Problem`; действия `UiAction::IntegrationInstall/Uninstall/
+    EnableWaybar/Reload` уходят в `IntegrationPanel` и исполняются по одной фоновой
+    операции за раз. Правка конфигов — только JSONC CST (`jsonc-parser`) с сохранением
+    комментариев и форматирования, одноразовый backup `<имя>.orbitfm.bak`, повторный
+    разбор перед атомарной записью; симлинки отклоняются. Перезапуск — `waybar-msg cmd
+    reload`, targeted `SIGUSR2` или `polybar-msg cmd restart`; `killall`/`pkill` не
+    используются. Операции требуют явного нажатия в GUI, установка native-host берёт
+    абсолютный путь к бинарнику.
+17. Показывать офлайн-данные и экономный режим (ADR-0043): при `search.offline` панель
+    помечает выдачу как локальную, при `session.world.offline()` легенда карты подписывает
+    источник снимком; `Session::economy_stream()` включает индикатор `ECO` рядом с
+    битрейтом. Кнопка «Очистить офлайн-снимок» в категории `About` даёт
+    `UiAction::ClearOfflineSnapshot` → `Session::clear_offline_snapshot`; успех и ошибка
+    приходят тостами `SnapshotCleared`/`SnapshotClearFailed`.
 
 ## Порядок инициализации
 
@@ -156,12 +187,15 @@ root-вьюпорта: цикл завершается, управление в�
 12. OrbitApp::new                   — на каждый прогон: применяет тему, акцент и язык к
                                       egui (`palette::configure_style`, включая
                                       `Style::animation_time` под reduce motion), ставит
-                                      системный цветной emoji-шрифт для флагов (ADR-0017,
-                                      деградация без шрифта), создаёт GlobeRenderer из
-                                      wgpu_render_state и кладёт его в callback_resources,
-                                      строит VisualizerModel по `Settings::viz_bars`,
-                                      `Toast` и `Transitions`, устанавливает WakeHandle
-                                      (`wake.install` замыкания repaint)
+                                      встроенные fallback-шрифты (`ui::fonts::install`,
+                                      ADR-0041) и системный цветной emoji-шрифт для флагов
+                                      (ADR-0017, деградация без шрифта), создаёт
+                                      GlobeRenderer из wgpu_render_state и кладёт его в
+                                      callback_resources, строит VisualizerModel по
+                                      `Settings::viz_bars`, `Toast`, `Transitions`,
+                                      `IntegrationPanel` и `onboarding::View`,
+                                      устанавливает WakeHandle (`wake.install` замыкания
+                                      repaint)
 13. после выхода — shutdown_tx + ожидание IPC-сервера с таймаутом 2 с; сокет удаляется
 ```
 
@@ -177,7 +211,7 @@ root-вьюпорта: цикл завершается, управление в�
 | Команда       | Действие |
 |---------------|----------|
 | Toggle/Show/Hide | Через `WindowState` ядра и `UiIntent` для UI (ADR-0018). Скрытие: `Session::hide` (или `toggle` в состоянии «открыто») → `UiIntent::Close` → `logic()` шлёт `ViewportCommand::Close` → `run_native` возвращается → `Session::end_window` (окно реально уходит из раскладки, `wake.clear()`, `sync_media()`) → `settle_analysis` (снимает `@level`/`@spectrum`) → `Session::park`. Показать: `Session::show`/`toggle` в скрытом состоянии → `UiIntent::Show` → `park` выходит с `ParkOutcome::Show` → новый `run_window` с восстановленным размером; на niri 26.04 окно с полностью отрисованным деском появляется за ≈1.02 с от приёма команды (≈73 мс из них — сам IPC-запрос). `ViewportCommand::Visible`, `CancelClose` и сжатие поверхности до 1×1 не используются: на Wayland `Visible` — no-op (редакция 1 ADR отклонена live-проверкой) |
-| Play          | `Session::resolve_station`: поиск в результатах последнего поиска, затем `radio.get_station` (таймаут 8 с); `audio.play(url_resolved)`, запись в историю, асинхронный `radio.send_click`, `sync_media` |
+| Play          | `Session::resolve_station`: поиск в результатах последнего поиска, затем в офлайн-снимке (`world.sample()`), затем `radio.get_station` (таймаут 8 с); `audio.play(url_resolved)`, запись в историю, асинхронный `radio.send_click`, `sync_media` |
 | Stop          | `Session::stop_playback` → `audio.stop()`; последний URL и станция сохраняются в `Session` для повторного запуска из MPRIS |
 | Volume        | `Session::set_volume` → `audio.set_volume(level)` + сохранение в `Settings::volume` (дискретная команда, pending-preview сбрасывается, ADR-0031); витрина MPRIS обновляется `sync_media()` в том же кадре (`tick`) или сразу после команды в `park()` |
 | Status        | `status <state>`, при активной станции `stationuuid`/`name`, затем `volume <0.00>` и `window visible\|hidden` |
@@ -222,24 +256,32 @@ presentation-слоем позже — в `logic()` следующего кад�
 
 `logic()` (один раз за кадр, перед отрисовкой):
 
-1. `Session::tick()` — аудио-события, очередь `IpcRequest` с ответами, `MediaCommand`,
-   `TrayCommand`, `poll_search`, `poll_roulette`, `sync_media`, `sync_tray`,
-   синхронизация `spectrum_enabled` с движком.
+1. `Session::tick()` — аудио-события, `poll_economy`, очередь `IpcRequest` с ответами,
+   `MediaCommand`, `TrayCommand`, `poll_search`, `poll_companion_search`,
+   `poll_stream_import`, `poll_roulette`, `poll_world`/`start_world`, `sync_media`,
+   `sync_tray`, синхронизация `spectrum_enabled` с движком, `publish_status`.
 2. `drain_notices` — `Session::take_notices()` → `Toast::info` / `Toast::error`; текст
    берётся из `i18n::catalog(effective_language())` по ключу `NoticeKey` (ADR-0030).
 3. `poll_favicons` — `FaviconCache::begin_frame`/`poll`, затем `take_fetches` →
    задачи `ArtworkFetcher::fetch` в `Session::runtime` (сеть, DNS и перепроверка
    хоппов — внутри `services::artwork`, ADR-0025 ред. 4); пока кэш занят — repaint
    через 120 мс.
-4. Размер окна: `inner_rect` из ввода → `Session::set_window_size` (геометрия нужна,
+4. `poll_integrations` — готовый результат фоновой операции `IntegrationPanel`:
+   тост об успехе/ручном перезапуске/ошибке, снимок интеграций обновляется сам
+   (ADR-0042).
+5. Размер окна: `inner_rect` из ввода → `Session::set_window_size` (геометрия нужна,
    чтобы следующий показ собрал `ViewportBuilder` до создания окна).
-5. `Session::take_intent()` → `ViewportCommand::Focus` (`UiIntent::Show`) или
-   `ViewportCommand::Close` (`UiIntent::Close`).
-6. `Escape` снимает верхний модальный слой: сначала окно настроек
+6. `Session::take_intent()` → `ViewportCommand::Focus` (`UiIntent::Show`) или
+   `ViewportCommand::Close` (`UiIntent::Close`); на macOS `Hide` превращается в
+   `Visible(false)` + `mark_hidden`, `Show` — в `Visible(true)` + `mark_shown`
+   (ADR-0026).
+7. Модальные слои: пока `Session::onboarding_open()`, `Escape`, `Ctrl+,`, `/`,
+   `Ctrl+F` и Space не срабатывают — мастер держит фокус до «Пропустить» или
+   «Готово» (ADR-0041). Иначе `Escape` снимает верхний слой: сначала окно настроек
    (`Session::close_settings`), затем карточку управления
-   (`Session::set_help_visible(false)`, ошибка — тост `SettingNotSaved`).
+   (`Session::set_help_visible(false)`, ошибка — тост `SettingNotSaved`);
    `Ctrl+,` (`Cmd+,`) — `Session::toggle_settings` (ADR-0031).
-7. Repaint-политика: при включённом визуализаторе и `Playing`/`Buffering` — repaint через 33 мс
+8. Repaint-политика: при включённом визуализаторе и `Playing`/`Buffering` — repaint через 33 мс
    (`SPECTRUM_REPAINT`); `draw_layers` добавляет кадры движения (33 мс при активном
    эфире, 66 мс для idle-дыхания; при `Off`/Reduce motion — без лишних кадров;
    идущий переворот камеры также продлевает repaint; пульс маркеров запрашивает
@@ -248,8 +290,8 @@ presentation-слоем позже — в `logic()` следующего кад�
 `ui()` вызывает `draw()`: `Frame::capture` снимает читаемое состояние в снапшот,
 `egui::CentralPanel` с прозрачной рамкой рисует `draw_layers` (один вызов
 `Transitions::frame` на кадр считает прогрессы зон по `ZoneFlags`; глобус → HUD → панель →
-transport → help → легенда → капсулы, затем в `Order::Foreground` скрим и окно настроек)
-и `toast.draw`, затем `apply_actions` исполняет собранные
+transport → help → легенда → капсулы, затем в `Order::Foreground` скрим, окно настроек
+и мастер первого запуска) и `toast.draw`, затем `apply_actions` исполняет собранные
 `UiAction`. `clear_color()` возвращает полностью прозрачный цвет — стекло зон рисует само.
 
 При закрытом окне UI-цикла нет вовсе: ни `logic()`, ни `ui()` не вызываются, кадры не
@@ -264,7 +306,8 @@ transport → help → легенда → капсулы, затем в `Order::
 transport снизу (84 px: контролы + громкость + 40 px визуализатора), help-карточка
 216×128 слева сверху (по требованию, с нижним полем 8 px), легенда плотности слева снизу и
 модальное окно настроек по центру (760×544, клампится до `viewport − 2·MARGIN`) поверх
-scrim на весь viewport; сцена стола под модалкой остаётся на месте. Клик и колесо
+scrim на весь viewport; мастер первого запуска — модалка 560×468 поверх того же
+стола (ADR-0041), сцена под ней остаётся на месте. Клик и колесо
 глобуса игнорируются внутри плавающих зон и зоны окна настроек (`DeskLayout::blocks_point`). UI вынесен
 в `src/ui/`; каждая зона через `ui.scope_builder(...).inner` возвращает собственный
 `Vec<UiAction>`, `OrbitApp` склеивает их и применяет после отрисовки кадра. Все
@@ -349,9 +392,9 @@ focusable, ↑/↓ переводят фокус на соседа по види
   не несёт `now_playing`/`favicons`, а ключ `hud.idle` удалён из каталога (ADR-0030,
   ADR-0015 ред. 2026-10-28); кнопка-луна
   (быстрый Dark/Light), шестерёнка (открывает окно настроек: `Appearance`, `Language`,
-  `Audio`, `Motion`, `Window`, `About`; оно же на `Ctrl+,` и в трее — `Settings…`,
-  закрывается крестиком, `Esc`, кликом по скриму и уходом окна в `park`), кнопка списка,
-  `?` (карточка управления по
+  `Audio`, `Motion`, `Window`, `Integrations`, `About`; оно же на `Ctrl+,` и в трее —
+  `Settings…`, закрывается крестиком, `Esc`, кликом по скриму и уходом окна в `park`),
+  кнопка списка, `?` (карточка управления по
   требованию) и `×` (Hide: процесс и эфир остаются живыми, это не выход), прижатая
   к правому краю строки с зазором 4 px от группы управления; слайдер
   громкости живёт в transport, не в HUD; при узком окне логотип и подписи
@@ -424,6 +467,32 @@ focusable, ↑/↓ переводят фокус на соседа по види
   `Session::set_motion_style`, `UiAction::SetAllowFlips` →
   `Session::set_allow_flips`); переключатель переворотов недоступен при
   `Off`/Reduce motion; ошибка сохранения показывается тостом;
+- категория `Integrations` (ADR-0042): три группы — Bars (`Waybar`, `Polybar`,
+  `i3blocks`, `swaybar`, `i3status-rust`, `XFCE`, `Cinnamon`, `MATE`, `LXQt`),
+  Environments (`KDE Plasma 6`, `GNOME`, `Omarchy`) и Browsers
+  (`Chrome / Chromium` — Chrome, Chromium, Brave, Edge, Vivaldi — и `Firefox`);
+  состояние каждой цели `NotInstalled`/`Installed`/`UpdateAvailable`/`Problem`
+  («Требует внимания»), кнопки «Установить»/«Удалить», для Waybar — «Включить в
+  конфиг», для установленного — «Перезапустить». Снимок обновляется при открытии
+  страницы, операции идут по одной в фоне; успех, необходимость ручного
+  перезапуска и ошибки приходят тостами. Правки Waybar — только JSONC CST с
+  сохранением комментариев, одноразовым `<имя>.orbitfm.bak` и повторным разбором
+  перед записью; native-host получает абсолютный путь к бинарнику; `killall`/
+  `pkill` не используются;
+- категория `About` содержит кнопку «Очистить офлайн-снимок»: она удаляет
+  локальный кэш станций и до конца сеанса запрещает его перезапись, живой каталог
+  и текущий эфир не затрагиваются (ADR-0043);
+- мастер первого запуска (ADR-0041) показывается только при отсутствующем файле
+  настроек: шаг «Язык и тема» применяет выбор сразу, шаг «Ваш рабочий стол»
+  показывает окружение и предлагает runtime-правила (Hyprland) или готовый
+  KDL-сниппет с кнопкой «Копировать» (niri), шаг «Интеграции» ведёт в категорию
+  `Integrations`. Арабский язык зеркалит раскладку; `Escape` и горячие клавиши
+  стола под мастером не работают;
+- офлайн-выдача и экономный режим видны в интерфейсе (ADR-0043): панель помечает
+  список как локальный (`search.offline`), легенда карты — источник заливки
+  снимком (`world.offline()`), рядом с битрейтом текущей станции появляется `ECO`;
+  вместо серых квадратов обложек рисуется детерминированная процедурная обложка
+  из UUID и палитры станции (ADR-0044), без новых сетевых запросов;
 - сглаженный сигнал эфира (`0.75·level + 0.25·flux`) передаётся в кольцо
   Listening: оно пульсирует при Playing и затухает при Stop и выключенном
   визуализаторе; глобус живёт по ADR-0028 (squash, рябь, стиль и `flash` от
@@ -445,13 +514,17 @@ focusable, ↑/↓ переводят фокус на соседа по види
 `OrbitApp<'a>` владеет только кадрами и per-run ресурсами: `session: &'a mut Session`,
 `globe_ready`, `spectrum_overlay: SpectrumOverlay`, `motion: MotionMixer`,
 `orbit_ring: OrbitRing`,
-`callout: CalloutState`, `visualizer: VisualizerModel`, `favicons: FaviconCache`,
-`artwork: ArtworkFetcher`, `toast: Toast`, `transitions: Transitions`,
-`settings_rect: Option<egui::Rect>`. Подсистемами (`AudioEngine`, `GeoService`, `RadioBrowserClient`,
+`callout: CalloutState`, `station_callout: CalloutState`, `visualizer: VisualizerModel`,
+`favicons: FaviconCache`, `artwork: ArtworkFetcher`, `toast: Toast`,
+`transitions: Transitions`, `settings_rect: Option<egui::Rect>`, `settings_category`,
+`integrations: IntegrationPanel`, `onboarding: onboarding::View`,
+`country_metric: CountryMetric`, `country_heat: CountryHeatCache`. Подсистемами
+(`AudioEngine`, `GeoService`, `RadioBrowserClient`,
 `MediaControls`, `StationLibrary`, `SettingsStore`, `GlobeCamera`, `tokio::runtime::Handle`)
 владеет `Session`; к ним presentation-слой обращается через поля ядра
 (`session.audio`, `session.geo`, `session.library`, `session.settings`, `session.runtime`,
-`session.panel_open`, `session.show_help`, `session.settings_open`)
+`session.panel_open`, `session.show_help`, `session.settings_open`,
+`session.search.offline`, `session.world.offline()`)
 и через методы ядра — `Session::start_station`, `focus_country`, `start_country_search`,
 `start_genre_search`, `start_search`, `switch_mode`, `start_roulette`, `toggle_favorite`,
 `clear_history`, `set_theme`, `set_accent`, `set_language`, `effective_language`,
@@ -460,7 +533,10 @@ focusable, ↑/↓ переводят фокус на соседа по види
 `set_volume`, `preview_volume`, `commit_volume`, `play_relative`, `toggle_playback`,
 `stop_playback`, `hide`, `quit`, `open_settings`, `close_settings`, `toggle_settings`,
 `window_mode`/`set_window_mode`, `motion_reactivity`, `tick`, `take_intent`, `take_notices`,
-`set_help_visible`, `select_station`, `take_station_reveal`.
+`set_help_visible`, `select_station`, `take_station_reveal`, `load_more`, `country_total`,
+`retry_search`, `onboarding_open`, `onboarding_desktop`, `finish_onboarding`,
+`apply_window_rules`, `clear_offline_snapshot`, `economy_stream`,
+`set_artwork_allow_http`.
 
 Из `src/ui/` используются `UiAction`, `DeskLayout`, `LayoutDensity`,
 `Palette`/`configure_style`, `GlobeState`/`GlobeResponse`, `OrbitRing`,
@@ -470,7 +546,8 @@ focusable, ↑/↓ переводят фокус на соседа по види
 `widgets::volume_slider_width` (с колесом над слайдером) и
 `SliderResponse`, примитивы строк настроек `controls::{dropdown, switch_row,
 accent_swatch, row}`,
-`settings_panel::{show, SettingsState, SettingsCategory}`, `animation` (`Transitions`, `ZoneFlags`,
+`settings_panel::{show, SettingsState, SettingsCategory}`, `onboarding`
+(`show`, `View`, `State`, `RuleState`), `fonts::install`, `animation` (`Transitions`, `ZoneFlags`,
 `FrameMotion`, `alpha`, `slide_x`, `rise_y`, `stagger`, `Presence`),
 `overlays::help_card`/`country_legend`, `ui::country_map::CountryHeatCache`,
 `SearchMode` (ре-экспорт
@@ -479,7 +556,9 @@ accent_swatch, row}`,
 `language_label`, `motion_label`, `style_label`, `fill`) — ADR-0030. Из `src/render/` —
 `GlobeRenderer`, `MotionMixer`,
 `SpectrumOverlay`, `SpectrumTarget`, `VisualizerModel`; из `src/settings/` —
-`Settings`, `MotionReactivity`, `MotionStyle`.
+`Settings`, `MotionReactivity`, `MotionStyle`; из `src/integration/` —
+`IntegrationPanel`, `PanelAction`, `PanelEvent`, `PanelOutcome`, `Target`,
+`TargetGroup` и `status` (ADR-0042).
 
 Подмена реализаций в тестах не требуется; модульные тесты
 проверяют чистые функции (`format_status`, `playback_label`, `country_label`,
@@ -487,4 +566,17 @@ accent_swatch, row}`,
 строки карточек (`row_name`, `row_place`), геометрию иконок и логику состояний
 `FaviconCache`. Клавиатурная навигация списка проверяется headless-кадрами egui:
 ↑/↓ переводят фокус на соседнюю строку, Space запускает станцию
-(`src/ui/station_row.rs`).
+(`src/ui/station_row.rs`). Мастер первого запуска покрыт тестами
+`step_index_never_leaves_the_wizard`, `arabic_switches_the_composition_direction`
+и `wizard_text_stacks_vertically_in_both_directions` (`src/ui/onboarding.rs`);
+встроенные шрифты — `embedded_fonts_stay_within_the_agreed_budget` и
+`every_embedded_file_is_a_real_font` (`src/ui/fonts.rs`, бюджет 6 MiB);
+процедурные обложки — детерминизмом UUID, геометрией и палитрой
+(`same_uuid_gives_the_same_cover`, `uuid_drives_geometry`,
+`genre_votes_and_bitrate_repaint_the_palette`, `src/ui/procedural.rs`);
+интеграции — CST-вставкой с сохранением комментариев и форматирования,
+идемпотентностью и единственным backup, отказом битым конфигам, симлинкам и
+отсутствующему `modules-right`, поиском конфига без расширения
+(`src/integration/waybar.rs`), правилами обнаружения окружения и фиксированными
+аргументами Hyprland (`src/integration/wm.rs`), выбором ручного перезапуска для
+неподдерживаемых целей (`src/integration/reload.rs`).

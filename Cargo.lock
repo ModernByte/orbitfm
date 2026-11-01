@@ -2190,6 +2190,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "jsonc-parser"
+version = "0.34.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ecded084f9b9a718d39668a42657c32253663d1f6afb3fbb9134f0305f73f48"
+
+[[package]]
 name = "keyboard-types"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3002,7 +3008,7 @@ dependencies = [
 
 [[package]]
 name = "orbitfm"
-version = "0.16.0-rc.3"
+version = "0.17.0-rc.1"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -3014,6 +3020,7 @@ dependencies = [
  "geojson",
  "glam",
  "image",
+ "jsonc-parser",
  "ksni",
  "libc",
  "libmpv2",

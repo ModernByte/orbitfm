@@ -23,7 +23,7 @@ mod tr;
 mod uk;
 mod zh;
 
-pub(crate) use catalog::{Catalog, LabelText, SettingsText};
+pub(crate) use catalog::{Catalog, IntegrationsText, LabelText, SettingsText, WelcomeText};
 pub(crate) use labels::{accent_label, language_label, motion_label, style_label, theme_label};
 
 use crate::settings::Language;
@@ -242,6 +242,7 @@ mod tests {
                 audio,
                 motion,
                 window,
+                integrations,
                 about,
                 theme,
                 accent,
@@ -276,7 +277,55 @@ mod tests {
                 audio_page_hint,
                 motion_page_hint,
                 window_page_hint,
+                integrations_page_hint,
                 about_page_hint,
+            }
+        );
+        assert_group_non_empty!(
+            c,
+            integrations {
+                group_bars,
+                group_environments,
+                group_browsers,
+                not_installed,
+                installed,
+                update_available,
+                problem,
+                not_detected,
+                install,
+                uninstall,
+                installing,
+                enable_config,
+                enabled_config,
+                config_missing,
+                reload,
+                restart_browser,
+                operation_done,
+                operation_failed,
+                reload_manual,
+            }
+        );
+        assert_group_non_empty!(
+            c,
+            welcome {
+                title,
+                subtitle,
+                language_theme,
+                environment,
+                environment_hint,
+                detected,
+                configure,
+                applied,
+                failed,
+                niri_hint,
+                copy,
+                copied,
+                skip,
+                back,
+                next,
+                finish,
+                integrations_hint,
+                open_integrations,
             }
         );
         assert_group_non_empty!(

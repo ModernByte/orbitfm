@@ -58,6 +58,8 @@ pub(crate) struct PanelState<'a> {
     pub pending: bool,
     pub empty: bool,
     pub error: Option<&'a str>,
+    /// Выборка собрана из офлайн-снимка после сетевой ошибки (ADR-0043).
+    pub offline: bool,
     /// Всего станций страны по мировому кэшу: «100 из 1244».
     pub total_available: Option<u32>,
     /// Идёт догрузка следующей страницы, список остаётся на экране.
@@ -114,6 +116,7 @@ pub(crate) fn show(
         pending,
         empty,
         error,
+        offline,
         total_available,
         loading_more,
         has_more,
@@ -183,6 +186,15 @@ pub(crate) fn show(
                 reduce,
             ) {
                 *tab = tab_from_index(clicked);
+            }
+
+            if *tab == LibraryTab::Results && offline {
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new(text.panel.offline_snapshot)
+                        .size(10.5)
+                        .color(palette.accent),
+                );
             }
 
             // Вкладка, выбранная этим кликом, начинает slide-in с нуля, а не

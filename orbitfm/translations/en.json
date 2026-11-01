@@ -3,6 +3,24 @@
     "label": "OrbitFM",
     "tooltip": "Show or hide the OrbitFM panel",
     "error_title": "OrbitFM",
-    "error_body": "Failed to run the orbitfm command"
+    "error_body": "Failed to run the orbitfm command",
+    "state": {
+      "stopped": "Off",
+      "playing": "Playing",
+      "paused": "Paused",
+      "buffering": "Buffering",
+      "reconnecting": "No network",
+      "error": "Playback error"
+    }
+  },
+  "settings": {
+    "display": {
+      "label": "Widget content",
+      "description": "Show only the icon or the icon with the OrbitFM label.",
+      "option": {
+        "icon": "Icon only",
+        "icon_text": "Icon and text"
+      }
+    }
   }
 }

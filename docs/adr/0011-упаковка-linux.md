@@ -171,6 +171,108 @@ Flatpak разблокирован и реализован: `packaging/linux/org
   ответственности владельца: сертификат не заведён, поэтому релизы подписываются
   только ad-hoc, а `SHA256SUMS` содержит дайджесты, а не сигнатуры.
 
+## Уточнение (2026-11-01): Flathub, интеграция AppImage и план подписей
+
+### Flathub: что готово и что блокирует публикацию
+
+Локальный манифест `packaging/linux/org.modernbyte.OrbitFM.yml` собирается и
+ставится через `build-flatpak.sh`; runtime 25.08, libmpv/libass/libplacebo из
+исходников и vendored Cargo не меняются. Для community-публикации в Flathub
+нужны ещё четыре вещи:
+
+1. **Удалённый источник вместо `type: dir`.** Flathub собирает приложение не из
+   рабочей копии, поэтому на подачу идёт вариант манифеста, где модуль `orbitfm`
+   объявлен через git с тегом и полным коммитом релиза:
+   ```yaml
+   sources:
+     - type: git
+       url: https://github.com/ModernByte/orbitfm.git
+       tag: v<версия>
+       commit: <полный SHA коммита тега>
+     - flatpak-cargo-sources.json
+   ```
+   Остальное — модули libplacebo/libass/libmpv, `finish-args` и inline
+   `.cargo/config.toml` с `vendored-sources` — переносится без изменений.
+   Локальный манифест с `type: dir` остаётся источником истины для разработки:
+   второй манифест-дубликат не заводится, чтобы пины версий и вендинга не
+   расходились.
+2. **Скриншоты в AppStream.** В `org.modernbyte.OrbitFM.metainfo.xml` добавлены
+   два снимка из `docs/wiki/images` с абсолютными URL на ветку `main`;
+   `appstreamcli validate --no-net` проходит без новых замечаний.
+3. **Стабильный тег.** Текущие релизы — `-rc.N`, а основной канал Flathub
+   рассчитан на стабильную версию. Подача начинается после решения владельца:
+   выпустить стабильный тег либо подавать pre-release отдельным beta-каналом.
+4. **Аккаунт и репозиторий Flathub.** Подача — PR в `flathub/<app-id>` от
+   аккаунта владельца; токенов и ключей Flathub в репозитории проекта нет.
+   Манифест подачи ограничивает архитектуры x86_64 (`flathub.json`,
+   `"only-arches": ["x86_64"]`): aarch64 не собирается и не проверяется.
+
+Локальная установка Flatpak по-прежнему не даёт IPC-сокет песочницы наружу,
+поэтому виджет Noctalia и команды `orbitfm …` работают только с AppImage или
+дистрибутивной сборкой (см. README).
+
+### Интеграция AppImage без root
+
+`packaging/linux/install-appimage.sh` публикуется рядом с AppImage как
+`install-appimage.sh` и ставит скачанный образ в меню приложений:
+
+- копирует AppImage в `${XDG_BIN_HOME:-$HOME/.local/bin}/orbitfm` и делает
+  копию исполняемой, поэтому пользователю не нужен `chmod +x`;
+- распаковывает образ через `--appimage-extract` во временный каталог и
+  устанавливает desktop entry, иконки hicolor и metainfo в `XDG_DATA_HOME`;
+- правит только строки `Exec=`/`TryExec=` по точному префиксу ключа (без
+  регулярных выражений), сохраняя аргументы (`mode focus`) и остальные строки;
+  путь с пробелами экранируется по Desktop Entry Specification;
+- пишет список установленных файлов в
+  `${XDG_STATE_HOME:-$HOME/.local/state}/orbitfm/appimage-install.list`;
+  `--uninstall` удаляет только пути внутри сохранённых `BIN_HOME`/`DATA_HOME`;
+- обновляет `update-desktop-database` и `gtk-update-icon-cache`, если они есть,
+  и предупреждает, если каталог установки отсутствует в `PATH`.
+
+Ограничения: установленный файл остаётся AppImage, поэтому для запуска нужен
+FUSE либо `APPIMAGE_EXTRACT_AND_RUN=1`; обновление — повторный запуск скрипта с
+новым образом; AppImageLauncher не требуется, но и не конфликтует с ним.
+
+### Подписи: текущее состояние и поэтапный план
+
+Сейчас:
+
+- MSI не подписан Authenticode и не имеет метки времени;
+- DMG подписан только ad-hoc (`codesign --sign -`), без Developer ID,
+  hardened runtime и notarization;
+- Linux-артефакты не имеют detached-подписи: `SHA256SUMS` лежит на той же
+  странице релиза и защищает от повреждения, но не от подмены.
+
+План (не реализован: нужны сертификаты и секреты владельца; ключи не попадают в
+репозиторий):
+
+1. **Linux — detached-подпись.** Minisign или OpenPGP-подпись над `SHA256SUMS`
+   (и, при желании, над каждым артефактом), публичный ключ в README. Подпись
+   ставится после сборки всех артефактов и после генерации контрольных сумм,
+   иначе подписывается устаревший дайджест. Проверка — одной командой,
+   сертификат не нужен. Это первый шаг: он не зависит от платформ и закрывает
+   целостность канала.
+2. **Windows — Authenticode.** OV- или EV-сертификат, ключ в аппаратном токене
+   или облачном HSM (Azure Trusted Signing, DigiCert KeyLocker и аналоги).
+   Подписываются исполняемые файлы до сборки MSI и сам MSI, ставится RFC 3161
+   timestamp; CI проверяет `signtool verify /pa /all`. EV даёт немедленную
+   репутацию SmartScreen, OV набирает её постепенно; до этого SmartScreen
+   предупреждает, как описано в README.
+3. **macOS — Developer ID и notarization.** Сертификат Developer ID Application
+   (платная программа Apple Developer), hardened runtime, подпись
+   `codesign --options runtime`, отправка `notarytool submit --wait`, затем
+   `stapler staple` и проверка `spctl --assess --type execute`. Секреты —
+   Apple ID с app-specific password или App Store Connect API key в CI.
+4. **Порядок.** Сначала Linux-подпись, затем Windows и macOS, потому что
+   последние два требуют покупки сертификатов и настройки CI-секретов. До
+   появления ключей релизы остаются не подписанными коммерческими
+   сертификатами, и документация обязана это говорить прямо; самоподписанные
+   сертификаты не используются — Gatekeeper и SmartScreen им не доверяют.
+
+После включения подписей `SHA256SUMS` генерируется заново после каждого шага
+подписи; порядок «сборка → подпись → дайджесты → detached-подпись дайджестов»
+фиксируется в release-workflow.
+
 ## Ссылки
 
 - ADR-0002: Выбор GUI-стека
@@ -180,4 +282,6 @@ Flatpak разблокирован и реализован: `packaging/linux/org
 - ADR-0025 (ред. 2): безопасная обработка favicon — политика, из-за которой
   артворк стал единственным сетевым путём с повышенным контролем
 - AppImage documentation, linuxdeploy, appimagetool
+- Flathub App Submission, Flatpak manifest guidelines
 - Desktop Entry Specification, AppStream specification
+- minisign, Microsoft Authenticode и RFC 3161, Apple Developer ID и notarization

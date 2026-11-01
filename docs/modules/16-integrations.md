@@ -1,14 +1,18 @@
 # Модуль: Интеграции оболочек и баров (`src/integration/`, `integrations/`)
 
-**Путь в коде:** `src/integration/{mod,assets}.rs`, `integrations/`  
+**Путь в коде:** `src/integration/{mod,assets,status,reload,waybar,wm}.rs`,
+`integrations/`  
 **Ответственность:** CLI `orbitfm integration status|install|uninstall`, встроенные
-ассеты оболочек, установка и удаление в пользовательские каталоги, квитанции и
-печать шагов подключения. Модуль не запускает GUI, не общается с IPC и не меняет
-чужие конфиги.  
-**Зависимости:** `anyhow`, `serde`, `serde_json`, `std::fs`, `tempfile` (тесты);
-ассеты встроены через `include_str!`.  
+ассеты оболочек, установка и удаление в пользовательские каталоги, квитанции,
+печать шагов подключения, снимок состояния для окна «Интеграции», CST-правка
+Waybar, перезагрузка баров и runtime-правила Hyprland. Модуль не запускает GUI и
+не общается с IPC; CLI не меняет чужие конфиги. Единственное исключение —
+явная кнопка «Включить в конфиге» в GUI (ADR-0042).  
+**Зависимости:** `anyhow`, `serde`, `serde_json`, `jsonc-parser`, `libc`,
+`tokio` (фоновая операция), `std::fs`, `tempfile` (тесты); ассеты встроены через
+`include_str!`.  
 **Решение:** ADR-0037 «Единая поверхность интеграции — JSON-статус, CLI-команды
-и установщик»
+и установщик», ADR-0042 «Управление интеграциями из GUI»
 
 ---
 
@@ -18,13 +22,15 @@
 поэтому прочие плагины и сниппеты нельзя приложить отдельным архивом; Plasma 6 —
 исключение со штатным форматом KPackage. Установщик живёт внутри бинарника: он раскладывает
 текстовые ассеты по XDG-каталогам пользователя, пишет квитанцию и печатает
-готовый фрагмент конфигурации. Конфиги Waybar, Polybar, i3, sway, Quickshell,
-Plasma и GNOME установщик не редактирует.
+готовый фрагмент конфигурации. CLI-установщик конфиги Waybar, Polybar, i3, sway,
+Quickshell, Plasma и GNOME не редактирует. Исключение — GUI-кнопка «Включить
+в конфиге» для Waybar: она через CST добавляет `custom/orbitfm` в `modules-right`,
+сохраняя комментарии и форматирование (ADR-0042 § 2).
 
 | Живёт в модуле | Не живёт в модуле |
 |---|---|
-| Разбор `integration`, цели, обзор `status` по всем целям, рендер ассетов, проверки путей, квитанции, установка/удаление одной цели, `status` | IPC-протокол (`src/ipc/`), состояние эфира и подписи (`Session`, `i18n`), работа GUI и трея |
-| Список целей, пути XDG, шаги подключения | Запуск оболочки, включение виджета, правка конфигураций оболочки |
+| Разбор `integration`, цели, обзор `status` по всем целям, рендер ассетов, проверки путей, квитанции, установка/удаление одной цели, `status` | IPC-протокол (`src/ipc/`), состояние эфира и подписи (`Session`, `i18n`), отрисовка окна и трея |
+| Снимок `TargetStatus` для GUI, фоновая операция установки/удаления, CST-правка Waybar, перезагрузка баров, обнаружение композитора и runtime-правила Hyprland | Запуск оболочки, включение виджета, произвольная правка конфигураций; страница рисуется в `src/ui/settings_panel.rs` (модуль 14) |
 
 `parse_invocation` в `src/main.rs` перехватывает `integration` до создания
 tokio-runtime и до маршрутизации IPC, поэтому команда работает без запущенного
@@ -36,8 +42,12 @@ Linux-оболочки.
 
 | Файл | Ответственность |
 |------|-----------------|
-| `src/integration/mod.rs` | `Target`, `Scope`, `Command`, `parse`, `run`; `Layout` XDG и `ORBITFM_INTEGRATION_ROOT`; рендер, квитанции, установка, удаление, инспекция |
+| `src/integration/mod.rs` | `Target`, `TargetGroup`, `Scope`, `Command`, `parse`, `run`; `Layout` XDG и `ORBITFM_INTEGRATION_ROOT`; рендер, квитанции, установка, удаление, инспекция, обнаружение целей |
 | `src/integration/assets.rs` | Таблица встроенных ассетов: путь установки, содержимое, исполняемость, режим подстановки, `asset|generated` |
+| `src/integration/status.rs` | `IntegrationPanel`: снимок `TargetStatus`, состояния `InstallState`, фоновая операция `PanelAction`, события `PanelEvent` |
+| `src/integration/waybar.rs` | Поиск `config.jsonc`/`config`/`config.json`, чтение состояния, CST-вставка `custom/orbitfm`, бэкап `.orbitfm.bak` |
+| `src/integration/reload.rs` | `waybar-msg` → адресный `SIGUSR2` процессам `waybar` → просьба перезапустить вручную; `polybar-msg` |
+| `src/integration/wm.rs` | `Desktop::detect`, `RuntimeRules`, `hyprctl keyword` с фиксированными аргументами, KDL-сниппет niri |
 | `integrations/common/orbitfm-bar.sh` | Мост для баров: чтение `orbitfm status`, форматы text/waybar/polybar/i3blocks/swaybar/i3status-rust/genmon, клики |
 | `integrations/common/bar-README.md` | Общая справка по бару |
 | `integrations/{plasma6,gnome,omarchy}/` | Метаданные и код виджетов: Plasmoid, GNOME Shell extension с `stylesheet.css`, Quickshell `BarWidget` |
@@ -109,7 +119,65 @@ Omarchy — глиф состояния и tooltip без сторонних API
 
 При чтении квитанции проверяются схема, имя цели и каждый путь: абсолютный,
 без `..` и строго внутри каталога установки. Квитанция пишется во временный
-`*.json.tmp` с последующим `rename`, чтобы не оставить نصف записанный файл.
+`*.json.tmp` с последующим `rename`, чтобы не оставить половину записанного файла.
+
+### 4.1. Снимок для страницы «Интеграции»
+
+`IntegrationPanel` собирает `Vec<TargetStatus>` один раз при открытии категории,
+а не на каждый кадр. Для каждой цели хранятся доступность (`Detected`/
+`NotDetected`), состояние квитанции (`NotInstalled`, `Installed`,
+`UpdateAvailable`, `Problem`), техническая подробность для hover, найденные
+браузеры и `WaybarStatus` (путь, включён ли модуль, ошибка разбора). Страница
+только читает этот снимок и возвращает `UiAction` (ADR-0042 § 1).
+
+Установка, удаление, включение Waybar и перезагрузка выполняются в tokio-фоне
+по одной операции за раз; завершение будит GUI через `WakeFn`, после чего снимок
+обновляется. Установка из GUI идёт через тот же `install_one`, что и CLI, и
+подставляет абсолютный путь текущего бинарника (`current_binary`): native-манифест
+Chrome/Firefox получает путь к реальному файлу, а не имя из `PATH`. Пока
+операция идёт, все строки страницы недоступны.
+
+### 4.2. Правка Waybar через CST
+
+Кнопка «Включить в конфиге» работает только с Waybar и только с массивом
+`modules-right`. Регулярные выражения и `serde_json` не применяются: файл
+разбирается `jsonc-parser` в CST, узел вставляется в дерево, результат перед
+записью разбирается заново и только затем атомарно заменяет файл. Комментарии,
+порядок ключей и форматирование сохраняются.
+
+Гарантии:
+
+- ищется первый существующий из `config.jsonc`, `config`, `config.json` — тот
+  же порядок, что у Waybar;
+- нет корневого объекта или массива `modules-right` — ошибка, файл не меняется;
+- существующее определение `custom/orbitfm` пользователя не перезаписывается,
+  повторное включение идемпотентно;
+- символическая ссылка на конфиге отклоняется, запись по чужому пути не идёт;
+- первая резервная копия `<имя>.orbitfm.bak` создаётся один раз и никогда не
+  обновляется; при повторных правках она остаётся исходной точкой отката;
+- ошибка разбора показывается в строке цели, а не роняет страницу.
+
+CLI-команда `integration install waybar` по-прежнему только раскладывает ассеты
+и печатает фрагмент конфигурации; она не трогает `config.jsonc`.
+
+### 4.3. Перезагрузка баров без `killall`
+
+Waybar сначала получает документированную команду `waybar-msg cmd reload`. Если
+её нет, `reload.rs` читает `/proc/*/comm` и посылает `SIGUSR2` только процессам
+с именем `waybar`; сигнал перезагружает конфиг, а не завершает процесс. Polybar
+перезагружается `polybar-msg cmd restart`. Если оба пути недоступны, кнопка
+возвращает `Manual` и UI просит перезапустить бар вручную. `killall` и `pkill`
+не используются ни в одном пути (ADR-0042 § 3).
+
+### 4.4. Окружение и правила окна
+
+`wm.rs` определяет композитор по `HYPRLAND_INSTANCE_SIGNATURE`, `NIRI_SOCKET`,
+`XDG_CURRENT_DESKTOP` и `DESKTOP_SESSION` (переменные композитора приоритетнее
+имён рабочего стола). Для Hyprland мастер вызывает `hyprctl keyword` с
+фиксированным набором из 14 правил, без shell и без правки конфига. Для niri
+показывает KDL-блок из `wm-configs/orbitfm-niri.kdl` с кнопкой «Копировать»:
+runtime-интерфейса для window-rule у niri нет. KDE, GNOME и прочие окружения
+получают `Unsupported` и никаких действий (ADR-0041 § 2).
 
 ## 5. Безопасность установки и удаления
 
@@ -125,6 +193,8 @@ Omarchy — глиф состояния и tooltip без сторонних API
   остаются; пустые каталоги установки вычищаются до корня цели, но не выше.
 - `ORBITFM_INTEGRATION_ROOT` подменяет XDG-корни для тестов; путь обязан быть
   абсолютным. Раскладка: `<root>/targets/<цель>` и `<root>/receipts/<цель>.json`.
+- Операции GUI вызывают те же `install_one`/`uninstall_one`, поэтому проверки
+  путей и квитанций не дублируются и не ослабляются.
 
 ## 6. Цели и форматы
 
@@ -183,6 +253,23 @@ stderr. `status` возвращает ошибку, только если не �
 `--force`, удаление только файлов квитанции, отказ при изменённом файле при
 удалении, `status` для отсутствующего файла, отказ при пути вне каталога.
 
+Отдельно покрыты новые поверхности ADR-0041/0042:
+
+- `integration::waybar`: `injects_module_and_preserves_comments_and_layout`
+  (комментарии и отступы на месте), `second_enable_is_idempotent_and_keeps_first_backup`,
+  `malformed_config_is_left_untouched`, `missing_modules_array_is_an_error`,
+  `root_array_is_rejected`, `symlinked_config_is_not_replaced`,
+  `finds_config_without_extension`;
+- `integration::wm`: `compositor_variables_win_over_desktop_names`,
+  `desktop_names_are_matched_case_insensitively`,
+  `hyprland_rules_are_single_line_fixed_arguments`;
+- `integration::reload`: `unsupported_targets_ask_for_a_manual_restart` —
+  неподдерживаемая цель не получает сигнал;
+- браузерные установки: `installs_chrome_extension_and_native_manifests`,
+  `installs_firefox_native_manifest`,
+  `uninstall_browser_removes_extension_and_manifests`; в манифесте проверяется
+  абсолютный путь wrapper'а и `exec` на текущий бинарник.
+
 Живая приёмка 2026-10-31 (niri/Wayland, Linux x86_64):
 
 - установка целей по одной во временный корень и в подставной XDG (Plasma,
@@ -220,6 +307,9 @@ Waybar, Polybar, i3blocks, swaybar, i3status-rust, XFCE, Cinnamon, MATE и LXQt
 - ADR-0037 — единая поверхность интеграции
 - ADR-0038 — браузерное расширение и native messaging host
 - ADR-0039 — поток событий `orbitfm events`
+- ADR-0041 — мастер первого запуска и runtime-правила Hyprland
+- ADR-0042 — управление интеграциями из GUI, CST-правка Waybar, перезагрузка
 - `docs/interfaces/05-ipc.md` — `status --json` и IPC-глаголы
+- `docs/modules/14-ui-settings.md` — страница «Интеграции»
 - `docs/modules/17-browser-companion.md` — браузерные цели
 - `docs/wiki/11-Интеграции-оболочек.md` — пользовательская инструкция

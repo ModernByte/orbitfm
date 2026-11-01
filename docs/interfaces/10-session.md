@@ -17,7 +17,7 @@ Application Core — слой, который переживает закрыт�
 
 | Элемент | Сигнатура | Поведение |
 |---------|-----------|-----------|
-| `Session::new` | `pub(crate) fn new(commands: mpsc::Receiver<IpcRequest>, wake: WakeHandle, services: AppServices) -> Self` | Собирает ядро из подсистем; подписывается на `audio.subscribe()`, восстанавливает громкость из настроек, берёт `visualizer_enabled` и `show_help` из них же, разворачивает `language = stored.language.resolve()`, помечает окно `visible = true`, `settings_open = false` |
+| `Session::new` | `pub(crate) fn new(commands: mpsc::Receiver<IpcRequest>, wake: WakeHandle, services: AppServices) -> Self` | Собирает ядро из подсистем; подписывается на `audio.subscribe()`, восстанавливает громкость из настроек, берёт `visualizer_enabled` и `show_help` из них же, разворачивает `language = stored.language.resolve()`, вычисляет `onboarding_open = !settings.existed_at_load() && !stored.onboarding_done`, определяет `onboarding_desktop`, подставляет офлайн-снимок (`load_snapshot`), запускает `start_world`, помечает окно `visible = true`, `settings_open = false` и публикует первый `status` кадр |
 | `tick` | `pub(crate) fn tick(&mut self)` | Один кадр фонового обслуживания; вызывается UI-циклом при открытом окне |
 | `take_intent` | `pub(crate) fn take_intent(&mut self) -> Option<UiIntent>` | Забирает и снимает запрос к окну |
 | `take_notices` | `pub(crate) fn take_notices(&mut self) -> VecDeque<Notice>` | Забирает всю очередь сообщений (очередь очищается) |
@@ -28,6 +28,10 @@ Application Core — слой, который переживает закрыт�
 | `open_settings` | `pub(crate) fn open_settings(&mut self)` | Открывает окно настроек: в `Listening` сначала переводит окно в `Overlay`, при закрытом окне ставит `UiIntent::Show` (ADR-0031) |
 | `close_settings` | `pub(crate) fn close_settings(&mut self)` | Закрывает окно настроек (`settings_open = false`) |
 | `toggle_settings` | `pub(crate) fn toggle_settings(&mut self)` | Открыто → `close_settings`, закрыто → `open_settings` |
+| `onboarding_open` | `pub(crate) fn onboarding_open(&self) -> bool` | Показывать ли мастер первого запуска: вычислен в `Session::new`, гасится `finish_onboarding` (ADR-0041) |
+| `onboarding_desktop` | `pub(crate) fn onboarding_desktop(&self) -> Desktop` | Определённое на старте окружение для шага «Ваш рабочий стол» (`integration::wm::Desktop`) |
+| `finish_onboarding` | `pub(crate) fn finish_onboarding(&mut self) -> Result<(), String>` | Завершение или пропуск мастера: `onboarding_open = false` и атомарная запись `Settings::onboarding_done`; ошибка записи возвращается вызывающему |
+| `apply_window_rules` | `pub(crate) fn apply_window_rules(&self) -> Result<(), String>` | Runtime-правила окна на время сеанса: Hyprland — `hyprctl keyword windowrulev2` с фиксированными аргументами; niri и остальные — ошибка (сниппет показывается, конфиги не правятся) |
 | `begin_window` | `pub(crate) fn begin_window(&mut self, size: [f32; 2])` | Отмечает окно открытым, сбрасывает `intent` и `reopen`, запоминает размер (только в `Focus`) |
 | `end_window` | `pub(crate) fn end_window(&mut self)` | Отмечает окно закрытым, снимает `intent`, `wake.clear()`, `flush_pending_volume()`, `sync_media()`, `sync_tray()` |
 | `set_window_size` | `pub(crate) fn set_window_size(&mut self, size: [f32; 2])` | Сохраняет текущий размер окна; в капсульных режимах значение отбрасывается (ADR-0021 п. 4) |
@@ -60,8 +64,8 @@ Application Core — слой, который переживает закрыт�
 | `process_tray_commands` | `pub(crate) fn process_tray_commands(&mut self)` | Вычерпывает очередь `TrayCommand` (`try_recv`), путь открытого окна |
 | `execute_tray_command` | `pub(crate) fn execute_tray_command(&mut self, command: TrayCommand)` | Реакция на одну команду трея; общее для окна и парковки |
 | `sync_tray` | `pub(crate) fn sync_tray(&mut self)` | Публикует `TraySnapshot` в SNI, только если снимок изменился |
-| `resolve_station` | `pub(crate) fn resolve_station(&self, station_uuid: &str) -> Result<Station, RadioError>` | Станция по UUID: сначала `search.results`, затем `radio.get_station` с таймаутом `STATION_LOOKUP_TIMEOUT` |
-| `start_station` | `pub(crate) fn start_station(&mut self, station: Station) -> Result<(), StationStartError>` | `audio.play(url_resolved)`, `selected_station`, история, click, MPRIS |
+| `resolve_station` | `pub(crate) fn resolve_station(&self, station_uuid: &str) -> Result<Station, RadioError>` | Станция по UUID: `search.results`, затем `world.sample()` (офлайн-снимок), затем `radio.get_station` с таймаутом `STATION_LOOKUP_TIMEOUT` |
+| `start_station` | `pub(crate) fn start_station(&mut self, station: Station) -> Result<(), StationStartError>` | Проверка `NoUrl`/`PrivateUrl`, `audio.play(url_resolved)`, `note_station_selected`, `selected_station`, история, click, MPRIS (ADR-0043) |
 | `select_station` | `pub(crate) fn select_station(&mut self, station: &Station)` | Клик по маркеру до запуска: `selected_station`, разовый `reveal_station`, сброс `country_filter`, вкладка `Results` (ADR-0036) |
 | `take_station_reveal` | `pub(crate) fn take_station_reveal(&mut self) -> Option<String>` | Забирает просьбу прокрутки один раз; `OrbitApp::draw_layers` передаёт UUID строке |
 | `spawn_click` | `pub(crate) fn spawn_click(&self, station_uuid: String)` | Фоновая отправка click в Radio Browser |
@@ -86,10 +90,22 @@ Application Core — слой, который переживает закрыт�
 | `clear_country_selection` | `pub(crate) fn clear_country_selection(&mut self)` | Клик мимо стран: снимает контекст страны, фильтр, список и маркеры; выделенная станция сохраняется (ADR-0036, ревизия 2026-10-31) |
 | `start_genre_search` | `pub(crate) fn start_genre_search(&mut self, tag: String)` | Глобальный поиск по тегу |
 | `switch_mode` | `pub(crate) fn switch_mode(&mut self, mode: SearchMode)` | Смена режима поиска и сброс контекста |
-| `poll_search` | `pub(crate) fn poll_search(&mut self)` | Забор ответа фонового поиска |
+| `retry_search` | `pub(crate) fn retry_search(&mut self)` | Повтор упавшего запроса: контекст страны, затем жанра, иначе `start_search` |
+| `load_more` | `pub(crate) fn load_more(&mut self)` | Догрузка следующей страницы по `last_params`/`next_offset`; ошибка не очищает список, а даёт `NoticeKey::LoadMoreFailed` |
+| `country_total` | `pub(crate) fn country_total(&self) -> Option<u32>` | Мировой счётчик станций выбранной страны; `None` без страны, снимка или при офлайн-данных (ADR-0043) |
+| `poll_search` | `pub(crate) fn poll_search(&mut self)` | Забор ответа фонового поиска; ответ может быть собран из офлайн-снимка (`SearchState::offline`) |
 | `start_roulette` | `pub(crate) fn start_roulette(&mut self)` | Запрос случайной станции |
 | `poll_roulette` | `pub(crate) fn poll_roulette(&mut self)` | Забор результата рулетки через `try_recv` |
 | `apply_roulette` | `pub(crate) fn apply_roulette(&mut self, outcome: Option<Result<Station, RadioError>>)` | Применение результата рулетки: общий путь UI-кадра и припаркованного цикла |
+| `observe_economy` | `pub(crate) fn observe_economy(&mut self, event: &AudioEvent)` | Передаёт аудио-событие экономному режиму: профиль буфера и, со второй попытки реконнекта, подбор более лёгкого потока (ADR-0043) |
+| `note_station_selected` | `pub(crate) fn note_station_selected(&mut self, station_uuid: &str)` | Новый выбор станции: снимает ECO у чужой записи, возвращает буфер к умолчаниям и снова разрешает один подбор |
+| `poll_economy` | `pub(crate) fn poll_economy(&mut self)` | Кадровое обслуживание: таймер буферизации (3 с) и ответ фонового поиска альтернативы |
+| `note_reconnect_attempt` | `pub(crate) fn note_reconnect_attempt(&mut self, attempt: u32)` | Со второй и последующих попыток реконнекта запускает однократный подбор лёгкого потока |
+| `economy_stream` | `pub(crate) fn economy_stream(&self) -> bool` | Показывать ли индикатор ECO: текущая станция — подобранная лёгкая замена (ADR-0043 § 4) |
+| `load_snapshot` | `pub(crate) fn load_snapshot(&mut self)` | Подставляет офлайн-снимок до первого сетевого запроса; повторный вызов при живых данных — no-op (ADR-0043) |
+| `start_world` | `pub(crate) fn start_world(&mut self)` | Запрашивает снимок мира (счётчики стран и мировой топ); повторные вызовы бесплатны, пока идёт задача, есть живые данные или исчерпаны три попытки |
+| `poll_world` | `pub(crate) fn poll_world(&mut self)` | Забирает ответ снимка мира; живой ответ снимает `offline` и запускает фоновую запись офлайн-снимка |
+| `clear_offline_snapshot` | `pub(crate) fn clear_offline_snapshot(&mut self)` | Удаляет офлайн-снимок с диска (отсутствие файла — успех), запрещает запись до конца сеанса и очищает офлайн-данные карты; успех — `SnapshotCleared`, ошибка — `SnapshotClearFailed` |
 | `set_theme` | `pub(crate) fn set_theme(&mut self, theme: ThemeMode) -> Result<(), String>` | Сохранение темы в `SettingsStore` |
 | `set_accent` | `pub(crate) fn set_accent(&mut self, accent: AccentColor) -> Result<(), String>` | Сохранение акцента |
 | `set_language` | `pub(crate) fn set_language(&mut self, language: Language) -> Result<(), String>` | Сохраняет язык, тут же разворачивает `System` в `self.language` и вызывает `sync_tray()`: меню и строки UI меняются без перезапуска (ADR-0030) |
@@ -106,15 +122,19 @@ Application Core — слой, который переживает закрыт�
 | `set_help_visible` | `pub(crate) fn set_help_visible(&mut self, visible: bool) -> Result<(), String>` | Меняет `show_help` и сохраняет `Settings::help_visible`; ошибка — `SettingNotSaved`; по умолчанию карточка включена (ADR-0036) |
 
 Поля `Session` — `pub(crate)`: presentation читает их напрямую (`markers`,
-`search.results`, `settings_open`) и редактирует через `&mut`-поля
+`search.results`, `settings_open`, `world.offline()`/`search.offline`,
+`onboarding_open()`) и редактирует через `&mut`-поля
 (`search.query`, `panel_open`, `show_help`, `library_tab`, `country_filter`,
 `globe_camera`), но побочные эффекты обязан выполнять через методы.
 `visualizer_enabled` — пользовательский переключатель визуализатора и кольца;
 `spectrum_enabled` — фактическое состояние аудио-анализа, которое может быть
 включено и при выключенном визуализаторе, если движение глобуса его требует.
-`language`, `settings_open` и `pending_volume` правятся только методами
-Core (`set_language`, `open_settings`/`close_settings`/`toggle_settings`,
-`preview_volume`/`commit_volume`).
+`language`, `settings_open`, `onboarding_open` и `pending_volume` правятся
+только методами Core (`set_language`,
+`open_settings`/`close_settings`/`toggle_settings`, `finish_onboarding`,
+`preview_volume`/`commit_volume`). `economy` и `world` — внутренние поля
+`src/session/`: UI не меняет их напрямую, а читает производные признаки через
+`economy_stream()` и `WorldBaseline::offline()`.
 
 ## 2. Типы-сообщения между Core и presentation
 
@@ -138,10 +158,15 @@ pub(crate) enum NoticeKey {
     FavoritesNotSaved,
     HistoryCleared,
     ClearHistoryFailed,
+    SnapshotCleared,
+    SnapshotClearFailed,
     PlaybackFailed,
     StationWithoutUrl,
     SearchTaskEnded,
+    LoadMoreFailed,
     RouletteStarted { station: Option<String> },
+    /// Станция заменена более лёгким потоком (ADR-0043 § 4).
+    EconomyStream { bitrate: u32 },
     RouletteFailed,
     RouletteTaskEnded,
     ThemeNotSaved,
@@ -159,6 +184,8 @@ pub(crate) enum NoticeKey {
 pub(crate) enum StationStartError {
     /// В записи станции пустой `url_resolved`.
     NoUrl,
+    /// Запись Radio Browser ведёт на приватный или служебный адрес.
+    PrivateUrl,
     /// Отказ аудио-ядра; техническая подробность не переводится.
     Audio(String),
 }
@@ -238,6 +265,8 @@ pub(crate) struct AppServices {
     pub(crate) settings: SettingsStore,
     /// Публикация кадров `events` (ADR-0039).
     pub(crate) status: StatusFeed,
+    /// Публикация кадров `search` для попапа (ADR-0039, ревизия 0.16).
+    pub(crate) search: SearchFeed,
     pub(crate) runtime: tokio::runtime::Handle,
 }
 
@@ -267,13 +296,13 @@ pub(crate) const PANEL_TITLE: &str = "OrbitFM · Panel";
 | Тип | Назначение |
 |-----|-----------|
 | `Notice` | Одностороннее сообщение Core → пользователю; UI показывает тостом (`OrbitApp::drain_notices`), строку берёт каталог по `NoticeKey` (ADR-0030) |
-| `NoticeKey` | Причина сообщения: ядро называет её, а не текст; `RouletteStarted { station }` несёт подпись станции |
+| `NoticeKey` | Причина сообщения: ядро называет её, а не текст; `RouletteStarted { station }` несёт подпись станции, `EconomyStream { bitrate }` — битрейт подобранной замены, `SnapshotCleared`/`SnapshotClearFailed` — итог очистки офлайн-снимка |
 | `UiIntent::Show` | Окно уже открыто: presentation шлёт `ViewportCommand::Focus` (на Wayland — no-op, фокус даёт композитор) |
 | `UiIntent::Close` | Закрыть root-вьюпорт; скрытие и выход различает `WindowState::quitting` |
 | `ParkOutcome` | Результат `park()`: снова открыть окно или завершить процесс |
 | `WindowState` | Приватное для Core состояние окна: `visible`, `size`, `mode`, `reopen`, `intent`, `quitting` |
 | `WindowMode` | Режим окна из `docs/adr/0021`: `Focus` — полный Orbital Desk, `Overlay` и `Listening` — капсулы. Хранится в Core, а не в `SettingsStore`, чтобы `mode` работал из парковки. Локализованные подписи режимов даёт `mode_label` в `src/ui/settings_panel.rs` по каталогу `i18n`, у самого типа метода `label()` нет |
-| `StationStartError` | Причина, по которой станция не запустилась (`NoUrl` / `Audio`); UI по ней выбирает `NoticeKey`, IPC печатает `Display` как `error <текст>` |
+| `StationStartError` | Причина, по которой станция не запустилась (`NoUrl` / `PrivateUrl` / `Audio`); UI по ней выбирает `NoticeKey`, IPC печатает `Display` как `error <текст>` |
 | `WakeHandle` | Слот замыкания пробуждения: presentation ставит его при старте прогона и снимает при закрытии; ядро работает с ним как с `WakeFn` |
 | `AppServices` | Готовые подсистемы из `launch`; `Session` забирает их в собственность |
 | `LibraryTab` | Определяет очередь `prev`/`next` и список, показанный в панели |
@@ -322,9 +351,30 @@ pub(crate) const PANEL_TITLE: &str = "OrbitFM · Panel";
 эффекта, а события читаются очередями напрямую.
 
 Порядок `tick()` (каждый кадр `OrbitApp::logic`): `process_audio_events` →
-`process_commands` → `process_media_commands` → `process_tray_commands` →
-`poll_search` → `poll_roulette` → `sync_media` → `sync_tray` → синхронизация
-`spectrum_enabled` с движком.
+`poll_economy` → `process_commands` → `process_media_commands` →
+`process_tray_commands` → `poll_search` → `poll_companion_search` →
+`poll_stream_import` → `poll_roulette` → `poll_world` → `start_world` →
+`sync_media` → `sync_tray` → синхронизация `spectrum_enabled` с движком →
+`publish_status`. `poll_economy` стоит сразу после аудио-событий: таймер
+буферизации и ответ подбора альтернативы должны отработать в том же кадре, что
+и событие (ADR-0043).
+
+### 3.1. Офлайн-снимок и экономный режим в жизненном цикле
+
+`Session::new` подставляет офлайн-снимок **до** `start_world`: карта, маркеры,
+поиск и рулетка получают локальные данные, не дожидаясь сети. Живой ответ
+`poll_world` заменяет их и запускает фоновую запись снимка; `save_world_snapshot`
+пропускается, если снимок моложе TTL или пользователь очистил его в этом сеансе
+(`snapshot_disabled`). `clear_offline_snapshot` удаляет файл и до конца сеанса
+запрещает запись заново.
+
+Экономный режим живёт целиком в `tick()`/`park()`: `apply_audio_event` передаёт
+событие в `observe_economy`, `poll_economy` проверяет таймер буферизации и
+забирает ответ фонового поиска альтернативы. Аудио-ядро получает только
+`set_cache_profile(true/false)`; команда без ответа, ошибка свойства логируется.
+Состояние сбрасывается в `note_station_selected` при каждом новом выборе станции.
+Ни один из этих путей не меняет IPC-, MPRIS- или `status`-контракты: меняется
+только буфер libmpv, выбранная станция и индикатор ECO в presentation.
 
 ## 4. Реакция на IPC-команды
 
@@ -465,9 +515,13 @@ mode <focus|overlay|listening|panel>
 | Трей | `Option<TrayHandle>` | `AppServices::tray` из `tray::spawn`; `None` — SNI-хоста нет или сборка без фичи `tray` |
 | Библиотека и настройки | `StationLibrary`, `SettingsStore` | `AppServices` |
 | Публикатор кадров `events` | `StatusFeed` | `AppServices::status`; получатель `watch` — у IPC-сервера (ADR-0039) |
+| Публикатор кадров `search` | `SearchFeed` | `AppServices::search`; подписка `events` для попапа (ADR-0039, ревизия 0.16) |
 | Tokio-рантайм | `tokio::runtime::Handle` | `AppServices::runtime` |
 | Пробуждение GUI | `WakeHandle` | создаётся в `launch`, делится с IPC/MPRIS/треем/поиском |
 | Камера глобуса | `GlobeCamera` | поле `Session` (ADR-0018 п. 2) |
+| Снимок мира и офлайн-снимок | `WorldBaseline` (`src/session/world.rs`) | поле `Session`; `services::snapshot` — файл `$XDG_DATA_HOME/orbitfm/cache/stations-snapshot.json` (ADR-0043) |
+| Экономный режим | `EconomyState` (`src/session/economy.rs`) | поле `Session`; профиль применяет `AudioEngine::set_cache_profile` (ADR-0043) |
+| Окружение мастера | `Desktop` (`src/integration/wm.rs`) | определяется в `Session::new`, нужен шагу «Ваш рабочий стол» (ADR-0041) |
 
 Чистые помощники Core берёт у соседей: `crate::ui::single_line`,
 `crate::ui::station_filter::{CountryFilterState, filtered_results}` (без egui) —
@@ -487,13 +541,22 @@ mode <focus|overlay|listening|panel>
 - `SearchState`, `SearchResponse` (`src/session/search.rs`) —
   внутреннее состояние поиска; наружу идут только поля `Session::search`,
   читаемые UI (`query`, `country_query`, `genre_query`, `context`, `results`,
-  `pending`, `empty`, `error`, `roulette_pending`, `revision`,
+  `pending`, `empty`, `error`, `offline`, `roulette_pending`, `revision`,
   `has_more`, `loading_more`). `Session::clear_country_selection` — единственный
   способ снять выбранную страну: контекст, фильтр, список и маркеры гаснут
   вместе (ADR-0036, ревизия 2026-10-31);
-  `Session::{load_more, country_total}` — единственные входы пагинации:
-  `load_more` двигает `offset` по `next_offset`, `country_total` читает мировой
-  снимок для подписи «загружено из всего»;
+  `Session::{load_more, country_total, retry_search}` — единственные входы
+  пагинации и повтора: `load_more` двигает `offset` по `next_offset`,
+  `country_total` читает мировой снимок для подписи «загружено из всего» и
+  молчит на офлайн-данных;
+- `EconomyState` и `WorldBaseline` (`src/session/economy.rs`, `world.rs`) —
+  внутренние типы Core: presentation читает только `economy_stream()` и
+  `WorldBaseline::offline()`/`sample()`/`counts()`, но не меняет их напрямую;
+  формат файла снимка задаёт `src/services/snapshot.rs` (ADR-0043);
+- `ui::onboarding::View`, `IntegrationPanel` и `IntegrationsView` — состояние
+  presentation-слоя; Core отдаёт только `onboarding_open()`/
+  `onboarding_desktop()`/`finish_onboarding()`/`apply_window_rules()`, а
+  установку интеграций исполняет `src/integration/` (ADR-0041, ADR-0042);
 - `Parked`, `wait_on`, `media_recv`, `tray_recv`, `roulette_recv`,
   `format_status`, `analysis_required`, `mpris_artist`, `station_geo`,
   `station_popularity`, `country_search_params`, `roulette_label`,
@@ -530,7 +593,34 @@ mode <focus|overlay|listening|panel>
   `stale_search_response_is_dropped`, `roulette_label_includes_country`,
   `country_request_lists_only_that_country`,
   `pagination_follows_the_world_counter_until_exhausted`,
-  `appended_page_keeps_the_existing_list_and_skips_duplicates`
+  `appended_page_keeps_the_existing_list_and_skips_duplicates`,
+  `offline_results_filter_by_country_name_and_tag`,
+  `offline_results_follow_name_offset_and_limit`,
+  `offline_results_drop_stations_without_coordinates_when_required`,
+  `roulette_snapshot_fallback_skips_excluded_stations`
+- `normalized_names_ignore_case_and_punctuation`,
+  `lighter_prefers_strictly_smaller_bitrate_but_accepts_unknown_current`,
+  `alternative_prefers_the_lightest_public_duplicate`,
+  `alternative_ignores_current_entry_and_missing_names`,
+  `alternative_accepts_any_bitrate_when_current_is_unknown`,
+  `buffering_enters_economy_after_three_seconds`,
+  `reconnect_enables_buffer_from_the_second_attempt`,
+  `started_restores_defaults_and_keeps_eco_marker`,
+  `selecting_another_station_resets_eco_and_buffer`,
+  `stopped_and_errors_clear_eco_and_timers`,
+  `alternative_is_searched_once_per_station` (`src/session/economy.rs`)
+- `counts_from_snapshot_follow_station_country_codes`,
+  `snapshot_seeds_counts_and_marks_the_map_offline` (`src/session/world.rs`);
+  `roundtrip_keeps_the_top_voted_public_stations`,
+  `snapshot_is_capped_at_five_hundred_and_keeps_the_most_voted`,
+  `corrupt_or_foreign_snapshots_are_ignored`,
+  `snapshot_rechecks_urls_when_loading`,
+  `records_are_clipped_to_keep_the_cache_small`,
+  `stale_snapshot_is_reported_but_still_loaded` (`src/services/snapshot.rs`)
+- `existing_file_disables_the_first_run_wizard` (`src/settings/mod.rs`) —
+  существующий файл настроек отключает мастер даже при
+  `onboarding_done == false`; отсутствующий файл даёт умолчания
+  (`missing_file_uses_defaults`)
 - `marker_groups_stations_with_shared_coordinates`,
   `markers_skip_missing_invalid_and_zero_coordinates`, `markers_deduplicate_by_uuid`,
   `popularity_signal_is_votes_only`, `grouped_markers_keep_the_loudest_station`
@@ -551,7 +641,12 @@ mode <focus|overlay|listening|panel>
 - ADR-0030: Локализация интерфейса (`NoticeKey` вместо текста в ядре)
 - ADR-0031: Панель настроек и персистентность (модальное окно, громкость
   commit-on-release)
+- ADR-0041: Встроенные шрифты и мастер первого запуска
+- ADR-0042: Управление интеграциями из GUI (AST/JSONC, backup, reload без kill)
+- ADR-0043: Офлайн-снимок станций и адаптация к плохой сети
 - `docs/modules/11-session.md` — модульная спецификация пакета
+- `docs/modules/16-integrations.md` — обнаружение окружения и runtime-правила
+  (`integration::wm`)
 - `docs/interfaces/11-tray.md`, `docs/modules/12-tray.md` — контракт и модуль трея
 - `docs/interfaces/12-i18n.md`, `docs/modules/13-i18n.md` — каталоги строк и
   подписи (`labels`)

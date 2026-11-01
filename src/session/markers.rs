@@ -74,7 +74,7 @@ pub(crate) fn build_markers(stations: Vec<Station>) -> Vec<GlobeMarker> {
 
 /// Координаты станции в допустимом диапазоне. `(0, 0)` — заглушка Radio Browser,
 /// её не показываем.
-fn station_geo(station: &Station) -> Option<(f64, f64)> {
+pub(crate) fn station_geo(station: &Station) -> Option<(f64, f64)> {
     let lat = station.geo_lat?;
     let lon = station.geo_long?;
     if !lat.is_finite()

@@ -71,6 +71,8 @@ pub(crate) struct TransportState<'a> {
     pub can_resume: bool,
     pub spectrum_enabled: bool,
     pub roulette_pending: bool,
+    /// Играет подобранный лёгкий поток: индикатор ECO (ADR-0043 §4).
+    pub eco: bool,
     pub volume: f64,
     pub visualizer: &'a VisualizerModel,
     pub favicons: &'a mut FaviconCache,
@@ -91,16 +93,17 @@ pub(crate) fn show(
         state.playback,
         PlaybackState::Playing | PlaybackState::Buffering | PlaybackState::Reconnecting
     );
-    let favicon = state
-        .current
-        .and_then(|station| station.favicon.as_deref())
-        .unwrap_or_default();
-    let texture = state.favicons.texture(favicon);
+    let texture = state.current.and_then(|station| {
+        state
+            .favicons
+            .texture_or_procedural(ui.ctx(), station, palette.accent)
+    });
     let current = state.current;
     let playback: &PlaybackState = state.playback;
     let spectrum_enabled = state.spectrum_enabled;
     let visualizer = state.visualizer;
     let roulette_pending = state.roulette_pending;
+    let eco = state.eco;
     let can_resume = state.can_resume;
     let favorite = state.favorite;
     let language = state.language;
@@ -345,9 +348,9 @@ pub(crate) fn show(
                     }
                     if ui.available_width() > SUMMARY_MIN_WIDTH {
                         ui.label(
-                            egui::RichText::new(stream_summary(language, current))
+                            egui::RichText::new(stream_summary(language, current, eco))
                                 .size(11.0)
-                                .color(palette.muted),
+                                .color(if eco { palette.accent } else { palette.muted }),
                         );
                     }
                 },
@@ -492,10 +495,11 @@ pub(crate) fn panel_footer(
         state.playback,
         PlaybackState::Playing | PlaybackState::Buffering | PlaybackState::Reconnecting
     );
-    let texture = state
-        .current
-        .and_then(|station| station.favicon.as_deref())
-        .and_then(|url| state.favicons.texture(url));
+    let texture = state.current.and_then(|station| {
+        state
+            .favicons
+            .texture_or_procedural(ui.ctx(), station, palette.accent)
+    });
     let current = state.current;
     let playback = state.playback;
     let favorite = state.favorite;
@@ -640,13 +644,13 @@ fn now_playing_line(
     }
 }
 
-fn stream_summary(language: Language, station: Option<&Station>) -> String {
+fn stream_summary(language: Language, station: Option<&Station>, eco: bool) -> String {
     let Some(station) = station else {
         return String::new();
     };
     let text = i18n::catalog(language);
     // Кодек — данные Radio Browser, он не переводится; битрейт собирается из
-    // шаблона каталога.
+    // шаблона каталога. ECO стоит вплотную к битрейту (ADR-0043 §4).
     let codec = single_line(&station.codec);
     let bitrate = if station.bitrate > 0 {
         let count = station.bitrate.to_string();
@@ -654,7 +658,8 @@ fn stream_summary(language: Language, station: Option<&Station>) -> String {
     } else {
         String::new()
     };
-    [codec, bitrate]
+    let eco = if eco { text.transport.eco } else { "" };
+    [codec, bitrate, eco.to_owned()]
         .into_iter()
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
@@ -772,14 +777,29 @@ mod tests {
     #[test]
     fn stream_summary_joins_codec_and_bitrate() {
         assert_eq!(
-            stream_summary(Language::English, Some(&station())),
+            stream_summary(Language::English, Some(&station()), false),
             "AAC  128 kbps"
         );
         let mut quiet = station();
         quiet.bitrate = 0;
         quiet.codec = " ".to_owned();
-        assert_eq!(stream_summary(Language::English, Some(&quiet)), "");
-        assert_eq!(stream_summary(Language::English, None), "");
+        assert_eq!(stream_summary(Language::English, Some(&quiet), false), "");
+        assert_eq!(stream_summary(Language::English, None, false), "");
+    }
+
+    #[test]
+    fn stream_summary_marks_economy_stream_next_to_bitrate() {
+        assert_eq!(
+            stream_summary(Language::English, Some(&station()), true),
+            "AAC  128 kbps  ECO"
+        );
+        let mut silent = station();
+        silent.bitrate = 0;
+        assert_eq!(
+            stream_summary(Language::English, Some(&silent), true),
+            "AAC  ECO",
+            "без битрейта ECO остаётся видимым"
+        );
     }
 
     #[test]

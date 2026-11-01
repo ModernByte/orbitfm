@@ -8,6 +8,10 @@ pub(crate) struct Catalog {
     pub capsule: CapsuleText,
     pub overlay: OverlayText,
     pub settings: SettingsText,
+    /// Мастер первого запуска (ADR-0041): не настройки, а объяснение шагов.
+    pub welcome: WelcomeText,
+    /// Страница «Интеграции» (ADR-0042): группы, состояния и действия.
+    pub integrations: IntegrationsText,
     /// Строки меню трея и подписи `status --json` (ADR-0020, ADR-0037):
     /// нужны SNI на Linux, строке меню macOS и JSON-снимку на всех платформах.
     pub tray: TrayText,
@@ -76,6 +80,8 @@ pub(crate) struct PanelText {
     pub history: &'static str,
     pub station_count: &'static str,
     pub search_failed: &'static str,
+    /// Пометка выборки, собранной из локального снимка (ADR-0043).
+    pub offline_snapshot: &'static str,
     pub results_of: &'static str,
     pub pick_country_or_genre: &'static str,
     pub quiet_sector: &'static str,
@@ -115,6 +121,8 @@ pub(crate) struct TransportText {
     pub no_station: &'static str,
     pub volume: &'static str,
     pub kbps: &'static str,
+    /// Индикатор подобранного лёгкого потока (ADR-0043 §4).
+    pub eco: &'static str,
 }
 
 pub(crate) struct CapsuleText {
@@ -141,6 +149,8 @@ pub(crate) struct OverlayText {
     pub map_scope_global: &'static str,
     pub map_scope_sample: &'static str,
     pub map_scope_top: &'static str,
+    /// Карта построена по офлайн-снимку (ADR-0043).
+    pub map_scope_snapshot: &'static str,
     pub low: &'static str,
     pub high: &'static str,
 }
@@ -152,6 +162,8 @@ pub(crate) struct SettingsText {
     pub audio: &'static str,
     pub motion: &'static str,
     pub window: &'static str,
+    /// Категория установки оболочек и браузерных расширений (ADR-0042).
+    pub integrations: &'static str,
     pub about: &'static str,
     pub theme: &'static str,
     pub accent: &'static str,
@@ -182,6 +194,8 @@ pub(crate) struct SettingsText {
     pub license: &'static str,
     pub app_id: &'static str,
     pub about_hint: &'static str,
+    /// Кнопка удаления офлайн-снимка станций (ADR-0043).
+    pub clear_snapshot: &'static str,
     pub saved_hint: &'static str,
     /// Подзаголовок страницы категории: одна строка под её названием.
     pub appearance_page_hint: &'static str,
@@ -189,7 +203,61 @@ pub(crate) struct SettingsText {
     pub audio_page_hint: &'static str,
     pub motion_page_hint: &'static str,
     pub window_page_hint: &'static str,
+    pub integrations_page_hint: &'static str,
     pub about_page_hint: &'static str,
+}
+
+/// Мастер первого запуска: три шага, окружение и кнопки (ADR-0041).
+pub(crate) struct WelcomeText {
+    pub title: &'static str,
+    pub subtitle: &'static str,
+    pub language_theme: &'static str,
+    pub environment: &'static str,
+    pub environment_hint: &'static str,
+    /// Строка «Определено: {name}».
+    pub detected: &'static str,
+    pub configure: &'static str,
+    pub applied: &'static str,
+    pub failed: &'static str,
+    pub niri_hint: &'static str,
+    pub copy: &'static str,
+    pub copied: &'static str,
+    pub skip: &'static str,
+    pub back: &'static str,
+    pub next: &'static str,
+    pub finish: &'static str,
+    pub integrations_hint: &'static str,
+    pub open_integrations: &'static str,
+}
+
+/// Страница «Интеграции» (ADR-0042): группы целей, состояния и действия.
+pub(crate) struct IntegrationsText {
+    pub group_bars: &'static str,
+    pub group_environments: &'static str,
+    pub group_browsers: &'static str,
+    pub not_installed: &'static str,
+    pub installed: &'static str,
+    pub update_available: &'static str,
+    /// Установка есть, но файлы изменены или отсутствуют.
+    pub problem: &'static str,
+    /// Среда не найдена: установка возможна, но бессмысленна.
+    pub not_detected: &'static str,
+    pub install: &'static str,
+    pub uninstall: &'static str,
+    pub installing: &'static str,
+    /// Кнопка правки конфига Waybar с резервной копией.
+    pub enable_config: &'static str,
+    /// Состояние: модуль уже прописан в конфиге Waybar.
+    pub enabled_config: &'static str,
+    /// Состояние: конфиг Waybar не найден.
+    pub config_missing: &'static str,
+    pub reload: &'static str,
+    /// Подсказка после установки расширения браузера.
+    pub restart_browser: &'static str,
+    pub operation_done: &'static str,
+    pub operation_failed: &'static str,
+    /// Автоперезагрузка не удалась: панель нужно перезапустить вручную.
+    pub reload_manual: &'static str,
 }
 
 pub(crate) struct TrayText {
@@ -279,11 +347,14 @@ pub(crate) struct NoticeText {
     pub favorites_not_saved: &'static str,
     pub history_cleared: &'static str,
     pub clear_history_failed: &'static str,
+    pub snapshot_cleared: &'static str,
+    pub snapshot_clear_failed: &'static str,
     pub playback_failed: &'static str,
     pub station_without_url: &'static str,
     pub search_task_ended: &'static str,
     pub load_more_failed: &'static str,
     pub roulette_started: &'static str,
+    pub economy_stream: &'static str,
     pub roulette_failed: &'static str,
     pub roulette_task_ended: &'static str,
     pub theme_not_saved: &'static str,

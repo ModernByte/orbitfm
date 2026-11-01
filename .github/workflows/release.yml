@@ -359,6 +359,12 @@ jobs:
             "release/OrbitFM-${VERSION}-plasma.plasmoid"
           unzip -l "release/OrbitFM-${VERSION}-plasma.plasmoid"
 
+      # Помощник интеграции AppImage в меню приложений без root (ADR-0011).
+      # Публикуется рядом с образом, чтобы `chmod +x` не требовался вообще:
+      # скрипт запускается как `bash install-appimage.sh <файл.AppImage>`.
+      - name: Stage AppImage desktop integration helper
+        run: install -Dm755 packaging/linux/install-appimage.sh release/install-appimage.sh
+
       - name: Build SHA256SUMS
         env:
           VERSION: ${{ needs.version.outputs.version }}
@@ -366,14 +372,14 @@ jobs:
           set -euo pipefail
           cd release
           mapfile -t files < <(find . -maxdepth 1 -type f -printf '%f\n' | sort)
-          if [[ ${#files[@]} -ne 4 ]]; then
-            echo "ожидалось 4 артефакта (AppImage, MSI, DMG, .plasmoid), найдено ${#files[@]}: ${files[*]}" >&2
+          if [[ ${#files[@]} -ne 5 ]]; then
+            echo "ожидалось 5 артефактов (AppImage, MSI, DMG, .plasmoid, install-appimage.sh), найдено ${#files[@]}: ${files[*]}" >&2
             exit 1
           fi
           for f in "${files[@]}"; do
             # Сегменты «OrbitFM-<version>-» без префикса v: ловит и артефакт,
             # ошибочно собранный с VERSION из тега (OrbitFM-v0.10.0-rc.1-...).
-            if [[ $f != OrbitFM-"$VERSION"-* ]]; then
+            if [[ $f != OrbitFM-"$VERSION"-* && $f != install-appimage.sh ]]; then
               echo "имя файла '$f' не соответствует OrbitFM-$VERSION-<platform>.*" >&2
               exit 1
             fi
@@ -409,6 +415,7 @@ jobs:
           name: OrbitFM v${{ needs.version.outputs.version }}
           files: |
             release/OrbitFM-*
+            release/install-appimage.sh
             release/SHA256SUMS
           prerelease: ${{ needs.version.outputs.prerelease }}
           make_latest: ${{ needs.version.outputs.make_latest }}

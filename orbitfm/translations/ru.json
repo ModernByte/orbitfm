@@ -3,6 +3,24 @@
     "label": "OrbitFM",
     "tooltip": "Показать или скрыть панель OrbitFM",
     "error_title": "OrbitFM",
-    "error_body": "Не удалось выполнить команду orbitfm"
+    "error_body": "Не удалось выполнить команду orbitfm",
+    "state": {
+      "stopped": "Выключено",
+      "playing": "Играет",
+      "paused": "Пауза",
+      "buffering": "Буферизация",
+      "reconnecting": "Нет сети",
+      "error": "Ошибка воспроизведения"
+    }
+  },
+  "settings": {
+    "display": {
+      "label": "Содержимое виджета",
+      "description": "Показывать только иконку или иконку с подписью OrbitFM.",
+      "option": {
+        "icon": "Только иконка",
+        "icon_text": "Иконка и текст"
+      }
+    }
   }
 }

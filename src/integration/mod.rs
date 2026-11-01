@@ -4,6 +4,10 @@
 //! сопровождается квитанцией. Чужие конфиги установщик не изменяет.
 
 mod assets;
+pub(crate) mod reload;
+pub(crate) mod status;
+pub(crate) mod waybar;
+pub(crate) mod wm;
 
 use std::collections::HashSet;
 use std::env;
@@ -61,11 +65,20 @@ pub(crate) enum Target {
     Firefox,
 }
 
+/// Группы списка «Интеграции» (ADR-0042 §1): порядок страницы, не CLI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TargetGroup {
+    Bars,
+    Environments,
+    Browsers,
+}
+
+impl TargetGroup {
+    pub(crate) const ALL: [Self; 3] = [Self::Bars, Self::Environments, Self::Browsers];
+}
+
 impl Target {
-    const ALL: [Self; 14] = [
-        Self::Plasma6,
-        Self::Gnome,
-        Self::Omarchy,
+    pub(crate) const ALL: [Self; 14] = [
         Self::Waybar,
         Self::Polybar,
         Self::I3blocks,
@@ -75,11 +88,49 @@ impl Target {
         Self::Cinnamon,
         Self::Mate,
         Self::Lxqt,
+        Self::Plasma6,
+        Self::Gnome,
+        Self::Omarchy,
         Self::Chrome,
         Self::Firefox,
     ];
 
-    fn id(self) -> &'static str {
+    pub(crate) fn group(self) -> TargetGroup {
+        match self {
+            Self::Waybar
+            | Self::Polybar
+            | Self::I3blocks
+            | Self::Swaybar
+            | Self::I3statusRust
+            | Self::Xfce
+            | Self::Cinnamon
+            | Self::Mate
+            | Self::Lxqt => TargetGroup::Bars,
+            Self::Plasma6 | Self::Gnome | Self::Omarchy => TargetGroup::Environments,
+            Self::Chrome | Self::Firefox => TargetGroup::Browsers,
+        }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Plasma6 => "KDE Plasma 6",
+            Self::Gnome => "GNOME",
+            Self::Omarchy => "Omarchy",
+            Self::Waybar => "Waybar",
+            Self::Polybar => "Polybar",
+            Self::I3blocks => "i3blocks",
+            Self::Swaybar => "swaybar",
+            Self::I3statusRust => "i3status-rust",
+            Self::Xfce => "XFCE",
+            Self::Cinnamon => "Cinnamon",
+            Self::Mate => "MATE",
+            Self::Lxqt => "LXQt",
+            Self::Chrome => "Chrome / Chromium",
+            Self::Firefox => "Firefox",
+        }
+    }
+
+    pub(crate) fn id(self) -> &'static str {
         match self {
             Self::Plasma6 => "plasma6",
             Self::Gnome => "gnome",
@@ -118,7 +169,7 @@ impl Target {
         }
     }
 
-    fn is_browser(self) -> bool {
+    pub(crate) fn is_browser(self) -> bool {
         matches!(self, Self::Chrome | Self::Firefox)
     }
 }
@@ -308,6 +359,7 @@ fn current_binary() -> Result<PathBuf> {
 #[derive(Clone, Copy)]
 struct ChromiumBrowser {
     id: &'static str,
+    name: &'static str,
     config_rel: &'static str,
     binaries: &'static [&'static str],
 }
@@ -315,26 +367,31 @@ struct ChromiumBrowser {
 const CHROMIUM_BROWSERS: [ChromiumBrowser; 5] = [
     ChromiumBrowser {
         id: "google-chrome",
+        name: "Google Chrome",
         config_rel: "google-chrome",
         binaries: &["google-chrome", "google-chrome-stable"],
     },
     ChromiumBrowser {
         id: "chromium",
+        name: "Chromium",
         config_rel: "chromium",
         binaries: &["chromium", "chromium-browser"],
     },
     ChromiumBrowser {
         id: "brave",
+        name: "Brave",
         config_rel: "BraveSoftware/Brave-Browser",
         binaries: &["brave-browser", "brave"],
     },
     ChromiumBrowser {
         id: "edge",
+        name: "Microsoft Edge",
         config_rel: "microsoft-edge",
         binaries: &["microsoft-edge", "microsoft-edge-stable"],
     },
     ChromiumBrowser {
         id: "vivaldi",
+        name: "Vivaldi",
         config_rel: "vivaldi",
         binaries: &["vivaldi", "vivaldi-stable"],
     },
@@ -476,6 +533,65 @@ impl Layout {
 
     fn firefox_present(&self) -> bool {
         self.home.join(".mozilla").is_dir() || command_in_path("firefox")
+    }
+
+    /// Обнаружение цели для страницы «Интеграции»: конфиг или исполняемый файл
+    /// в `PATH`, без единой записи (ADR-0042 §1).
+    fn target_detected(&self, target: Target) -> bool {
+        match target {
+            Target::Waybar => waybar::config_path(self).is_some() || command_in_path("waybar"),
+            Target::Polybar => {
+                self.config_file("polybar/config.ini")
+                    || self.config_file("polybar/config")
+                    || command_in_path("polybar")
+            }
+            Target::I3blocks => self.config_file("i3blocks/config") || command_in_path("i3blocks"),
+            Target::Swaybar => self.config_file("sway/config") || command_in_path("sway"),
+            Target::I3statusRust => {
+                self.config_file("i3status-rust/config.toml") || command_in_path("i3status-rs")
+            }
+            Target::Xfce => self.config_dir("xfce4") || command_in_path("xfce4-panel"),
+            Target::Cinnamon => self.config_dir("cinnamon") || command_in_path("cinnamon"),
+            Target::Mate => self.config_dir("mate") || command_in_path("mate-panel"),
+            Target::Lxqt => self.config_dir("lxqt") || command_in_path("lxqt-panel"),
+            Target::Plasma6 => {
+                self.config_file("kdeglobals")
+                    || command_in_path("plasmashell")
+                    || command_in_path("startplasma-wayland")
+            }
+            Target::Gnome => {
+                self.data_home.join("gnome-shell").is_dir() || command_in_path("gnome-shell")
+            }
+            Target::Omarchy => self.config_dir("omarchy") || command_in_path("omarchy"),
+            Target::Chrome | Target::Firefox => !self.detected_browsers(target).is_empty(),
+        }
+    }
+
+    /// Найденные браузеры цели: имена показываются в строке и после установки.
+    fn detected_browsers(&self, target: Target) -> Vec<&'static str> {
+        match target {
+            Target::Chrome => CHROMIUM_BROWSERS
+                .iter()
+                .filter(|browser| self.chromium_present(browser))
+                .map(|browser| browser.name)
+                .collect(),
+            Target::Firefox => {
+                if self.firefox_present() {
+                    vec!["Firefox"]
+                } else {
+                    Vec::new()
+                }
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    fn config_file(&self, relative: &str) -> bool {
+        self.config_home.join(relative).is_file()
+    }
+
+    fn config_dir(&self, relative: &str) -> bool {
+        self.config_home.join(relative).is_dir()
     }
 }
 

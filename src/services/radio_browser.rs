@@ -457,7 +457,7 @@ fn random_query(offset: u32) -> Vec<(&'static str, String)> {
 
 /// Число из `[0, bound)` без внешних crate'ов: splitmix64 поверх наносекунд и
 /// счётчика, чтобы два вызова в одну наносекунду не совпали.
-fn random_below(bound: u32) -> u32 {
+pub(crate) fn random_below(bound: u32) -> u32 {
     if bound == 0 {
         return 0;
     }

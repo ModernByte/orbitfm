@@ -31,7 +31,7 @@ orbitfm/
 ```toml
 id           = "modernbyte/orbitfm"
 name         = "OrbitFM"
-version      = "1.0.0"
+version      = "1.1.0"
 plugin_api   = 3
 author       = "ModernByte"
 license      = "MIT"
@@ -43,6 +43,17 @@ dependencies = ["orbitfm"]
 [[widget]]
 id    = "launcher"
 entry = "plugin.luau"
+
+  [[widget.setting]]
+  key             = "display"
+  type            = "select"
+  label_key       = "settings.display.label"
+  description_key = "settings.display.description"
+  default         = "icon_text"
+  options = [
+    { value = "icon", label_key = "settings.display.option.icon" },
+    { value = "icon_text", label_key = "settings.display.option.icon_text" },
+  ]
 ```
 
 Noctalia требует `id` в формате `<author>/<plugin>`; `org.modernbyte.orbitfm`
@@ -50,8 +61,28 @@ Noctalia требует `id` в формате `<author>/<plugin>`; `org.modernb
 
 ### Поведение
 
-Скрипт задаёт глиф `radio`, текст «OrbitFM» и подсказку из переводов. При клике
-выполняется:
+Настройка `display` управляет содержимым: `icon_text` (по умолчанию) показывает
+глиф и подпись, `icon` — только глиф. Подпись берётся из
+`widget.label`, подсказка — из `widget.tooltip` плюс текущее состояние.
+
+Виджет раз в 2 секунды вызывает `orbitfm status` с колбэком и разбирает первую
+строку `status <state>`; exit code ≠ 0 означает, что приложение не запущено.
+Состояние меняет только оформление:
+
+| `status` | Глиф | Цвет |
+|---|---|---|
+| `stopped` / приложение не запущено | `radio` | цвет темы (`on_surface`) |
+| `playing`, `buffering` | `radio` | зелёный `#22C55E` |
+| `paused` | `radio` | цвет темы (`on_surface`) |
+| `reconnecting` | `radio-off` | тёмно-серый `#6B7280` |
+| `error` | `radio` | красный `#EF4444` |
+
+Это презентационный опрос: плагин не владеет воспроизведением и не хранит
+метаданные, источник истины остаётся в процессе OrbitFM. `runAsync` с колбэком
+применяется только к короткому `status`; запуск GUI по-прежнему идёт без
+колбэка, потому что таймаут 5 с убивает группу процессов.
+
+При клике выполняется:
 
 ```luau
 local started = noctalia.runAsync("orbitfm panel")
@@ -65,9 +96,10 @@ end
 отсоединённым (double-fork + setsid); бинарник должен быть в `PATH`. Форма с
 колбэком здесь неприменима: Noctalia ограничивает такую команду таймаутом
 `kDefaultCommandTimeout = 5000 мс` и по истечении убивает всю группу процессов
-вместе с только что поднятым GUI. Поэтому виджет проверяет лишь факт запуска
-команды, а ошибки работы плеера остаются в логах OrbitFM. Плагин **не** хранит
-состояние плеера и не содержит бизнес-логики; `panel` — переключатель выпадающей
+вместе с только что поднятым GUI. Поэтому для `panel` виджет проверяет лишь факт
+запуска команды, а ошибки работы плеера остаются в логах OrbitFM. Плагин **не**
+владеет состоянием плеера и не содержит бизнес-логики; опрос `status` нужен
+только для цвета и глифа. Команда `panel` — переключатель выпадающей
 панели: открытая панель своего режима скрывается, другой режим переключается на
 `Panel` и показывается, а при отсутствии экземпляра команда поднимает OrbitFM
 сразу с видимой панелью (семантика CLI). Капсулу Overlay той же механикой зовёт
@@ -228,8 +260,8 @@ windowrulev2 = noblur, title:^OrbitFM · Panel$
 
 ## 3. Принципы
 
-- Плагин Noctalia — максимально тонкий
-- Все команды идут через существующий IPC (`orbitfm panel`, `orbitfm toggle` и т.д.)
+- Плагин Noctalia — максимально тонкий: `panel` через IPC, `status` только для оформления
+- Все команды идут через существующий IPC (`orbitfm panel`, `orbitfm toggle`, `orbitfm status` и т.д.)
 - app-id / class должны быть стабильными и соответствовать Desktop Entry
 
 ## 4. Связанные ADR

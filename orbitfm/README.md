@@ -2,7 +2,8 @@
 
 OrbitFM is a desktop radio player with an interactive 3D globe for browsing
 stations by country. This plugin adds a compact bar widget that shows or hides
-the player's dropdown panel through the application's single-instance IPC.
+the player's dropdown panel through the application's single-instance IPC and
+reflects the playback state in the icon.
 
 ## Plugin
 
@@ -10,6 +11,7 @@ the player's dropdown panel through the application's single-instance IPC.
 | --- | --- |
 | ID | `modernbyte/orbitfm` |
 | Entries | Bar widget: `launcher` |
+| Settings | `display`: `icon_text` (default) or `icon` |
 
 ## Requirements
 
@@ -34,6 +36,23 @@ the panel next to the widget. The full Focus desk is reached by the
 Listening capsules stay separate surfaces behind the same IPC: `orbitfm overlay`,
 `orbitfm mode focus`, `orbitfm mode listening` and `orbitfm mode panel`.
 
+## Widget appearance
+
+The widget polls `orbitfm status` every two seconds and changes only its
+presentation:
+
+| State | Icon | Color |
+| --- | --- | --- |
+| Off / app not running | `radio` | theme color |
+| Playing or buffering | `radio` | green `#22C55E` |
+| Paused | `radio` | theme color |
+| No network (`reconnecting`) | `radio-off` | dark gray `#6B7280` |
+| Error | `radio` | red `#EF4444` |
+
+The `display` setting switches between the icon with the OrbitFM label
+(`icon_text`, default) and the icon alone (`icon`). The plugin does not own
+playback state; the OrbitFM process remains the source of truth.
+
 ## Window rules
 
 The panel is a frameless 400×640 window. On tiling compositors it must float,
@@ -53,8 +72,9 @@ include "./cfg/orbitfm.kdl"
 
 ## Notes
 
-- The plugin contains no audio logic and keeps no player state; playback,
-  favorites, history and appearance settings live in the OrbitFM process.
+- The plugin contains no audio logic and keeps no player state of its own;
+  playback, favorites, history and appearance settings live in the OrbitFM
+  process. The icon only mirrors `orbitfm status`.
 - It starts a local process and does not access the network itself.
 - OrbitFM is single-instance: repeated clicks reuse the running process through
   the session IPC socket.

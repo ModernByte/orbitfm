@@ -15,7 +15,7 @@ kbuildsycoca6 --noincremental
 В разделе Releases лежит готовый `OrbitFM-<версия>-plasma.plasmoid`:
 
 ```
-kpackagetool6 -t Plasma/Applet -i OrbitFM-0.16.0-rc.3-plasma.plasmoid
+kpackagetool6 -t Plasma/Applet -i OrbitFM-0.17.0-rc.1-plasma.plasmoid
 ```
 
 Или в режиме редактирования панели: «Добавить виджеты» → «Установить из

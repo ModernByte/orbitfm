@@ -1,6 +1,6 @@
 id           = "modernbyte/orbitfm"
 name         = "OrbitFM"
-version      = "1.0.0"
+version      = "1.1.0"
 plugin_api   = 3
 author       = "ModernByte"
 license      = "MIT"
@@ -12,3 +12,14 @@ dependencies = ["orbitfm"]
 [[widget]]
 id    = "launcher"
 entry = "plugin.luau"
+
+  [[widget.setting]]
+  key             = "display"
+  type            = "select"
+  label_key       = "settings.display.label"
+  description_key = "settings.display.description"
+  default         = "icon_text"
+  options = [
+    { value = "icon", label_key = "settings.display.option.icon" },
+    { value = "icon_text", label_key = "settings.display.option.icon_text" },
+  ]

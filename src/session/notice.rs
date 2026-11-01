@@ -20,11 +20,19 @@ pub(crate) enum NoticeKey {
     FavoritesNotSaved,
     HistoryCleared,
     ClearHistoryFailed,
+    SnapshotCleared,
+    SnapshotClearFailed,
     PlaybackFailed,
     StationWithoutUrl,
     SearchTaskEnded,
     LoadMoreFailed,
-    RouletteStarted { station: Option<String> },
+    RouletteStarted {
+        station: Option<String>,
+    },
+    /// Станция заменена более лёгким потоком (ADR-0043 §4).
+    EconomyStream {
+        bitrate: u32,
+    },
     RouletteFailed,
     RouletteTaskEnded,
     ThemeNotSaved,

@@ -135,6 +135,9 @@ modules:
       - install -Dm644 packaging/linux/org.modernbyte.OrbitFM.metainfo.xml /app/share/metainfo/org.modernbyte.OrbitFM.metainfo.xml
       - install -Dm644 packaging/linux/org.modernbyte.OrbitFM.svg /app/share/icons/hicolor/scalable/apps/org.modernbyte.OrbitFM.svg
     sources:
+      # Локальная сборка идёт из рабочего дерева. Для подачи в Flathub этот
+      # блок заменяется на type: git с tag/commit релиза (ADR-0011);
+      # inline-конфиг Cargo и flatpak-cargo-sources.json не меняются.
       - type: dir
         path: ../..
         skip:

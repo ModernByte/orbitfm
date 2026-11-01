@@ -9,6 +9,7 @@
 
 pub(crate) mod commands;
 pub(crate) mod companion;
+pub(crate) mod economy;
 pub(crate) mod heat;
 pub(crate) mod markers;
 pub(crate) mod notice;
@@ -28,6 +29,7 @@ use tokio::sync::{broadcast, mpsc};
 
 use crate::audio::{AudioEngine, AudioEvent, PlaybackState};
 use crate::geo::GeoService;
+use crate::integration::wm::{self, Desktop};
 use crate::ipc::{IpcRequest, SearchFeed, StatusFeed, WakeFn};
 use crate::library::StationLibrary;
 use crate::media::MediaControls;
@@ -39,6 +41,7 @@ use crate::text::single_line;
 use crate::tray::{TrayHandle, TraySnapshot};
 
 use companion::CompanionSearchState;
+use economy::EconomyState;
 use markers::GlobeMarker;
 pub(crate) use notice::{Notice, NoticeKey};
 pub(crate) use park::ParkOutcome;
@@ -146,6 +149,8 @@ pub(crate) struct Session {
     /// выбирает станцию, которой может не быть на экране.
     pub(crate) reveal_station: Option<String>,
     pub(crate) search: SearchState,
+    /// Адаптация к плохой сети: буфер и fallback по битрейту (ADR-0043).
+    pub(crate) economy: EconomyState,
     /// Поиск попапа: своё поколение и выдача, не связанные с панелью окна.
     pub(crate) companion: CompanionSearchState,
     /// Незавершённый `play-url`: ответ клиенту ждёт сетевой резолвер.
@@ -159,6 +164,10 @@ pub(crate) struct Session {
     pub(crate) panel_open: bool,
     /// Открыто ли модальное окно настроек (ADR-0031).
     pub(crate) settings_open: bool,
+    /// Открыт ли мастер первого запуска (ADR-0041).
+    pub(crate) onboarding_open: bool,
+    /// Окружение, определённое на старте для шага «Окружение и окно».
+    pub(crate) onboarding_desktop: Desktop,
     /// Громкость, изменённая перетаскиванием, но ещё не записанная на диск.
     pub(crate) pending_volume: Option<f64>,
     pub(crate) show_help: bool,
@@ -204,6 +213,8 @@ impl Session {
         let spectrum_enabled = audio.spectrum_enabled();
         let language = stored.language.resolve();
         let show_help = stored.help_visible;
+        let onboarding_open = !settings.existed_at_load() && !stored.onboarding_done;
+        let onboarding_desktop = Desktop::detect();
         let publish_gate = PublishGate::new(runtime.clone(), wake.clone());
         let mut session = Self {
             audio,
@@ -226,6 +237,7 @@ impl Session {
             selected_station: None,
             reveal_station: None,
             search: SearchState::default(),
+            economy: EconomyState::default(),
             companion: CompanionSearchState::default(),
             pending_stream: None,
             markers: Vec::new(),
@@ -234,6 +246,8 @@ impl Session {
             country_filter: CountryFilterState::default(),
             panel_open: true,
             settings_open: false,
+            onboarding_open,
+            onboarding_desktop,
             pending_volume: None,
             show_help,
             window: WindowState::shown(),
@@ -243,6 +257,9 @@ impl Session {
             search_feed: search,
             publish_gate,
         };
+        // Последний снимок подставляется до первого сетевого запроса: карта
+        // не остаётся пустой, пока каталог отвечает (ADR-0043).
+        session.load_snapshot();
         // Снимок мира уходит в фон сразу: карта стран должна закраситься до
         // первого выбора в панели.
         session.start_world();
@@ -255,6 +272,7 @@ impl Session {
     /// Один кадр фонового обслуживания: вызывается UI-циклом при открытом окне.
     pub(crate) fn tick(&mut self) {
         self.process_audio_events();
+        self.poll_economy();
         self.process_commands();
         self.process_media_commands();
         self.process_tray_commands();
@@ -314,6 +332,33 @@ impl Session {
 
     pub(crate) fn close_settings(&mut self) {
         self.settings_open = false;
+    }
+
+    /// Мастер первого запуска (ADR-0041): показывается только на чистом профиле.
+    pub(crate) fn onboarding_open(&self) -> bool {
+        self.onboarding_open
+    }
+
+    pub(crate) fn onboarding_desktop(&self) -> Desktop {
+        self.onboarding_desktop
+    }
+
+    /// Завершение или пропуск мастера: отметка сохраняется атомарно.
+    pub(crate) fn finish_onboarding(&mut self) -> Result<(), String> {
+        self.onboarding_open = false;
+        self.settings
+            .set_onboarding_done()
+            .map_err(|err| err.to_string())
+    }
+
+    /// Правила окна на время сеанса; конфиги пользователя не меняются.
+    pub(crate) fn apply_window_rules(&self) -> Result<(), String> {
+        match self.onboarding_desktop.runtime_rules() {
+            wm::RuntimeRules::Hyprland => wm::apply_hyprland_rules(),
+            wm::RuntimeRules::Snippet(_) | wm::RuntimeRules::Unsupported => {
+                Err("runtime-правила для этого окружения недоступны".to_owned())
+            }
+        }
     }
 
     pub(crate) fn toggle_settings(&mut self) {

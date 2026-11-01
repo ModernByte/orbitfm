@@ -25,6 +25,28 @@
       <li xml:lang="ru">Экспериментальный FFT-визуализатор</li>
     </ul>
   </description>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Focus desk with the 3D globe and the station list</caption>
+      <caption xml:lang="ru">Стол Focus с 3D-глобусом и списком станций</caption>
+      <image type="source">https://raw.githubusercontent.com/ModernByte/orbitfm/main/docs/wiki/images/01-focus.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Settings: appearance, language and motion</caption>
+      <caption xml:lang="ru">Настройки: оформление, язык и движение</caption>
+      <image type="source">https://raw.githubusercontent.com/ModernByte/orbitfm/main/docs/wiki/images/02-settings.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>First-run wizard: language and theme</caption>
+      <caption xml:lang="ru">Мастер первого запуска: язык и тема</caption>
+      <image type="source">https://raw.githubusercontent.com/ModernByte/orbitfm/main/docs/wiki/images/08-onboarding.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Integrations: panels, desktops and browsers</caption>
+      <caption xml:lang="ru">Интеграции: панели, окружения и браузеры</caption>
+      <image type="source">https://raw.githubusercontent.com/ModernByte/orbitfm/main/docs/wiki/images/09-integrations.png</image>
+    </screenshot>
+  </screenshots>
   <launchable type="desktop-id">org.modernbyte.OrbitFM.desktop</launchable>
   <url type="homepage">https://github.com/ModernByte/orbitfm</url>
   <url type="bugtracker">https://github.com/ModernByte/orbitfm/issues</url>
@@ -33,6 +55,24 @@
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.17.0-rc.1" date="2026-11-01">
+      <description>
+        <p>OrbitFM 0.17.0-rc.1 — ниже порог входа и меньше зависимости от сети.
+        В бинарник встроены шрифты Noto для латиницы, кириллицы, CJK-строк
+        интерфейса, арабского и флагов, поэтому интерфейс читается сразу после
+        установки; первый запуск проводит мастер из трёх шагов с языком, темой,
+        определением рабочего стола и переходом к интеграциям. В настройках
+        появилась категория «Интеграции»: она находит панели, окружения и
+        браузеры, ставит и удаляет их по одной цели, а модуль Waybar включает
+        через JSONC CST с резервной копией и без регулярных выражений.
+        Офлайн-снимок до 500 станций страхует глобус и списки без сети,
+        экономичный аудиорежим поднимает буфер при обрывах, процедурные обложки
+        заменяют серые квадраты. Рядом с AppImage публикуется
+        install-appimage.sh для меню и PATH без root, а виджет Noctalia 1.1.0
+        показывает состояние эфира цветом и переключается между иконкой и
+        иконкой с подписью. Контракты CLI, IPC и MPRIS не менялись.</p>
+      </description>
+    </release>
     <release version="0.16.0-rc.3" date="2026-11-01">
       <description>
         <p>OrbitFM 0.16.0-rc.3 — патч безопасности после 0.16.0-rc.2.

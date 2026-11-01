@@ -109,6 +109,8 @@ pub struct Settings {
     pub artwork_allow_http: bool,
     /// Видимость карточки управления глобусом; по умолчанию включена (ADR-0036).
     pub help_visible: bool,
+    /// Мастер первого запуска завершён или пропущен (ADR-0041).
+    pub onboarding_done: bool,
     pub motion: MotionReactivity,
     pub motion_style: MotionStyle,
     pub allow_flips: bool,
@@ -134,6 +136,8 @@ impl SettingsStore {
     pub fn load_default() -> Result<Self, SettingsError>;
     pub fn ephemeral() -> Self;
     pub fn path(&self) -> Option<&Path>;
+    /// Был ли файл настроек на месте при загрузке (признак первого запуска).
+    pub fn existed_at_load(&self) -> bool;
     pub fn settings(&self) -> Settings;
     pub fn set_theme(&mut self, theme: ThemeMode) -> Result<(), SettingsError>;
     pub fn set_accent(&mut self, accent: AccentColor) -> Result<(), SettingsError>;
@@ -143,6 +147,7 @@ impl SettingsStore {
     pub fn set_visualizer_enabled(&mut self, enabled: bool) -> Result<(), SettingsError>;
     pub fn set_artwork_allow_http(&mut self, allow: bool) -> Result<(), SettingsError>;
     pub fn set_help_visible(&mut self, visible: bool) -> Result<(), SettingsError>;
+    pub fn set_onboarding_done(&mut self) -> Result<(), SettingsError>;
     pub fn set_motion(&mut self, motion: MotionReactivity) -> Result<(), SettingsError>;
     pub fn set_motion_style(&mut self, style: MotionStyle) -> Result<(), SettingsError>;
     pub fn set_allow_flips(&mut self, allow: bool) -> Result<(), SettingsError>;
@@ -167,6 +172,7 @@ pub fn default_path() -> Result<PathBuf, SettingsError>;
 | `load` | Читает JSON; `NotFound` → значения по умолчанию; повреждённый JSON → `Parse`; при загрузке `viz_bars` притягивается к ближайшему допустимому числу, `volume` клампится |
 | `load_default` | `load(default_path()?)` |
 | `ephemeral` | Хранилище в памяти; `save` — no-op, файл не создаётся |
+| `existed_at_load` | `true`, если файл был прочитан при `load`; вместе с `onboarding_done == false` это признак первого запуска (ADR-0041) |
 | `settings` | Возвращает копию `Settings` для применения в GUI |
 | `set_theme` / `set_accent` | Меняет значение и сохраняет; повторная установка того же значения — успех без записи |
 | `set_language` | Меняет язык (`System` или один из 16 языков каталога); сохраняет только при изменении |
@@ -175,6 +181,7 @@ pub fn default_path() -> Result<PathBuf, SettingsError>;
 | `set_visualizer_enabled` | Включает или выключает визуализатор и аудиокольцо; сохраняет только при изменении |
 | `set_artwork_allow_http` | Разрешает или запрещает favicon по HTTP; значение по умолчанию `false`, сохраняет только при изменении. Применение к сетевой политике — `ArtworkFetcher::set_allow_http` (ADR-0025 ред. 4) |
 | `set_help_visible` | Включает или выключает карточку управления глобусом; значение по умолчанию `true`, сохраняет только при изменении. Старый ключ `help_seen` игнорируется (ADR-0036) |
+| `set_onboarding_done` | Ставит `onboarding_done = true` и сохраняет; повторный вызов — успех без записи. Вызывается кнопками «Начать слушать» и «Пропустить» мастера (ADR-0041) |
 | `set_motion` / `set_reduce_motion` | Меняет реактивность движения и Reduce motion; сохраняет только при изменении |
 | `set_motion_style` | Меняет характер движения (`Auto` или один из шести стилей); сохраняет только при изменении |
 | `set_allow_flips` | Разрешает перевороты камеры; по умолчанию `false`, сохраняет только при изменении |
@@ -197,6 +204,7 @@ pub fn default_path() -> Result<PathBuf, SettingsError>;
   "visualizer_enabled": true,
   "artwork_allow_http": false,
   "help_visible": true,
+  "onboarding_done": true,
   "motion": "normal",
   "motion_style": "auto",
   "allow_flips": false,
@@ -208,7 +216,8 @@ pub fn default_path() -> Result<PathBuf, SettingsError>;
 `accent` — `blue`/`green`/`amber`/`violet`/`rose`/`cyan`, `motion` —
 `off`/`low`/`normal`/`high`, `motion_style` — `auto`/`soft-pulse`/`groove-sway`/
 `bass-drop`/`ambient-drift`/`sparkle-twitch`/`beat-march`, `language` —
-`system`/`en`/`ru`/`fr`/`de`/`es`/`it`/`pt`/`zh`/`ko`/`ja`. `viz_bars` при
+`system`/`en`/`ru`/`uk`/`pl`/`fr`/`de`/`es`/`it`/`pt`/`tr`/`ar`/`hi`/`id`/`zh`/`ko`/`ja`.
+`viz_bars` при
 загрузке притягивается к ближайшему из 16/24/32, `volume` клампится в
 `0.0..=1.0`. Отсутствующие поля заменяются значениями по умолчанию. Неизвестное
 значение enum — ошибка разбора, кроме `language`: неизвестный код языка даёт
@@ -254,10 +263,12 @@ Application Core затемняет акцент для текста (ссылк
 - `default_path_falls_back_to_home_for_relative_xdg`
 - `missing_file_uses_defaults`
 - `roundtrip_persists_theme_and_accent`
-- `missing_fields_use_defaults` (все одиннадцать остальных полей, включая
-  `language`, `volume`, `visualizer_enabled`, `artwork_allow_http`)
+- `missing_fields_use_defaults` (все остальные поля, включая `language`,
+  `volume`, `visualizer_enabled`, `artwork_allow_http`, `onboarding_done`)
 - `roundtrip_persists_language_volume_and_visualizer`
 - `roundtrip_persists_artwork_http_opt_in`
+- `existing_file_disables_the_first_run_wizard` (`existed_at_load`, сохранение
+  `onboarding_done`)
 - `unknown_language_code_falls_back_without_touching_other_fields`
 - `invalid_volume_is_sanitized_on_load_and_write`
 - `roundtrip_persists_motion_preferences` (включая `motion_style`)
@@ -279,4 +290,6 @@ Application Core затемняет акцент для текста (ссылк
 - ADR-0030: Локализация интерфейса (язык и подписи значений)
 - ADR-0031: Панель настроек и персистентность (`language`, `volume`,
   `visualizer_enabled`, commit-on-release)
+- ADR-0041: Встроенные шрифты и мастер первого запуска (`onboarding_done`,
+  `existed_at_load`)
 - `docs/modules/10-settings.md`, `docs/modules/14-ui-settings.md`

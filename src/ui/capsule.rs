@@ -108,6 +108,8 @@ pub(crate) struct Listening<'a> {
     pub can_resume: bool,
     pub pulse: f32,
     pub favicons: &'a mut FaviconCache,
+    /// Играет подобранный лёгкий поток: индикатор ECO (ADR-0043 §4).
+    pub eco: bool,
     /// Разрешённый язык интерфейса (ADR-0030).
     pub language: Language,
 }
@@ -181,6 +183,7 @@ fn listening_line(
     language: Language,
     station: Option<&Station>,
     playback: &PlaybackState,
+    eco: bool,
 ) -> String {
     let text = i18n::catalog(language);
     let Some(station) = station else {
@@ -196,6 +199,11 @@ fn listening_line(
         playback_label(language, playback),
         row_place(station),
         bitrate,
+        if eco {
+            text.transport.eco.to_owned()
+        } else {
+            String::new()
+        },
     ]
     .into_iter()
     .filter(|part| !part.is_empty())
@@ -227,8 +235,7 @@ pub(crate) fn overlay_top(
     let name = station_name(language, current);
     let subtitle = overlay_subtitle(language, current, playback);
     let texture = current
-        .and_then(|station| station.favicon.as_deref())
-        .and_then(|url| favicons.texture(url));
+        .and_then(|station| favicons.texture_or_procedural(ui.ctx(), station, palette.accent));
     let mut volume = volume;
 
     // Содержимое входит теми же 180 мс, что и каркас капсулы.
@@ -462,15 +469,15 @@ pub(crate) fn listening(
         can_resume,
         pulse,
         favicons,
+        eco,
         language,
     } = state;
     let is_playing = playing(playback);
     let text = i18n::catalog(language);
     let name = station_name(language, current);
-    let details = listening_line(language, current, playback);
+    let details = listening_line(language, current, playback, eco);
     let texture = current
-        .and_then(|station| station.favicon.as_deref())
-        .and_then(|url| favicons.texture(url));
+        .and_then(|station| favicons.texture_or_procedural(ui.ctx(), station, palette.accent));
 
     // Строка входит вместе со своим каркасом; пульс эфира остаётся отдельным
     // слоем, который оркестратор обслуживает своими кадрами.
@@ -481,7 +488,12 @@ pub(crate) fn listening(
         &shell,
         play_progress(ui.ctx(), motion, PLAY_LISTENING, is_playing),
     );
-    let glow = animation::alpha(pulse);
+    // Reduce motion гасит пульсацию, но оставляет статичный обод (ADR-0044 §5).
+    let glow = if motion.reduce {
+        0.5
+    } else {
+        animation::alpha(pulse)
+    };
 
     palette.glass().show(ui, |ui| {
         ui.set_min_size(ui.available_size());
@@ -637,12 +649,22 @@ mod tests {
             listening_line(
                 Language::English,
                 Some(&station("Radio Nova")),
-                &PlaybackState::Playing
+                &PlaybackState::Playing,
+                false
             ),
             "on air · New York, United States · 128 kbps"
         );
         assert_eq!(
-            listening_line(Language::English, None, &PlaybackState::Stopped),
+            listening_line(
+                Language::English,
+                Some(&station("Radio Nova")),
+                &PlaybackState::Playing,
+                true
+            ),
+            "on air · New York, United States · 128 kbps · ECO"
+        );
+        assert_eq!(
+            listening_line(Language::English, None, &PlaybackState::Stopped, false),
             "stopped"
         );
         // Битрейт собирается из шаблона каталога, а не из литерала.

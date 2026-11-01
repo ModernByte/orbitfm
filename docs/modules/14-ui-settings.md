@@ -1,8 +1,8 @@
 # Модуль: Модальное окно настроек
 
-**Путь в коде:** `src/ui/settings_panel.rs`, примитивы строк — `src/ui/controls.rs`  
-**Ответственность:** Содержимое модального окна настроек: шапка, категории, карточки и подвал; scrim и каркас стекла — в `app.rs`.  
-**Зависимости:** egui, `ui::animation`, `ui::controls`, `ui::palette`, `ui::widgets`, `ui::icons`, `i18n`, `settings`, `session::WindowMode`.
+**Путь в коде:** `src/ui/settings_panel.rs`, `src/ui/onboarding.rs`, примитивы строк — `src/ui/controls.rs`  
+**Ответственность:** Содержимое модального окна настроек и мастера первого запуска: шапка, категории, карточки и подвал; scrim и каркас стекла — в `app.rs`.  
+**Зависимости:** egui, `ui::animation`, `ui::controls`, `ui::palette`, `ui::widgets`, `ui::icons`, `i18n`, `settings`, `session::WindowMode`, `integration::{status, wm}`.
 
 ---
 
@@ -17,6 +17,10 @@
 тень и приход/уход считает `app.rs` (`draw_settings`) по прогрессам
 `animation::FrameMotion`.
 
+`onboarding.rs` — соседний файл той же ответственности: модалка мастера первого
+запуска (ADR-0041) рисуется поверх стола и не входит в `DeskLayout`, пока она
+открыта, сцена не принимает ввод. Её шаги описаны в § 4.1.
+
 ## 2. Состояние и геометрия
 
 | Владелец | Поле | Смысл |
@@ -25,6 +29,10 @@
 | `Session` | `pending_volume: Option<f64>` | громкость незавершённого перетаскивания |
 | `OrbitApp` | `settings_rect: Option<Rect>` | прямоугольник с последнего открытого кадра |
 | `OrbitApp` | `settings_category: SettingsCategory` | открытая категория, состояние представления |
+| `OrbitApp` | `integrations: IntegrationPanel` | снимок целей и текущая фоновая операция |
+| `Session` | `onboarding_open: bool` | мастер первого запуска открыт |
+| `Session` | `onboarding_desktop: Desktop` | окружение, обнаруженное для шага 2 |
+| `OrbitApp` | `onboarding: onboarding::View` | шаг мастера, отклик правил и «Скопировано» |
 | `OrbitApp` | `transitions: Transitions` | прогрессы `settings` и `scrim` кадра |
 | `OrbitApp` | `Toast` | сообщения об ошибках сохранения |
 | `DeskLayout` | `settings: Option<Rect>` | зона модалки в текущем кадре |
@@ -93,8 +101,8 @@ drag, начатые над ним. В `Listening` зоны нет: `Session::op
 ## 3. Категории
 
 Категории задаёт `SettingsCategory { Appearance, Language, Audio, Motion, Window,
-About }`; порядок навигации — `ALL`, иконки — `Moon`, `Globe`, `Volume`,
-`Sparkles`, `AppWindow`, `Help`. Выбранная категория залита accent-подложкой,
+Integrations, About }`; порядок навигации — `ALL`, иконки — `Moon`, `Globe`,
+`Volume`, `Sparkles`, `AppWindow`, `Panel`, `Help`. Выбранная категория залита accent-подложкой,
 роль — `Tab`; в рейке подпись заменяется подсказкой при наведении. У каждой
 страницы есть заголовок 18 px и короткий подзаголовок 11.5 px из
 `SettingsText`: подзаголовок не повторяет подсказку отдельной строки.
@@ -116,8 +124,18 @@ About }`; порядок навигации — `ALL`, иконки — `Moon`, 
   показывается `flips_unavailable`.
 - **Window** — `dropdown` по `WindowMode::ALL` с `window_hint`, `switch_row`
   карточки управления.
-- **About** — версия, лицензия, app-id, пояснение про фоновую работу, затем
-  единственная кнопка окна — «Выход» (`widgets::quiet_button` в цвете ошибки,
+- **Integrations** — три группы `TargetGroup::ALL`: панели и бары, окружения
+  рабочего стола, браузеры. Строка цели показывает состояние
+  (`NotInstalled`/`Installed`/`UpdateAvailable`/`Problem`), найденные браузеры
+  или «не обнаружено», а для Waybar — включён ли `custom/orbitfm` в конфиге,
+  есть ли файл и ошибка разбора. Кнопки: «Установить», «Удалить», «Включить
+  в конфиге» (Waybar, только при разобранном конфиге), «Перезагрузить»
+  (Waybar после включения, Polybar). Пока операция идёт, все строки
+  недоступны; снимок `IntegrationPanel` не читает файлы на каждый кадр, а
+  обновляется после завершения операции (ADR-0042).
+- **About** — версия, лицензия, app-id, пояснение про фоновую работу, кнопка
+  «Очистить офлайн-снимок» (`UiAction::ClearOfflineSnapshot`, ADR-0043) и
+  единственная кнопка выхода — «Выход» (`widgets::quiet_button` в цвете ошибки,
   `UiAction::Quit`).
 
 Подвал окна (`HEADER_MARGIN` слева и справа, высота 32) отделён линией и
@@ -155,6 +173,26 @@ About }`; порядок навигации — `ALL`, иконки — `Moon`, 
 пересоздание viewport из-за смены режима сохраняет окно открытым, а любое другое
 закрытие — нет. В `OrbitApp::logic` Escape снимает самый верхний модальный слой:
 сначала настройки, затем help.
+
+### 4.1. Мастер первого запуска
+
+Показывается вместо сцены, когда `!settings.existed_at_load() && !onboarding_done`;
+существующий `settings.json` отключает мастер. Модалка 560×468 центрируется и
+клампится по `MARGIN`; при арабском каталоге шаг и подвал зеркалятся
+(`Layout::right_to_left`). Пока мастер открыт, Escape и горячие клавиши сцены
+не срабатывают, ввод получает только модалка.
+
+| Шаг | Содержимое | Действия |
+|-----|------------|----------|
+| «Язык и тема» | `dropdown` языка (`Language::ALL`) и темы (`ThemeMode::ALL`) | `SetLanguage`, `SetTheme` — применяются сразу, без перезапуска |
+| «Ваш рабочий стол» | `Desktop::detect()` и его имя | Hyprland — «Настроить окно» (`ApplyWindowRules`, `hyprctl keyword` с фиксированными аргументами); niri — KDL-блок и «Копировать»; KDE/GNOME/иное — без действий |
+| «Интеграции» | подсказка, что виджет можно включить позже | «Открыть интеграции» (`OpenIntegrations`): мастер завершается, открывается категория `Integrations` |
+
+«Назад» возвращает на шаг, «Пропустить» и «Начать слушать» отправляют
+`FinishOnboarding`: `Session::finish_onboarding` закрывает мастер и пишет
+`onboarding_done = true`; ошибка записи показывается тостом, но мастер уже
+закрыт. Если `hyprctl` не ответил, шаг показывает `failed` и тот же сниппет с
+кнопкой «Копировать»; конфиги пользователя не правятся.
 
 ## 5. Громкость
 
@@ -236,4 +274,18 @@ Scrim — `egui::Area` на весь viewport в `Order::Foreground`, затем
   заполняют подзаголовки страниц;
 - `settings`: `roundtrip_persists_language_volume_and_visualizer`,
   `invalid_volume_is_sanitized_on_load_and_write`,
-  `unknown_language_code_falls_back_without_touching_other_fields`.
+  `unknown_language_code_falls_back_without_touching_other_fields`,
+  `existing_file_disables_the_first_run_wizard`;
+- `onboarding`: `step_index_never_leaves_the_wizard`,
+  `arabic_switches_the_composition_direction`,
+  `wizard_text_stacks_vertically_in_both_directions`;
+- `integration::waybar`: `injects_module_and_preserves_comments_and_layout`,
+  `second_enable_is_idempotent_and_keeps_first_backup`,
+  `malformed_config_is_left_untouched`,
+  `missing_modules_array_is_an_error`, `root_array_is_rejected`,
+  `symlinked_config_is_not_replaced`,
+  `finds_config_without_extension`;
+- `integration::wm`: `compositor_variables_win_over_desktop_names`,
+  `desktop_names_are_matched_case_insensitively`,
+  `hyprland_rules_are_single_line_fixed_arguments`;
+- `integration::reload`: `unsupported_targets_ask_for_a_manual_restart`.

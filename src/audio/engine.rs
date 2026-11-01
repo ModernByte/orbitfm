@@ -37,6 +37,11 @@ pub(super) enum AudioCommand {
         enabled: bool,
         reply: oneshot::Sender<CommandResult>,
     },
+    /// Экономный профиль буфера (ADR-0043 §3): ошибки не фатальны, ответ
+    /// вызывающему не нужен.
+    SetCacheProfile {
+        economy: bool,
+    },
     Shutdown,
 }
 
@@ -187,6 +192,20 @@ impl AudioEngine {
             .send(AudioCommand::SetSpectrum { enabled, reply })
             .map_err(|_| AudioError::Internal("аудио-поток остановлен".to_owned()))?;
         wait_for_reply(response).await
+    }
+
+    /// Повысить буфер на время плохой сети или вернуть умолчания libmpv.
+    ///
+    /// Ошибка установки свойства остаётся в логе аудио-потока: сбой профиля
+    /// не должен прерывать воспроизведение (ADR-0043 §3).
+    pub fn set_cache_profile(&self, economy: bool) {
+        if self
+            .commands
+            .send(AudioCommand::SetCacheProfile { economy })
+            .is_err()
+        {
+            tracing::debug!("аудио-поток остановлен: профиль буфера не применён");
+        }
     }
 
     /// Текущее состояние воспроизведения.

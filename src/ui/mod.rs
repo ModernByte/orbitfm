@@ -7,15 +7,18 @@ pub(crate) mod animation;
 pub(crate) mod capsule;
 pub(crate) mod controls;
 pub(crate) mod country_map;
+pub(crate) mod fonts;
 pub(crate) mod globe_view;
 pub(crate) mod hud;
 pub(crate) mod icons;
 pub(crate) mod images;
 pub(crate) mod layout;
 pub(crate) mod mode_switch;
+pub(crate) mod onboarding;
 pub(crate) mod orbit_ring;
 pub(crate) mod overlays;
 pub(crate) mod palette;
+pub(crate) mod procedural;
 pub(crate) mod settings_panel;
 pub(crate) mod station_panel;
 pub(crate) mod station_row;
@@ -26,6 +29,7 @@ pub(crate) mod widgets;
 use crate::audio::PlaybackState;
 use crate::geo::Country;
 use crate::i18n;
+use crate::integration::Target;
 use crate::services::Station;
 use crate::session::WindowMode;
 use crate::settings::{AccentColor, Language, MotionReactivity, MotionStyle, ThemeMode};
@@ -92,6 +96,22 @@ pub(crate) enum UiAction {
     CloseSettings,
     /// Смена режима окна Focus/Overlay/Listening (ADR-0021).
     SetWindowMode(WindowMode),
+    /// Мастер первого запуска пройден или пропущен (ADR-0041).
+    FinishOnboarding,
+    /// Правила окна Hyprland на время сеанса через `hyprctl`.
+    ApplyWindowRules,
+    /// Выход из мастера с открытием категории «Интеграции» (ADR-0042).
+    OpenIntegrations,
+    /// Установка интеграции из окна настроек (ADR-0042).
+    IntegrationInstall(Target),
+    /// Удаление файлов интеграции по квитанции.
+    IntegrationUninstall(Target),
+    /// Включение модуля OrbitFM в конфиг Waybar с резервной копией.
+    IntegrationEnableWaybar,
+    /// Перезагрузка панели после правки конфига.
+    IntegrationReload(Target),
+    /// Удаление офлайн-снимка станций с диска (ADR-0043).
+    ClearOfflineSnapshot,
 }
 
 /// Подпись состояния эфира: статусная строка HUD, капсул и transport (ADR-0030).

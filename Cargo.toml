@@ -1,6 +1,6 @@
 [package]
 name = "orbitfm"
-version = "0.16.0-rc.3"
+version = "0.17.0-rc.1"
 edition = "2024"
 rust-version = "1.95"
 description = "3D Interactive Global Radio Player"
@@ -30,6 +30,7 @@ geojson = "1.0"
 glam = "0.34"
 # Только растровые форматы из allowlist ADR-0025: SVG/GIF/ICO не декодируются.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+jsonc-parser = { version = "0.34", features = ["cst"] }
 libc = "0.2"
 libmpv2 = { version = "6.0", default-features = false }
 playwire = "2.0"

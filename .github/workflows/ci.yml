@@ -238,7 +238,10 @@ jobs:
         shell: pwsh
         env:
           RUSTFLAGS: -L native=${{ github.workspace }}\build\mpv-lib
-        run: cargo test --all-targets --locked
+        run: |
+          # Тестовый exe грузит libmpv-2.dll в рантайме; в PATH pwsh каталога MSYS2 нет.
+          $env:PATH = "${{ steps.msys2.outputs.msys2-location }}\ucrt64\bin;$env:PATH"
+          cargo test --all-targets --locked
 
       - name: Stage application and runtime DLLs
         shell: msys2 {0}
@@ -379,6 +382,7 @@ jobs:
         run: |
           bash -n packaging/cargo-deny-check.sh
           bash -n packaging/linux/build-appimage.sh
+          bash -n packaging/linux/install-appimage.sh
           bash -n packaging/macos/build-dmg.sh
           bash -n packaging/windows/stage-app.sh
 

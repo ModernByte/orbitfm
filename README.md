@@ -1,7 +1,7 @@
 # OrbitFM
 
 **Плеер интернет-радио с 3D-глобусом**  
-Под эгидой [ModernByte](https://github.com/ModernByte) · версия `0.16.0-rc.3`
+Под эгидой [ModernByte](https://github.com/ModernByte) · версия `0.17.0-rc.1`
 
 [![Релиз](https://img.shields.io/github/v/release/ModernByte/orbitfm?include_prereleases)](https://github.com/ModernByte/orbitfm/releases)
 [![Статус CI](https://img.shields.io/github/actions/workflow/status/ModernByte/orbitfm/ci.yml?branch=main)](https://github.com/ModernByte/orbitfm/actions/workflows/ci.yml)
@@ -14,7 +14,7 @@ OrbitFM — плеер интернет-радио, где каталог пок
 и её станции лежат рядом в списке; так же можно искать по жанру или по названию станции. Закрытие окна музыку не
 останавливает: приложение работает одним процессом, живёт в системном трее и принимает команды из терминала и от
 медиа-клавиш. Для экрана есть три режима — от большого рабочего стола с глобусом до компактной капсулы в углу.
-Приоритетная платформа — Linux (Wayland и X11), сборки есть для Windows и macOS; версия `0.16.0-rc.3` —
+Приоритетная платформа — Linux (Wayland и X11), сборки есть для Windows и macOS; версия `0.17.0-rc.1` —
 пре-релиз, отдельные детали ещё могут меняться.
 
 ## Что умеет
@@ -77,22 +77,35 @@ OrbitFM — плеер интернет-радио, где каталог пок
 ## Установка
 
 Готовые сборки — на странице релизов: <https://github.com/ModernByte/orbitfm/releases>. В набор входят AppImage,
-MSI, DMG и `.plasmoid` для Plasma 6; рядом лежит файл `SHA256SUMS`, так что перед первым запуском можно сверить
-контрольную сумму: `sha256sum -c SHA256SUMS`.
+MSI, DMG, `.plasmoid` для Plasma 6 и `install-appimage.sh`; рядом лежит файл `SHA256SUMS`, так что перед первым
+запуском можно сверить контрольную сумму: `sha256sum -c SHA256SUMS`.
 
 ### AppImage (Linux x86_64)
 
-Файл называется `OrbitFM-<версия>-x86_64.AppImage`, например `OrbitFM-0.16.0-rc.3-x86_64.AppImage`. Права root и
+Файл называется `OrbitFM-<версия>-x86_64.AppImage`, например `OrbitFM-0.17.0-rc.1-x86_64.AppImage`. Права root и
 установка не нужны — приложение rootless по определению, и `libmpv` с FFmpeg уже внутри:
 
 ```bash
-chmod +x OrbitFM-0.16.0-rc.3-x86_64.AppImage
-./OrbitFM-0.16.0-rc.3-x86_64.AppImage
+chmod +x OrbitFM-0.17.0-rc.1-x86_64.AppImage
+./OrbitFM-0.17.0-rc.1-x86_64.AppImage
 ```
 
+Чтобы добавить приложение в меню и `PATH` без root и без ручного `chmod +x`, положите рядом `install-appimage.sh`
+из релиза и запустите:
+
+```bash
+bash install-appimage.sh OrbitFM-0.17.0-rc.1-x86_64.AppImage
+```
+
+Скрипт копирует образ в `~/.local/bin/orbitfm`, ставит desktop entry с абсолютным `Exec`, иконки и metainfo в
+`~/.local/share`, обновляет кэши и предупреждает, если `~/.local/bin` не в `PATH`. Удаление —
+`bash install-appimage.sh --uninstall`; скачанный AppImage и пользовательские настройки не затрагиваются.
+Для обновления запустите скрипт с новым образом.
+
 Если FUSE недоступен (контейнеры, минимальные образы) или не нужна интеграция через монтирование, запускайте в
-режиме распаковки: `APPIMAGE_EXTRACT_AND_RUN=1 ./OrbitFM-0.16.0-rc.3-x86_64.AppImage`. Виджету Noctalia и командам
-`orbitfm …` нужен запускаемый `orbitfm` в `PATH` — удобно сделать символьную ссылку на AppImage.
+режиме распаковки: `APPIMAGE_EXTRACT_AND_RUN=1 ./OrbitFM-0.17.0-rc.1-x86_64.AppImage`. Виджету Noctalia и командам
+`orbitfm …` нужен запускаемый `orbitfm` в `PATH` — скрипт выше ставит его, либо сделайте символьную ссылку на
+AppImage.
 
 ### Установщики Windows и macOS
 
@@ -124,8 +137,10 @@ cargo build --release
 
 Пакеты собираются и локально: `./packaging/linux/build-appimage.sh` (результат —
 `target/appimage/OrbitFM-<версия>-x86_64.AppImage`) и `./packaging/linux/build-flatpak.sh` (нужен
-`flatpak-builder` и runtime 25.08). Flatpak в релизы не входит, а его IPC-сокет живёт в sandbox, поэтому виджет
-Noctalia и команды `orbitfm …` с Flatpak-сборкой не работают.
+`flatpak-builder` и runtime 25.08). Собранный AppImage можно сразу поставить в меню и `PATH`:
+`./packaging/linux/install-appimage.sh target/appimage/OrbitFM-<версия>-x86_64.AppImage`. Flatpak в релизы не
+входит, а его IPC-сокет живёт в sandbox, поэтому виджет Noctalia и команды `orbitfm …` с Flatpak-сборкой не
+работают.
 
 ### Виджет для панели Noctalia v5
 
@@ -141,7 +156,10 @@ noctalia msg plugins enable modernbyte/orbitfm
 ```
 
 Дальше виджет добавляется в интерфейсе: настройки бара → «Add widget» → **OrbitFM**. Проверить, что плагин на
-месте, можно командой `noctalia msg plugins list`.
+месте, можно командой `noctalia msg plugins list`. В настройках виджета («Содержимое виджета») выбирается
+«Иконка и текст» или только иконка; цвет и глиф отражают `orbitfm status`: зелёный — играет, тёмно-серый
+перечёркнутый — нет сети, красный — ошибка, цвет темы — выключено или пауза. Плагин версии 1.1.0 опрашивает
+состояние раз в две секунды и не владеет воспроизведением.
 
 ### Правила окон для niri и Hyprland
 
@@ -220,7 +238,7 @@ kbuildsycoca6 --noincremental
 Виджет также публикуется в Releases отдельным архивом `OrbitFM-<версия>-plasma.plasmoid`:
 
 ```bash
-kpackagetool6 -t Plasma/Applet -i OrbitFM-0.16.0-rc.3-plasma.plasmoid
+kpackagetool6 -t Plasma/Applet -i OrbitFM-0.17.0-rc.1-plasma.plasmoid
 ```
 
 Или в графическом интерфейсе: режим редактирования панели → «Добавить виджеты» → «Установить из файла» → выбрать
@@ -531,8 +549,8 @@ Sans Arabic. Это зависимость от окружения, а не де
   значениями по умолчанию, не перезаписывая ваш файл. Сброс: `orbitfm quit`, затем переименовать
   `~/.config/orbitfm/settings.json` и `~/.local/share/orbitfm/library.json` в `.bak`. Избранное и история живут в
   `library.json`: их удаление чистит их, но не трогает оформление.
-- **Виджет Noctalia не управляет плеером.** Виджет вызывает `orbitfm panel`, поэтому нативный бинарник должен быть в
-  `PATH`; с Flatpak-сборкой внешний CLI не работает (сокет в sandbox).
+- **Виджет Noctalia не управляет плеером.** Виджет вызывает `orbitfm panel` и читает `orbitfm status` для цвета
+  иконки, поэтому нативный бинарник должен быть в `PATH`; с Flatpak-сборкой внешний CLI не работает (сокет в sandbox).
 
 ## Безопасность и приватность
 

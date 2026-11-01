@@ -10,7 +10,11 @@ use std::collections::HashMap;
 
 use eframe::egui;
 use tokio::sync::mpsc;
-use tracing::debug;
+use tracing::{debug, warn};
+
+use crate::services::Station;
+
+use super::procedural;
 
 /// Сторона кэшируемой текстуры, px (ADR-0016, п. 6).
 pub(crate) const FAVICON_SIZE: u32 = 64;
@@ -133,6 +137,65 @@ impl FaviconCache {
     pub(crate) fn retry_failed(&mut self) {
         self.entries
             .retain(|_, entry| !matches!(entry.state, FaviconState::Failed));
+    }
+
+    /// Обложка станции: готовый сетевой favicon, иначе детерминированная
+    /// процедурная картинка в том же кэше (ADR-0044 §1). Сетевой запрос при
+    /// этом не отменяется — его результат заменит обложку, когда придёт.
+    pub(crate) fn texture_or_procedural(
+        &mut self,
+        ctx: &egui::Context,
+        station: &Station,
+        accent: egui::Color32,
+    ) -> Option<egui::TextureHandle> {
+        if let Some(texture) = station
+            .favicon
+            .as_deref()
+            .filter(|url| !url.is_empty() && !url.starts_with(procedural::KEY_PREFIX))
+            .and_then(|url| self.texture(url))
+        {
+            return Some(texture);
+        }
+
+        let key = procedural::key(&station.stationuuid);
+        if let Some(entry) = self.entries.get_mut(&key) {
+            entry.last_used = self.frame;
+            return match &entry.state {
+                FaviconState::Ready(texture) => Some(texture.clone()),
+                _ => None,
+            };
+        }
+        if self.entries.len() >= MAX_CACHED && !self.evict() {
+            return None;
+        }
+        // Паника генератора не должна ломать кадр (ADR-0044 §5): UI получает
+        // инициалы, как при отказе декодера favicon.
+        let image = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            procedural::cover(station, accent)
+        }));
+        let Ok(image) = image else {
+            warn!("процедурная обложка: генератор запаниковал");
+            return None;
+        };
+        self.generation = self.generation.wrapping_add(1);
+        let texture = ctx.load_texture(&key, image, egui::TextureOptions::LINEAR);
+        self.entries.insert(
+            key,
+            Entry {
+                state: FaviconState::Ready(texture.clone()),
+                last_used: self.frame,
+                generation: self.generation,
+            },
+        );
+        Some(texture)
+    }
+
+    /// Забывает процедурные обложки: после смены акцента палитра обязана
+    /// пересобраться (ADR-0044 §2). Счётчики не трогаются — такие записи
+    /// всегда `Ready` и не занимают слот загрузки.
+    pub(crate) fn forget_procedural(&mut self) {
+        self.entries
+            .retain(|url, _| !url.starts_with(procedural::KEY_PREFIX));
     }
 
     /// Есть незавершённые загрузки — окно стоит перерисовать.
@@ -482,6 +545,104 @@ mod tests {
                 "потолок нарушен на вставке {index}"
             );
         }
+    }
+
+    fn accent() -> egui::Color32 {
+        egui::Color32::from_rgb(80, 150, 255)
+    }
+
+    /// Станция без favicon получает процедурную обложку в тот же кэш и не
+    /// создаёт сетевой очереди (ADR-0044 §1).
+    #[test]
+    fn procedural_cover_is_cached_without_network() {
+        let mut cache = FaviconCache::new();
+        let station = crate::session::markers::sample_station();
+        let key = procedural::key(&station.stationuuid);
+
+        let first = cache
+            .texture_or_procedural(&ctx(), &station, accent())
+            .expect("обложка строится на месте");
+        assert!(cache.take_fetches().is_empty(), "сеть не задействована");
+        assert_eq!(cache.entries.len(), 1);
+        assert!(cache.entries.contains_key(&key));
+
+        let again = cache
+            .texture_or_procedural(&ctx(), &station, accent())
+            .expect("обложка уже в кэше");
+        assert_eq!(first.id(), again.id(), "текстура переиспользуется");
+        assert_eq!(cache.entries.len(), 1);
+        assert_eq!(cache.stats().served, 0, "счётчик сети не тронут");
+    }
+
+    /// Пока сетевой favicon летит, показывается обложка; готовый ответ имеет
+    /// приоритет и заменяет её в UI, не удаляя из кэша.
+    #[test]
+    fn ready_favicon_wins_over_procedural_cover() {
+        let ctx = ctx();
+        let mut cache = FaviconCache::new();
+        let mut station = crate::session::markers::sample_station();
+        station.favicon = Some("https://a/icon.png".to_owned());
+
+        let cover = cache
+            .texture_or_procedural(&ctx, &station, accent())
+            .expect("пока загрузка идёт, обложка видна");
+        let taken = cache.take_fetches();
+        assert_eq!(taken.len(), 1, "сетевой запрос поставлен");
+        let (url, generation) = taken[0].clone();
+        cache
+            .sender
+            .try_send((url, generation, Some(image())))
+            .expect("слот свободен");
+        cache.poll(&ctx);
+
+        let ready = cache
+            .texture_or_procedural(&ctx, &station, accent())
+            .expect("готовая текстура приоритетнее");
+        assert_ne!(ready.id(), cover.id());
+        assert!(cache.entries.contains_key("https://a/icon.png"));
+        assert!(
+            cache
+                .entries
+                .contains_key(&procedural::key(&station.stationuuid))
+        );
+    }
+
+    /// Процедурные записи подчиняются общему потолку и LRU-вытеснению.
+    #[test]
+    fn procedural_cover_respects_the_cache_cap() {
+        let mut cache = FaviconCache::new();
+        for index in 0..MAX_CACHED {
+            cache.texture(&format!("https://a/{index}"));
+        }
+        let station = crate::session::markers::sample_station();
+        let before = cache.stats();
+        assert!(
+            cache
+                .texture_or_procedural(&ctx(), &station, accent())
+                .is_some()
+        );
+        assert_eq!(cache.entries.len(), MAX_CACHED);
+        assert_eq!(cache.stats().evicted, before.evicted + 1);
+    }
+
+    /// Смена акцента пересобирает палитру: старые обложки забываются, сетевые
+    /// записи и счётчики остаются.
+    #[test]
+    fn accent_change_forgets_only_procedural_entries() {
+        let mut cache = FaviconCache::new();
+        cache.texture("https://a/icon.png");
+        let station = crate::session::markers::sample_station();
+        let _ = cache
+            .texture_or_procedural(&ctx(), &station, accent())
+            .expect("обложка построена");
+        cache.forget_procedural();
+        assert!(
+            !cache
+                .entries
+                .contains_key(&procedural::key(&station.stationuuid))
+        );
+        assert!(cache.entries.contains_key("https://a/icon.png"));
+        assert_eq!(cache.queued, 1, "сетевые записи не тронуты");
     }
 
     #[test]

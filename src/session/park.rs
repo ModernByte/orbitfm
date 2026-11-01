@@ -71,7 +71,7 @@ impl super::Session {
                         request.try_respond(response);
                     }
                 }
-                Parked::Audio(event) => self.apply_audio_event(event),
+                Parked::Audio(event) => self.apply_audio_event(&event),
                 Parked::Media(command) => self.execute_media_command(command),
                 Parked::Tray(command) => self.execute_tray_command(command),
                 Parked::Roulette(outcome) => self.apply_roulette(*outcome),

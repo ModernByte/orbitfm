@@ -185,6 +185,7 @@ fn scope_label(text: &Catalog, scope: HeatScope) -> &'static str {
         HeatScope::Global => text.overlay.map_scope_global,
         HeatScope::Sample => text.overlay.map_scope_sample,
         HeatScope::Top => text.overlay.map_scope_top,
+        HeatScope::Snapshot => text.overlay.map_scope_snapshot,
     }
 }
 

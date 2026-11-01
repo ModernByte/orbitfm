@@ -31,7 +31,7 @@ orbitfm/
 ```toml
 id         = "modernbyte/orbitfm"
 name       = "OrbitFM"
-version    = "1.0.0"
+version    = "1.1.0"
 plugin_api = 3
 author     = "ModernByte"
 icon       = "radio"
@@ -42,6 +42,17 @@ dependencies = ["orbitfm"]
 [[widget]]
 id    = "launcher"
 entry = "plugin.luau"
+
+  [[widget.setting]]
+  key             = "display"
+  type            = "select"
+  label_key       = "settings.display.label"
+  description_key = "settings.display.description"
+  default         = "icon_text"
+  options = [
+    { value = "icon", label_key = "settings.display.option.icon" },
+    { value = "icon_text", label_key = "settings.display.option.icon_text" },
+  ]
 ```
 
 ### 2. Поведение виджета
@@ -98,6 +109,21 @@ noctalia.runAsync("orbitfm panel")
   виджета. Niri-правила используют `default-floating-position` с якорем
   `top-right`, чтобы окно появлялось под панелью Noctalia рядом с виджетом,
   а не в центре экрана.
+
+### Уточнение (2026-11-01): вид и состояние иконки
+
+- Виджет получил настройку `display` (`icon` или `icon_text`, по умолчанию
+  `icon_text`): в режиме `icon` подпись скрывается, остаётся только глиф.
+- Плагин раз в 2 секунды запрашивает `orbitfm status` и отражает состояние
+  только в оформлении: `stopped` — глиф `radio` цветом темы, `playing` и
+  `buffering` — зелёный, `paused` — цвет темы, `reconnecting` — тёмно-серый
+  перечёркнутый `radio-off`, `error` — красный. Это презентационный опрос, а не
+  владение состоянием: источник истины остаётся в процессе OrbitFM.
+- Уточнение к запрету колбэка: короткий `orbitfm status` вызывается с
+  колбэком, чтобы получить stdout, — таймаут 5 с и убийство группы процессов
+  касаются только долгоживущего GUI. Запуск `orbitfm panel` по-прежнему идёт
+  без колбэка.
+- Манифест проходит `noctalia plugins lint`; версия плагина — 1.1.0.
 
 ### Альтернативы
 

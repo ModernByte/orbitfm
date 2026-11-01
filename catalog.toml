@@ -4,7 +4,7 @@
 [[plugin]]
 id = "modernbyte/orbitfm"
 name = "OrbitFM"
-version = "1.0.0"
+version = "1.1.0"
 author = "ModernByte"
 license = "MIT"
 icon = "radio"

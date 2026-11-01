@@ -45,6 +45,11 @@ const END_FILE_REDIRECT: libmpv2::EndFileReason = libmpv2::mpv_end_file_reason::
 const DEFAULT_RECONNECT_ATTEMPTS: u32 = 5;
 const INITIAL_RECONNECT_DELAY: Duration = Duration::from_secs(1);
 const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(16);
+/// Экономный профиль буфера (ADR-0043 §3): больше упреждающего чтения, чтобы
+/// короткие провалы не превращались в реконнект. Это заметно выше умолчаний
+/// libmpv; URL и качество потока при этом не меняются.
+const ECONOMY_DEMUXER_MAX_BYTES: i64 = 256 * 1024 * 1024;
+const ECONOMY_CACHE_SECS: f64 = 60.0;
 
 /// Раскладка, для которой определён граф полос (ADR-0027).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,6 +77,23 @@ struct LayoutRetry {
     attempt: u8,
 }
 
+/// Умолчания libmpv, снятые до первого изменения профиля: возврат в обычный
+/// режим обязан восстановить именно их, а не зашитые в коде числа.
+#[derive(Debug, Clone, Copy, Default)]
+struct CacheDefaults {
+    demuxer_max_bytes: Option<i64>,
+    cache_secs: Option<f64>,
+}
+
+impl CacheDefaults {
+    fn read(mpv: &Mpv) -> Self {
+        Self {
+            demuxer_max_bytes: mpv.get_property::<i64>("demuxer-max-bytes").ok(),
+            cache_secs: mpv.get_property::<f64>("cache-secs").ok(),
+        }
+    }
+}
+
 pub(super) struct AudioWorker {
     mpv: Mpv,
     shared: Arc<Shared>,
@@ -85,6 +107,9 @@ pub(super) struct AudioWorker {
     /// `@spectrum` реально стоит в текущей цепочке.
     bands_active: bool,
     applied_af: Option<String>,
+    cache_defaults: CacheDefaults,
+    /// Включён ли экономный профиль буфера (ADR-0043 §3).
+    economy_cache: bool,
 }
 
 impl AudioWorker {
@@ -94,6 +119,7 @@ impl AudioWorker {
         commands: mpsc::UnboundedReceiver<AudioCommand>,
     ) -> Self {
         Self {
+            cache_defaults: CacheDefaults::read(&mpv),
             mpv,
             shared,
             commands,
@@ -104,6 +130,7 @@ impl AudioWorker {
             bands_allowed: true,
             bands_active: false,
             applied_af: None,
+            economy_cache: false,
         }
     }
 
@@ -181,6 +208,7 @@ impl AudioWorker {
                 let result = self.apply_spectrum(enabled);
                 respond(reply, result);
             }
+            AudioCommand::SetCacheProfile { economy } => self.apply_cache_profile(economy),
             AudioCommand::Shutdown => {}
         }
     }
@@ -262,6 +290,39 @@ impl AudioWorker {
             .map_err(|err| AudioError::Playback(err.to_string()))?;
         self.shared.set_volume(volume);
         Ok(())
+    }
+
+    /// Переключает буфер между экономным профилем и умолчаниями libmpv.
+    /// Ошибка свойства только логируется: воспроизведение важнее профиля.
+    fn apply_cache_profile(&mut self, economy: bool) {
+        if self.economy_cache == economy {
+            return;
+        }
+        self.economy_cache = economy;
+        if economy {
+            self.set_cache_property("demuxer-max-bytes", ECONOMY_DEMUXER_MAX_BYTES);
+            self.set_cache_property("cache-secs", ECONOMY_CACHE_SECS);
+            tracing::debug!("включён экономный профиль буфера");
+            return;
+        }
+
+        if let Some(value) = self.cache_defaults.demuxer_max_bytes {
+            self.set_cache_property("demuxer-max-bytes", value);
+        } else {
+            tracing::debug!("умолчание demuxer-max-bytes неизвестно");
+        }
+        if let Some(value) = self.cache_defaults.cache_secs {
+            self.set_cache_property("cache-secs", value);
+        } else {
+            tracing::debug!("умолчание cache-secs неизвестно");
+        }
+        tracing::debug!("восстановлен обычный профиль буфера");
+    }
+
+    fn set_cache_property<T: libmpv2::SetData>(&self, name: &str, value: T) {
+        if let Err(err) = self.mpv.set_property(name, value) {
+            tracing::warn!(property = name, error = %err, "не удалось применить профиль буфера");
+        }
     }
 
     fn apply_spectrum(&mut self, enabled: bool) -> Result<(), AudioError> {

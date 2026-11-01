@@ -37,6 +37,8 @@ pub(crate) enum HeatScope {
     Sample,
     /// Мировой топ станций, когда выборки нет.
     Top,
+    /// Данные локального офлайн-снимка (ADR-0043).
+    Snapshot,
 }
 
 #[derive(Debug, Default)]

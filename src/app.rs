@@ -12,6 +12,9 @@ use tracing::{debug, warn};
 
 use crate::audio::PlaybackState;
 use crate::i18n;
+use crate::integration::status::{
+    IntegrationPanel, IntegrationsView, PanelAction, PanelEvent, PanelOutcome,
+};
 use crate::render::{
     BandTargets, GlobeRenderer, MotionMixer, SpectrumOverlay, SpectrumTarget, VisualizerModel,
 };
@@ -26,6 +29,7 @@ use crate::ui::country_map::{CountryHeatCache, HeatScope, HeatSource};
 use crate::ui::globe_view::{self, CalloutState, GlobeState};
 use crate::ui::images::{FaviconCache, decode_favicon};
 use crate::ui::layout::{DeskLayout, LayoutDensity};
+use crate::ui::onboarding::{self, RuleState};
 use crate::ui::orbit_ring::OrbitRing;
 use crate::ui::palette::{self, Palette};
 use crate::ui::settings_panel::{self, SettingsCategory, SettingsState};
@@ -62,6 +66,8 @@ fn notice_text(
         NoticeKey::FavoritesNotSaved => notices.favorites_not_saved,
         NoticeKey::HistoryCleared => notices.history_cleared,
         NoticeKey::ClearHistoryFailed => notices.clear_history_failed,
+        NoticeKey::SnapshotCleared => notices.snapshot_cleared,
+        NoticeKey::SnapshotClearFailed => notices.snapshot_clear_failed,
         NoticeKey::PlaybackFailed => notices.playback_failed,
         NoticeKey::StationWithoutUrl => notices.station_without_url,
         NoticeKey::SearchTaskEnded => notices.search_task_ended,
@@ -71,6 +77,9 @@ fn notice_text(
                 .clone()
                 .unwrap_or_else(|| catalog.common.untitled.to_owned());
             return i18n::fill(notices.roulette_started, &[("station", &label)]);
+        }
+        NoticeKey::EconomyStream { bitrate } => {
+            return i18n::fill(notices.economy_stream, &[("bitrate", &bitrate.to_string())]);
         }
         NoticeKey::RouletteFailed => notices.roulette_failed,
         NoticeKey::RouletteTaskEnded => notices.roulette_task_ended,
@@ -115,6 +124,10 @@ pub(crate) struct OrbitApp<'a> {
     settings_rect: Option<egui::Rect>,
     /// Открытая категория модального окна: состояние представления, не настройка.
     settings_category: SettingsCategory,
+    /// Снимок интеграций и очередь фоновых операций (ADR-0042).
+    integrations: IntegrationPanel,
+    /// Шаг и отклики мастера первого запуска (ADR-0041).
+    onboarding: onboarding::View,
     /// Режим тепловой карты стран из легенды Focus-стола.
     country_metric: CountryMetric,
     /// Текстура карты: пересобирается на смену выборки или режима.
@@ -127,7 +140,7 @@ impl<'a> OrbitApp<'a> {
         palette::configure_style(&egui_ctx, session.settings.settings());
         // SVG-иконки: загрузчик ставится на каждый новый Context окна (ADR-0034).
         egui_extras::install_image_loaders(&egui_ctx);
-        install_emoji_font(&egui_ctx);
+        crate::ui::fonts::install(&egui_ctx);
         session.wake.install({
             let ctx = egui_ctx;
             move || ctx.request_repaint()
@@ -170,6 +183,8 @@ impl<'a> OrbitApp<'a> {
             transitions: Transitions::new(),
             settings_rect: None,
             settings_category: SettingsCategory::default(),
+            integrations: IntegrationPanel::default(),
+            onboarding: onboarding::View::default(),
             country_metric: CountryMetric::default(),
             country_heat: CountryHeatCache::default(),
         }
@@ -191,6 +206,42 @@ impl<'a> OrbitApp<'a> {
                 self.toast.info(ctx, text);
             }
         }
+    }
+
+    /// Результат фоновой операции интеграций: тост и обновлённый снимок.
+    fn poll_integrations(&mut self, ctx: &egui::Context) {
+        let Some(event) = self.integrations.poll() else {
+            return;
+        };
+        let text = &i18n::catalog(self.session.effective_language()).integrations;
+        match event {
+            PanelEvent::Done { action, outcome } => match outcome {
+                PanelOutcome::Completed => {
+                    let browser_changed = action.target().is_browser()
+                        && matches!(action, PanelAction::Install(_) | PanelAction::Uninstall(_));
+                    let message = if browser_changed {
+                        format!("{} — {}", text.operation_done, text.restart_browser)
+                    } else {
+                        text.operation_done.to_owned()
+                    };
+                    self.toast.info(ctx, message);
+                }
+                PanelOutcome::ManualReload => {
+                    self.toast.info(ctx, text.reload_manual.to_owned());
+                }
+            },
+            PanelEvent::Failed { action, detail } => {
+                self.toast.error(
+                    ctx,
+                    format!(
+                        "{} ({}): {detail}",
+                        text.operation_failed,
+                        action.target().label()
+                    ),
+                );
+            }
+        }
+        ctx.request_repaint();
     }
 
     /// Фоновые favicon-загрузки: очередь → сетевая политика → декод → текстура.
@@ -299,13 +350,26 @@ impl<'a> OrbitApp<'a> {
             // закрашена до всякого выбора; остальные метрики считаются по
             // выборке панели, а без неё — по мировому топу.
             let source = if metric == CountryMetric::Density && !session.world.counts().is_empty() {
-                heat_scope = HeatScope::Global;
+                heat_scope = if session.world.offline() {
+                    HeatScope::Snapshot
+                } else {
+                    HeatScope::Global
+                };
                 HeatSource::Counts(session.world.counts())
             } else {
                 let stations = if session.search.results.is_empty() {
-                    heat_scope = HeatScope::Top;
+                    heat_scope = if session.world.offline() {
+                        HeatScope::Snapshot
+                    } else {
+                        HeatScope::Top
+                    };
                     session.world.sample()
                 } else {
+                    heat_scope = if session.search.offline {
+                        HeatScope::Snapshot
+                    } else {
+                        HeatScope::Sample
+                    };
                     &session.search.results
                 };
                 HeatSource::Stations(stations)
@@ -507,6 +571,7 @@ impl<'a> OrbitApp<'a> {
                                     pending: session.search.pending,
                                     empty: session.search.empty,
                                     error: session.search.error.as_deref(),
+                                    offline: session.search.offline,
                                     total_available,
                                     loading_more: session.search.loading_more,
                                     has_more: session.search.has_more,
@@ -549,6 +614,7 @@ impl<'a> OrbitApp<'a> {
                                     can_resume: frame.can_resume,
                                     spectrum_enabled: session.visualizer_enabled,
                                     roulette_pending: session.search.roulette_pending,
+                                    eco: session.economy_stream(),
                                     volume: frame.volume,
                                     visualizer,
                                     favicons,
@@ -678,6 +744,7 @@ impl<'a> OrbitApp<'a> {
                                     can_resume: frame.can_resume,
                                     pulse,
                                     favicons,
+                                    eco: session.economy_stream(),
                                     language: frame.language,
                                 },
                             )
@@ -759,6 +826,7 @@ impl<'a> OrbitApp<'a> {
                                     pending: session.search.pending,
                                     empty: session.search.empty,
                                     error: session.search.error.as_deref(),
+                                    offline: session.search.offline,
                                     total_available,
                                     loading_more: session.search.loading_more,
                                     has_more: session.search.has_more,
@@ -803,13 +871,34 @@ impl<'a> OrbitApp<'a> {
             }
         }
 
+        // Снимок интеграций обновляется при открытии страницы, а операции
+        // приходят из фона и сами освежают его (ADR-0042).
+        if session.settings_open && self.settings_category == SettingsCategory::Integrations {
+            self.integrations.ensure_loaded();
+        }
+        let integrations = self.integrations.view();
         actions.extend(draw_settings(
             ui,
             frame,
             &ui_motion,
             self.settings_rect,
             &mut self.settings_category,
+            integrations,
         ));
+
+        if session.onboarding_open() {
+            actions.extend(onboarding::show(
+                ui,
+                frame.viewport,
+                &frame.palette,
+                onboarding::State {
+                    view: &mut self.onboarding,
+                    language: frame.language,
+                    settings: frame.settings,
+                    desktop: session.onboarding_desktop(),
+                },
+            ));
+        }
 
         if frame.motion_reactivity.is_enabled() {
             // Активный эфир — 30 fps; idle-дыханию хватает 15 fps.
@@ -855,6 +944,7 @@ impl<'a> OrbitApp<'a> {
             UiAction::RetrySearch => self.session.retry_search(),
             UiAction::Roulette => self.session.start_roulette(),
             UiAction::ClearHistory => self.session.clear_history(),
+            UiAction::ClearOfflineSnapshot => self.session.clear_offline_snapshot(),
             UiAction::SetTheme(theme) => {
                 if let Err(err) = self.session.set_theme(theme) {
                     self.error_toast(ctx, &NoticeKey::ThemeNotSaved, Some(err.as_str()));
@@ -866,6 +956,8 @@ impl<'a> OrbitApp<'a> {
                     self.error_toast(ctx, &NoticeKey::AccentNotSaved, Some(err.as_str()));
                 }
                 palette::configure_style(ctx, self.session.settings.settings());
+                // Процедурные обложки строятся на акценте темы (ADR-0044 §2).
+                self.favicons.forget_procedural();
             }
             UiAction::SetLanguage(language) => {
                 if let Err(err) = self.session.set_language(language) {
@@ -947,7 +1039,12 @@ impl<'a> OrbitApp<'a> {
                     self.error_toast(ctx, &NoticeKey::SettingNotSaved, Some(err.as_str()));
                 }
             }
-            UiAction::ToggleSettings => self.session.toggle_settings(),
+            UiAction::ToggleSettings => {
+                self.session.toggle_settings();
+                if self.session.settings_open {
+                    self.integrations.refresh();
+                }
+            }
             UiAction::CloseSettings => self.session.close_settings(),
             UiAction::SetWindowMode(mode) => {
                 self.session.set_window_mode(mode);
@@ -956,8 +1053,51 @@ impl<'a> OrbitApp<'a> {
                     self.session.close_settings();
                 }
             }
+            UiAction::FinishOnboarding => {
+                if let Err(err) = self.session.finish_onboarding() {
+                    self.error_toast(ctx, &NoticeKey::SettingNotSaved, Some(err.as_str()));
+                }
+                self.onboarding = onboarding::View::default();
+            }
+            UiAction::ApplyWindowRules => {
+                self.onboarding.rule = match self.session.apply_window_rules() {
+                    Ok(()) => RuleState::Applied,
+                    Err(detail) => {
+                        warn!(error = %detail, "правила окна Hyprland не применились");
+                        RuleState::Failed
+                    }
+                };
+            }
+            UiAction::OpenIntegrations => {
+                if let Err(err) = self.session.finish_onboarding() {
+                    self.error_toast(ctx, &NoticeKey::SettingNotSaved, Some(err.as_str()));
+                }
+                self.onboarding = onboarding::View::default();
+                self.session.open_settings();
+                self.settings_category = SettingsCategory::Integrations;
+                self.integrations.refresh();
+            }
+            UiAction::IntegrationInstall(target) => {
+                self.start_integration(PanelAction::Install(target));
+            }
+            UiAction::IntegrationUninstall(target) => {
+                self.start_integration(PanelAction::Uninstall(target));
+            }
+            UiAction::IntegrationEnableWaybar => {
+                self.start_integration(PanelAction::EnableWaybar);
+            }
+            UiAction::IntegrationReload(target) => {
+                self.start_integration(PanelAction::Reload(target));
+            }
         }
         ctx.request_repaint();
+    }
+
+    /// Одна фоновая операция интеграций за раз: конфиг и квитанции не должны
+    /// меняться параллельно (ADR-0042).
+    fn start_integration(&mut self, action: PanelAction) {
+        self.integrations
+            .start(action, &self.session.runtime, self.session.wake.waker());
     }
 
     /// Запуск станции из списка или маркера: одна обработка ошибок на оба пути.
@@ -1095,6 +1235,7 @@ fn draw_settings(
     motion: &FrameMotion<'_>,
     last_settings_rect: Option<egui::Rect>,
     category: &mut SettingsCategory,
+    integrations: IntegrationsView<'_>,
 ) -> Vec<UiAction> {
     let palette = &frame.palette;
     let mut volume = frame.volume;
@@ -1165,6 +1306,7 @@ fn draw_settings(
                     volume: &mut volume,
                     show_help: frame.show_help,
                     category,
+                    integrations,
                 },
             ));
         });
@@ -1186,42 +1328,12 @@ fn vertical(rect: egui::Rect) -> egui::UiBuilder {
         .layout(egui::Layout::top_down(egui::Align::Min))
 }
 
-/// Ставит системный цветной emoji-шрифт в запас Proportional, чтобы флаги стран
-/// (`flag_emoji`) рисовались глифами, а не tofu-квадратами. Чтение файла —
-/// побочный эффект, поэтому живёт в App, а не в UI-модулях. Если шрифт не найден,
-/// молча пропускаем: UI работает без флагов, как и раньше.
-fn install_emoji_font(ctx: &egui::Context) {
-    const PATHS: &[&str] = &[
-        "/usr/share/fonts/noto/NotoColorEmoji.ttf",
-        "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
-        "/usr/share/fonts/google-noto-emoji/NotoColorEmoji.ttf",
-        "/usr/share/fonts/TTF/NotoColorEmoji.ttf",
-    ];
-    let Some(bytes) = PATHS
-        .iter()
-        .map(std::path::Path::new)
-        .find(|path| path.is_file())
-        .and_then(|path| std::fs::read(path).ok())
-    else {
-        debug!("цветной emoji-шрифт не найден: флаги стран будут пропущены");
-        return;
-    };
-    ctx.add_font(egui::FontInsert::new(
-        "Noto Color Emoji",
-        egui::FontData::from_owned(bytes),
-        vec![egui::InsertFontFamily {
-            family: egui::FontFamily::Proportional,
-            priority: egui::FontPriority::Lowest,
-        }],
-    ));
-    debug!("цветной emoji-шрифт подключён: флаги стран будут рисоваться");
-}
-
 impl eframe::App for OrbitApp<'_> {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.session.tick();
         self.drain_notices(ctx);
         self.poll_favicons(ctx);
+        self.poll_integrations(ctx);
 
         if let Some(rect) = ctx.input(|input| input.viewport().inner_rect) {
             self.session.set_window_size([rect.width(), rect.height()]);
@@ -1266,8 +1378,12 @@ impl eframe::App for OrbitApp<'_> {
             None => {}
         }
 
+        // Мастер первого запуска держит фокус до явного «Пропустить» или «Готово»:
+        // горячие клавиши стола под ним не срабатывают (ADR-0041).
+        let onboarding = self.session.onboarding_open();
+
         // Escape сначала снимает самый верхний модальный слой: настройки, затем help.
-        if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+        if !onboarding && ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
             if self.session.settings_open {
                 self.session.close_settings();
             } else if self.session.show_help
@@ -1278,7 +1394,9 @@ impl eframe::App for OrbitApp<'_> {
         }
 
         // Ctrl+, — стандартный горячий вызов настроек (ADR-0031).
-        if ctx.input(|input| input.modifiers.command && input.key_pressed(egui::Key::Comma)) {
+        if !onboarding
+            && ctx.input(|input| input.modifiers.command && input.key_pressed(egui::Key::Comma))
+        {
             self.session.toggle_settings();
         }
 
@@ -1289,7 +1407,7 @@ impl eframe::App for OrbitApp<'_> {
             input.consume_key(egui::Modifiers::COMMAND, egui::Key::F)
                 || (unfocused && input.consume_key(egui::Modifiers::NONE, egui::Key::Slash))
         });
-        if focus_search && !self.session.settings_open {
+        if focus_search && !self.session.settings_open && !onboarding {
             let id = search_field_id(self.session.search.context.mode, self.session.window_mode());
             ctx.memory_mut(|memory| memory.request_focus(id));
         }
@@ -1298,6 +1416,7 @@ impl eframe::App for OrbitApp<'_> {
         // занят станцией (station_row), поэтому просим клавишу только когда
         // фокус пуст и окно настроек закрыто.
         if !self.session.settings_open
+            && !onboarding
             && unfocused
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Space))
             && let Err(err) = self.session.toggle_playback()

@@ -220,6 +220,10 @@ pub struct Settings {
     /// Opt-in загрузки обложек по HTTP (ADR-0025, п. 11); по умолчанию только
     /// HTTPS, а http-ссылка беззвучно повторяется как https.
     pub artwork_allow_http: bool,
+    /// Мастер первого запуска пройден или пропущен (ADR-0041). Поле аддитивно:
+    /// старые файлы читаются как `false`, но существующий файл сам по себе
+    /// отключает мастер.
+    pub onboarding_done: bool,
 }
 
 /// Доступные варианты числа столбцов визуализатора.
@@ -244,6 +248,7 @@ impl Default for Settings {
             allow_flips: false,
             reduce_motion: false,
             artwork_allow_http: false,
+            onboarding_done: false,
         }
     }
 }
@@ -269,15 +274,21 @@ pub enum SettingsError {
 pub struct SettingsStore {
     path: Option<PathBuf>,
     settings: Settings,
+    /// Существовал ли файл на момент загрузки: признак первого запуска берётся
+    /// отсюда, а не из значения поля (ADR-0041).
+    existed_at_load: bool,
 }
 
 impl SettingsStore {
     /// Загружает настройки из файла. Отсутствующий файл — значения по умолчанию.
     pub fn load(path: PathBuf) -> Result<Self, SettingsError> {
-        let mut settings = match fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice::<Settings>(&bytes)
-                .map_err(|err| SettingsError::Parse(format!("{}: {err}", path.display())))?,
-            Err(err) if err.kind() == ErrorKind::NotFound => Settings::default(),
+        let (mut settings, existed) = match fs::read(&path) {
+            Ok(bytes) => (
+                serde_json::from_slice::<Settings>(&bytes)
+                    .map_err(|err| SettingsError::Parse(format!("{}: {err}", path.display())))?,
+                true,
+            ),
+            Err(err) if err.kind() == ErrorKind::NotFound => (Settings::default(), false),
             Err(err) => return Err(SettingsError::Read(format!("{}: {err}", path.display()))),
         };
         settings.viz_bars = nearest_viz_bars(settings.viz_bars);
@@ -285,6 +296,7 @@ impl SettingsStore {
         Ok(Self {
             path: Some(path),
             settings,
+            existed_at_load: existed,
         })
     }
 
@@ -298,7 +310,14 @@ impl SettingsStore {
         Self {
             path: None,
             settings: Settings::default(),
+            existed_at_load: false,
         }
+    }
+
+    /// Файл настроек существовал при старте: действующего пользователя мастер
+    /// первого запуска не беспокоит (ADR-0041).
+    pub fn existed_at_load(&self) -> bool {
+        self.existed_at_load
     }
 
     pub fn path(&self) -> Option<&Path> {
@@ -409,6 +428,15 @@ impl SettingsStore {
         self.save()
     }
 
+    /// Мастер первого запуска пройден или пропущен (ADR-0041).
+    pub fn set_onboarding_done(&mut self) -> Result<(), SettingsError> {
+        if self.settings.onboarding_done {
+            return Ok(());
+        }
+        self.settings.onboarding_done = true;
+        self.save()
+    }
+
     fn save(&self) -> Result<(), SettingsError> {
         let Some(path) = &self.path else {
             return Ok(());
@@ -488,6 +516,26 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let store = SettingsStore::load(directory.path().join("settings.json")).unwrap();
         assert_eq!(store.settings(), Settings::default());
+        assert!(!store.existed_at_load(), "отсутствие файла — первый запуск");
+    }
+
+    #[test]
+    fn existing_file_disables_the_first_run_wizard() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        fs::write(&path, b"{\"theme\":\"dark\"}").unwrap();
+
+        let mut store = SettingsStore::load(path).unwrap();
+        assert!(store.existed_at_load());
+        assert!(
+            !store.settings().onboarding_done,
+            "старый файл читается как false, но мастер уже не показывается"
+        );
+        store.set_onboarding_done().unwrap();
+        assert!(store.settings().onboarding_done);
+
+        let reloaded = SettingsStore::load(directory.path().join("settings.json")).unwrap();
+        assert!(reloaded.settings().onboarding_done);
     }
 
     #[test]

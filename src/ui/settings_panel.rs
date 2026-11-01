@@ -12,6 +12,8 @@
 use eframe::egui;
 
 use crate::i18n;
+use crate::integration::status::{Availability, InstallState, IntegrationsView, TargetStatus};
+use crate::integration::{Target, TargetGroup};
 use crate::session::WindowMode;
 use crate::settings::{
     AccentColor, Language, MotionReactivity, MotionStyle, Settings, ThemeMode, VIZ_BAR_CHOICES,
@@ -23,7 +25,8 @@ use super::controls::{accent_swatch, dropdown, row, switch_row};
 use super::icons::{self, Icon, close_button};
 use super::palette::{Palette, accent_color, mix_colors};
 use super::widgets::{
-    control_motion, faded, faded_palette, focus_ring, quiet_button, volume_slider_width,
+    action_pill, chip, control_motion, faded, faded_palette, focus_ring, quiet_button,
+    volume_slider_width,
 };
 
 /// Шапка модалки: иконка, заголовок, Esc и крестик.
@@ -56,16 +59,19 @@ pub(crate) enum SettingsCategory {
     Audio,
     Motion,
     Window,
+    /// Установка панелей, окружений и расширений браузеров (ADR-0042).
+    Integrations,
     About,
 }
 
 impl SettingsCategory {
-    pub(crate) const ALL: [Self; 6] = [
+    pub(crate) const ALL: [Self; 7] = [
         Self::Appearance,
         Self::Language,
         Self::Audio,
         Self::Motion,
         Self::Window,
+        Self::Integrations,
         Self::About,
     ];
 
@@ -76,6 +82,7 @@ impl SettingsCategory {
             Self::Audio => Icon::Volume,
             Self::Motion => Icon::Sparkles,
             Self::Window => Icon::AppWindow,
+            Self::Integrations => Icon::Panel,
             Self::About => Icon::Help,
         }
     }
@@ -91,6 +98,8 @@ pub(crate) struct SettingsState<'a> {
     pub show_help: bool,
     /// Открытая категория: состояние окна, а не персистентная настройка.
     pub category: &'a mut SettingsCategory,
+    /// Снимок интеграций: страница не ходит по файлам на каждый кадр (ADR-0042).
+    pub integrations: IntegrationsView<'a>,
 }
 
 pub(crate) fn show(
@@ -366,6 +375,9 @@ fn draw_category(
                 cards,
                 actions,
             );
+        }
+        SettingsCategory::Integrations => {
+            integrations_page(ui, palette, &text.integrations, state, cards, actions);
         }
         SettingsCategory::About => {
             about(ui, palette, text, cards[0], actions);
@@ -688,6 +700,179 @@ fn window(
     });
 }
 
+/// Страница «Интеграции»: группы целей, состояние и действия (ADR-0042).
+fn integrations_page(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    text: &i18n::IntegrationsText,
+    state: &mut SettingsState<'_>,
+    cards: [f32; 2],
+    actions: &mut Vec<UiAction>,
+) {
+    let view = state.integrations;
+    for (index, group) in TargetGroup::ALL.into_iter().enumerate() {
+        if index > 0 {
+            ui.add_space(10.0);
+        }
+        // Карточки входят двумя волнами: третья группа едет вместе со второй.
+        let alpha = cards[index.min(1)];
+        card(ui, palette, alpha, |ui| {
+            let dim = faded_palette(palette, alpha);
+            ui.label(
+                egui::RichText::new(group_label(text, group))
+                    .size(12.5)
+                    .strong()
+                    .color(dim.text),
+            );
+            ui.add_space(2.0);
+            let mut first = true;
+            for status in view
+                .statuses
+                .iter()
+                .filter(|status| status.target.group() == group)
+            {
+                if !first {
+                    divider(ui, palette, alpha);
+                }
+                first = false;
+                integration_row(ui, palette, text, status, view.busy, alpha, actions);
+            }
+        });
+    }
+}
+
+/// Строка цели: подпись, состояние, найденные браузеры и кнопки действий.
+fn integration_row(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    text: &i18n::IntegrationsText,
+    status: &TargetStatus,
+    busy: Option<Target>,
+    alpha: f32,
+    actions: &mut Vec<UiAction>,
+) {
+    let dim = faded_palette(palette, alpha);
+    let busy_here = busy == Some(status.target);
+    let interactive = busy.is_none();
+    let state_color = match status.state {
+        InstallState::Installed => dim.live,
+        InstallState::UpdateAvailable => dim.accent,
+        InstallState::Problem => dim.error,
+        InstallState::NotInstalled => dim.muted,
+    };
+
+    ui.horizontal(|ui| {
+        let label = ui.label(
+            egui::RichText::new(status.target.label())
+                .size(12.5)
+                .strong()
+                .color(dim.text),
+        );
+        if let Some(detail) = status.detail.as_deref() {
+            label.on_hover_text(detail);
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(
+                egui::RichText::new(state_label(text, status.state))
+                    .size(10.5)
+                    .color(state_color),
+            );
+        });
+    });
+
+    let notes = status_notes(text, status);
+    if !notes.is_empty() {
+        ui.label(
+            egui::RichText::new(notes.join(" · "))
+                .size(10.0)
+                .color(dim.muted),
+        );
+    }
+
+    ui.add_space(4.0);
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        if busy_here {
+            ui.label(
+                egui::RichText::new(text.installing)
+                    .size(11.5)
+                    .color(dim.accent),
+            );
+            return;
+        }
+        if !interactive {
+            return;
+        }
+
+        let installed = status.state != InstallState::NotInstalled;
+        if status.state != InstallState::Installed && action_pill(ui, &dim, text.install).clicked()
+        {
+            actions.push(UiAction::IntegrationInstall(status.target));
+        }
+        if installed {
+            if chip(ui, &dim, text.uninstall, false).clicked() {
+                actions.push(UiAction::IntegrationUninstall(status.target));
+            }
+            if let Some(waybar) = &status.waybar {
+                let config_ready = waybar.path.is_some() && waybar.error.is_none();
+                if config_ready && !waybar.enabled {
+                    if action_pill(ui, &dim, text.enable_config).clicked() {
+                        actions.push(UiAction::IntegrationEnableWaybar);
+                    }
+                } else if config_ready && chip(ui, &dim, text.reload, false).clicked() {
+                    actions.push(UiAction::IntegrationReload(status.target));
+                }
+            } else if status.target == Target::Polybar
+                && chip(ui, &dim, text.reload, false).clicked()
+            {
+                actions.push(UiAction::IntegrationReload(status.target));
+            }
+        }
+    });
+}
+
+fn status_notes(text: &i18n::IntegrationsText, status: &TargetStatus) -> Vec<String> {
+    let mut notes = Vec::new();
+    if !status.browsers.is_empty() {
+        notes.push(status.browsers.join(", "));
+    } else if status.availability == Availability::NotDetected {
+        notes.push(text.not_detected.to_owned());
+    }
+    if let Some(waybar) = &status.waybar {
+        if waybar.path.is_none() || waybar.error.is_some() {
+            notes.push(text.config_missing.to_owned());
+        } else if waybar.enabled {
+            notes.push(text.enabled_config.to_owned());
+        }
+    }
+    if status.target.is_browser()
+        && matches!(
+            status.state,
+            InstallState::Installed | InstallState::UpdateAvailable
+        )
+    {
+        notes.push(text.restart_browser.to_owned());
+    }
+    notes
+}
+
+fn group_label(text: &i18n::IntegrationsText, group: TargetGroup) -> &'static str {
+    match group {
+        TargetGroup::Bars => text.group_bars,
+        TargetGroup::Environments => text.group_environments,
+        TargetGroup::Browsers => text.group_browsers,
+    }
+}
+
+fn state_label(text: &i18n::IntegrationsText, state: InstallState) -> &'static str {
+    match state {
+        InstallState::NotInstalled => text.not_installed,
+        InstallState::Installed => text.installed,
+        InstallState::UpdateAvailable => text.update_available,
+        InstallState::Problem => text.problem,
+    }
+}
+
 fn about(
     ui: &mut egui::Ui,
     palette: &Palette,
@@ -704,9 +889,20 @@ fn about(
         about_row(ui, palette, strings.app_id, crate::APP_ID, alpha);
     });
     ui.add_space(8.0);
+    let dim = faded_palette(palette, alpha);
+    if quiet_button(
+        ui,
+        &dim,
+        strings.clear_snapshot,
+        faded(palette.accent, alpha),
+    )
+    .clicked()
+    {
+        actions.push(UiAction::ClearOfflineSnapshot);
+    }
+    ui.add_space(8.0);
     // Единственная кнопка окна: в безрамочных режимах это честный выход, а не
     // скрытие в трей, которое уже делает крестик шапки.
-    let dim = faded_palette(palette, alpha);
     if quiet_button(ui, &dim, text.common.quit, faded(palette.error, alpha)).clicked() {
         actions.push(UiAction::Quit);
     }
@@ -785,6 +981,7 @@ fn category_label(strings: &i18n::SettingsText, category: SettingsCategory) -> &
         SettingsCategory::Audio => strings.audio,
         SettingsCategory::Motion => strings.motion,
         SettingsCategory::Window => strings.window,
+        SettingsCategory::Integrations => strings.integrations,
         SettingsCategory::About => strings.about,
     }
 }
@@ -797,6 +994,7 @@ fn category_hint(strings: &i18n::SettingsText, category: SettingsCategory) -> &'
         SettingsCategory::Audio => strings.audio_page_hint,
         SettingsCategory::Motion => strings.motion_page_hint,
         SettingsCategory::Window => strings.window_page_hint,
+        SettingsCategory::Integrations => strings.integrations_page_hint,
         SettingsCategory::About => strings.about_page_hint,
     }
 }

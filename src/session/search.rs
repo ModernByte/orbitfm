@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 use tracing::warn;
 
 use crate::geo::Country;
-use crate::services::{RadioError, SearchParams, Station};
+use crate::services::{RadioError, SearchParams, Station, random_below};
 use crate::text::single_line;
 
 use super::LibraryTab;
@@ -104,6 +104,8 @@ pub(crate) struct SearchState {
     /// Номер изменения выборки: тепловая карта стран пересобирается по нему,
     /// а не по указателю `Vec`, который может переиспользоваться.
     pub(crate) revision: u64,
+    /// Текущая выборка собрана из офлайн-снимка (ADR-0043), а не из каталога.
+    pub(crate) offline: bool,
 }
 
 impl SearchState {
@@ -118,6 +120,7 @@ impl SearchState {
         self.loading_more = false;
         self.last_params = None;
         self.next_offset = 0;
+        self.offline = false;
     }
 
     /// Снимает выбранную страну вместе с её выборкой: клик мимо стран гасит
@@ -141,6 +144,8 @@ pub(crate) struct SearchResponse {
     result: Result<Vec<Station>, RadioError>,
     /// `true` — следующая страница: строки дополняют список, а не заменяют.
     append: bool,
+    /// Ответ собран локально из снимка после сетевой ошибки (ADR-0043).
+    offline: bool,
 }
 
 impl SearchResponse {
@@ -267,16 +272,25 @@ impl super::Session {
         self.search.last_params = Some(params.clone());
 
         let radio = self.radio.clone();
+        let sample = self.world.sample_shared();
         let waker = self.wake.waker();
         self.runtime.spawn(async move {
-            let result = radio.search(params).await;
-            if let Err(err) = &result {
-                warn!(error = %err, "поиск станций не удался");
-            }
+            let (result, offline) = match radio.search(params.clone()).await {
+                Ok(stations) => (Ok(stations), false),
+                Err(err) if !sample.is_empty() => {
+                    warn!(error = %err, "каталог недоступен, отвечает офлайн-снимок");
+                    (Ok(offline_results(&sample, &params)), true)
+                }
+                Err(err) => {
+                    warn!(error = %err, "поиск станций не удался");
+                    (Err(err), false)
+                }
+            };
             let _ = sender.send(SearchResponse {
                 generation,
                 result,
                 append: false,
+                offline,
             });
             waker();
         });
@@ -313,6 +327,7 @@ impl super::Session {
                 generation,
                 result,
                 append: true,
+                offline: false,
             });
             waker();
         });
@@ -321,6 +336,11 @@ impl super::Session {
     /// Счётчик станций выбранной страны из мирового кэша: по нему панель
     /// показывает «100 из 1244» и решает, есть ли ещё страницы.
     pub(crate) fn country_total(&self) -> Option<u32> {
+        // Счётчики снимка — это число станций снимка, а не базы: подпись
+        // «100 из 1244» по ним была бы ложью (ADR-0043).
+        if self.search.offline || self.world.offline() {
+            return None;
+        }
         let iso_a2 = self.search.context.country.as_ref()?.iso_a2.to_uppercase();
         self.world.counts().get(&iso_a2).copied()
     }
@@ -353,6 +373,7 @@ impl super::Session {
             }
             Ok(response) => {
                 let append = response.append;
+                let offline = response.offline;
                 match response.result {
                     Ok(stations) if append => {
                         let page_len = stations.len() as u32;
@@ -370,7 +391,13 @@ impl super::Session {
                         self.search.empty = stations.is_empty();
                         self.markers = build_markers(stations.clone());
                         self.search.results = stations;
-                        self.update_has_more(page_len);
+                        self.search.offline = offline;
+                        if offline {
+                            // Снимок уже целиком в списке: догружать нечего.
+                            self.search.has_more = false;
+                        } else {
+                            self.update_has_more(page_len);
+                        }
                         self.search.revision = self.search.revision.wrapping_add(1);
                         self.search.pending = false;
                         self.search.rx = None;
@@ -415,10 +442,24 @@ impl super::Session {
         let (sender, receiver) = mpsc::unbounded_channel();
         self.search.roulette_rx = Some(receiver);
         let radio = self.radio.clone();
+        let sample = self.world.sample_shared();
         let exclude = self.roulette_exclusions();
         let waker = self.wake.waker();
         self.runtime.spawn(async move {
-            let result = radio.random_station(&exclude).await;
+            let result = match radio.random_station(&exclude).await {
+                Ok(station) => Ok(station),
+                Err(err) if !sample.is_empty() => {
+                    let station = random_from_snapshot(&sample, &exclude);
+                    match station {
+                        Some(station) => {
+                            warn!(error = %err, "рулетка без сети: станция из офлайн-снимка");
+                            Ok(station)
+                        }
+                        None => Err(err),
+                    }
+                }
+                Err(err) => Err(err),
+            };
             let _ = sender.send(result);
             waker();
         });
@@ -520,6 +561,81 @@ fn append_unique(results: &mut Vec<Station>, page: Vec<Station>) {
             results.push(station);
         }
     }
+}
+
+/// Локальная выборка из мирового снимка, когда каталог не ответил (ADR-0043).
+/// Правила те же, что у серверного поиска: подстрока имени, точный ISO, тег и
+/// язык по вхождению, `limit`/`offset` страницы.
+fn offline_results(sample: &[Station], params: &SearchParams) -> Vec<Station> {
+    let name = needle(&params.name);
+    let country = needle(&params.country_code);
+    let tag = needle(&params.tag);
+    let language = needle(&params.language);
+    let limit = if params.limit == 0 {
+        usize::MAX
+    } else {
+        params.limit as usize
+    };
+
+    sample
+        .iter()
+        .filter(|station| {
+            if params.hide_broken && station.url_resolved.trim().is_empty() {
+                return false;
+            }
+            if params.has_geo_info && super::markers::station_geo(station).is_none() {
+                return false;
+            }
+            if let Some(name) = &name
+                && !station.name.to_lowercase().contains(name)
+            {
+                return false;
+            }
+            if let Some(country) = &country
+                && !station.countrycode.trim().eq_ignore_ascii_case(country)
+            {
+                return false;
+            }
+            if let Some(tag) = &tag
+                && !station.tags.to_lowercase().contains(tag)
+            {
+                return false;
+            }
+            if let Some(language) = &language
+                && !station.language.to_lowercase().contains(language)
+            {
+                return false;
+            }
+            true
+        })
+        .skip(params.offset as usize)
+        .take(limit)
+        .cloned()
+        .collect()
+}
+
+/// Случайная станция офлайн-снимка для рулетки (ADR-0043). Поток и координаты
+/// уже проверены при записи; текущая и недавние станции не повторяются.
+fn random_from_snapshot(sample: &[Station], exclude: &[String]) -> Option<Station> {
+    let candidates: Vec<&Station> = sample
+        .iter()
+        .filter(|station| !station.url_resolved.trim().is_empty())
+        .filter(|station| super::markers::station_geo(station).is_some())
+        .filter(|station| !exclude.contains(&station.stationuuid))
+        .collect();
+    if candidates.is_empty() {
+        return None;
+    }
+    let index = random_below(candidates.len() as u32) as usize;
+    Some(candidates[index].clone())
+}
+
+fn needle(value: &Option<String>) -> Option<String> {
+    value
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_lowercase)
 }
 
 /// Запрос «только станции выбранной страны» (ТЗ §5.3): фильтр по ISO без примеси
@@ -634,6 +750,7 @@ mod tests {
             generation: 7,
             result: Err(RadioError::NotFound),
             append: false,
+            offline: false,
         };
         assert!(response.is_current(7));
         assert!(
@@ -700,6 +817,93 @@ mod tests {
             !page_has_more(100, 0, 100, None),
             "нулевой лимит не зацикливает"
         );
+    }
+
+    fn offline_station(uuid: &str, name: &str, code: &str, tags: &str) -> Station {
+        let mut station = sample_station();
+        station.stationuuid = uuid.to_owned();
+        station.name = name.to_owned();
+        station.countrycode = code.to_owned();
+        station.tags = tags.to_owned();
+        station
+    }
+
+    #[test]
+    fn offline_results_filter_by_country_name_and_tag() {
+        let sample = vec![
+            offline_station("a", "Jazz FM", "DE", "jazz, soul"),
+            offline_station("b", "Rock Antenne", "DE", "rock"),
+            offline_station("c", "Jazz Radio", "FR", "jazz"),
+        ];
+        let params = SearchParams {
+            country_code: Some(" de ".to_owned()),
+            tag: Some("Jazz".to_owned()),
+            limit: 100,
+            ..SearchParams::default()
+        };
+
+        let results = offline_results(&sample, &params);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].stationuuid, "a");
+    }
+
+    #[test]
+    fn offline_results_follow_name_offset_and_limit() {
+        let sample = vec![
+            offline_station("a", "Jazz FM", "DE", "jazz"),
+            offline_station("b", "Jazz Radio", "FR", "jazz"),
+            offline_station("c", "Jazz Cafe", "US", "jazz"),
+        ];
+        let params = SearchParams {
+            name: Some("jazz".to_owned()),
+            limit: 1,
+            offset: 1,
+            ..SearchParams::default()
+        };
+
+        let results = offline_results(&sample, &params);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].stationuuid, "b");
+    }
+
+    #[test]
+    fn offline_results_drop_stations_without_coordinates_when_required() {
+        let mut groundless = offline_station("no-geo", "Jazz FM", "DE", "jazz");
+        groundless.geo_lat = None;
+        let mut located = offline_station("geo", "Jazz Radio", "DE", "jazz");
+        located.geo_lat = Some(52.52);
+        located.geo_long = Some(13.405);
+        let sample = vec![groundless, located];
+        let params = SearchParams {
+            tag: Some("jazz".to_owned()),
+            has_geo_info: true,
+            ..SearchParams::default()
+        };
+
+        let results = offline_results(&sample, &params);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].stationuuid, "geo");
+    }
+
+    #[test]
+    fn roulette_snapshot_fallback_skips_excluded_stations() {
+        let mut first = offline_station("a", "Jazz FM", "DE", "jazz");
+        first.geo_lat = Some(52.52);
+        first.geo_long = Some(13.405);
+        let mut second = offline_station("b", "Rock Radio", "FR", "rock");
+        second.geo_lat = Some(48.85);
+        second.geo_long = Some(2.35);
+
+        assert!(
+            random_from_snapshot(std::slice::from_ref(&first), &[first.stationuuid.clone()])
+                .is_none(),
+            "исключённая станция не повторяется"
+        );
+        let picked = random_from_snapshot(&[first, second], &[]).expect("есть кандидат");
+        assert!(picked.stationuuid == "a" || picked.stationuuid == "b");
     }
 
     #[test]

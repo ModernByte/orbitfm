@@ -261,7 +261,7 @@ fn draw_contents(
     let text = i18n::catalog(state.language);
     let texture = state
         .favicons
-        .texture(station.favicon.as_deref().unwrap_or_default());
+        .texture_or_procedural(ui.ctx(), station, palette.accent);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 10.0;
         let avatar_size = (ui.available_height() - 2.0).clamp(22.0, 44.0);
