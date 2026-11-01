@@ -839,7 +839,8 @@ rc.2 читает карты `af-metadata/level` и `af-metadata/spectrum` це�
 - [x] Приёмка на libmpv 0.37.0 + FFmpeg 6 (официальный AppImage): две минуты
   опроса каждые 50 мс без SIGSEGV, `bands=true`; системный 0.41 также
   отдаёт карты
-- [ ] Тег `v0.17.0-rc.2` и GitHub Release с пересобранными артефактами
+- [x] Тег `v0.17.0-rc.2` и GitHub Release с пересобранными артефактами —
+  <https://github.com/ModernByte/orbitfm/releases/tag/v0.17.0-rc.2>
 
 ## Без версии в этом репозитории
 
