@@ -335,6 +335,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn path_prefers_absolute_xdg_data_home() {
         let path = default_path_from(Some("/tmp/xdg".into()), Some("/home/user".into())).unwrap();
@@ -344,6 +345,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn path_falls_back_to_home_for_relative_xdg() {
         let path = default_path_from(Some("relative".into()), Some("/home/user".into())).unwrap();

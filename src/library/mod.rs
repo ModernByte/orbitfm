@@ -213,12 +213,14 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn default_path_prefers_absolute_xdg_data_home() {
         let path = default_path_from(Some("/tmp/xdg".into()), Some("/home/user".into())).unwrap();
         assert_eq!(path, PathBuf::from("/tmp/xdg/orbitfm/library.json"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn default_path_falls_back_to_home_for_relative_xdg() {
         let path = default_path_from(Some("relative".into()), Some("/home/user".into())).unwrap();
