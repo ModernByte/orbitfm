@@ -50,6 +50,12 @@ const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(16);
 /// libmpv; URL и качество потока при этом не меняются.
 const ECONOMY_DEMUXER_MAX_BYTES: i64 = 256 * 1024 * 1024;
 const ECONOMY_CACHE_SECS: f64 = 60.0;
+/// Минимальная версия libmpv для безопасного опроса `af-metadata`.
+///
+/// На 0.37 (Ubuntu 24.04) периодическое чтение метрик из аудио-потока
+/// роняет процесс внутри `mpv_get_property`; воспроизведение при этом
+/// важнее визуализатора.
+const MIN_ANALYSIS_MPV: (u32, u32) = (0, 40);
 
 /// Раскладка, для которой определён граф полос (ADR-0027).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,6 +100,29 @@ impl CacheDefaults {
     }
 }
 
+/// Версия libmpv из свойства `mpv-version`, например `"mpv 0.41.0"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MpvVersion {
+    major: u32,
+    minor: u32,
+}
+
+impl MpvVersion {
+    fn parse(raw: &str) -> Option<Self> {
+        let rest = raw.strip_prefix("mpv ").unwrap_or(raw);
+        let rest = rest.strip_prefix('v').unwrap_or(rest);
+        let mut parts = rest.split('.');
+        Some(Self {
+            major: parts.next()?.parse().ok()?,
+            minor: parts.next()?.parse().ok()?,
+        })
+    }
+
+    fn supports_analysis(self) -> bool {
+        (self.major, self.minor) >= MIN_ANALYSIS_MPV
+    }
+}
+
 pub(super) struct AudioWorker {
     mpv: Mpv,
     shared: Arc<Shared>,
@@ -110,6 +139,8 @@ pub(super) struct AudioWorker {
     cache_defaults: CacheDefaults,
     /// Включён ли экономный профиль буфера (ADR-0043 §3).
     economy_cache: bool,
+    /// Текущая версия libmpv умеет безопасно отдавать `af-metadata`.
+    analysis_supported: bool,
 }
 
 impl AudioWorker {
@@ -118,6 +149,19 @@ impl AudioWorker {
         shared: Arc<Shared>,
         commands: mpsc::UnboundedReceiver<AudioCommand>,
     ) -> Self {
+        let version = mpv.get_property::<String>("mpv-version").ok();
+        let analysis_supported = version
+            .as_deref()
+            .and_then(MpvVersion::parse)
+            .is_some_and(MpvVersion::supports_analysis);
+        if !analysis_supported {
+            tracing::warn!(
+                version = version.as_deref().unwrap_or("неизвестна"),
+                "аудио-анализ отключён: libmpv не поддерживает безопасный опрос af-metadata"
+            );
+            shared.set_spectrum_enabled(false);
+        }
+
         Self {
             cache_defaults: CacheDefaults::read(&mpv),
             mpv,
@@ -131,11 +175,13 @@ impl AudioWorker {
             bands_active: false,
             applied_af: None,
             economy_cache: false,
+            analysis_supported,
         }
     }
 
     pub(super) fn run(mut self) {
-        if self.shared.spectrum_enabled()
+        if self.analysis_supported
+            && self.shared.spectrum_enabled()
             && let Err(err) = self.apply_spectrum(true)
         {
             tracing::warn!(error = %err, "не удалось включить спектр-фильтр при старте");
@@ -332,6 +378,13 @@ impl AudioWorker {
             self.shared.set_spectrum(None);
             self.bands_active = false;
             self.layout_retry = None;
+            return Ok(());
+        }
+
+        if !self.analysis_supported {
+            tracing::debug!("аудио-анализ недоступен в этой версии libmpv");
+            self.shared.set_spectrum_enabled(false);
+            self.shared.set_spectrum(None);
             return Ok(());
         }
 
@@ -937,6 +990,24 @@ mod tests {
         assert_eq!(ChannelLayout::from_count(1), ChannelLayout::Mono);
         assert_eq!(ChannelLayout::from_count(2), ChannelLayout::Stereo);
         assert_eq!(ChannelLayout::from_count(6), ChannelLayout::Unsupported);
+    }
+
+    #[test]
+    fn gates_analysis_by_mpv_version() {
+        let parse = |raw| MpvVersion::parse(raw).expect("версия должна разобраться");
+        assert_eq!(
+            parse("mpv 0.37.0"),
+            MpvVersion {
+                major: 0,
+                minor: 37
+            }
+        );
+        assert!(!parse("mpv 0.37.0").supports_analysis());
+        assert!(parse("mpv 0.40.0").supports_analysis());
+        assert!(parse("mpv 0.41.0-unknown").supports_analysis());
+        assert!(parse("mpv v1.0.0").supports_analysis());
+        assert!(MpvVersion::parse("mpv").is_none());
+        assert!(MpvVersion::parse("mpv x.y").is_none());
     }
 
     #[test]
