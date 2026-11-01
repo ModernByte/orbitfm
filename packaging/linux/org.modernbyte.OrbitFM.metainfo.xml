@@ -55,6 +55,14 @@
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.17.0-rc.2" date="2026-11-01">
+      <description>
+        <p>Патч 0.17.0-rc.2 возвращает аудиовизуализатор на libmpv 0.37 из
+        официального AppImage: метаданные фильтров читаются одной картой
+        вместо вложенных ключей, которые роняли процесс. Контракты и настройки
+        не меняются.</p>
+      </description>
+    </release>
     <release version="0.17.0-rc.1" date="2026-11-01">
       <description>
         <p>OrbitFM 0.17.0-rc.1 — ниже порог входа и меньше зависимости от сети.

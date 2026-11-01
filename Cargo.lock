@@ -3008,7 +3008,7 @@ dependencies = [
 
 [[package]]
 name = "orbitfm"
-version = "0.17.0-rc.1"
+version = "0.17.0-rc.2"
 dependencies = [
  "anyhow",
  "bytemuck",

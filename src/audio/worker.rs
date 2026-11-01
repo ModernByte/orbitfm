@@ -25,18 +25,20 @@ asplit=2[main][analysis];\
 [lo][mi][hi]amerge=inputs=3[bands];\
 [main][bands]amerge=inputs=2,\
 astats=metadata=1:reset=1:measure_perchannel=RMS_level:measure_overall=none";
-const LEVEL_CENTROID: &str = "af-metadata/level/lavfi.aspectralstats.1.centroid";
-const LEVEL_SPREAD: &str = "af-metadata/level/lavfi.aspectralstats.1.spread";
-const LEVEL_ROLLOFF: &str = "af-metadata/level/lavfi.aspectralstats.1.rolloff";
-const LEVEL_FLATNESS: &str = "af-metadata/level/lavfi.aspectralstats.1.flatness";
-const LEVEL_FLUX: &str = "af-metadata/level/lavfi.aspectralstats.1.flux";
-const LEVEL_RMS: &str = "af-metadata/level/lavfi.astats.Overall.RMS_level";
-const BAND_BASS_LEFT: &str = "af-metadata/spectrum/lavfi.astats.3.RMS_level";
-const BAND_BASS_RIGHT: &str = "af-metadata/spectrum/lavfi.astats.4.RMS_level";
-const BAND_MID_LEFT: &str = "af-metadata/spectrum/lavfi.astats.5.RMS_level";
-const BAND_MID_RIGHT: &str = "af-metadata/spectrum/lavfi.astats.6.RMS_level";
-const BAND_HIGH_LEFT: &str = "af-metadata/spectrum/lavfi.astats.7.RMS_level";
-const BAND_HIGH_RIGHT: &str = "af-metadata/spectrum/lavfi.astats.8.RMS_level";
+const LEVEL_CENTROID: &str = "lavfi.aspectralstats.1.centroid";
+const LEVEL_SPREAD: &str = "lavfi.aspectralstats.1.spread";
+const LEVEL_ROLLOFF: &str = "lavfi.aspectralstats.1.rolloff";
+const LEVEL_FLATNESS: &str = "lavfi.aspectralstats.1.flatness";
+const LEVEL_FLUX: &str = "lavfi.aspectralstats.1.flux";
+const LEVEL_RMS: &str = "lavfi.astats.Overall.RMS_level";
+const LEVEL_METADATA: &str = "af-metadata/level";
+const SPECTRUM_METADATA: &str = "af-metadata/spectrum";
+const BAND_BASS_LEFT: &str = "lavfi.astats.3.RMS_level";
+const BAND_BASS_RIGHT: &str = "lavfi.astats.4.RMS_level";
+const BAND_MID_LEFT: &str = "lavfi.astats.5.RMS_level";
+const BAND_MID_RIGHT: &str = "lavfi.astats.6.RMS_level";
+const BAND_HIGH_LEFT: &str = "lavfi.astats.7.RMS_level";
+const BAND_HIGH_RIGHT: &str = "lavfi.astats.8.RMS_level";
 const END_FILE_EOF: libmpv2::EndFileReason = libmpv2::mpv_end_file_reason::Eof;
 const END_FILE_ERROR: libmpv2::EndFileReason = libmpv2::mpv_end_file_reason::Error;
 const END_FILE_STOP: libmpv2::EndFileReason = libmpv2::mpv_end_file_reason::Stop;
@@ -50,12 +52,6 @@ const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(16);
 /// libmpv; URL и качество потока при этом не меняются.
 const ECONOMY_DEMUXER_MAX_BYTES: i64 = 256 * 1024 * 1024;
 const ECONOMY_CACHE_SECS: f64 = 60.0;
-/// Минимальная версия libmpv для безопасного опроса `af-metadata`.
-///
-/// На 0.37 (Ubuntu 24.04) периодическое чтение метрик из аудио-потока
-/// роняет процесс внутри `mpv_get_property`; воспроизведение при этом
-/// важнее визуализатора.
-const MIN_ANALYSIS_MPV: (u32, u32) = (0, 40);
 
 /// Раскладка, для которой определён граф полос (ADR-0027).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,29 +96,6 @@ impl CacheDefaults {
     }
 }
 
-/// Версия libmpv из свойства `mpv-version`, например `"mpv 0.41.0"`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct MpvVersion {
-    major: u32,
-    minor: u32,
-}
-
-impl MpvVersion {
-    fn parse(raw: &str) -> Option<Self> {
-        let rest = raw.strip_prefix("mpv ").unwrap_or(raw);
-        let rest = rest.strip_prefix('v').unwrap_or(rest);
-        let mut parts = rest.split('.');
-        Some(Self {
-            major: parts.next()?.parse().ok()?,
-            minor: parts.next()?.parse().ok()?,
-        })
-    }
-
-    fn supports_analysis(self) -> bool {
-        (self.major, self.minor) >= MIN_ANALYSIS_MPV
-    }
-}
-
 pub(super) struct AudioWorker {
     mpv: Mpv,
     shared: Arc<Shared>,
@@ -139,8 +112,6 @@ pub(super) struct AudioWorker {
     cache_defaults: CacheDefaults,
     /// Включён ли экономный профиль буфера (ADR-0043 §3).
     economy_cache: bool,
-    /// Текущая версия libmpv умеет безопасно отдавать `af-metadata`.
-    analysis_supported: bool,
 }
 
 impl AudioWorker {
@@ -149,19 +120,6 @@ impl AudioWorker {
         shared: Arc<Shared>,
         commands: mpsc::UnboundedReceiver<AudioCommand>,
     ) -> Self {
-        let version = mpv.get_property::<String>("mpv-version").ok();
-        let analysis_supported = version
-            .as_deref()
-            .and_then(MpvVersion::parse)
-            .is_some_and(MpvVersion::supports_analysis);
-        if !analysis_supported {
-            tracing::warn!(
-                version = version.as_deref().unwrap_or("неизвестна"),
-                "аудио-анализ отключён: libmpv не поддерживает безопасный опрос af-metadata"
-            );
-            shared.set_spectrum_enabled(false);
-        }
-
         Self {
             cache_defaults: CacheDefaults::read(&mpv),
             mpv,
@@ -175,13 +133,11 @@ impl AudioWorker {
             bands_active: false,
             applied_af: None,
             economy_cache: false,
-            analysis_supported,
         }
     }
 
     pub(super) fn run(mut self) {
-        if self.analysis_supported
-            && self.shared.spectrum_enabled()
+        if self.shared.spectrum_enabled()
             && let Err(err) = self.apply_spectrum(true)
         {
             tracing::warn!(error = %err, "не удалось включить спектр-фильтр при старте");
@@ -378,13 +334,6 @@ impl AudioWorker {
             self.shared.set_spectrum(None);
             self.bands_active = false;
             self.layout_retry = None;
-            return Ok(());
-        }
-
-        if !self.analysis_supported {
-            tracing::debug!("аудио-анализ недоступен в этой версии libmpv");
-            self.shared.set_spectrum_enabled(false);
-            self.shared.set_spectrum(None);
             return Ok(());
         }
 
@@ -677,29 +626,31 @@ fn read_spectrum(mpv: &Mpv, bands_active: bool) -> Option<SpectrumFrame> {
     } else {
         None
     };
+    let level = read_metadata(mpv, LEVEL_METADATA)?;
     spectrum_from_values(
-        read_metric(mpv, LEVEL_CENTROID)?,
-        read_metric(mpv, LEVEL_SPREAD)?,
-        read_metric(mpv, LEVEL_ROLLOFF)?,
-        read_metric(mpv, LEVEL_FLATNESS)?,
-        read_metric(mpv, LEVEL_FLUX)?,
-        read_metric(mpv, LEVEL_RMS)?,
+        metric(&level, LEVEL_CENTROID)?,
+        metric(&level, LEVEL_SPREAD)?,
+        metric(&level, LEVEL_ROLLOFF)?,
+        metric(&level, LEVEL_FLATNESS)?,
+        metric(&level, LEVEL_FLUX)?,
+        metric(&level, LEVEL_RMS)?,
         bands,
     )
 }
 
 fn read_band_levels(mpv: &Mpv) -> Option<BandLevels> {
+    let spectrum = read_metadata(mpv, SPECTRUM_METADATA)?;
     let bass = band_db(
-        read_metric(mpv, BAND_BASS_LEFT)?,
-        read_metric(mpv, BAND_BASS_RIGHT)?,
+        metric(&spectrum, BAND_BASS_LEFT)?,
+        metric(&spectrum, BAND_BASS_RIGHT)?,
     )?;
     let mid = band_db(
-        read_metric(mpv, BAND_MID_LEFT)?,
-        read_metric(mpv, BAND_MID_RIGHT)?,
+        metric(&spectrum, BAND_MID_LEFT)?,
+        metric(&spectrum, BAND_MID_RIGHT)?,
     )?;
     let high = band_db(
-        read_metric(mpv, BAND_HIGH_LEFT)?,
-        read_metric(mpv, BAND_HIGH_RIGHT)?,
+        metric(&spectrum, BAND_HIGH_LEFT)?,
+        metric(&spectrum, BAND_HIGH_RIGHT)?,
     )?;
     Some(BandLevels {
         bass_db: bass,
@@ -724,9 +675,23 @@ fn band_db(left_db: f32, right_db: f32) -> Option<f32> {
     })
 }
 
-fn read_metric(mpv: &Mpv, property: &str) -> Option<f32> {
+/// Читает метаданные фильтрового ярлыка одной картой.
+///
+/// libmpv 0.37 (Ubuntu 24.04, официальный AppImage) падает в
+/// `mpv_get_property` на вложенном ключе вроде
+/// `af-metadata/level/lavfi.…`, поэтому карта `af-metadata/<label>`
+/// забирается целиком и разбирается локально (ADR-0027).
+fn read_metadata(mpv: &Mpv, property: &str) -> Option<serde_json::Map<String, serde_json::Value>> {
     let raw: String = mpv.get_property(property).ok()?;
-    raw.trim().parse::<f32>().ok()
+    serde_json::from_str(&raw).ok()
+}
+
+fn metric(map: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<f32> {
+    match map.get(key)? {
+        serde_json::Value::String(raw) => raw.trim().parse().ok(),
+        serde_json::Value::Number(number) => number.as_f64().map(|value| value as f32),
+        _ => None,
+    }
 }
 
 fn spectrum_from_values(
@@ -993,21 +958,28 @@ mod tests {
     }
 
     #[test]
-    fn gates_analysis_by_mpv_version() {
-        let parse = |raw| MpvVersion::parse(raw).expect("версия должна разобраться");
-        assert_eq!(
-            parse("mpv 0.37.0"),
-            MpvVersion {
-                major: 0,
-                minor: 37
-            }
+    fn reads_metrics_from_metadata_map() {
+        let map: serde_json::Map<String, serde_json::Value> = serde_json::from_str(
+            r#"{"lavfi.astats.Overall.RMS_level":"-23.5","lavfi.astats.1.RMS_level":-31}"#,
+        )
+        .expect("карта должна разобраться");
+        assert_eq!(metric(&map, "lavfi.astats.Overall.RMS_level"), Some(-23.5));
+        assert_eq!(metric(&map, "lavfi.astats.1.RMS_level"), Some(-31.0));
+        assert_eq!(metric(&map, "lavfi.astats.2.RMS_level"), None);
+        assert_eq!(metric(&map, "lavfi.astats.Overall.RMS_level"), Some(-23.5));
+    }
+
+    #[test]
+    fn rejects_broken_or_non_numeric_metadata() {
+        let map: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(r#"{"a":"-inf","b":true,"c":" 12.5 "}"#)
+                .expect("карта должна разобраться");
+        assert_eq!(metric(&map, "a"), Some(f32::NEG_INFINITY));
+        assert_eq!(metric(&map, "b"), None);
+        assert_eq!(metric(&map, "c"), Some(12.5));
+        assert!(
+            serde_json::from_str::<serde_json::Map<String, serde_json::Value>>("not json").is_err()
         );
-        assert!(!parse("mpv 0.37.0").supports_analysis());
-        assert!(parse("mpv 0.40.0").supports_analysis());
-        assert!(parse("mpv 0.41.0-unknown").supports_analysis());
-        assert!(parse("mpv v1.0.0").supports_analysis());
-        assert!(MpvVersion::parse("mpv").is_none());
-        assert!(MpvVersion::parse("mpv x.y").is_none());
     }
 
     #[test]

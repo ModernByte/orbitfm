@@ -821,8 +821,25 @@ host-компонента — в тонких адаптерах, не в трё
   Noto CJK/Arabic/Emoji (нужны отдельные окружения)
 - [ ] Ручная приёмка экономичного режима и офлайн-снимка на реальном слабом
   канале; автотесты покрывают логику, но не качество звука и тайминги сети
-- [ ] Тег `v0.17.0-rc.1` и GitHub Release: AppImage, MSI, DMG, `.plasmoid`,
-  `install-appimage.sh` и SHA256SUMS
+- [x] Тег `v0.17.0-rc.1` и GitHub Release: AppImage, MSI, DMG, `.plasmoid`,
+  `install-appimage.sh` и SHA256SUMS — <https://github.com/ModernByte/orbitfm/releases/tag/v0.17.0-rc.1>
+
+## Релиз 0.17.0-rc.2 — возврат визуализатора на libmpv 0.37 (2026-11-01)
+
+Патч поверх 0.17.0-rc.1: официальный AppImage собран на Ubuntu 24.04 с libmpv
+0.37.0, где чтение вложенного ключа `af-metadata/<label>/<metric>` роняет
+процесс в `mpv_get_property`. В rc.1 анализ на такой версии был отключён;
+rc.2 читает карты `af-metadata/level` и `af-metadata/spectrum` целиком и
+разбирает JSON, поэтому визуализатор снова работает без падений.
+
+- [x] `src/audio/worker.rs`: две карты на тик вместо 12 вложенных свойств,
+  разбор `serde_json`, проверка `mpv-version` удалена
+- [x] Unit-тесты разбора карт; ADR-0027, модуль и интерфейс аудио,
+  CHANGELOG и вики синхронизированы
+- [x] Приёмка на libmpv 0.37.0 + FFmpeg 6 (официальный AppImage): две минуты
+  опроса каждые 50 мс без SIGSEGV, `bands=true`; системный 0.41 также
+  отдаёт карты
+- [ ] Тег `v0.17.0-rc.2` и GitHub Release с пересобранными артефактами
 
 ## Без версии в этом репозитории
 
