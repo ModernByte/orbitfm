@@ -9,6 +9,7 @@ use eframe::egui;
 
 use crate::geo::Country;
 use crate::i18n;
+use crate::library::StationAlias;
 use crate::services::Station;
 use crate::session::LibraryTab;
 use crate::settings::Language;
@@ -54,6 +55,8 @@ pub(crate) struct PanelState<'a> {
     pub markers_total: usize,
     pub results: &'a [Station],
     pub favorites: &'a [Station],
+    /// Ручные ссылки станций (ADR-0050): строка с алиасом показывает хост.
+    pub aliases: &'a [StationAlias],
     pub history: &'a [Station],
     pub pending: bool,
     pub empty: bool,
@@ -112,6 +115,7 @@ pub(crate) fn show(
         markers_total,
         results,
         favorites,
+        aliases,
         history,
         pending,
         empty,
@@ -318,6 +322,7 @@ pub(crate) fn show(
                                     compact,
                                     context_mode,
                                     favorites,
+                                    aliases,
                                     language,
                                     favicons,
                                     &mut actions,
@@ -349,6 +354,7 @@ pub(crate) fn show(
                                     compact,
                                     false,
                                     favorites,
+                                    aliases,
                                     language,
                                     favicons,
                                     &mut actions,
@@ -380,6 +386,7 @@ pub(crate) fn show(
                                     compact,
                                     false,
                                     favorites,
+                                    aliases,
                                     language,
                                     favicons,
                                     &mut actions,
@@ -602,6 +609,7 @@ fn draw_rows(
     compact: bool,
     tag_chips: bool,
     favorites: &[Station],
+    aliases: &[StationAlias],
     language: Language,
     favicons: &mut FaviconCache,
     actions: &mut Vec<UiAction>,
@@ -614,6 +622,10 @@ fn draw_rows(
             reveal: reveal_uuid == Some(uuid),
             compact,
             favorites,
+            alias: aliases
+                .iter()
+                .find(|alias| alias.stationuuid == uuid)
+                .map(|alias| alias.label.as_str()),
             language,
             favicons: &mut *favicons,
             previous: index

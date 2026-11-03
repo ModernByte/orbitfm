@@ -36,6 +36,7 @@ pub(crate) const CATALOG: Catalog = Catalog {
         no_audio: "Bu sayfada ses bulunamadı.",
         importing: "Akış içe aktarılıyor…",
         stream_rejected: "Akış reddedildi.",
+        manual_link: "elle bağlantı",
     },
     hud: HudText {
         subtitle: "Küresel İnternet Radyosu",

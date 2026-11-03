@@ -36,6 +36,7 @@ pub(crate) const CATALOG: Catalog = Catalog {
         no_audio: "このページに音声が見つかりませんでした。",
         importing: "ストリームを読み込み中…",
         stream_rejected: "ストリームが拒否されました。",
+        manual_link: "手動リンク",
     },
     hud: HudText {
         subtitle: "世界のインターネットラジオ",

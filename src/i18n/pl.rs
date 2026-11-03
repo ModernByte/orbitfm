@@ -36,6 +36,7 @@ pub(crate) const CATALOG: Catalog = Catalog {
         no_audio: "Na tej stronie nie znaleziono dźwięku.",
         importing: "Importowanie strumienia…",
         stream_rejected: "Strumień został odrzucony.",
+        manual_link: "link ręczny",
     },
     hud: HudText {
         subtitle: "Globalne radio internetowe",

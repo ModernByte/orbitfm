@@ -441,6 +441,9 @@ pub(crate) fn overlay_favorites(
                         reveal: false,
                         compact: true,
                         favorites,
+                        // Компактная строка не рисует вторую строку, а значит и
+                        // пометку ручной ссылки (ADR-0050 § 8).
+                        alias: None,
                         language,
                         favicons: &mut *favicons,
                         previous: index

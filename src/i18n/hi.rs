@@ -36,6 +36,7 @@ pub(crate) const CATALOG: Catalog = Catalog {
         no_audio: "इस पेज पर कोई ध्वनि नहीं मिली।",
         importing: "स्ट्रीम आयात हो रही है…",
         stream_rejected: "स्ट्रीम अस्वीकृत हुई।",
+        manual_link: "मैनुअल लिंक",
     },
     hud: HudText {
         subtitle: "वैश्विक इंटरनेट रेडियो",

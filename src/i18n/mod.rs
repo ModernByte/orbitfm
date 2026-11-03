@@ -148,6 +148,7 @@ mod tests {
                 no_audio,
                 importing,
                 stream_rejected,
+                manual_link,
             }
         );
         assert_group_non_empty!(

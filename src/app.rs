@@ -591,6 +591,7 @@ impl<'a> OrbitApp<'a> {
                                     markers_total: frame.markers_total,
                                     results: &session.search.results,
                                     favorites: session.library.favorites(),
+                                    aliases: session.library.aliases(),
                                     history: session.library.history(),
                                     pending: session.search.pending,
                                     empty: session.search.empty,
@@ -641,6 +642,9 @@ impl<'a> OrbitApp<'a> {
                                     spectrum_enabled: session.visualizer_enabled,
                                     roulette_pending: session.search.roulette_pending,
                                     eco: session.economy_stream(),
+                                    alias: session.current_station.as_ref().and_then(|station| {
+                                        session.library.alias_label(&station.stationuuid)
+                                    }),
                                     volume: frame.volume,
                                     visualizer,
                                     favicons,
@@ -852,6 +856,7 @@ impl<'a> OrbitApp<'a> {
                                     markers_total: frame.markers_total,
                                     results: &session.search.results,
                                     favorites: session.library.favorites(),
+                                    aliases: session.library.aliases(),
                                     history: session.library.history(),
                                     pending: session.search.pending,
                                     empty: session.search.empty,

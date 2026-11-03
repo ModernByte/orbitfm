@@ -36,6 +36,7 @@ pub(crate) const CATALOG: Catalog = Catalog {
         no_audio: "이 페이지에서 오디오를 찾지 못했습니다.",
         importing: "스트림을 가져오는 중…",
         stream_rejected: "스트림이 거부되었습니다.",
+        manual_link: "수동 링크",
     },
     hud: HudText {
         subtitle: "글로벌 인터넷 라디오",

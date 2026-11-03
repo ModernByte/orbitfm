@@ -76,6 +76,9 @@ pub(crate) struct TransportState<'a> {
     pub roulette_pending: bool,
     /// Играет подобранный лёгкий поток: индикатор ECO (ADR-0043 §4).
     pub eco: bool,
+    /// Пометка «ручная ссылка» для текущей станции: `Some(host)` — эфир идёт по
+    /// адресу пользователя, а не по каталожному (ADR-0050 § 8).
+    pub alias: Option<&'a str>,
     pub volume: f64,
     pub visualizer: &'a VisualizerModel,
     pub favicons: &'a mut FaviconCache,
@@ -107,6 +110,7 @@ pub(crate) fn show(
     let visualizer = state.visualizer;
     let roulette_pending = state.roulette_pending;
     let eco = state.eco;
+    let alias = state.alias;
     let can_resume = state.can_resume;
     let can_previous = state.can_previous;
     let can_next = state.can_next;
@@ -352,7 +356,7 @@ pub(crate) fn show(
                     }
                     if ui.available_width() > SUMMARY_MIN_WIDTH {
                         ui.label(
-                            egui::RichText::new(stream_summary(language, current, eco))
+                            egui::RichText::new(stream_summary(language, current, eco, alias))
                                 .size(11.0)
                                 .color(if eco { palette.accent } else { palette.muted }),
                         );
@@ -652,7 +656,12 @@ fn now_playing_line(
     }
 }
 
-fn stream_summary(language: Language, station: Option<&Station>, eco: bool) -> String {
+fn stream_summary(
+    language: Language,
+    station: Option<&Station>,
+    eco: bool,
+    alias: Option<&str>,
+) -> String {
     let Some(station) = station else {
         return String::new();
     };
@@ -667,7 +676,12 @@ fn stream_summary(language: Language, station: Option<&Station>, eco: bool) -> S
         String::new()
     };
     let eco = if eco { text.transport.eco } else { "" };
-    [codec, bitrate, eco.to_owned()]
+    // Хост ручной ссылки, а не весь URL: адрес длинный и не для чтения.
+    let manual = match alias {
+        Some(host) => format!("{} · {host}", text.common.manual_link),
+        None => String::new(),
+    };
+    [codec, bitrate, eco.to_owned(), manual]
         .into_iter()
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
@@ -785,28 +799,44 @@ mod tests {
     #[test]
     fn stream_summary_joins_codec_and_bitrate() {
         assert_eq!(
-            stream_summary(Language::English, Some(&station()), false),
+            stream_summary(Language::English, Some(&station()), false, None),
             "AAC  128 kbps"
         );
         let mut quiet = station();
         quiet.bitrate = 0;
         quiet.codec = " ".to_owned();
-        assert_eq!(stream_summary(Language::English, Some(&quiet), false), "");
-        assert_eq!(stream_summary(Language::English, None, false), "");
+        assert_eq!(
+            stream_summary(Language::English, Some(&quiet), false, None),
+            ""
+        );
+        assert_eq!(stream_summary(Language::English, None, false, None), "");
     }
 
     #[test]
     fn stream_summary_marks_economy_stream_next_to_bitrate() {
         assert_eq!(
-            stream_summary(Language::English, Some(&station()), true),
+            stream_summary(Language::English, Some(&station()), true, None),
             "AAC  128 kbps  ECO"
         );
         let mut silent = station();
         silent.bitrate = 0;
         assert_eq!(
-            stream_summary(Language::English, Some(&silent), true),
+            stream_summary(Language::English, Some(&silent), true, None),
             "AAC  ECO",
             "без битрейта ECO остаётся видимым"
+        );
+    }
+
+    #[test]
+    fn stream_summary_shows_manual_link_host() {
+        assert_eq!(
+            stream_summary(Language::English, Some(&station()), false, Some("a.tld")),
+            "AAC  128 kbps  manual link · a.tld"
+        );
+        // ECO и ручная ссылка — разные явления, оба умещаются в строке.
+        assert_eq!(
+            stream_summary(Language::English, Some(&station()), true, Some("a.tld")),
+            "AAC  128 kbps  ECO  manual link · a.tld"
         );
     }
 

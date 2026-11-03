@@ -40,6 +40,9 @@ pub(crate) struct RowContext<'a> {
     pub reveal: bool,
     pub compact: bool,
     pub favorites: &'a [Station],
+    /// Подпись ручного адреса станции (ADR-0050 § 8): `Some(host)` — станция
+    /// играет по адресу пользователя, а не по каталожному `url_resolved`.
+    pub alias: Option<&'a str>,
     /// Разрешённый язык интерфейса (ADR-0030).
     pub language: Language,
     pub favicons: &'a mut FaviconCache,
@@ -295,6 +298,18 @@ fn draw_contents(
                     ui.add(
                         egui::Label::new(
                             egui::RichText::new(place).size(10.5).color(palette.muted),
+                        )
+                        .truncate(),
+                    );
+                }
+                // Расхождение каталога и эфира обязано быть видно: строка
+                // показывает хост ручной ссылки, а не полный URL (ADR-0050 § 8).
+                if let Some(host) = state.alias {
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(format!("{} · {host}", text.common.manual_link))
+                                .size(10.0)
+                                .color(palette.accent),
                         )
                         .truncate(),
                     );
@@ -610,6 +625,7 @@ mod tests {
                 reveal: false,
                 compact: false,
                 favorites: &favorites,
+                alias: None,
                 language: Language::English,
                 favicons: &mut first_cache,
                 previous: None,
@@ -623,6 +639,7 @@ mod tests {
                 reveal: false,
                 compact: false,
                 favorites: &favorites,
+                alias: None,
                 language: Language::English,
                 favicons: &mut second_cache,
                 previous: Some("uuid-1"),

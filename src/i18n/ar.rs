@@ -39,6 +39,7 @@ pub(crate) const CATALOG: Catalog = Catalog {
         no_audio: "لم يتم العثور على صوت في هذه الصفحة.",
         importing: "جارٍ استيراد البث…",
         stream_rejected: "تم رفض البث.",
+        manual_link: "رابط يدوي",
     },
     hud: HudText {
         subtitle: "راديو إنترنت عالمي",

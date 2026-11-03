@@ -36,6 +36,7 @@ pub(crate) const CATALOG: Catalog = Catalog {
         no_audio: "此页面上未找到音频。",
         importing: "正在导入流…",
         stream_rejected: "流已被拒绝。",
+        manual_link: "手动链接",
     },
     hud: HudText {
         subtitle: "全球网络电台",

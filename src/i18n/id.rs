@@ -36,6 +36,7 @@ pub(crate) const CATALOG: Catalog = Catalog {
         no_audio: "Tidak ada audio di halaman ini.",
         importing: "Mengimpor aliran…",
         stream_rejected: "Aliran ditolak.",
+        manual_link: "tautan manual",
     },
     hud: HudText {
         subtitle: "Radio Internet Global",

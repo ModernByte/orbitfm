@@ -52,6 +52,8 @@ pub(crate) struct CommonText {
     pub no_audio: &'static str,
     pub importing: &'static str,
     pub stream_rejected: &'static str,
+    /// Пометка «ручная ссылка»: станция играет по адресу пользователя (ADR-0050 § 8).
+    pub manual_link: &'static str,
 }
 
 pub(crate) struct HudText {
