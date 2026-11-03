@@ -64,14 +64,12 @@ EOF
 clang -shared -fPIC -o "$stub" "$tmp/vsscript-stub.c"
 install_name_tool -id "$stub_ref" "$stub"
 libmpv="$app/Contents/Frameworks/libmpv.2.dylib"
-refs=$(otool -L "$libmpv" | grep -i 'vapoursynth' | awk 'NR > 1 { print $1 }' || true)
-if [ -n "$refs" ]; then
-    printf '%s\n' "$refs" | while IFS= read -r ref; do
-        install_name_tool -change "$ref" "$stub_ref" "$libmpv"
-    done
+vsscript_ref="@executable_path/../Frameworks/libvapoursynth-script.0.dylib"
+if otool -L "$libmpv" | grep -q 'vapoursynth'; then
+    install_name_tool -change "$vsscript_ref" "$stub_ref" "$libmpv"
 fi
 rm -f "$app/Contents/Frameworks"/libvapoursynth*.dylib
-if otool -L "$libmpv" | grep -i 'vapoursynth'; then
+if otool -L "$libmpv" | grep -qi 'vapoursynth'; then
     echo "VapourSynth осталась в $libmpv после выгрузки" >&2
     exit 1
 fi
