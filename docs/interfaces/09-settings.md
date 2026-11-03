@@ -115,6 +115,8 @@ pub struct Settings {
     pub motion_style: MotionStyle,
     pub allow_flips: bool,
     pub reduce_motion: bool,
+    /// `next` после последней станции возвращается к первой (ADR-0046).
+    pub queue_wrap: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -152,6 +154,7 @@ impl SettingsStore {
     pub fn set_motion_style(&mut self, style: MotionStyle) -> Result<(), SettingsError>;
     pub fn set_allow_flips(&mut self, allow: bool) -> Result<(), SettingsError>;
     pub fn set_reduce_motion(&mut self, reduce: bool) -> Result<(), SettingsError>;
+    pub fn set_queue_wrap(&mut self, wrap: bool) -> Result<(), SettingsError>;
 }
 
 /// Стандартный путь по XDG Base Directory Specification.
@@ -185,6 +188,7 @@ pub fn default_path() -> Result<PathBuf, SettingsError>;
 | `set_motion` / `set_reduce_motion` | Меняет реактивность движения и Reduce motion; сохраняет только при изменении |
 | `set_motion_style` | Меняет характер движения (`Auto` или один из шести стилей); сохраняет только при изменении |
 | `set_allow_flips` | Разрешает перевороты камеры; по умолчанию `false`, сохраняет только при изменении |
+| `set_queue_wrap` | Включает кольцевой переход очереди; по умолчанию `true`, сохраняет только при изменении (ADR-0046) |
 
 ## 3. Расположение и формат
 
@@ -208,7 +212,8 @@ pub fn default_path() -> Result<PathBuf, SettingsError>;
   "motion": "normal",
   "motion_style": "auto",
   "allow_flips": false,
-  "reduce_motion": false
+  "reduce_motion": false,
+  "queue_wrap": true
 }
 ```
 
@@ -219,7 +224,8 @@ pub fn default_path() -> Result<PathBuf, SettingsError>;
 `system`/`en`/`ru`/`uk`/`pl`/`fr`/`de`/`es`/`it`/`pt`/`tr`/`ar`/`hi`/`id`/`zh`/`ko`/`ja`.
 `viz_bars` при
 загрузке притягивается к ближайшему из 16/24/32, `volume` клампится в
-`0.0..=1.0`. Отсутствующие поля заменяются значениями по умолчанию. Неизвестное
+`0.0..=1.0`. Отсутствующие поля заменяются значениями по умолчанию (включая
+`queue_wrap: true` в старых файлах). Неизвестное
 значение enum — ошибка разбора, кроме `language`: неизвестный код языка даёт
 `System` и не стоит остальных настроек (`language::deserialize_language`).
 

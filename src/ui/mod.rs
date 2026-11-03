@@ -70,6 +70,10 @@ pub(crate) enum UiAction {
     SetVizBars(u8),
     /// Opt-in загрузки обложек по HTTP (ADR-0025, п. 11).
     SetArtworkAllowHttp(bool),
+    /// Таймер сна: `Some(minutes)` включает, `None` выключает (ADR-0046).
+    SetSleepTimer(Option<u16>),
+    /// Кольцевой переход очереди после последней станции (ADR-0046).
+    SetQueueWrap(bool),
     /// Реактивность аудио-движения глобуса (ADR-0028).
     SetMotion(MotionReactivity),
     /// Характер движения: Auto или один из шести стилей.

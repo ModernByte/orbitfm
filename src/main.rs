@@ -79,7 +79,13 @@ OrbitFM — 3D Interactive Global Radio Player
   volume <0.0-1.0>     Установить громкость
   volume-up            Громче на один шаг
   volume-down          Тише на один шаг
+  sleep <1-720>        Остановить эфир через заданное число минут
+  sleep clear          Отменить таймер сна
   theme <режим>        Тема: system, dark или light
+  library-export <путь>
+                       Выгрузить избранное и историю (JSON, схема 1)
+  library-import <путь>
+                       Слить избранное и историю из JSON схемы 1
   settings             Открыть настройки
   quit                 Завершить процесс
 
@@ -92,7 +98,8 @@ OrbitFM — 3D Interactive Global Radio Player
 Команда mode без аргумента спрашивает режим; mode <режим> при отсутствии
 запущенного экземпляра запускает OrbitFM сразу в этом режиме.
 Команды search, library, favorite, play-result, play-library и play-url
-обслуживают браузерное расширение и не запускают новый экземпляр.";
+обслуживают браузерное расширение, а sleep, library-export и library-import
+управляют уже запущенным плеером — новый экземпляр они не запускают.";
 
 enum Invocation {
     Help,

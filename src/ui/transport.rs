@@ -69,6 +69,9 @@ pub(crate) struct TransportState<'a> {
     pub current: Option<&'a Station>,
     pub favorite: bool,
     pub can_resume: bool,
+    /// Доступность шага назад/вперёд с учётом wrap очереди (ADR-0046).
+    pub can_previous: bool,
+    pub can_next: bool,
     pub spectrum_enabled: bool,
     pub roulette_pending: bool,
     /// Играет подобранный лёгкий поток: индикатор ECO (ADR-0043 §4).
@@ -105,6 +108,8 @@ pub(crate) fn show(
     let roulette_pending = state.roulette_pending;
     let eco = state.eco;
     let can_resume = state.can_resume;
+    let can_previous = state.can_previous;
+    let can_next = state.can_next;
     let favorite = state.favorite;
     let language = state.language;
     let text = i18n::catalog(language);
@@ -248,8 +253,7 @@ pub(crate) fn show(
                     // Бейдж LIVE и мини-эквалайзер из строки убраны: эфир
                     // показан карточкой станции на глобусе и чипом в HUD, а
                     // здесь они только отнимали место у контролов.
-                    let has_station = current.is_some();
-                    if prev_button(ui, palette, has_station, language).clicked() {
+                    if prev_button(ui, palette, can_previous, language).clicked() {
                         actions.push(UiAction::PlayRelative(-1));
                     }
                     let hint = if playing {
@@ -260,7 +264,7 @@ pub(crate) fn show(
                     if circle_button(ui, palette, playing, playing || can_resume, hint).clicked() {
                         actions.push(UiAction::TogglePlayback);
                     }
-                    if next_button(ui, palette, has_station, language).clicked() {
+                    if next_button(ui, palette, can_next, language).clicked() {
                         actions.push(UiAction::PlayRelative(1));
                     }
                     let stop_enabled = !matches!(playback, PlaybackState::Stopped);
@@ -476,6 +480,9 @@ pub(crate) struct PanelFooterState<'a> {
     pub current: Option<&'a Station>,
     pub favorite: bool,
     pub can_resume: bool,
+    /// Доступность шага назад/вперёд с учётом wrap очереди (ADR-0046).
+    pub can_previous: bool,
+    pub can_next: bool,
     pub favicons: &'a mut FaviconCache,
     /// Разрешённый язык интерфейса (ADR-0030).
     pub language: Language,
@@ -504,6 +511,8 @@ pub(crate) fn panel_footer(
     let playback = state.playback;
     let favorite = state.favorite;
     let can_resume = state.can_resume;
+    let can_previous = state.can_previous;
+    let can_next = state.can_next;
     let language = state.language;
     let text = i18n::catalog(language);
 
@@ -591,8 +600,7 @@ pub(crate) fn panel_footer(
                     if stop_button(ui, palette, stop_enabled, language).clicked() {
                         actions.push(UiAction::Stop);
                     }
-                    let has_station = current.is_some();
-                    if next_button(ui, palette, has_station, language).clicked() {
+                    if next_button(ui, palette, can_next, language).clicked() {
                         actions.push(UiAction::PlayRelative(1));
                     }
                     let hint = if playing {
@@ -605,7 +613,7 @@ pub(crate) fn panel_footer(
                     {
                         actions.push(UiAction::TogglePlayback);
                     }
-                    if prev_button(ui, palette, has_station, language).clicked() {
+                    if prev_button(ui, palette, can_previous, language).clicked() {
                         actions.push(UiAction::PlayRelative(-1));
                     }
                 },

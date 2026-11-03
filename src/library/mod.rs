@@ -6,16 +6,24 @@ use std::ffi::OsString;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::services::Station;
+use crate::services::{Station, publishable};
 
 const DATA_DIR: &str = "orbitfm";
 const FILE_NAME: &str = "library.json";
 const TMP_FILE_NAME: &str = "library.json.tmp";
+const EXPORT_TMP_NAME: &str = "library-export.json.tmp";
 /// Сколько последних станций хранит история.
 pub const HISTORY_LIMIT: usize = 20;
+/// Версия схемы экспорта/импорта библиотеки (docs/interfaces/15-library-export.md).
+pub const EXPORT_SCHEMA: u32 = 1;
+/// Потолок импортируемого файла: библиотека в разы меньше.
+const IMPORT_FILE_LIMIT: u64 = 2 * 1024 * 1024;
+/// Потолок числа станций в одном импорте.
+const IMPORT_STATIONS_LIMIT: usize = 5000;
 
 /// Ошибки библиотеки станций.
 #[derive(Debug, thiserror::Error)]
@@ -35,6 +43,25 @@ pub enum LibraryError {
 struct LibraryData {
     favorites: Vec<Station>,
     history: Vec<Station>,
+}
+
+/// Переносимый снимок библиотеки для desktop → Android и обратно.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+struct LibraryExport {
+    schema: u32,
+    app: String,
+    exported_at: u64,
+    favorites: Vec<Station>,
+    history: Vec<Station>,
+}
+
+/// Итог слияния импортированного файла с локальной библиотекой.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ImportSummary {
+    pub favorites_added: usize,
+    pub history_added: usize,
+    pub skipped: usize,
 }
 
 /// Избранные станции и история прослушивания.
@@ -135,6 +162,121 @@ impl StationLibrary {
         self.save()
     }
 
+    /// Переносимый JSON схемы 1: избранное и история без локальных путей.
+    pub fn export_json(&self) -> Result<String, LibraryError> {
+        let export = LibraryExport {
+            schema: EXPORT_SCHEMA,
+            app: "orbitfm".to_owned(),
+            exported_at: unix_now(),
+            favorites: self.data.favorites.iter().map(export_station).collect(),
+            history: self.data.history.iter().map(export_station).collect(),
+        };
+        serde_json::to_string_pretty(&export).map_err(|err| LibraryError::Write(err.to_string()))
+    }
+
+    /// Пишет экспорт по выбранному пути атомарно; возвращает число избранных.
+    ///
+    /// Файл содержит stream URL, поэтому на Unix получает права 0600.
+    pub fn export_to(&self, path: &Path) -> Result<usize, LibraryError> {
+        let path = absolute_path(path)?;
+        let json = self.export_json()?;
+        crate::storage::write_atomic(&path, EXPORT_TMP_NAME, json.as_bytes())
+            .map_err(|err| LibraryError::Write(format!("{}: {err}", path.display())))?;
+        private_file(&path)?;
+        Ok(self.data.favorites.len())
+    }
+
+    /// Читает файл экспорта и сливает его с текущей библиотекой.
+    pub fn import_from(&mut self, path: &Path) -> Result<ImportSummary, LibraryError> {
+        let path = absolute_path(path)?;
+        let metadata = fs::metadata(&path)
+            .map_err(|err| LibraryError::Read(format!("{}: {err}", path.display())))?;
+        if metadata.len() > IMPORT_FILE_LIMIT {
+            return Err(LibraryError::Parse(format!(
+                "{}: файл больше {} байт",
+                path.display(),
+                IMPORT_FILE_LIMIT
+            )));
+        }
+        let bytes = fs::read(&path)
+            .map_err(|err| LibraryError::Read(format!("{}: {err}", path.display())))?;
+        self.import_bytes(&bytes)
+    }
+
+    /// Слияние без обращения к файлу: единица тестирования и будущий Android.
+    ///
+    /// Недоверенный файл проходит те же проверки, что и станция из сети:
+    /// потолок размера и числа записей, санитизация строк, публичный http(s)
+    /// без userinfo (ADR-0025). Некорректные станции пропускаются, а не
+    /// отменяют весь импорт.
+    pub fn import_bytes(&mut self, bytes: &[u8]) -> Result<ImportSummary, LibraryError> {
+        if bytes.len() as u64 > IMPORT_FILE_LIMIT {
+            return Err(LibraryError::Parse(format!(
+                "файл больше {IMPORT_FILE_LIMIT} байт"
+            )));
+        }
+        let export: LibraryExport = serde_json::from_slice(bytes)
+            .map_err(|err| LibraryError::Parse(format!("импорт: {err}")))?;
+        if export.schema != EXPORT_SCHEMA {
+            return Err(LibraryError::Parse(format!(
+                "импорт: поддерживается schema {EXPORT_SCHEMA}, получено {}",
+                export.schema
+            )));
+        }
+        if !export.app.is_empty() && export.app != "orbitfm" {
+            return Err(LibraryError::Parse(format!(
+                "импорт: приложение {} не поддерживается",
+                export.app
+            )));
+        }
+        if export.favorites.len() + export.history.len() > IMPORT_STATIONS_LIMIT {
+            return Err(LibraryError::Parse(format!(
+                "импорт: больше {IMPORT_STATIONS_LIMIT} станций"
+            )));
+        }
+
+        let mut summary = ImportSummary::default();
+        let mut favorite_ids: HashSet<String> = self
+            .data
+            .favorites
+            .iter()
+            .map(|station| station.stationuuid.clone())
+            .collect();
+        for station in export.favorites {
+            match sanitize_import_station(&station) {
+                Some(station) if favorite_ids.insert(station.stationuuid.clone()) => {
+                    self.data.favorites.push(station);
+                    summary.favorites_added += 1;
+                }
+                Some(_) => {}
+                None => summary.skipped += 1,
+            }
+        }
+
+        let mut history_ids: HashSet<String> = self
+            .data
+            .history
+            .iter()
+            .map(|station| station.stationuuid.clone())
+            .collect();
+        for station in export.history {
+            match sanitize_import_station(&station) {
+                Some(station) if history_ids.insert(station.stationuuid.clone()) => {
+                    self.data.history.push(station);
+                    summary.history_added += 1;
+                }
+                Some(_) => {}
+                None => summary.skipped += 1,
+            }
+        }
+
+        normalize(&mut self.data);
+        if summary.favorites_added > 0 || summary.history_added > 0 {
+            self.save()?;
+        }
+        Ok(summary)
+    }
+
     fn save(&self) -> Result<(), LibraryError> {
         let Some(path) = &self.path else {
             return Ok(());
@@ -142,8 +284,139 @@ impl StationLibrary {
         let json = serde_json::to_vec_pretty(&self.data)
             .map_err(|err| LibraryError::Write(err.to_string()))?;
         crate::storage::write_atomic(path, TMP_FILE_NAME, &json)
-            .map_err(|err| LibraryError::Write(format!("{}: {err}", path.display())))
+            .map_err(|err| LibraryError::Write(format!("{}: {err}", path.display())))?;
+        private_file(path)
     }
+}
+
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or_default()
+}
+
+fn absolute_path(path: &Path) -> Result<PathBuf, LibraryError> {
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+    env::current_dir()
+        .map(|cwd| cwd.join(path))
+        .map_err(|err| LibraryError::Path(err.to_string()))
+}
+
+/// Ограничивает длину и убирает управляющие символы: строка идёт в файл,
+/// который прочитает другая платформа (ADR-0030, `crate::text`).
+fn clean(value: &str, max_chars: usize) -> String {
+    crate::text::single_line(value)
+        .chars()
+        .take(max_chars)
+        .collect()
+}
+
+fn export_station(station: &Station) -> Station {
+    let mut station = station.clone();
+    station.stationuuid = clean(&station.stationuuid, 64);
+    station.name = clean(&station.name, 256);
+    station.url = clean(&station.url, 2048);
+    station.url_resolved = clean(&station.url_resolved, 2048);
+    station.homepage = station
+        .homepage
+        .as_deref()
+        .map(|value| clean(value, 2048))
+        .filter(|value| !value.is_empty());
+    station.favicon = station
+        .favicon
+        .as_deref()
+        .map(|value| clean(value, 2048))
+        .filter(|value| !value.is_empty());
+    station.tags = clean(&station.tags, 512);
+    station.countrycode = clean(&station.countrycode, 8);
+    station.language = clean(&station.language, 128);
+    station.country = clean(&station.country, 128);
+    station.state = clean(&station.state, 128);
+    station.codec = clean(&station.codec, 64);
+    station
+}
+
+fn sanitize_import_station(station: &Station) -> Option<Station> {
+    let stationuuid = clean(&station.stationuuid, 64);
+    if stationuuid.is_empty() {
+        return None;
+    }
+    let mut url = clean(&station.url, 2048);
+    let mut url_resolved = clean(&station.url_resolved, 2048);
+    if url_resolved.is_empty() {
+        url_resolved = url.clone();
+    }
+    if url.is_empty() {
+        url = url_resolved.clone();
+    }
+    let url = public_stream_url(&url)?;
+    let url_resolved = public_stream_url(&url_resolved)?;
+    let homepage = station
+        .homepage
+        .as_deref()
+        .and_then(|value| public_stream_url(&clean(value, 2048)));
+    let favicon = station
+        .favicon
+        .as_deref()
+        .and_then(|value| public_stream_url(&clean(value, 2048)));
+    let (geo_lat, geo_long) = match (station.geo_lat, station.geo_long) {
+        (Some(lat), Some(long))
+            if lat.is_finite()
+                && long.is_finite()
+                && (-90.0..=90.0).contains(&lat)
+                && (-180.0..=180.0).contains(&long) =>
+        {
+            (Some(lat), Some(long))
+        }
+        _ => (None, None),
+    };
+    Some(Station {
+        stationuuid,
+        name: clean(&station.name, 256),
+        url,
+        url_resolved,
+        homepage,
+        favicon,
+        tags: clean(&station.tags, 512),
+        countrycode: clean(&station.countrycode, 8),
+        language: clean(&station.language, 128),
+        votes: station.votes,
+        country: clean(&station.country, 128),
+        state: clean(&station.state, 128),
+        bitrate: station.bitrate,
+        codec: clean(&station.codec, 64),
+        geo_lat,
+        geo_long,
+        source: station.source,
+    })
+}
+
+/// Публичный http(s) без учётных данных: та же планка, что у радиостанции
+/// перед запуском (ADR-0025). Stream-станция из локальной сети не переносится.
+fn public_stream_url(raw: &str) -> Option<String> {
+    if raw.is_empty() {
+        return None;
+    }
+    let parsed = url::Url::parse(raw).ok()?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return None;
+    }
+    publishable(raw).map(str::to_owned)
+}
+
+#[cfg(unix)]
+fn private_file(path: &Path) -> Result<(), LibraryError> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+        .map_err(|err| LibraryError::Write(format!("{}: {err}", path.display())))
+}
+
+#[cfg(not(unix))]
+fn private_file(_path: &Path) -> Result<(), LibraryError> {
+    Ok(())
 }
 
 /// Стандартный путь библиотеки по XDG Base Directory Specification.
@@ -337,5 +610,138 @@ mod tests {
         assert_eq!(library.favorites(), std::slice::from_ref(&saved));
         assert_eq!(library.history(), std::slice::from_ref(&saved));
         assert!(library.path().is_none());
+    }
+
+    #[test]
+    fn export_import_roundtrip_merges_and_deduplicates() {
+        let favorite = station("11111111-1111-1111-1111-111111111111");
+        let played = station("22222222-2222-2222-2222-222222222222");
+        let mut source = StationLibrary::ephemeral();
+        source.toggle_favorite(&favorite).unwrap();
+        source.record_played(&played).unwrap();
+
+        let json = source.export_json().unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["schema"], EXPORT_SCHEMA);
+        assert_eq!(value["app"], "orbitfm");
+        assert!(value["exported_at"].as_u64().unwrap() > 0);
+
+        let mut target = StationLibrary::ephemeral();
+        let summary = target.import_bytes(json.as_bytes()).unwrap();
+        assert_eq!(
+            summary,
+            ImportSummary {
+                favorites_added: 1,
+                history_added: 1,
+                skipped: 0,
+            }
+        );
+        assert_eq!(target.favorites(), &[favorite]);
+        assert_eq!(target.history(), &[played]);
+
+        let again = target.import_bytes(json.as_bytes()).unwrap();
+        assert_eq!(again, ImportSummary::default());
+        assert_eq!(target.favorites().len(), 1);
+        assert_eq!(target.history().len(), 1);
+    }
+
+    #[test]
+    fn import_rejects_unknown_schema_and_foreign_app() {
+        let mut library = StationLibrary::ephemeral();
+        let schema_two = br#"{"schema":2,"app":"orbitfm","favorites":[],"history":[]}"#;
+        assert!(library.import_bytes(schema_two).is_err());
+        let foreign = br#"{"schema":1,"app":"other","favorites":[],"history":[]}"#;
+        assert!(library.import_bytes(foreign).is_err());
+        let malformed = b"{not json";
+        assert!(library.import_bytes(malformed).is_err());
+    }
+
+    #[test]
+    fn import_rejects_oversized_payload_and_station_count() {
+        let mut library = StationLibrary::ephemeral();
+        let oversized = vec![b' '; (IMPORT_FILE_LIMIT + 1) as usize];
+        assert!(library.import_bytes(&oversized).is_err());
+
+        let export = LibraryExport {
+            schema: EXPORT_SCHEMA,
+            app: "orbitfm".to_owned(),
+            exported_at: 1,
+            favorites: (0..=IMPORT_STATIONS_LIMIT)
+                .map(|index| station(&format!("station-{index}")))
+                .collect(),
+            history: Vec::new(),
+        };
+        let bytes = serde_json::to_vec(&export).unwrap();
+        assert!(bytes.len() as u64 <= IMPORT_FILE_LIMIT);
+        assert!(library.import_bytes(&bytes).is_err());
+        assert!(library.favorites().is_empty());
+    }
+
+    #[test]
+    fn import_skips_hostile_stations_and_sanitizes_accepted_ones() {
+        let mut valid = station("11111111-1111-1111-1111-111111111111");
+        valid.name = "Jazz\u{1B}[2J".to_owned();
+        valid.geo_lat = Some(200.0);
+        valid.geo_long = Some(10.0);
+
+        let mut private = station("22222222-2222-2222-2222-222222222222");
+        private.url = "http://192.168.1.10/live".to_owned();
+        private.url_resolved = private.url.clone();
+
+        let mut userinfo = station("33333333-3333-3333-3333-333333333333");
+        userinfo.url = "https://user:pass@example.com/live".to_owned();
+        userinfo.url_resolved = userinfo.url.clone();
+
+        let mut scheme = station("44444444-4444-4444-4444-444444444444");
+        scheme.url = "file:///etc/passwd".to_owned();
+        scheme.url_resolved = scheme.url.clone();
+
+        let export = LibraryExport {
+            schema: EXPORT_SCHEMA,
+            app: "orbitfm".to_owned(),
+            exported_at: 1,
+            favorites: vec![valid, private, userinfo, scheme],
+            history: Vec::new(),
+        };
+        let bytes = serde_json::to_vec(&export).unwrap();
+        let mut library = StationLibrary::ephemeral();
+        let summary = library.import_bytes(&bytes).unwrap();
+
+        assert_eq!(
+            summary,
+            ImportSummary {
+                favorites_added: 1,
+                history_added: 0,
+                skipped: 3,
+            }
+        );
+        let saved = &library.favorites()[0];
+        assert_eq!(saved.name, "Jazz [2J");
+        assert_eq!(saved.geo_lat, None);
+        assert_eq!(saved.geo_long, None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn export_writes_private_file_and_import_reads_it_back() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("out/library-export.json");
+        let saved = station("11111111-1111-1111-1111-111111111111");
+        let mut source = StationLibrary::ephemeral();
+        source.toggle_favorite(&saved).unwrap();
+
+        assert_eq!(source.export_to(&path).unwrap(), 1);
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        assert!(
+            !directory.path().join("out").join(EXPORT_TMP_NAME).exists(),
+            "временный файл убран"
+        );
+
+        let mut target = StationLibrary::ephemeral();
+        assert_eq!(target.import_from(&path).unwrap().favorites_added, 1);
+        assert_eq!(target.import_from(&path).unwrap().favorites_added, 0);
     }
 }

@@ -44,6 +44,8 @@ const SWATCH_SLOT: (f32, f32) = (184.0, 26.0);
 const SWATCH_GAP: f32 = 4.0;
 /// Насколько гаснет контрол, недоступный из-за другой настройки.
 const DISABLED: f32 = 0.45;
+/// Варианты таймера сна в минутах; 0 — выключен (ADR-0046).
+const SLEEP_CHOICES: [u16; 6] = [0, 15, 30, 45, 60, 90];
 /// Порядок stagger: шапка, навигация, заголовок категории, затем карточки.
 const BLOCK_HEADER: usize = 0;
 const BLOCK_NAV: usize = 1;
@@ -96,6 +98,8 @@ pub(crate) struct SettingsState<'a> {
     /// Копия громкости, которую двигает слайдер (commit-on-release, ADR-0031).
     pub volume: &'a mut f64,
     pub show_help: bool,
+    /// Активный таймер сна: `None` — выключен (ADR-0046).
+    pub sleep_minutes: Option<u16>,
     /// Открытая категория: состояние окна, а не персистентная настройка.
     pub category: &'a mut SettingsCategory,
     /// Снимок интеграций: страница не ходит по файлам на каждый кадр (ADR-0042).
@@ -360,7 +364,7 @@ fn draw_category(
             language(ui, palette, &text.settings, state, cards[0], actions);
         }
         SettingsCategory::Audio => {
-            audio(ui, palette, &text.settings, state, cards[0], actions);
+            audio(ui, palette, &text.settings, state, cards, actions);
         }
         SettingsCategory::Motion => {
             motion(ui, palette, &text.settings, state, cards, actions);
@@ -530,9 +534,10 @@ fn audio(
     palette: &Palette,
     strings: &i18n::SettingsText,
     state: &mut SettingsState<'_>,
-    alpha: f32,
+    cards: [f32; 2],
     actions: &mut Vec<UiAction>,
 ) {
+    let alpha = cards[0];
     card(ui, palette, alpha, |ui| {
         let dim = faded_palette(palette, alpha);
         ui.horizontal(|ui| {
@@ -563,6 +568,55 @@ fn audio(
         }
         ui.add_space(3.0);
         hint(ui, palette, strings.audio_hint, alpha);
+    });
+
+    let alpha = cards[1];
+    ui.add_space(10.0);
+    card(ui, palette, alpha, |ui| {
+        let dim = faded_palette(palette, alpha);
+        let selected = state.sleep_minutes.unwrap_or(0);
+        if let Some(index) = row(
+            ui,
+            &dim,
+            strings.sleep_timer,
+            Some(strings.sleep_timer_hint),
+            DROPDOWN_SLOT,
+            |ui| {
+                dropdown(
+                    ui,
+                    &dim,
+                    "orbitfm_set_sleep",
+                    ui.available_width(),
+                    &SLEEP_CHOICES,
+                    selected,
+                    |index| {
+                        let minutes = SLEEP_CHOICES[index];
+                        if minutes == 0 {
+                            strings.sleep_off.to_owned()
+                        } else {
+                            i18n::fill(strings.sleep_minutes, &[("minutes", &minutes.to_string())])
+                        }
+                    },
+                )
+            },
+        ) {
+            let minutes = SLEEP_CHOICES[index];
+            actions.push(UiAction::SetSleepTimer((minutes > 0).then_some(minutes)));
+        }
+        divider(ui, palette, alpha);
+        let wrap = state.settings.queue_wrap;
+        if switch_row(
+            ui,
+            &dim,
+            strings.queue_wrap,
+            Some(strings.queue_wrap_hint),
+            wrap,
+            true,
+        )
+        .clicked()
+        {
+            actions.push(UiAction::SetQueueWrap(!wrap));
+        }
     });
 }
 

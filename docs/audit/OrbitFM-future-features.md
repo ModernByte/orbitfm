@@ -3,7 +3,7 @@
 | Поле | Значение |
 |------|----------|
 | **Дата** | 2026-11-03 |
-| **База** | OrbitFM `0.17.0-rc.2` (коммит `704b77c`) |
+| **База** | OrbitFM `0.17.0-rc.3`; enabler-пункты §2 реализованы в `0.18.0-rc.1` |
 | **Статус** | Продуктовые предложения; не ADR и не обязательство релиза |
 | **Приоритет владельца** | **Android-приложение — в приоритете** |
 
@@ -15,23 +15,24 @@
 
 Краткий снимок, чтобы не предлагать дубли:
 
-| Область | Состояние (0.17) |
-|---------|------------------|
+| Область | Состояние (0.18.0-rc.1) |
+|---------|--------------------------|
 | Desktop Linux-first | eframe/egui/wgpu, libmpv, single-instance IPC |
 | Окно | Focus / Overlay / Listening / Panel |
 | Каталог | Radio Browser + stream import + SSRF |
 | UX | Orbital Desk, heatmap, markers, favorites/history |
 | Аудио-UI | cava-like visualizer, globe motion, orbit ring |
-| Локализация | System + 10 языков |
+| Локализация | System + 16 языков |
 | Интеграции | Noctalia, Waybar, Plasma6, GNOME, Omarchy, polybar, swaybar, i3*, browser (Chrome/Firefox native host) и др. |
 | Устойчивость | offline stations snapshot, adaptive bitrate path |
+| Ритуалы | sleep timer, `queue_wrap`, экспорт/импорт библиотеки |
 | Packaging | AppImage, Flatpak, MSI, DMG |
 
 **Вывод:** desktop-ядро насыщено. Рост — через **мобильный companion**, ритуалы слушания и гигиену кода; не через «ещё один DE-виджет» как главный трек.
 
 ---
 
-## 1. Приоритет A — Android-приложение
+## 1. Приоритет A — Android-приложение (ADR-0045 принят, кода нет)
 
 ### 1.1. Зачем
 
@@ -82,18 +83,19 @@
 - Дублирование всех WindowMode desktop.
 - Встраивание всех bar-plugin концепций.
 
-### 1.7. Технический контур (предложение, не ADR)
+### 1.7. Технический контур (зафиксирован в ADR-0045)
 
-| Слой | Вариант | Комментарий |
-|------|---------|-------------|
+| Слой | Решение ADR-0045 | Комментарий |
+|------|------------------|-------------|
 | Язык UI | Kotlin + Jetpack Compose | Стандарт Android 2026 |
-| Плеер | Media3 (ExoPlayer) | Нативные stream; HLS/icy по возможности |
-| Фон | `MediaSessionService` + FGS | Требование Android 8+ / 14+ политики |
+| Плеер | Media3 (ExoPlayer) | Нативные stream, ICY через `IcyHeaders`/`IcyInfo` |
+| Фон | `MediaSessionService` + FGS `mediaPlayback` | Требование Android 8+ / 14+ политики |
 | Сеть | OkHttp / Ktor | RB API, DNS discovery по аналогии с desktop |
 | Данные | Room / DataStore | favorites, history, settings |
 | Карта (v1.5) | MapLibre Native или platform Map | Легче, чем порт wgpu-глобуса |
-| DI | Рекомендуется один стиль (Hilt/Koin) | Не принципиально для v1 |
+| DI | Один стиль (Hilt/Koin) | Не принципиально для v1 |
 | Модули | `:app`, `:core:radio`, `:core:player`, `:feature:search` | Не монолит Activity |
+| SDK | `minSdk 26`, `targetSdk 36` | Зафиксировано в ADR-0045 |
 
 **Связь с desktop-кодом:**
 
@@ -113,10 +115,10 @@
 
 | Вопрос | Рекомендация |
 |--------|--------------|
-| Монорепо vs отдельный | **Отдельный** `ModernByte/orbitfm-android` **или** каталог `android/` в monorepo после 0.18 desktop stable |
+| Монорепо vs отдельный | **Отдельный** `ModernByte/orbitfm-android` **или** каталог `android/` в monorepo — открытое решение владельца в ADR-0045 |
 | Versioning | Независимое `1.0.0-alpha` приложения; в README desktop — ссылка «Companion» |
 | CI | GitHub Actions: assembleDebug, lint, unit tests; release AAB отдельно |
-| Минимум SDK | API 26+ (или 29+ для упрощения FGS) — решить в ADR Android |
+| Минимум SDK | `minSdk 26`, `targetSdk 36` — зафиксировано в ADR-0045 |
 
 ### 1.10. Критерии приёмки Android v1
 
@@ -147,11 +149,13 @@
 
 Фичи с высокой ежедневной ценностью при умеренной стоимости. На Android большинство из них тоже нужны.
 
-### 2.1. Sleep timer
+### 2.1. Sleep timer — реализовано в 0.18.0-rc.1 (ADR-0046)
 
 **Суть:** остановить воспроизведение через N минут (15 / 30 / 45 / 60 / custom).
 
-**Desktop:** пункт в transport / settings; IPC `sleep <minutes>` / `sleep clear`; MPRIS не обязан дублировать.  
+**Desktop:** пункт в настройках («Аудио», 15/30/45/60/90 и «выключен»), IPC
+`sleep <minutes>` / `sleep clear`, поле `sleep` в `status --json`; срабатывает
+и при закрытом окне.  
 **Android:** must в v1.5, should в v1 если успевает.
 
 **Детали:**
@@ -160,9 +164,11 @@
 - Опция «уменьшать громкость последние 2 минуты» (fade) — nice-to-have.
 - Уведомление «эфир остановлен по таймеру».
 
-### 2.2. Очередь и осмысленный Next/Previous
+### 2.2. Очередь и осмысленный Next/Previous — база в 0.18.0-rc.1 (ADR-0046)
 
-**Суть:** не только roulette, а контекстная очередь.
+**Суть:** не только roulette, а контекстная очередь. Семантика видимой очереди,
+краёв и `queue_wrap` уже зафиксирована; остаются расширенные контексты
+(например, «назад по history stack»).
 
 | Контекст | Next |
 |----------|------|
@@ -171,16 +177,22 @@
 | Избранное | следующая в favorites |
 | История | previous = назад по history stack |
 
-**IPC:** `next`, `previous` с гарантированной семантикой (документировать в interfaces).  
-**UI:** не показывать next, если очередь из одного элемента без wrap-режима (настройка wrap on/off).
+**IPC:** `next`, `previous` с гарантированной семантикой — реализовано в
+`docs/interfaces/05-ipc.md` и `docs/interfaces/10-session.md` (0.18.0-rc.1).  
+**UI:** кнопки, MPRIS `CanGoNext/CanGoPrevious` и `can` в статусе гаснут по
+позиции при `queue_wrap = false` (ADR-0046).
 
-### 2.3. Экспорт / импорт библиотеки
+### 2.3. Экспорт / импорт библиотеки — реализовано в 0.18.0-rc.1 (ADR-0046)
 
 **Суть:** JSON (и опционально простой OPML-like список URL) для избранного и истории.
 
-- Схема versioned (`schema: 1`), совместима с Android import.
-- Desktop: Settings → About/Data → Export / Import.
-- Безопасность: import только http(s) URL через существующий SSRF classifier перед play.
+- Схема versioned (`schema: 1`), совместима с Android import — контракт
+  `docs/interfaces/15-library-export.md`.
+- Desktop: IPC/CLI `library-export`/`library-import`; GUI-кнопок и file picker
+  в 0.18.0-rc.1 нет.
+- Безопасность: импорт принимает только публичные http(s) URL (та же политика
+  `publishable`, ADR-0025), лимиты 2 МиБ / 5000 станций, санитизация строк;
+  на Unix файл пишется с правами `0600`.
 
 ### 2.4. Профиль сети (Network profile)
 
@@ -289,12 +301,15 @@
                             public HTTPS streams
 ```
 
-**Общие артефакты (документировать в `docs/interfaces/`):**
+**Общие артефакты:**
 
-1. Schema `library` export/import v1.  
-2. Правила publishable URL (ссылка на ADR-0025 / ssrf policy).  
-3. Семантика metadata станции (uuid, name, url, countrycode, tags, bitrate).  
-4. Deep link format (v2): `orbitfm://station/<uuid>` на desktop; `https://` app links на Android — отдельное решение.
+1. Schema `library` export/import v1 — `docs/interfaces/15-library-export.md`
+   (реализовано в 0.18.0-rc.1).  
+2. Правила publishable URL — ADR-0025 и `crate::services::publishable`.  
+3. Семантика metadata станции (uuid, name, url, countrycode, tags, bitrate) —
+   ADR-0045 § 3.  
+4. Deep link format (v2): `orbitfm://station/<uuid>` на desktop; `https://`
+   app links на Android — отдельное решение, в ADR-0045 не входит.
 
 ---
 
@@ -302,10 +317,10 @@
 
 ### Волна 1 — Android foundation + desktop enablers
 
-1. ADR: Android Companion (scope v1 / non-goals).  
-2. Desktop: **export/import library** (разблокирует перенос избранного).  
-3. Android A1–A2: player + search + favorites.  
-4. Desktop: **sleep timer** + IPC (паритет с будущим Android).
+1. [x] ADR: Android Companion (ADR-0045, scope v1 / non-goals).  
+2. [x] Desktop: **export/import library** (0.18.0-rc.1, интерфейс 15).  
+3. [ ] Android A1–A2: player + search + favorites.  
+4. [x] Desktop: **sleep timer** + IPC (0.18.0-rc.1, ADR-0046).
 
 ### Волна 2 — Companion usable daily
 
@@ -354,6 +369,7 @@ Discord RPC, D-Bus, desktop Actions, Telegram bot — по одному, по с
 | Дата | Изменение |
 |------|-----------|
 | 2026-11-03 | Первая версия: идеи после 0.17.0-rc.2; Android Companion как приоритет A |
+| 2026-11-03 | Волна 1: Android Companion зафиксирован ADR-0045; sleep timer, `queue_wrap` и экспорт/импорт библиотеки реализованы в 0.18.0-rc.1 (ADR-0046, интерфейс 15); отмечены статусы §2 и артефакты §6 |
 
 ---
 

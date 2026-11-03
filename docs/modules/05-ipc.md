@@ -19,7 +19,7 @@
 
 | Файл | Назначение |
 |------|------------|
-| `mod.rs` | Публичный фасад (`IpcServer`, `IpcCommand`, `WindowModeArg`, `IpcError`, `IpcRequest`, `StatusFeed`, `WakeFn`) |
+| `mod.rs` | Публичный фасад (`IpcServer`, `IpcCommand`, `WindowModeArg`, `ThemeArg`, `MAX_SLEEP_MINUTES`, `IpcError`, `IpcRequest`, `StatusFeed`, `WakeFn`) |
 | `protocol.rs` | Разбор/сериализация команд, лимиты, ошибки |
 | `client.rs` | Клиент: одноразовый запрос и долгоживущая подписка `events` |
 | `events.rs` | `StatusFeed`, конверт NDJSON, keepalive и бюджеты подписок (ADR-0039) |
@@ -95,13 +95,38 @@ pub enum IpcCommand {
     Play { station_uuid: String },
     Stop,
     Status,
+    StatusJson,                     // `status --json` — схема 1 (ADR-0037)
+    Events,                         // `events` — поток кадров NDJSON (ADR-0039)
     ModeQuery,                      // `mode` — спросить текущий режим
     SetMode { mode: WindowModeArg }, // `mode <режим>` — переключить
     Quit,
     Volume { level: f64 },
-    Raw(String),                     // для расширяемости протокола
+    VolumeUp,                       // `volume-up` — шаг +0.1
+    VolumeDown,                     // `volume-down` — шаг −0.1
+    PlayPause,                      // `playpause` — toggle воспроизведения
+    Next,                           // `next` — следующая станция очереди
+    Previous,                       // `previous` — предыдущая станция очереди
+    Roulette,                       // `roulette` — радиорулетка
+    Theme { mode: ThemeArg },       // `theme <system|dark|light>`
+    Settings,                       // `settings` — окно настроек
+    Search { query: String },       // `search <запрос>` — поиск попапа
+    Library,                        // `library` — избранное и история попапа
+    Favorite { station_uuid: Option<String> },
+    PlayResult { station_uuid: String },  // только из последней выдачи
+    PlayLibrary { station_uuid: String }, // только из библиотеки
+    PlayUrl { url: String },        // импорт внешнего потока (ADR-0040)
+    SetSleep { minutes: u16 },      // `sleep <1..=720>` (ADR-0046)
+    ClearSleep,                     // `sleep clear`
+    LibraryExport { path: String }, // `library-export <путь>` (ADR-0046)
+    LibraryImport { path: String }, // `library-import <путь>`
+    Raw(String),                    // для расширяемости протокола
 }
 ```
+
+`ThemeArg` (`system|dark|light`) — такой же wire-тип, как `WindowModeArg`;
+доменный `ThemeMode` из него получает Core. Лимиты аргументов:
+`MAX_SEARCH_CHARS = 128`, `MAX_PLAY_URL_BYTES = 2048`,
+`MAX_SLEEP_MINUTES = 720`.
 
 `WindowModeArg` — часть wire-контракта: `src/ipc/` не импортирует доменный
 `WindowMode` из `src/session/window.rs`. Преобразование живёт в Application Core
@@ -146,12 +171,30 @@ hide
 panel
 overlay
 play <stationuuid>
+playpause
+next
+previous
+roulette
 stop
 status [--json]
 events
 mode [focus|overlay|listening|panel]
+theme <system|dark|light>
+settings
 quit
 volume <0.0..=1.0>
+volume-up
+volume-down
+search <запрос>
+library
+favorite [uuid]
+play-result <uuid>
+play-library <uuid>
+play-url <url>
+sleep <1..=720>
+sleep clear
+library-export <путь>
+library-import <путь>
 ```
 
 - `events` — долгоживущая read-only подписка: первая строка `snapshot`, далее
@@ -179,6 +222,12 @@ volume <0.0..=1.0>
   возвращаются как `error <сообщение>`
 - `stop` и `volume` управляют аудио-ядром; `stop` не сбрасывает последний URL, поэтому
   MPRIS `Play` может перезапустить поток
+- `sleep <1..=720>` взводит таймер сна (повтор заменяет дедлайн), `sleep clear`
+  снимает его; ответ — `ok`/`error`, таймер переживает скрытие окна, но не выход
+  процесса (ADR-0046)
+- `library-export <путь>` и `library-import <путь>` пишут/читают JSON схемы 1
+  (`docs/interfaces/15-library-export.md`); путь не может быть пустым, лимиты и
+  слияние задаёт библиотека
 - Завершение ответа — EOF; сервер пишет финальный `\n` и закрывает соединение
 - Пустой ответ и неизвестная команда (`Raw`) обрабатываются как ошибки на стороне App
 - Лишние аргументы и невалидный `volume` отклоняются на этапе разбора
@@ -233,8 +282,9 @@ volume <0.0..=1.0>
 
 Покрыто в `src/ipc/`:
 
-- разбор всех команд, `play`, `volume`, `mode` (запрос и установка), отказ невалидных
-  значений, неизвестного режима и лишних аргументов;
+- разбор всех команд, `play`, `volume`, `mode` (запрос и установка), `sleep`
+  (диапазон `1..=720`, `clear`) и `library-export`/`library-import`, отказ
+  невалидных значений, неизвестного режима и лишних аргументов;
 - сохранение неизвестных команд как `Raw` и round-trip через wire-формат;
 - запрос → очередь → `try_respond` → ответ клиенту + вызов `wake`;
 - `AlreadyRunning` для живого сокета;

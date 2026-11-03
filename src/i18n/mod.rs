@@ -256,6 +256,12 @@ mod tests {
                 volume,
                 volume_hint,
                 audio_hint,
+                sleep_timer,
+                sleep_timer_hint,
+                sleep_off,
+                sleep_minutes,
+                queue_wrap,
+                queue_wrap_hint,
                 motion_reactivity,
                 motion_spin_hint,
                 motion_style,
@@ -374,6 +380,7 @@ mod tests {
                 language_not_saved,
                 visualizer_not_saved,
                 fft_unavailable,
+                sleep_expired,
             }
         );
         assert_group_non_empty!(

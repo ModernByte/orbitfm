@@ -238,6 +238,10 @@ fn forbidden(command: &IpcCommand) -> Option<(&'static str, &'static str)> {
         IpcCommand::ModeQuery | IpcCommand::SetMode { .. } => {
             Some(("forbidden", "команда mode запрещена"))
         }
+        // Браузерное расширение не должно писать файлы библиотеки.
+        IpcCommand::LibraryExport { .. } | IpcCommand::LibraryImport { .. } => {
+            Some(("forbidden", "команда библиотеки запрещена"))
+        }
         IpcCommand::Raw(_) => Some(("forbidden", "неизвестная команда")),
         _ => None,
     }
@@ -338,6 +342,8 @@ mod tests {
         assert!(forbidden(&command("play 9604b0f1-aaaa")).is_some());
         assert!(forbidden(&command("mode")).is_some());
         assert!(forbidden(&command("mode panel")).is_some());
+        assert!(forbidden(&command("library-export /tmp/a.json")).is_some());
+        assert!(forbidden(&command("library-import /tmp/a.json")).is_some());
         assert!(forbidden(&IpcCommand::Raw("future".into())).is_some());
     }
 
@@ -368,6 +374,8 @@ mod tests {
             "play-result 9604b0f1-aaaa",
             "play-library 9604b0f1-aaaa",
             "play-url https://example.org/live.m3u",
+            "sleep 45",
+            "sleep clear",
         ] {
             assert!(forbidden(&command(raw)).is_none(), "{raw}");
         }

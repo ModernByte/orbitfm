@@ -16,7 +16,8 @@ ADR-0021 «Режимы окна (`WindowMode`)», ADR-0026 «macOS: меню-б
 (модальное окно настроек, громкость commit-on-release), ADR-0037 «Единая
 поверхность интеграции: JSON-статус, CLI-команды и установщик», ADR-0041
 «Встроенные шрифты и мастер первого запуска», ADR-0043 «Офлайн-снимок станций
-и адаптация к плохой сети»
+и адаптация к плохой сети», ADR-0046 «Ритуалы слушания: таймер сна, очередь
+и перенос библиотеки»
 
 ---
 
@@ -57,7 +58,7 @@ Core не принимают `&egui::Context` — детали в `docs/interfac
 | `media` | `Option<MediaControls>` | `None`, когда MPRIS недоступен (нет D-Bus); тогда очередь команд нет |
 | `tray` | `Option<TrayHandle>` | `None`, когда SNI-хоста нет или сборка без фичи `tray`; сам `Option` меняется и в рантайме: мёртвый трей `sync_tray` выключает ветку |
 | `library` | `StationLibrary` | Избранное и история (до 20 записей, `HISTORY_LIMIT`) |
-| `settings` | `SettingsStore` | Тема, акцент, язык, `viz_bars`, `volume`, `visualizer_enabled`, `artwork_allow_http`, признаки движения, `help_visible`, `onboarding_done`; `Session::new` восстанавливает из него громкость и решает, показывать ли мастер первого запуска |
+| `settings` | `SettingsStore` | Тема, акцент, язык, `viz_bars`, `volume`, `visualizer_enabled`, `artwork_allow_http`, признаки движения, `help_visible`, `onboarding_done`, `queue_wrap`; `Session::new` восстанавливает из него громкость и решает, показывать ли мастер первого запуска |
 | `runtime` | `tokio::runtime::Handle` | `block_on` для коротких аудио-операций и `spawn` для сетевых задач |
 | `wake` | `WakeHandle` | Разделяемый слот пробуждения: `Arc<Mutex<Option<Notifier>>>` |
 
@@ -80,6 +81,7 @@ Core не принимают `&egui::Context` — детали в `docs/interfac
 | `reveal_station` | `Option<String>` | Разовая просьба прокрутить строку в центр; взводится `select_station`, забирается `take_station_reveal` в начале кадра панели |
 | `search` | `SearchState` | Всё о поиске: строки запросов, контекст, результаты, поколение, незавершённые задания, признак `offline` (ответ собран из снимка) |
 | `economy` | `EconomyState` | Адаптация к плохой сети (ADR-0043 § 3–4): буфер `true/false`, таймер буферизации, право на один подбор лёгкой альтернативы на станцию, признак ECO и незавершённый фоновый поиск |
+| `sleep` | `SleepTimer` (`sleep.rs`) | Таймер сна (ADR-0046): дедлайн и выбранные минуты; переживает закрытие окна, не переживает выход процесса; `poll_sleep` вызывает `stop_playback` и `NoticeKey::SleepExpired` |
 | `markers` | `Vec<GlobeMarker>` | Маркеры глобуса: подмножество строк текущего списка с координатами (ADR-0036, ревизия 2026-10-28 (второе)) |
 | `world` | `WorldBaseline` | Счётчики стран, мировой топ, `revision`, `offline` (на карте локальный снимок), `saved_at` и `snapshot_disabled` (ADR-0035, ADR-0043) |
 | `library_tab` | `LibraryTab` | Активная вкладка панели = источник очереди `prev`/`next` |
@@ -137,22 +139,23 @@ MPRIS и `TraySnapshot` (ADR-0026), а `window_visible()` читают `status`,
 | `mod.rs` | Ядро: владение подсистемами, пробуждение, окно настроек, язык и мастер первого запуска, `status`, `status --json`, исследование видимости для macOS, ре-экспорт контрактов пакета | `Session`, `AppServices`, `Notice`, `NoticeKey`, `ParkOutcome`, `WakeHandle`, `LibraryTab`, `StationStartError`; наружу из `window.rs` — `UiIntent`, `WindowMode`, `WindowState`, `WINDOW_TITLE` |
 | `notice.rs` | Типизированные сообщения пользователю: ядро называет причину, строку берёт каталог `i18n` (ADR-0030) | `Notice { Info(NoticeKey), Error { key, detail } }`, `NoticeKey` |
 | `window.rs` | Состояние окна: режим (`WindowMode`), геометрия и заголовки по режиму, намерения UI (`Show`/`Hide`/`Close`), признак перезапуска, видимость без пересоздания вьюпорта (ADR-0018, ADR-0021, ADR-0026) | `WindowMode` (+ `ALL`/`default_size`/`min_size`/`title`/`as_str`/`is_borderless`), `UiIntent`, `WindowState` (+ `mark_hidden`/`mark_shown`), `WINDOW_SIZE`, `WINDOW_MIN_SIZE`, `WINDOW_TITLE`, `OVERLAY_SIZE`, `OVERLAY_MIN_SIZE`, `OVERLAY_TITLE`, `LISTENING_SIZE`, `LISTENING_MIN_SIZE`, `LISTENING_TITLE`, `PANEL_SIZE`, `PANEL_MIN_SIZE`, `PANEL_TITLE` |
-| `commands.rs` | Разбор `IpcCommand` (общий для окна и парковки), `impl From<WindowModeArg> for WindowMode`, `impl From<ThemeArg> for ThemeMode`, диспетчеризация команд управления (ADR-0037) и настроек оформления, языка и движения | `Session::{execute, process_commands, set_theme, set_accent, set_language, set_viz_bars, set_visualizer_enabled, set_artwork_allow_http, set_motion, set_motion_style, set_allow_flips, set_reduce_motion, settle_analysis, set_help_visible}` |
-| `playback.rs` | Аудио-события, запуск/остановка, выбор станции, громкость commit-on-release, избранное, история, очередь `prev`/`next`, витрина MPRIS через гейт публикации | `Session::{process_audio_events, apply_audio_event, resolve_station, start_station, select_station, take_station_reveal, spawn_click, toggle_favorite, clear_history, focus_country, set_volume, preview_volume, commit_volume, flush_pending_volume, set_audio_paused, resume_playback, toggle_playback, stop_playback, process_media_commands, execute_media_command, visible_queue, visible_queue_len, play_relative, sync_media}` |
+| `commands.rs` | Разбор `IpcCommand` (общий для окна и парковки), `impl From<WindowModeArg> for WindowMode`, `impl From<ThemeArg> for ThemeMode`, диспетчеризация команд управления (ADR-0037), настроек оформления, языка, движения, таймера сна и переноса библиотеки | `Session::{execute, process_commands, set_theme, set_accent, set_language, set_viz_bars, set_visualizer_enabled, set_artwork_allow_http, set_motion, set_motion_style, set_allow_flips, set_reduce_motion, set_queue_wrap, settle_analysis, set_help_visible}`; `library-export`/`library-import` обрабатываются прямо в `execute` через `StationLibrary::{export_to, import_from}` |
+| `playback.rs` | Аудио-события, запуск/остановка, выбор станции, громкость commit-on-release, избранное, история, очередь `prev`/`next` с учётом `queue_wrap`, витрина MPRIS через гейт публикации | `Session::{process_audio_events, apply_audio_event, resolve_station, start_station, select_station, take_station_reveal, spawn_click, toggle_favorite, clear_history, focus_country, set_volume, preview_volume, commit_volume, flush_pending_volume, set_audio_paused, resume_playback, toggle_playback, stop_playback, process_media_commands, execute_media_command, visible_queue, visible_queue_len, play_relative, skip_availability, sync_media}` |
 | `economy.rs` | Экономный режим (ADR-0043 § 3–4): профиль буфера, таймер буферизации, однократный подбор более лёгкого дубля и признак ECO | `EconomyState`, `Session::{observe_economy, note_station_selected, poll_economy, note_reconnect_attempt, economy_stream}` (приватные `enter_economy`, `try_economy_alternative`, `poll_economy_alternative`, `start_alternative`, `alternative_from`) |
 | `publish_gate.rs` | Вердикт яруса 2 для публикуемых метаданных (ADR-0025 ред. 4): bounded-кэш `url → публичный/нет`, TTL 60 с, stale-while-revalidate; резолв фоном, пробуждение кадра | `PublishGate` (+ `new`/`permits`), приватные `Verdict`, `refresh`, `evict` |
+| `sleep.rs` | Таймер сна (ADR-0046): дедлайн, остаток, проверка срабатывания в `tick` и `park`, остановка эфира и уведомление | `SleepTimer` (+ `set`/`clear`/`deadline`/`minutes`/`remaining`/`expired`), `Session::{set_sleep, clear_sleep, sleep_remaining, sleep_deadline, sleep_minutes, poll_sleep, sleep_repaint_after}` |
 | `search.rs` | Поиск по имени/стране/жанру с поколениями ответов, локальный офлайн-fallback и рулетка | `SearchMode`, `SearchContext`, `SearchState`, `SearchResponse`, `STATION_LOOKUP_TIMEOUT`, `Session::{start_search, start_country_search, start_genre_search, switch_mode, poll_search, load_more, retry_search, country_total, start_roulette, poll_roulette, apply_roulette}` |
 | `markers.rs` | Агрегация станций с координатами в маркеры глобуса | `GlobeMarker`, `build_markers` (+ `#[cfg(test)] sample_station`, `geo_station`) |
 | `heat.rs` | Метрики тепловой карты стран (ADR-0035): нормировка в `0,15..=1` по выборке станций и по глобальным счётчикам | `CountryMetric` (+ `ALL`/`is_on`), `intensities`, `densities` |
 | `world.rs` | Глобальный снимок Radio Browser для карты (ADR-0035) и локальный офлайн-снимок станций (ADR-0043): подстановка до сети, запись после живого ответа, очистка | `WorldBaseline` (+ `counts`/`sample`/`sample_shared`/`revision`/`offline`), `Session::{load_snapshot, start_world, poll_world, clear_offline_snapshot}` (приватные `adopt_snapshot`, `save_world_snapshot`) |
 | `tray.rs` | Трей: публикация снимка и исполнение `TrayCommand` тем же dispatch; `nudge_volume` общий для трея, IPC `volume-up/down` и media-команд | `Session::{sync_tray, process_tray_commands, execute_tray_command, nudge_volume}` (приватный `tray_snapshot`) |
-| `park.rs` | Простой без окна: `select!` по IPC, MPRIS, трею, аудио и ответу рулетки | `ParkOutcome`, `Session::park` (приватные `Parked`, `wait_on`, `media_recv`, `tray_recv`, `roulette_recv`) |
+| `park.rs` | Простой без окна: `select!` по IPC, MPRIS, трею, аудио, рулетке, импорту потока, поиску попапа и дедлайну таймера сна | `ParkOutcome`, `Session::park` (приватные `Parked`, `wait_on`, `media_recv`, `tray_recv`, `roulette_recv`, `stream_recv`, `companion_recv`, `sleep_until`) |
 
 Помощники `mpris_artist`, `country_search_params`, `roulette_label`,
 `station_geo`, `station_popularity`, `analysis_required`, `sync_analysis`,
 `apply_and_persist_volume`, `Parked`, `wait_on`, `media_recv`, `tray_recv`,
-`roulette_recv`, `format_status` остаются приватными: ими пользуются один-два
-файла пакета. Локализованные подписи режимов, тем и стилей движения живут не в
+`roulette_recv`, `stream_recv`, `companion_recv`, `sleep_until`, `format_status`
+остаются приватными: ими пользуются один-два файла пакета. Локализованные подписи режимов, тем и стилей движения живут не в
 Core: `src/i18n/labels.rs` и `mode_label` в `src/ui/settings_panel.rs`.
 
 ## 4. Поведение
@@ -229,12 +232,21 @@ ECO, таймер, попытку и буфер. `EndOfFile` в Core ничег�
 | `Results` без контекста | `search.results.clone()` |
 
 `play_relative(step: i8)`: пустой снапшот — no-op; позиция текущей станции ищется
-по `stationuuid`; шаг считается как `(index + step).rem_euclid(len)`, то есть со
-циклом в обе стороны. Если текущей станции в списке нет, `+1` даёт первый
-элемент, `-1` — последний. Запуск станции идёт через `start_station`, ошибка —
-`NoticeKey::StationWithoutUrl` или `NoticeKey::PlaybackFailed` с технической
-подробностью. Источники одинаковые: кнопки `⏮`/`⏭` (`UiAction::PlayRelative`) и
-MPRIS `Next`/`Previous`.
+по `stationuuid`. При `queue_wrap = true` шаг считается как
+`(index + step).rem_euclid(len)`, то есть с циклом в обе стороны; при
+`queue_wrap = false` шаг за край списка — no-op (ADR-0046). Если текущей станции
+в списке нет, `+1` даёт первый элемент, `-1` — последний. Запуск станции идёт
+через `start_station`, ошибка — `NoticeKey::StationWithoutUrl` или
+`NoticeKey::PlaybackFailed` с технической подробностью. Источники одинаковые:
+кнопки `⏮`/`⏭` (`UiAction::PlayRelative`), MPRIS `Next`/`Previous` и IPC
+`next`/`previous`.
+
+`skip_availability() -> (bool, bool)` — общий ответ для MPRIS
+`CanGoNext/CanGoPrevious`, полей `can` в `status --json` и кнопок транспорта:
+пустая очередь — `(false, false)`; с `queue_wrap` — `(true, true)`;
+без wrap — по позиции текущей станции (`index > 0`, `index + 1 < len`);
+отсутствие текущей станции в списке и `wrap` дают `(true, true)`, потому что
+шаг ведёт к краю списка.
 
 ### 4.6. Синхронизация с MPRIS
 
@@ -255,8 +267,8 @@ MPRIS `Next`/`Previous`.
 публичный вердикт яруса 2 из кэша; нет вердикта — пустая строка, резолв идёт
 фоном (ADR-0025 ред. 4, п. 12); `url` — `url_resolved` под тем же гейтом
 (если непустой после `trim`), иначе `current_url` под гейтом, иначе пустая
-строка; `volume` — `audio.volume()`; `can_go_next`/`can_go_previous` —
-`visible_queue_len() > 0`, то есть число станций в очереди без клонирования.
+строка; `volume` — `audio.volume()`; `can_go_next`/`can_go_previous` — пара
+`skip_availability()`, учитывающая `queue_wrap` и позицию текущей станции.
 Без `current_station` заголовок — URL потока
 (пустой URL при наличии трека даёт `WINDOW_TITLE`), `artist` и `art_url` — `None`.
 Ошибка `set_playback` только логируется.
@@ -392,12 +404,17 @@ accent-строку списка и белое кольцо маркера по�
 Порядок фиксирован (`src/session/mod.rs`):
 
 ```
-process_audio_events → poll_economy → process_commands
+poll_sleep → process_audio_events → poll_economy → process_commands
 → process_media_commands → process_tray_commands → poll_search
 → poll_companion_search → poll_stream_import → poll_roulette → poll_world
 → start_world → sync_media → sync_tray
 → spectrum_enabled = audio.spectrum_enabled() → publish_status
 ```
+
+`poll_sleep` стоит первым: сработавший дедлайн должен остановить эфир до
+обработки команд кадра (ADR-0046). Presentation дополнительно планирует
+перерисовку к `sleep_repaint_after()`, поэтому таймер срабатывает без
+пользовательских событий.
 
 Снимок мира (`world.rs`, ADR-0035) запрашивается один раз за сессию:
 `Session::new` подставляет офлайн-снимок (`load_snapshot`), затем вызывает
@@ -412,30 +429,37 @@ process_audio_events → poll_economy → process_commands
 
 ### 4.11. `park()`
 
-Цикл: `runtime.block_on(wait_on(&mut commands, &mut audio_events, &mut media,
-&mut tray, &mut search.roulette_rx))` → обработка одного события
-(`Parked::Ipc` → `execute` + `try_respond`, `Parked::Audio` → `apply_audio_event`,
-`Parked::Media` → `execute_media_command`, `Parked::Tray` → `execute_tray_command`,
-`Parked::Roulette` → `apply_roulette`, `Parked::QueueClosed` → `quit()`) →
-`sync_media()` + `sync_tray()` → проверка `is_quitting()` (`ParkOutcome::Quit`) и
-`intent == Some(UiIntent::Show)` (`ParkOutcome::Show`).
+Цикл: перед каждым `runtime.block_on(wait_on(...))` вычисляется
+`sleep_deadline()`; `wait_on` получает `commands`, `audio_events`, `media`,
+`tray`, `search.roulette_rx`, `pending_stream`, `companion.rx` и дедлайн.
+Обработка одного события: `Parked::Ipc` → `execute` + `try_respond` (кроме
+`play-url`, который уходит в `begin_play_url`), `Parked::Audio` →
+`apply_audio_event`, `Parked::Media` → `execute_media_command`, `Parked::Tray` →
+`execute_tray_command`, `Parked::Roulette` → `apply_roulette`, `Parked::Stream` →
+`finish_stream_import`, `Parked::CompanionSearch` → `apply_companion_response`,
+`Parked::Sleep` → `poll_sleep`, `Parked::QueueClosed` → `quit()`. Затем
+`sync_media()` + `sync_tray()` + `publish_status()` и проверка `is_quitting()`
+(`ParkOutcome::Quit`) и `intent == Some(UiIntent::Show)` (`ParkOutcome::Show`).
 
-`wait_on` собран из пяти веток `tokio::select!`; закрытый `audio_events`,
-отсутствие `MediaControls`, отсутствующий или мёртвый `TrayHandle` и невызванная
-рулетка не будят цикл зря (`Err(_) => continue`, а `media_recv`, `tray_recv` и
-`roulette_recv` для `None` возвращают `std::future::pending()`). Исполнение команд
-намеренно вынесено из async-контекста: `execute` зовёт `Handle::block_on` для
-операций аудио-ядра. `Parked::QueueClosed` — это закрытие очереди IPC-сервером
-(отправитель живёт в `Session`, так что у MPRIS- и трей-веток такой причины выхода
-нет): держать процесс без канала нечем, поэтому он трактуется как выход.
+`wait_on` собран из восьми веток `tokio::select!`; закрытый `audio_events`,
+отсутствие `MediaControls`, отсутствующий или мёртвый `TrayHandle`, невызванная
+рулетка, отсутствующий импорт, поиск попапа и выключенный таймер не будят цикл
+зря (`Err(_) => continue`, а `media_recv`, `tray_recv`, `roulette_recv`,
+`stream_recv`, `companion_recv` и `sleep_until` для `None` возвращают
+`std::future::pending()`). Исполнение команд намеренно вынесено из
+async-контекста: `execute` зовёт `Handle::block_on` для операций аудио-ядра.
+`Parked::QueueClosed` — это закрытие очереди IPC-сервером (отправитель живёт в
+`Session`, так что у MPRIS- и трей-веток такой причины выхода нет): держать
+процесс без канала нечем, поэтому он трактуется как выход.
 
 В припаркованном состоянии без UI исполняются IPC-команды `play`, `stop`,
 `volume`, `volume-up`, `volume-down`, `playpause`, `next`, `previous`,
-`roulette`, `theme`, `status`, `status --json`, `mode` (обе формы), все
-`MediaCommand` (`Play`, `Pause`, `PlayPause`, `Stop`,
-`SetVolume`, `Next`, `Previous`) и все `TrayCommand` (`Toggle`, `Show`,
-`PlayPause`, `Stop`, `Previous`, `Next`, `Roulette`, `VolumeUp`, `VolumeDown`,
-`SetTheme`, `Settings`, `Quit`). `hide` ничего не делает (окно уже закрыто), `show`,
+`roulette`, `theme`, `status`, `status --json`, `mode` (обе формы), `search`,
+`library`, `favorite`, `play-result`, `play-library`, `play-url`, `sleep`,
+`sleep clear`, `library-export`, `library-import`, все `MediaCommand` (`Play`,
+`Pause`, `PlayPause`, `Stop`, `SetVolume`, `Next`, `Previous`) и все
+`TrayCommand` (`Toggle`, `Show`, `PlayPause`, `Stop`, `Previous`, `Next`,
+`Roulette`, `VolumeUp`, `VolumeDown`, `SetTheme`, `Settings`, `Quit`). `hide` ничего не делает (окно уже закрыто), `show`,
 `toggle` и `settings` ставят `UiIntent::Show` и выводят `park()` — окно
 настроек открывается уже на следующем показе. `mode <режим>` при
 скрытом окне меняет только `window.mode` и тоже выводит `park()`: новое окно
@@ -665,6 +689,37 @@ Hyprland вызывает `hyprctl keyword windowrulev2` с фиксирован
 арабский зеркалит раскладку. Шаги, строки и кнопки — `src/ui/onboarding.rs`,
 подробности — `docs/modules/14-ui-settings.md` § 4.1.
 
+### 4.18. Таймер сна (ADR-0046)
+
+`SleepTimer` (`sleep.rs`) хранит `deadline: Option<Instant>` и выбранные минуты.
+`set_sleep(minutes)` принимает только `1..=MAX_SLEEP_MINUTES` (720), повторный
+вызов заменяет дедлайн; `clear_sleep` снимает его, отсутствие таймера — no-op.
+`remaining(now)` насыщает остаток нулём, `expired(now)` сравнивает с дедлайном.
+
+Дедлайн проверяется в двух местах:
+
+- при открытом окне — `poll_sleep` первым шагом `tick()`;
+- без окна — отдельной веткой `park()`, которая получает `sleep_deadline` и
+  просыпается ровно к сроку (`sleep_until`), поэтому таймер работает и в
+  простое.
+
+По срабатывании `poll_sleep` вызывает `clear_sleep`, `stop_playback`,
+`notify_info(NoticeKey::SleepExpired)` и `publish_status`. Это **stop**, а не
+pause: сеть и аудио-устройство освобождаются. Presentation планирует
+перерисовку к `sleep_repaint_after()`. Дедлайн не пишется в `settings.json`:
+закрытие окна таймер переживает, выход процесса — нет.
+
+Очередь краёв списка задаёт `queue_wrap` в настройках: при `true`
+`play_relative` зациклен, при `false` шаг за край — no-op, а
+`skip_availability` гасит `can` у соответствующей стороны. Значение меняется
+тумблером в категории «Аудио» и сохраняется сразу.
+
+Перенос библиотеки — `library-export`/`library-import` в `execute`:
+`StationLibrary::export_to`/`import_from` возвращают число избранных или
+`ImportSummary`; ошибки уходят как `error <сообщение>`, успех — `ok exported N`
+и `ok imported N favorites, M history, K skipped`. В GUI-настройках кнопок нет:
+команды предназначены для CLI и будущего Android Companion.
+
 ## 5. Текущие ограничения
 
 - `FaviconCache` с текстурами живёт в `OrbitApp` (`src/app.rs`) и теряется при
@@ -691,9 +746,15 @@ Hyprland вызывает `hyprctl keyword windowrulev2` с фиксирован
   инкапсуляция держится на соглашении «побочные эффекты — только через методы».
 - Показ окна стоит пересоздания UI-прогона (wgpu-адаптер, `GlobeRenderer`,
   шрифты, `egui::Context`) — измерено ≈1.02 с на niri 26.04 (ADR-0018).
-- `Next`/`Previous` исполняются по видимой очереди, и `src/media/mod.rs` рекламит
-  `can_go_next`/`can_go_previous` ровно при непустой очереди — расхождение
-  способностей и поведения устранено.
+- `Next`/`Previous` исполняются по видимой очереди; `can_go_next`/
+  `can_go_previous` в MPRIS, поля `can` в `status --json` и кнопки транспорта
+  берут одну пару `skip_availability()` и учитывают `queue_wrap` (ADR-0046).
+- Таймер сна не переживает выход процесса и не имеет fade: по дедлайну эфир
+  останавливается сразу. Дедлайн не виден трею — только `status --json` и
+  окно настроек.
+- Экспорт/импорт библиотеки не имеет GUI-кнопок и file picker: пути задаются
+  через IPC/CLI. Импорт — слияние, а не зеркало, и не удаляет локальные
+  записи.
 - `WindowMode` реализован в Core, IPC и UI (ADR-0021): `LayoutDensity` в
   `src/ui/layout.rs` даёт Focus полную раскладку, Overlay — капсулу из HUD-строки,
   мини-глобуса и избранного, Listening — строку now-playing (`src/ui/capsule.rs`).
@@ -721,11 +782,13 @@ Hyprland вызывает `hyprctl keyword windowrulev2` с фиксирован
 
 ## 6. Тестирование
 
-Unit-тесты лежат в модулах: `mod.rs` — молчание `WakeHandle` без слота,
+Unit-тесты лежат в модулях: `mod.rs` — молчание `WakeHandle` без слота,
 отсутствие потребности в анализе без окна и его следование настройкам
 визуализатора и движения, все варианты `format_status`, `status_json`
-(stopped/playing, `station: null`, скрытое окно, `can`, локализованный `ui`,
-округление громкости, стабильная схема); `window.rs` —
+(stopped/playing, `station: null`, скрытое окно, `can`, `sleep` активный и
+`null`, локализованный `ui`, округление громкости, стабильная схема);
+`sleep.rs` — диапазон `1..=720`, повторная установка заменяет дедлайн,
+насыщение остатка нулём и no-op очистки; `window.rs` —
 чередование `toggle`, отсутствие намерения при `hide` закрытого окна,
 единичность `Hide` до обработки кадра, обе ветки
 смены режима, единичность `reopen`, `mark_hidden`/`mark_shown`, порядок
@@ -776,7 +839,9 @@ round-trip протокола, `WindowModeArg → WindowMode` и `ThemeArg → T
 - ADR-0037: Единая поверхность интеграции (JSON-статус и команды управления)
 - ADR-0041: Встроенные шрифты и мастер первого запуска
 - ADR-0043: Офлайн-снимок станций и адаптация к плохой сети
+- ADR-0046: Ритуалы слушания — таймер сна, `queue_wrap`, перенос библиотеки
 - `docs/interfaces/10-session.md` — формальный контракт `Session`
+- `docs/interfaces/15-library-export.md` — схема экспорта/импорта
 - `docs/modules/12-tray.md`, `docs/interfaces/11-tray.md` — модуль трея
 - `docs/modules/13-i18n.md`, `docs/interfaces/12-i18n.md` — каталоги строк, в том
   числе `notices` и `labels`

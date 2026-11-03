@@ -7,6 +7,8 @@
 //! аудио-ядро зовёт `Handle::block_on`, поэтому исполнение нельзя оставлять
 //! внутри async-ветки.
 
+use std::time::Instant;
+
 use tokio::sync::{broadcast, mpsc};
 
 use crate::audio::AudioEvent;
@@ -44,6 +46,8 @@ enum Parked {
     CompanionSearch(Option<CompanionResponse>),
     /// IPC-сервер закрыл очередь: держать процесс без смысла нечем.
     QueueClosed,
+    /// Дедлайн таймера сна: эфир останавливается без кадра окна.
+    Sleep,
 }
 
 impl super::Session {
@@ -51,6 +55,7 @@ impl super::Session {
     /// рулетки, пока не попросят показать окно или выйти.
     pub(crate) fn park(&mut self) -> ParkOutcome {
         loop {
+            let sleep_deadline = self.sleep_deadline();
             let event = self.runtime.block_on(wait_on(
                 &mut self.commands,
                 &mut self.audio_events,
@@ -59,6 +64,7 @@ impl super::Session {
                 &mut self.search.roulette_rx,
                 &mut self.pending_stream,
                 &mut self.companion.rx,
+                sleep_deadline,
             ));
             match event {
                 Parked::Ipc(request) => {
@@ -80,6 +86,7 @@ impl super::Session {
                     self.apply_companion_response(response);
                 }
                 Parked::QueueClosed => self.quit(),
+                Parked::Sleep => self.poll_sleep(),
             }
             self.sync_media();
             self.sync_tray();
@@ -95,6 +102,7 @@ impl super::Session {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // все ветки select живут в одном месте
 async fn wait_on(
     commands: &mut mpsc::Receiver<IpcRequest>,
     audio_events: &mut broadcast::Receiver<AudioEvent>,
@@ -103,6 +111,7 @@ async fn wait_on(
     roulette: &mut Option<mpsc::UnboundedReceiver<Result<Station, RadioError>>>,
     stream: &mut Option<PendingStream>,
     companion: &mut Option<mpsc::UnboundedReceiver<CompanionResponse>>,
+    sleep_deadline: Option<Instant>,
 ) -> Parked {
     loop {
         let event = tokio::select! {
@@ -123,8 +132,19 @@ async fn wait_on(
             outcome = roulette_recv(roulette) => Parked::Roulette(Box::new(outcome)),
             outcome = stream_recv(stream) => Parked::Stream(outcome),
             response = companion_recv(companion) => Parked::CompanionSearch(response),
+            () = sleep_until(sleep_deadline) => Parked::Sleep,
         };
         return event;
+    }
+}
+
+/// Таймер сна: без дедлайна ветка не готова никогда.
+async fn sleep_until(deadline: Option<Instant>) {
+    match deadline {
+        Some(deadline) => {
+            tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await;
+        }
+        None => std::future::pending().await,
     }
 }
 

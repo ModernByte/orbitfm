@@ -6,6 +6,8 @@ pub const MAX_COMMAND_BYTES: usize = 4096;
 pub const MAX_SEARCH_CHARS: usize = 128;
 /// Предел длины URL в `play-url`: длиннее не нужен ни одному каталогу.
 pub const MAX_PLAY_URL_BYTES: usize = 2048;
+/// Верхняя граница таймера сна: двенадцать часов.
+pub const MAX_SLEEP_MINUTES: u16 = 720;
 
 /// Аргумент глагола `mode` — целевой режим окна (ADR-0021 п. 5).
 ///
@@ -150,6 +152,20 @@ pub enum IpcCommand {
     PlayUrl {
         url: String,
     },
+    /// `sleep <минуты>`: остановить эфир через заданное время (1..=720).
+    SetSleep {
+        minutes: u16,
+    },
+    /// `sleep clear`: отменить таймер сна.
+    ClearSleep,
+    /// `library-export <путь>`: выгрузить избранное и историю в JSON схемы 1.
+    LibraryExport {
+        path: String,
+    },
+    /// `library-import <путь>`: слить избранное и историю из JSON схемы 1.
+    LibraryImport {
+        path: String,
+    },
     /// Неизвестная команда сохраняется для расширения протокола.
     Raw(String),
 }
@@ -274,6 +290,49 @@ impl IpcCommand {
                 let url = parse_play_url(line, name)?;
                 Ok(Self::PlayUrl { url })
             }
+            "sleep" => match parts.next() {
+                Some("clear") => {
+                    reject_extra_args(parts.next())?;
+                    Ok(Self::ClearSleep)
+                }
+                Some(raw) => {
+                    let minutes = raw.parse::<u16>().map_err(|_| {
+                        IpcError::InvalidArgument(format!("sleep: некорректное число: {raw}"))
+                    })?;
+                    if !(1..=MAX_SLEEP_MINUTES).contains(&minutes) {
+                        return Err(IpcError::InvalidArgument(format!(
+                            "sleep: минуты должны быть в диапазоне 1..={MAX_SLEEP_MINUTES}"
+                        )));
+                    }
+                    reject_extra_args(parts.next())?;
+                    Ok(Self::SetSleep { minutes })
+                }
+                None => Err(IpcError::InvalidArgument(
+                    "sleep: ожидается число минут или clear".into(),
+                )),
+            },
+            "library-export" => {
+                let path = rest_of_line(line, name);
+                if path.is_empty() {
+                    return Err(IpcError::InvalidArgument(
+                        "library-export: ожидается путь к файлу".into(),
+                    ));
+                }
+                Ok(Self::LibraryExport {
+                    path: path.to_owned(),
+                })
+            }
+            "library-import" => {
+                let path = rest_of_line(line, name);
+                if path.is_empty() {
+                    return Err(IpcError::InvalidArgument(
+                        "library-import: ожидается путь к файлу".into(),
+                    ));
+                }
+                Ok(Self::LibraryImport {
+                    path: path.to_owned(),
+                })
+            }
             "quit" => {
                 reject_extra_args(parts.next())?;
                 Ok(Self::Quit)
@@ -356,6 +415,10 @@ impl IpcCommand {
             Self::PlayResult { station_uuid } => format!("play-result {station_uuid}"),
             Self::PlayLibrary { station_uuid } => format!("play-library {station_uuid}"),
             Self::PlayUrl { url } => format!("play-url {url}"),
+            Self::SetSleep { minutes } => format!("sleep {minutes}"),
+            Self::ClearSleep => "sleep clear".to_owned(),
+            Self::LibraryExport { path } => format!("library-export {path}"),
+            Self::LibraryImport { path } => format!("library-import {path}"),
             Self::Raw(raw) => raw.clone(),
         }
     }
@@ -672,6 +735,37 @@ mod tests {
     }
 
     #[test]
+    fn parses_sleep_and_library_transfer() {
+        assert_eq!(
+            IpcCommand::parse("sleep 45").unwrap(),
+            IpcCommand::SetSleep { minutes: 45 }
+        );
+        assert_eq!(
+            IpcCommand::parse("sleep clear").unwrap(),
+            IpcCommand::ClearSleep
+        );
+        assert!(IpcCommand::parse("sleep").is_err());
+        assert!(IpcCommand::parse("sleep 0").is_err());
+        assert!(IpcCommand::parse("sleep 721").is_err());
+        assert!(IpcCommand::parse("sleep soon").is_err());
+        assert!(IpcCommand::parse("sleep 15 extra").is_err());
+        assert_eq!(
+            IpcCommand::parse("library-export /tmp/My Library.json").unwrap(),
+            IpcCommand::LibraryExport {
+                path: "/tmp/My Library.json".to_owned()
+            }
+        );
+        assert_eq!(
+            IpcCommand::parse("library-import ./backup.json").unwrap(),
+            IpcCommand::LibraryImport {
+                path: "./backup.json".to_owned()
+            }
+        );
+        assert!(IpcCommand::parse("library-export").is_err());
+        assert!(IpcCommand::parse("library-import   ").is_err());
+    }
+
+    #[test]
     fn keeps_unknown_commands_as_raw() {
         assert_eq!(
             IpcCommand::parse("future-command payload").unwrap(),
@@ -718,6 +812,14 @@ mod tests {
             },
             IpcCommand::PlayUrl {
                 url: "https://example.org/live.m3u".to_owned(),
+            },
+            IpcCommand::SetSleep { minutes: 45 },
+            IpcCommand::ClearSleep,
+            IpcCommand::LibraryExport {
+                path: "/home/user/My Music/library export.json".to_owned(),
+            },
+            IpcCommand::LibraryImport {
+                path: "/home/user/library.json".to_owned(),
             },
             IpcCommand::Raw("custom arg".to_owned()),
         ];

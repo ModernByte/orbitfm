@@ -157,6 +157,29 @@ impl super::Session {
             // `play-url` перехватывается в `process_commands` и парковке:
             // ответ приходит после сетевого резолва.
             IpcCommand::PlayUrl { .. } => "error play-url обслуживается отложенно".to_owned(),
+            IpcCommand::SetSleep { minutes } => match self.set_sleep(*minutes) {
+                Ok(()) => format!("ok sleep {minutes}"),
+                Err(err) => format!("error {err}"),
+            },
+            IpcCommand::ClearSleep => {
+                self.clear_sleep();
+                "ok".to_owned()
+            }
+            IpcCommand::LibraryExport { path } => {
+                match self.library.export_to(std::path::Path::new(path)) {
+                    Ok(favorites) => format!("ok exported {favorites}"),
+                    Err(err) => format!("error {err}"),
+                }
+            }
+            IpcCommand::LibraryImport { path } => {
+                match self.library.import_from(std::path::Path::new(path)) {
+                    Ok(summary) => format!(
+                        "ok imported {} favorites, {} history, {} skipped",
+                        summary.favorites_added, summary.history_added, summary.skipped
+                    ),
+                    Err(err) => format!("error {err}"),
+                }
+            }
             IpcCommand::Raw(raw) => format!("error неизвестная команда: {raw}"),
         }
     }
@@ -234,6 +257,13 @@ impl super::Session {
     pub(crate) fn set_artwork_allow_http(&mut self, allow: bool) -> Result<(), String> {
         self.settings
             .set_artwork_allow_http(allow)
+            .map_err(|err| err.to_string())
+    }
+
+    /// Кольцевой переход очереди после последней станции (ADR-0046).
+    pub(crate) fn set_queue_wrap(&mut self, wrap: bool) -> Result<(), String> {
+        self.settings
+            .set_queue_wrap(wrap)
             .map_err(|err| err.to_string())
     }
 

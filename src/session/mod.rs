@@ -17,6 +17,7 @@ pub(crate) mod park;
 pub(crate) mod playback;
 pub(crate) mod publish_gate;
 pub(crate) mod search;
+pub(crate) mod sleep;
 pub(crate) mod stream_import;
 pub(crate) mod tray;
 pub(crate) mod window;
@@ -170,6 +171,8 @@ pub(crate) struct Session {
     pub(crate) onboarding_desktop: Desktop,
     /// Громкость, изменённая перетаскиванием, но ещё не записанная на диск.
     pub(crate) pending_volume: Option<f64>,
+    /// Таймер сна: дедлайн и выбранная длительность (ADR-0046).
+    pub(crate) sleep: sleep::SleepTimer,
     pub(crate) show_help: bool,
     pub(crate) window: WindowState,
     pub(crate) notices: VecDeque<Notice>,
@@ -249,6 +252,7 @@ impl Session {
             onboarding_open,
             onboarding_desktop,
             pending_volume: None,
+            sleep: sleep::SleepTimer::default(),
             show_help,
             window: WindowState::shown(),
             notices: VecDeque::new(),
@@ -271,6 +275,7 @@ impl Session {
 
     /// Один кадр фонового обслуживания: вызывается UI-циклом при открытом окне.
     pub(crate) fn tick(&mut self) {
+        self.poll_sleep();
         self.process_audio_events();
         self.poll_economy();
         self.process_commands();
@@ -546,6 +551,14 @@ impl Session {
         let station = self.active_station();
         let favorite =
             station.is_some_and(|station| self.library.is_favorite(&station.stationuuid));
+        let (can_previous, can_next) = self.skip_availability();
+        let sleep = self
+            .sleep_minutes()
+            .zip(self.sleep_remaining())
+            .map(|(minutes, remaining)| StatusSleep {
+                minutes,
+                remaining_secs: remaining.as_secs(),
+            });
         let payload = build_status_payload(
             &self.audio.state(),
             self.audio.volume(),
@@ -555,8 +568,10 @@ impl Session {
             self.settings.settings().theme,
             self.settings.settings().accent,
             self.language,
-            self.visible_queue_len() > 0,
+            can_previous,
+            can_next,
             favorite,
+            sleep,
         );
         serde_json::to_string(&payload).unwrap_or_else(|err| format!("error {err}"))
     }
@@ -617,7 +632,15 @@ struct StatusPayload {
     accent: &'static str,
     language: &'static str,
     can: StatusCan,
+    /// Активный таймер сна: `null`, когда таймер выключен (ADR-0046).
+    sleep: Option<StatusSleep>,
     ui: StatusUi,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct StatusSleep {
+    minutes: u16,
+    remaining_secs: u64,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -773,8 +796,10 @@ fn build_status_payload(
     theme: ThemeMode,
     accent: AccentColor,
     language: Language,
-    can_skip: bool,
+    can_previous: bool,
+    can_next: bool,
     favorite: bool,
+    sleep: Option<StatusSleep>,
 ) -> StatusPayload {
     StatusPayload {
         schema: STATUS_SCHEMA,
@@ -791,9 +816,10 @@ fn build_status_payload(
         accent: accent.as_str(),
         language: language.code(),
         can: StatusCan {
-            previous: can_skip,
-            next: can_skip,
+            previous: can_previous,
+            next: can_next,
         },
+        sleep,
         ui: StatusUi::new(language),
     }
 }
@@ -948,6 +974,8 @@ mod tests {
             Language::Russian,
             false,
             false,
+            false,
+            None,
         );
         let json = serde_json::to_string(&payload).expect("снимок сериализуется");
         assert!(!json.contains('\n'), "IPC отвечает одной строкой");
@@ -964,6 +992,31 @@ mod tests {
         assert_eq!(value["language"], "ru");
         assert_eq!(value["can"]["previous"], false);
         assert_eq!(value["can"]["next"], false);
+        assert!(value["sleep"].is_null());
+    }
+
+    #[test]
+    fn status_json_reports_active_sleep_timer() {
+        let payload = build_status_payload(
+            &PlaybackState::Playing,
+            0.5,
+            true,
+            WindowMode::Focus,
+            None,
+            ThemeMode::Dark,
+            AccentColor::Violet,
+            Language::Russian,
+            true,
+            false,
+            false,
+            Some(StatusSleep {
+                minutes: 45,
+                remaining_secs: 2700,
+            }),
+        );
+        let value = status_value(&payload);
+        assert_eq!(value["sleep"]["minutes"], 45);
+        assert_eq!(value["sleep"]["remaining_secs"], 2700);
     }
 
     #[test]
@@ -980,6 +1033,8 @@ mod tests {
             Language::English,
             true,
             true,
+            true,
+            None,
         );
         let value = status_value(&payload);
         assert_eq!(value["state"], "playing");
@@ -1026,6 +1081,8 @@ mod tests {
             Language::English,
             true,
             true,
+            true,
+            None,
         );
         let value = status_value(&payload);
         assert_eq!(value["station"]["name"], "Evil [2JFM");
@@ -1047,6 +1104,8 @@ mod tests {
                 language,
                 false,
                 false,
+                false,
+                None,
             );
             let value = status_value(&payload);
             let catalog = crate::i18n::catalog(language);
@@ -1096,6 +1155,8 @@ mod tests {
             Language::English,
             false,
             false,
+            false,
+            None,
         );
         let value = status_value(&payload);
         assert_eq!(value["volume"], 0.3);

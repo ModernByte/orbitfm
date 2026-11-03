@@ -1,7 +1,7 @@
 # OrbitFM
 
 **Плеер интернет-радио с 3D-глобусом**  
-Под эгидой [ModernByte](https://github.com/ModernByte) · версия `0.17.0-rc.3`
+Под эгидой [ModernByte](https://github.com/ModernByte) · версия `0.18.0-rc.1`
 
 [![Релиз](https://img.shields.io/github/v/release/ModernByte/orbitfm?include_prereleases)](https://github.com/ModernByte/orbitfm/releases)
 [![Статус CI](https://img.shields.io/github/actions/workflow/status/ModernByte/orbitfm/ci.yml?branch=main)](https://github.com/ModernByte/orbitfm/actions/workflows/ci.yml)
@@ -14,7 +14,7 @@ OrbitFM — плеер интернет-радио, где каталог пок
 и её станции лежат рядом в списке; так же можно искать по жанру или по названию станции. Закрытие окна музыку не
 останавливает: приложение работает одним процессом, живёт в системном трее и принимает команды из терминала и от
 медиа-клавиш. Для экрана есть три режима — от большого рабочего стола с глобусом до компактной капсулы в углу.
-Приоритетная платформа — Linux (Wayland и X11), сборки есть для Windows и macOS; версия `0.17.0-rc.3` —
+Приоритетная платформа — Linux (Wayland и X11), сборки есть для Windows и macOS; версия `0.18.0-rc.1` —
 пре-релиз, отдельные детали ещё могут меняться.
 
 ## Что умеет
@@ -42,12 +42,20 @@ OrbitFM — плеер интернет-радио, где каталог пок
   Now Playing на macOS — в том числе при скрытом окне.
 - **17 языков интерфейса** — «Системный» плюс 16 языков, смена без перезапуска.
 - **Настройки.** Тема (системная / тёмная / светлая), акцент, язык, громкость, визуализатор, реактивность и стиль
-  движения, «Уменьшить движение», компоновка окна. Сохраняются автоматически.
+  движения, «Уменьшить движение», компоновка окна, таймер сна и зацикливание очереди. Сохраняются автоматически.
+- **Таймер сна.** `orbitfm sleep 30` (15 / 30 / 45 / 60 / 90 минут в настройках) останавливает эфир по истечении
+  срока и работает при закрытом окне; оставшееся время видно в `orbitfm status --json`, отмена — `sleep clear`.
+- **Очередь без тупиков.** `Next`/`Previous` идут по текущему видимому списку, а настройка «Зациклить очередь»
+  (по умолчанию включена) решает, переходить ли с последней станции на первую; доступность кнопок отражается
+  в `can` у `status --json` и в транспорте.
+- **Перенос библиотеки.** `orbitfm library-export <файл>` и `orbitfm library-import <файл>` сохраняют и
+  принимают избранное и историю в JSON-схеме 1 с теми же проверками публичных URL, что у каталога: импорт
+  сливается по UUID, локальная запись побеждает, приватные адреса отбрасываются.
 - **Три режима окна** — Focus / Overlay / Listening, переключение из интерфейса и командой `orbitfm mode …`.
 - **Виджет для панели Noctalia v5** и готовые правила окон для niri и Hyprland.
 - **Машиночитаемый статус для интеграций.** `orbitfm status --json` (схема 1) отдаёт состояние, станцию,
-  громкость, окно, тему, язык, доступные действия и локализованные подписи; `orbitfm events` отдаёт тот же
-  снимок потоком — на нём строятся плагины оболочек и браузерная панель.
+  громкость, окно, тему, язык, доступные действия, таймер сна и локализованные подписи; `orbitfm events` отдаёт
+  тот же снимок потоком — на нём строятся плагины оболочек и браузерная панель.
 - **Готовые интеграции оболочек.** Каждая цель ставится отдельной командой `orbitfm integration install <цель>`:
   плагин Plasma 6, расширение GNOME 45–51, виджет Omarchy/Quickshell и модули Waybar, Polybar, i3blocks,
   swaybar, i3status-rust, а для XFCE, Cinnamon, MATE и LXQt — скрипт и шаги для штатного апплета вывода команды.
@@ -82,19 +90,19 @@ MSI, DMG, `.plasmoid` для Plasma 6 и `install-appimage.sh`; рядом ле�
 
 ### AppImage (Linux x86_64)
 
-Файл называется `OrbitFM-<версия>-x86_64.AppImage`, например `OrbitFM-0.17.0-rc.3-x86_64.AppImage`. Права root и
+Файл называется `OrbitFM-<версия>-x86_64.AppImage`, например `OrbitFM-0.18.0-rc.1-x86_64.AppImage`. Права root и
 установка не нужны — приложение rootless по определению, и `libmpv` с FFmpeg уже внутри:
 
 ```bash
-chmod +x OrbitFM-0.17.0-rc.3-x86_64.AppImage
-./OrbitFM-0.17.0-rc.3-x86_64.AppImage
+chmod +x OrbitFM-0.18.0-rc.1-x86_64.AppImage
+./OrbitFM-0.18.0-rc.1-x86_64.AppImage
 ```
 
 Чтобы добавить приложение в меню и `PATH` без root и без ручного `chmod +x`, положите рядом `install-appimage.sh`
 из релиза и запустите:
 
 ```bash
-bash install-appimage.sh OrbitFM-0.17.0-rc.3-x86_64.AppImage
+bash install-appimage.sh OrbitFM-0.18.0-rc.1-x86_64.AppImage
 ```
 
 Скрипт копирует образ в `~/.local/bin/orbitfm`, ставит desktop entry с абсолютным `Exec`, иконки и metainfo в
@@ -103,7 +111,7 @@ bash install-appimage.sh OrbitFM-0.17.0-rc.3-x86_64.AppImage
 Для обновления запустите скрипт с новым образом.
 
 Если FUSE недоступен (контейнеры, минимальные образы) или не нужна интеграция через монтирование, запускайте в
-режиме распаковки: `APPIMAGE_EXTRACT_AND_RUN=1 ./OrbitFM-0.17.0-rc.3-x86_64.AppImage`. Виджету Noctalia и командам
+режиме распаковки: `APPIMAGE_EXTRACT_AND_RUN=1 ./OrbitFM-0.18.0-rc.1-x86_64.AppImage`. Виджету Noctalia и командам
 `orbitfm …` нужен запускаемый `orbitfm` в `PATH` — скрипт выше ставит его, либо сделайте символьную ссылку на
 AppImage.
 
@@ -238,7 +246,7 @@ kbuildsycoca6 --noincremental
 Виджет также публикуется в Releases отдельным архивом `OrbitFM-<версия>-plasma.plasmoid`:
 
 ```bash
-kpackagetool6 -t Plasma/Applet -i OrbitFM-0.17.0-rc.3-plasma.plasmoid
+kpackagetool6 -t Plasma/Applet -i OrbitFM-0.18.0-rc.1-plasma.plasmoid
 ```
 
 Или в графическом интерфейсе: режим редактирования панели → «Добавить виджеты» → «Установить из файла» → выбрать
@@ -471,7 +479,11 @@ orbitfm roulette            # случайная станция
 orbitfm stop
 orbitfm volume 0.4          # 0.0–1.0
 orbitfm volume-up | orbitfm volume-down
+orbitfm sleep 30            # остановить эфир через 1–720 минут
+orbitfm sleep clear         # отменить таймер сна
 orbitfm theme dark          # system | dark | light
+orbitfm library-export ~/orbitfm-library.json  # избранное и история, схема 1
+orbitfm library-import ~/orbitfm-library.json  # слить с текущей библиотекой по UUID
 orbitfm settings            # открыть настройки (запускает приложение, если нужно)
 orbitfm integration status [цель]            # какие интеграции установлены
 orbitfm integration install <цель>           # плагин, бар-модуль или расширение браузера

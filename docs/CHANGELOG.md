@@ -5,6 +5,50 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),  
 проект следует [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [0.18.0-rc.1] - 2026-11-03
+
+MINOR-пакет «ритуалы слушания»: таймер сна, кольцевая очередь и перенос
+библиотеки. Схема `status --json` остаётся 1, старые `settings.json` и
+`library.json` читаются без миграции.
+
+### Добавлено
+- Таймер сна (ADR-0046): `orbitfm sleep <1…720>` и `orbitfm sleep clear`,
+  выбор 15/30/45/60/90 минут в категории «Аудио», остановка эфира по дедлайну
+  в открытом окне и в простое без окна, уведомление `SleepExpired`. Дедлайн
+  переживает закрытие окна, не переживает выход процесса
+- Настройка `queue_wrap` (по умолчанию `true`, ADR-0046): `next` после
+  последней станции возвращается к первой, `previous` с первой — к последней;
+  при выключенном wrap шаг за край — no-op, а кнопки, MPRIS
+  `CanGoNext/CanGoPrevious` и поля `can` в `status --json` гаснут по позиции
+- Экспорт и импорт библиотеки (ADR-0046, интерфейс 15): `orbitfm
+  library-export <путь>` и `orbitfm library-import <путь>`, JSON схемы 1 с
+  `schema`/`app`/`exported_at`/`favorites`/`history`; атомарная запись, права
+  `0600` на Unix, лимиты 2 МиБ и 5000 станций, слияние по UUID, проверка
+  публичности URL и санитизация строк
+- `status --json` и поток `events`: аддитивное поле
+  `sleep: { minutes, remaining_secs } | null`; `can` учитывает `queue_wrap`
+- ADR-0045: Android Companion (Kotlin/Compose, Media3, foreground service) —
+  спроектирован и задокументирован, кода Android в этом репозитории нет
+- ADR-0046: «Ритуалы слушания» — решения по таймеру, очереди и переносу
+  библиотеки
+- Интерфейс `docs/interfaces/15-library-export.md`: полная схема экспорта,
+  алгоритм слияния, ошибки, безопасность файлов и общий контракт с Android
+
+### Изменено
+- Все 16 каталогов `i18n` и `System`: подписи таймера сна, подсказки
+  `queue_wrap`, строки уведомления о срабатывании
+- Browser native host: `sleep` и `sleep clear` разрешены,
+  `library-export`/`library-import` запрещены — расширение не пишет файлы
+  библиотеки
+- `TransportState`/`PanelFooterState` получают `can_previous`/`can_next` из
+  `Session::skip_availability()` в обеих раскладках
+- Документация: интерфейсы 00/05/06/07/08/09/10/13/14/15, модули 05/06/07/09/10/11,
+  README и wiki
+
+### Тесты
+- `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
+  `cargo test --locked` — 603 passed, 5 ignored
+
 ## [0.17.0-rc.3] - 2026-11-03
 
 Патч без изменения поведения: разделение крупнейшего UI-модуля и синхронизация

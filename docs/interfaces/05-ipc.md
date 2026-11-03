@@ -62,6 +62,10 @@ Windows. Named pipe занимает первый экземпляр как пр
 | `play-result <uuid>` | Играть станцию только из последней выдачи companion-поиска (ред. 0.16) | UUID |
 | `play-library <uuid>` | Играть станцию только из избранного или истории, без обращения к каталогу (ред. 0.16) | UUID |
 | `play-url <url>` | Импортировать внешний поток: `.m3u`, `.pls`, страница или аудио; только `http(s)`, без пробелов, ≤2048 байт (ADR-0040) | URL |
+| `sleep <minutes>` | Включить таймер сна: остановить эфир через N минут, `1..=720` (ADR-0046) | целое число |
+| `sleep clear` | Выключить таймер сна (ADR-0046) | — |
+| `library-export <path>` | Записать избранное и историю в JSON схемы 1 (ADR-0046) | остаток строки-путь |
+| `library-import <path>` | Слить JSON схемы 1 с локальной библиотекой (ADR-0046) | остаток строки-путь |
 | `mode` | Текущий режим окна | — |
 | `mode <режим>` | Переключить режим окна | `focus`, `overlay`, `listening` или `panel` |
 | `theme <режим>` | Установить тему интерфейса (ADR-0037) | `system`, `dark`, `light` |
@@ -87,6 +91,18 @@ Windows. Named pipe занимает первый экземпляр как пр
 пробелов; резолв идёт в tokio-задаче, ответ приходит после `start_station`
 (бюджет резолвера 8 с, ответа — 10 с), повторный импорт до завершения
 получает `error импорт уже выполняется` (ADR-0040).
+
+`sleep` принимает одно целое число минут (`1..=720`) или `clear`; повторный
+`sleep <minutes>` заменяет дедлайн, `clear` без активного таймера — no-op.
+Таймер переживает скрытие окна и проверяется в простое, но не переживает
+выход процесса; по срабатывании эфир останавливается и показывается
+уведомление (ADR-0046).
+
+`library-export` и `library-import` берут путь остатком строки, поэтому пробелы
+в имени файла допустимы. Относительный путь разрешается от текущего каталога
+процесса. Импорт — слияние по `stationuuid` с приоритетом локальной записи;
+формат и правила безопасности — `docs/interfaces/15-library-export.md`.
+Браузерный native host обе команды запрещает.
 
 На Этапе 3 `play <uuid>` полностью подключён: Application Core ищет станцию в результатах
 последнего поиска, затем в кэше/каталоге Radio Browser (таймаут 8 с), запускает
@@ -147,6 +163,14 @@ favorite true
 `library` отвечает одной строкой JSON:
 `{"favorites":[{"uuid":…,"name":…,"country":…,"countrycode":…,"tags":…,"bitrate":128,"source":"radio"}],"history":[…]}`.
 
+`sleep`, `library-export` и `library-import` отвечают:
+```
+ok sleep 45
+ok exported 12
+ok imported 3 favorites, 1 history, 2 skipped
+```
+`sleep clear` отвечает просто `ok`.
+
 `status` принимает значения `stopped`, `playing`, `paused`, `buffering`, `reconnecting`,
 `error`. Текст ошибки в статус не включается. `volume` печатается с двумя знаками после
 запятой. Строки `stationuuid` и `name` присутствуют, пока состояние не `stopped`/`error`
@@ -172,7 +196,7 @@ error <сообщение>
 {
   "schema": 1,
   "app": "orbitfm",
-  "version": "0.17.0-rc.3",
+  "version": "0.18.0-rc.1",
   "state": "playing",
   "station": {
     "uuid": "960cf833-0601-11e8-ae97-52543be04c81",
@@ -193,6 +217,7 @@ error <сообщение>
   "accent": "blue",
   "language": "en",
   "can": { "previous": true, "next": true },
+  "sleep": { "minutes": 45, "remaining_secs": 2700 },
   "ui": {
     "play_pause": "Play/Pause", "stop": "Stop", "previous": "Previous",
     "next": "Next", "radio_roulette": "Radio Roulette",
@@ -231,6 +256,11 @@ error <сообщение>
   выбора страницы.
 - `accent` — токен акцента интерфейса (`blue`, `green`, `amber`, `violet`,
   `rose`, `cyan`): попап и виджеты панелей красят акцент, не дублируя палитру.
+- `sleep` — активный таймер сна (ADR-0046): `minutes` — выбранная
+  длительность, `remaining_secs` — остаток на момент снимка; `null`, когда
+  таймер выключен. Поле аддитивно, схема остаётся 1.
+- `can` — доступность шага по видимой очереди с учётом `queue_wrap`:
+  при выключенном wrap на краю списка соответствующий флаг `false`.
 - `station.source` — `radio` (каталог Radio Browser) или `stream` (внешний
   поток из `play-url`, ADR-0040); `station.favorite` — лежит ли станция в
   избранном прямо сейчас.
@@ -292,6 +322,8 @@ error <сообщение>
 | Ожидание ответа Application Core | 10 с |
 | Ожидание ответа клиентом | 12 с |
 | Дренаж соединений при shutdown | 1 с |
+| Таймер сна | 1..=720 минут |
+| Импорт библиотеки | 2 МиБ, ≤5000 станций |
 
 При истечении таймаута клиент получает `error таймаут ...` (если соединение ещё открыто)
 либо локальную ошибку `IpcError::Timeout`.
@@ -299,6 +331,9 @@ error <сообщение>
 ## 6. Rust-контракт
 
 ```rust
+/// Верхняя граница таймера сна: двенадцать часов.
+pub const MAX_SLEEP_MINUTES: u16 = 720;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowModeArg {
     Focus,
@@ -374,6 +409,14 @@ pub enum IpcCommand {
     PlayLibrary { station_uuid: String },
     /// `play-url <url>` — импорт внешнего потока (ADR-0040).
     PlayUrl { url: String },
+    /// `sleep <minutes>` — таймер сна, 1..=720 минут (ADR-0046).
+    SetSleep { minutes: u16 },
+    /// `sleep clear` — выключить таймер сна.
+    ClearSleep,
+    /// `library-export <path>` — JSON схемы 1 (ADR-0046).
+    LibraryExport { path: String },
+    /// `library-import <path>` — слияние JSON схемы 1 (ADR-0046).
+    LibraryImport { path: String },
     Quit,
     Volume { level: f64 },
     Raw(String),

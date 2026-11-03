@@ -91,6 +91,7 @@ fn notice_text(
         NoticeKey::LanguageNotSaved => notices.language_not_saved,
         NoticeKey::VisualizerNotSaved => notices.visualizer_not_saved,
         NoticeKey::FftUnavailable => notices.fft_unavailable,
+        NoticeKey::SleepExpired => notices.sleep_expired,
     };
     match detail {
         Some(detail) => format!("{base}: {detail}"),
@@ -327,6 +328,7 @@ impl<'a> OrbitApp<'a> {
     /// `egui::Frame` умеет только сплошную заливку и остаётся прозрачным.
     fn draw_layers(&mut self, ui: &mut egui::Ui, frame: &Frame) -> Vec<UiAction> {
         let session = &mut *self.session;
+        let (can_previous, can_next) = session.skip_availability();
         // Просьба панели прокрутить строку живёт один кадр: клик по маркеру
         // оставляет её, следующий кадр списка её потребляет (ADR-0036).
         let reveal_uuid = session.take_station_reveal();
@@ -612,6 +614,8 @@ impl<'a> OrbitApp<'a> {
                                     current: session.current_station.as_ref(),
                                     favorite: frame.current_favorite,
                                     can_resume: frame.can_resume,
+                                    can_previous,
+                                    can_next,
                                     spectrum_enabled: session.visualizer_enabled,
                                     roulette_pending: session.search.roulette_pending,
                                     eco: session.economy_stream(),
@@ -860,6 +864,8 @@ impl<'a> OrbitApp<'a> {
                                     current: session.current_station.as_ref(),
                                     favorite: frame.current_favorite,
                                     can_resume: frame.can_resume,
+                                    can_previous,
+                                    can_next,
                                     favicons,
                                     language: frame.language,
                                 },
@@ -883,6 +889,7 @@ impl<'a> OrbitApp<'a> {
             &ui_motion,
             self.settings_rect,
             &mut self.settings_category,
+            session.sleep_minutes(),
             integrations,
         ));
 
@@ -997,6 +1004,19 @@ impl<'a> OrbitApp<'a> {
                 }
                 let bars = self.session.settings.settings().viz_bars;
                 self.visualizer = VisualizerModel::new(usize::from(bars));
+            }
+            UiAction::SetSleepTimer(minutes) => match minutes {
+                Some(minutes) => {
+                    if let Err(err) = self.session.set_sleep(minutes) {
+                        self.error_toast(ctx, &NoticeKey::SettingNotSaved, Some(err.as_str()));
+                    }
+                }
+                None => self.session.clear_sleep(),
+            },
+            UiAction::SetQueueWrap(wrap) => {
+                if let Err(err) = self.session.set_queue_wrap(wrap) {
+                    self.error_toast(ctx, &NoticeKey::SettingNotSaved, Some(err.as_str()));
+                }
             }
             UiAction::SetArtworkAllowHttp(allow) => {
                 if let Err(err) = self.session.set_artwork_allow_http(allow) {
@@ -1235,6 +1255,7 @@ fn draw_settings(
     motion: &FrameMotion<'_>,
     last_settings_rect: Option<egui::Rect>,
     category: &mut SettingsCategory,
+    sleep_minutes: Option<u16>,
     integrations: IntegrationsView<'_>,
 ) -> Vec<UiAction> {
     let palette = &frame.palette;
@@ -1305,6 +1326,7 @@ fn draw_settings(
                     window_mode: frame.window_mode,
                     volume: &mut volume,
                     show_help: frame.show_help,
+                    sleep_minutes,
                     category,
                     integrations,
                 },
@@ -1434,6 +1456,11 @@ impl eframe::App for OrbitApp<'_> {
             )
         {
             ctx.request_repaint_after(SPECTRUM_REPAINT);
+        }
+
+        // Таймер сна обязан сработать в срок и без пользовательских событий.
+        if let Some(remaining) = self.session.sleep_repaint_after() {
+            ctx.request_repaint_after(remaining);
         }
     }
 

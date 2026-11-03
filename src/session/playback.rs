@@ -368,7 +368,8 @@ impl super::Session {
         }
     }
 
-    /// Шаг по видимому списку с wrap; при пустой очереди — no-op.
+    /// Шаг по видимому списку; при пустой очереди — no-op. С выключенным
+    /// wrap (ADR-0046) шаг за край списка тоже ничего не делает.
     pub(crate) fn play_relative(&mut self, step: i8) {
         let queue = self.visible_queue();
         if queue.is_empty() {
@@ -381,7 +382,14 @@ impl super::Session {
         });
         let next = match current {
             Some(index) => {
-                (index as isize + step as isize).rem_euclid(queue.len() as isize) as usize
+                let target = index as isize + step as isize;
+                if self.settings.settings().queue_wrap {
+                    target.rem_euclid(queue.len() as isize) as usize
+                } else if target < 0 || target >= queue.len() as isize {
+                    return;
+                } else {
+                    target as usize
+                }
             }
             None if step >= 0 => 0,
             None => queue.len() - 1,
@@ -397,6 +405,30 @@ impl super::Session {
                     self.notify_error_detail(NoticeKey::PlaybackFailed, detail);
                 }
             }
+        }
+    }
+
+    /// Доступность шагов назад/вперёд для MPRIS, статуса и кнопок: пустая
+    /// очередь — оба шага запрещены, с wrap — оба разрешены, без wrap — по
+    /// позиции текущей станции в списке (ADR-0046).
+    pub(crate) fn skip_availability(&self) -> (bool, bool) {
+        let len = self.visible_queue_len();
+        if len == 0 {
+            return (false, false);
+        }
+        if self.settings.settings().queue_wrap {
+            return (true, true);
+        }
+        let Some(current) = self.current_station.as_ref() else {
+            return (true, true);
+        };
+        let queue = self.visible_queue();
+        match queue
+            .iter()
+            .position(|item| item.stationuuid == current.stationuuid)
+        {
+            Some(index) => (index > 0, index + 1 < len),
+            None => (true, true),
         }
     }
 
@@ -447,7 +479,7 @@ impl super::Session {
             String::new()
         };
 
-        let can_skip = self.visible_queue_len() > 0;
+        let (can_previous, can_next) = self.skip_availability();
         let info = PlaybackInfo {
             title,
             artist,
@@ -455,8 +487,8 @@ impl super::Session {
             url,
             playing,
             volume: self.audio.volume(),
-            can_go_next: can_skip,
-            can_go_previous: can_skip,
+            can_go_next: can_next,
+            can_go_previous: can_previous,
         };
 
         if let Some(media) = self.media.as_mut()

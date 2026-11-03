@@ -43,4 +43,6 @@ pub(crate) enum NoticeKey {
     LanguageNotSaved,
     VisualizerNotSaved,
     FftUnavailable,
+    /// Таймер сна остановил эфир (ADR-0046).
+    SleepExpired,
 }

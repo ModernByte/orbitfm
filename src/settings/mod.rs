@@ -224,6 +224,9 @@ pub struct Settings {
     /// старые файлы читаются как `false`, но существующий файл сам по себе
     /// отключает мастер.
     pub onboarding_done: bool,
+    /// `next` после последней станции возвращается к первой. Выключение
+    /// делает края очереди остановками (ADR-0046).
+    pub queue_wrap: bool,
 }
 
 /// Доступные варианты числа столбцов визуализатора.
@@ -249,6 +252,7 @@ impl Default for Settings {
             reduce_motion: false,
             artwork_allow_http: false,
             onboarding_done: false,
+            queue_wrap: true,
         }
     }
 }
@@ -425,6 +429,15 @@ impl SettingsStore {
             return Ok(());
         }
         self.settings.motion_style = style;
+        self.save()
+    }
+
+    /// Кольцевой переход очереди после последней станции (ADR-0046).
+    pub fn set_queue_wrap(&mut self, wrap: bool) -> Result<(), SettingsError> {
+        if self.settings.queue_wrap == wrap {
+            return Ok(());
+        }
+        self.settings.queue_wrap = wrap;
         self.save()
     }
 

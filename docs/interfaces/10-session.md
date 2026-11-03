@@ -79,8 +79,9 @@ Application Core — слой, который переживает закрыт�
 | `commit_volume` | `pub(crate) fn commit_volume(&mut self, volume: f64) -> Result<(), String>` | Завершение перетаскивания, клик по треку, клавиатурный шаг и щелчок колеса: применить и записать в `SettingsStore` (колесо — дискретный ввод, pending не открывается, ADR-0031 § 8) |
 | `flush_pending_volume` | `pub(crate) fn flush_pending_volume(&mut self)` | Дозаписать незакрытый preview в настройки; зовётся из `end_window`, ошибка — только `warn!` |
 | `visible_queue` | `pub(crate) fn visible_queue(&self) -> Vec<Station>` | Снапшот текущего видимого списка — очередь prev/next |
-| `visible_queue_len` | `pub(crate) fn visible_queue_len(&self) -> usize` | Число станций в очереди без клонирования; питает `can_go_next`/`can_go_previous` MPRIS |
-| `play_relative` | `pub(crate) fn play_relative(&mut self, step: i8)` | Шаг по снапшоту с циклом; сбой запуска — `NoticeKey::StationWithoutUrl` или `NoticeKey::PlaybackFailed` |
+| `visible_queue_len` | `pub(crate) fn visible_queue_len(&self) -> usize` | Число станций в очереди без клонирования; питает `skip_availability()` и через него `can_go_next`/`can_go_previous` MPRIS |
+| `play_relative` | `pub(crate) fn play_relative(&mut self, step: i8)` | Шаг по снапшоту: с `queue_wrap` края замыкаются, без него шаг за край — no-op; сбой запуска — `NoticeKey::StationWithoutUrl` или `NoticeKey::PlaybackFailed` |
+| `skip_availability` | `pub(crate) fn skip_availability(&self) -> (bool, bool)` | Доступность `Previous`/`Next`: пустая очередь — оба `false`, `queue_wrap` — оба `true`, без wrap — по позиции станции; питает MPRIS и `can` в `status --json` |
 | `sync_media` | `pub(crate) fn sync_media(&mut self)` | Публикует состояние в MPRIS; URL проходят гейт `publish_gate` (ярус 1 + вердикт яруса 2, ADR-0025 ред. 4), сам вызов синхронен |
 | `toggle_favorite` | `pub(crate) fn toggle_favorite(&mut self, station: &Station)` | Избранное; ошибка — `notify_error_detail(NoticeKey::FavoritesNotSaved, …)` |
 | `clear_history` | `pub(crate) fn clear_history(&mut self)` | Очистка истории; успех — `NoticeKey::HistoryCleared`, ошибка — `NoticeKey::ClearHistoryFailed` |
@@ -350,12 +351,14 @@ pub(crate) const PANEL_TITLE: &str = "OrbitFM · Panel";
 внешние источники (IPC-сервер, playwire, фоновые задачи) будят пустой слот без
 эффекта, а события читаются очередями напрямую.
 
-Порядок `tick()` (каждый кадр `OrbitApp::logic`): `process_audio_events` →
-`poll_economy` → `process_commands` → `process_media_commands` →
-`process_tray_commands` → `poll_search` → `poll_companion_search` →
-`poll_stream_import` → `poll_roulette` → `poll_world` → `start_world` →
-`sync_media` → `sync_tray` → синхронизация `spectrum_enabled` с движком →
-`publish_status`. `poll_economy` стоит сразу после аудио-событий: таймер
+Порядок `tick()` (каждый кадр `OrbitApp::logic`): `poll_sleep` →
+`process_audio_events` → `poll_economy` → `process_commands` →
+`process_media_commands` → `process_tray_commands` → `poll_search` →
+`poll_companion_search` → `poll_stream_import` → `poll_roulette` → `poll_world`
+→ `start_world` → `sync_media` → `sync_tray` → синхронизация
+`spectrum_enabled` с движком → `publish_status`. `poll_sleep` стоит первым:
+дедлайн таймера сна не должен зависеть от порядка обработки кадров
+(ADR-0046). `poll_economy` стоит сразу после аудио-событий: таймер
 буферизации и ответ подбора альтернативы должны отработать в том же кадре, что
 и событие (ADR-0043).
 
@@ -400,7 +403,11 @@ ADR-0037).
 | `Stop` | `stop_playback()` | `ok`, иначе `error <ошибка>` |
 | `Volume { level }` | `set_volume(level)` | `ok`, иначе `error <ошибка>` |
 | `PlayPause` | `toggle_playback()` | `ok`, иначе `error <ошибка>` |
-| `Next` / `Previous` | `play_relative(±1)` по видимой очереди | `ok`, иначе `error <ошибка>` |
+| `Next` / `Previous` | `play_relative(±1)` по видимой очереди; с `queue_wrap = false` шаг за край — no-op | `ok`, иначе `error <ошибка>` |
+| `SetSleep { minutes }` | `set_sleep(minutes)`: `1..=720`, дедлайн в `SleepTimer` (ADR-0046) | `ok sleep <minutes>`, иначе `error` |
+| `ClearSleep` | `clear_sleep()` | `ok` |
+| `LibraryExport { path }` | `library.export_to(path)` — атомарный JSON схемы 1 | `ok exported <favorites>`, иначе `error` |
+| `LibraryImport { path }` | `library.import_from(path)` — слияние с локальной библиотекой | `ok imported …`, иначе `error` |
 | `Roulette` | `start_roulette()` (повтор игнорируется, пока ответ в пути) | `ok` |
 | `VolumeUp` / `VolumeDown` | `nudge_volume(±VOLUME_STEP)` с `clamp` к `0.0..=1.0` | `ok`, иначе `error <ошибка>` |
 | `Theme { mode }` | `set_theme(ThemeMode::from(mode))` | `ok`, иначе `error <ошибка>` |
@@ -461,7 +468,10 @@ mode <focus|overlay|listening|panel>
 `docs/interfaces/05-ipc.md` § 4. Поля: `schema`, `app`, `version`, `state`,
 `station` (полные метаданные или `null`), `volume` (округление до тысячных),
 `window { visible, mode }`, `theme`, `language`, `can { previous, next }`,
-`ui` — локализованные подписи `TrayText` из `i18n::catalog`. `window.visible`
+`sleep` (`{ minutes, remaining_secs }` или `null`), `ui` — локализованные
+подписи `TrayText` из `i18n::catalog`. `can` учитывает `queue_wrap`: на краю
+очереди при выключенном wrap соответствующий флаг `false`; `sleep` отражает
+активный таймер (ADR-0046). `window.visible`
 на macOS отражает `mark_hidden`, а не только закрытие вьюпорта (ADR-0026).
 Схема растёт только при удалении или переименовании полей; добавление полей
 её не меняет (ADR-0037).
@@ -481,8 +491,12 @@ mode <focus|overlay|listening|panel>
 | `tray_recv(tray)` | `command` | `execute_tray_command` |
 | `tray_recv(tray)` | мёртвый `TrayHandle` | `*tray = None` и ждать дальше; без трея ветка — `std::future::pending()` |
 | `roulette_recv(roulette)` | `Some`/`None` | `apply_roulette` (`None` — задача исчезла); без рулетки ветка не готова никогда |
+| `stream_recv(stream)` | `Some`/`None` | `finish_stream_import` — ответ на `play-url` уходит в открытое соединение (ADR-0040); без импорта ветка не готова никогда |
+| `companion_recv(companion)` | `Some`/`None` | `apply_companion_response` — ответ поиска попапа; без поиска ветка не готова никогда |
+| `sleep_until(sleep_deadline)` | дедлайн | `park` считает `sleep_deadline` перед каждым `block_on`; `Parked::Sleep` → `poll_sleep()` останавливает эфир и шлёт `NoticeKey::SleepExpired`; без таймера ветка не готова никогда |
 
-После каждого события — `sync_media()` + `sync_tray()`, затем проверка:
+После каждого события — `sync_media()` + `sync_tray()` + `publish_status()`
+(подписки `events` получают кадры и без окна, ADR-0039), затем проверка:
 `is_quitting()` → возврат `ParkOutcome::Quit`; `intent == Some(UiIntent::Show)` →
 возврат `ParkOutcome::Show` (его ставят `show`, `toggle` из закрытого состояния,
 `TrayCommand::Show`/`Toggle` и `TrayCommand::Settings`, который открывает окно
@@ -491,6 +505,11 @@ mode <focus|overlay|listening|panel>
 срабатывает только при `visible`), поэтому цикл остаётся в простое.
 `Parked::QueueClosed` означает, что IPC-сервер закрыл очередь: держать процесс
 без смысла нечем, это выход как по `quit`.
+
+Таймер сна живёт в `Session` и переживает закрытие окна: в простое его дедлайн
+будит отдельную ветку `select!`, а `poll_sleep` останавливает эфир без UI.
+Выход процесса таймер не переживает — дедлайн не пишется в настройки
+(ADR-0046).
 
 Команды исполняются **вне** async-контекста: `wait_on` возвращает готовое
 событие из `block_on`, а `execute`/`apply_audio_event`/`execute_media_command`/
@@ -558,10 +577,15 @@ mode <focus|overlay|listening|panel>
   `onboarding_desktop()`/`finish_onboarding()`/`apply_window_rules()`, а
   установку интеграций исполняет `src/integration/` (ADR-0041, ADR-0042);
 - `Parked`, `wait_on`, `media_recv`, `tray_recv`, `roulette_recv`,
+  `stream_recv`, `companion_recv`, `sleep_until`,
   `format_status`, `analysis_required`, `mpris_artist`, `station_geo`,
   `station_popularity`, `country_search_params`, `roulette_label`,
   `nudge_volume`, `tray_snapshot`, `sync_analysis`, `apply_and_persist_volume` —
   приватные функции;
+- `SleepTimer` (`src/session/sleep.rs`) — внутренний тип Core; наружу
+  выходят только `set_sleep`/`clear_sleep`/`sleep_remaining`/`sleep_minutes`,
+  а `poll_sleep`, `sleep_deadline` и `sleep_repaint_after` — приватные методы
+  `Session` (ADR-0046);
 - `WindowMode::label()` не существует: локализованные подписи режимов даёт
   `mode_label` (`src/ui/settings_panel.rs`) по каталогу `i18n`, как и подписи тем,
   акцентов, реактивности и стилей (`src/i18n/labels.rs`);
@@ -584,7 +608,13 @@ mode <focus|overlay|listening|panel>
   `modes_are_listed_from_full_to_minimal`,
   `user_size_is_remembered_only_while_focused` (`src/session/window.rs`)
 - `status_reports_hidden_window`, `status_reports_error_state_as_error`,
-  `status_includes_station_metadata`, `status_sanitizes_multiline_station_name`
+  `status_includes_station_metadata`, `status_sanitizes_multiline_station_name`,
+  `status_json_reports_active_sleep_timer` — `sleep` в статусе равен
+  `{ minutes, remaining_secs }` при активном таймере и `null` без него
+- `set_validates_range_and_replaces_deadline`,
+  `clear_disables_timer_and_remaining_saturates` (`src/session/sleep.rs`) —
+  границы `1..=MAX_SLEEP_MINUTES`, замена дедлайна повтором, насыщение
+  остатка нулём и отключение таймера
 - `unknown_command_reply_is_marked_as_error`, `wire_round_trip_keeps_command_identity`,
   `mode_argument_maps_to_domain_mode`
 - `parses_mode_as_query_or_switch`, `round_trips_through_wire_format` (`src/ipc/protocol.rs`)

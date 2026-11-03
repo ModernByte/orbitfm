@@ -22,6 +22,7 @@
       <li>Radio Browser search with automatic mirror failover</li>
       <li>Playback through libmpv with automatic reconnect</li>
       <li>MPRIS media controls and single-instance IPC on Linux</li>
+      <li>Sleep timer, queue wrap and JSON library transfer</li>
       <li xml:lang="ru">Экспериментальный FFT-визуализатор</li>
     </ul>
   </description>
@@ -55,6 +56,18 @@
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.18.0-rc.1" date="2026-11-03">
+      <description>
+        <p>OrbitFM 0.18.0-rc.1 добавляет ритуалы слушания и перенос библиотеки.
+        Таймер сна останавливает эфир через 15 / 30 / 45 / 60 / 90 минут или по
+        команде `orbitfm sleep`, работает при закрытом окне и виден в JSON-статусе.
+        Настройка «Зациклить очередь» управляет переходом с последней станции на
+        первую. Избранное и история выгружаются и сливаются командами
+        `library-export` и `library-import` в JSON-схеме 1 с проверкой публичных
+        адресов. Android Companion зафиксирован отдельным ADR без кода; контракты
+        CLI, IPC и MPRIS расширены обратносовместимо.</p>
+      </description>
+    </release>
     <release version="0.17.0-rc.3" date="2026-11-03">
       <description>
         <p>Патч 0.17.0-rc.3 не меняет поведение: крупнейший UI-модуль widgets

@@ -661,8 +661,13 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
   снапшот текущего видимого списка — вкладка `Results` (с учётом локальных
   фильтров и сортировки в контекстном режиме), иначе `Favorites` или `History`.
 - `Session::play_relative(step)` находит позицию текущей станции в снапшоте и делает шаг
-  со `rem_euclid` (циклом); если текущей станции в списке нет — `+1` даёт первую,
+  со `rem_euclid` (циклом), если включён `queue_wrap`; при выключенном wrap шаг за
+  край — no-op (ADR-0046). Если текущей станции в списке нет — `+1` даёт первую,
   `-1` последнюю; пустой список — no-op.
+- `Session::skip_availability()` отдаёт пару `can_previous`/`can_next` для кнопок
+  transport, MPRIS и `status --json`; `TransportState`/`PanelFooterState` получают
+  её в `draw_layers`, поэтому недоступная сторона гаснет и в Focus, и в компактных
+  раскладках.
 - Источники действия: кнопки `⏮`/`⏭` в transport (`UiAction::PlayRelative`) и
   MPRIS `Next`/`Previous`; обе маршрутизации ведут в один метод ядра.
 
@@ -700,7 +705,8 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
   модальное окно 760×544 с колонкой категорий: `Appearance` (тема
   `System`/`Dark`/`Light` — `controls::dropdown`, шесть пресетов акцента (`Orbit`, `Emerald`,
   `Amber`, `Violet`, `Rose`, `Ocean`) — круглые свотчи, тумблер визуализатора, число столбцов — dropdown), `Language`
-  (dropdown, `System` и шестнадцать языков), `Audio` (громкость), `Motion` (`Off`/`Low`/`Normal`/`High`
+  (dropdown, `System` и шестнадцать языков), `Audio` (громкость, таймер сна и
+  тумблер `queue_wrap`), `Motion` (`Off`/`Low`/`Normal`/`High`
   и стиль — dropdown, `Reduce motion` и перевороты — тумблеры), `Window` (режим окна — dropdown,
   `Show help` — тумблер) и `About` (версия, лицензия, app-id, «Выход»). Изменение применяется сразу и
   сохраняется через `SettingsStore`; ошибка записи показывается тостом и не прерывает
@@ -714,6 +720,13 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
   (`UiAction::CommitVolume`, ADR-0031); колесо над полосой даёт ±5 % за щелчок и
   пишет файл сразу, как стрелки, — дельта при этом потребляется, чтобы окно под
   курсором не прокручивалось.
+- Категория `Audio` дополнительно содержит таймер сна и `queue_wrap` (ADR-0046).
+  Список `SLEEP_CHOICES = [0, 15, 30, 45, 60, 90]` показывает активные минуты
+  из `Session::sleep_minutes()`; выбор даёт `UiAction::SetSleepTimer(Some(n))`
+  или `None`, а `App` вызывает `Session::set_sleep`/`clear_sleep`. Ошибка
+  диапазона показывается `NoticeKey::SettingNotSaved`. Тумблер `queue_wrap`
+  даёт `UiAction::SetQueueWrap` → `Session::set_queue_wrap` и сохраняется сразу;
+  от него зависят `can` и `skip_availability`.
 - `Palette` и `configure_style` живут в `ui/palette.rs`. `Palette::for_ui(ctx.theme(), accent)`
   вызывается в `Frame::capture` и задаёт цвета панелей, обводки, приглушённого и
   ошибочного текста, подложек и глобуса. В тёмной теме акцент совпадает с цветом маркеров;
@@ -793,8 +806,9 @@ root-вьюпорта, а не невидимое окно. `ViewportCommand::Ca
   показать станцию без эфира» не поддерживается
 - Hover страны вычисляется raycast-ом каждый кадр без кэша последней точки
 - `Next`/`Previous` из MPRIS и кнопки `⏮`/`⏭` в transport идут по текущему видимому
-  списку (`play_relative(±1)` с циклом): очередь — снимок панели, а не постоянный
-  плейлист (ADR-0013 переопределён фазой 6 для этого поведения)
+  списку (`play_relative(±1)`): очередь — снимок панели, а не постоянный
+  плейлист, а цикл на краях задаёт `queue_wrap` (ADR-0013 переопределён фазой 6
+  для этого поведения, ADR-0046 — для краёв)
 - На глобусе нет подписей стран, атмосфера ограничена Fresnel-ободом; маркеры
   группируются только по совпадающим координатам, кластеризации близких точек нет
 - Клик мимо окна (overlay) ещё не реализован
@@ -826,7 +840,7 @@ root-вьюпорта, а не невидимое окно. `ViewportCommand::Ca
 
 - ADR-0002, ADR-0005, ADR-0006, ADR-0010, ADR-0012, ADR-0013, ADR-0014, ADR-0015,
   ADR-0016, ADR-0017, ADR-0018, ADR-0019, ADR-0028, ADR-0029, ADR-0030, ADR-0031,
-  ADR-0032
+  ADR-0032, ADR-0046
 - `docs/modules/11-session.md`, `docs/interfaces/10-session.md` — контракт Application Core
 - `docs/interfaces/07-app.md` — контракт presentation-слоя
 - `docs/modules/13-i18n.md`, `docs/interfaces/12-i18n.md` — каталог строк и `NoticeKey`

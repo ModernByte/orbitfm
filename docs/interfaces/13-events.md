@@ -46,12 +46,15 @@ JSON не нормируются. Порядок полей не гаранти�
 Первая строка после подписки:
 
 ```json
-{"ev":1,"type":"snapshot","status":{"schema":1,"app":"orbitfm","version":"0.17.0-rc.3","state":"playing","station":{"uuid":"…","name":"…","country":"Германия","countrycode":"de","tags":"…","favicon":"https://…","homepage":"https://…","bitrate":128,"codec":"MP3","source":"radio","favorite":false},"volume":0.75,"window":{"visible":true,"mode":"focus"},"theme":"dark","accent":"blue","language":"ru","can":{"previous":true,"next":true},"ui":{"play_pause":"Пуск/Пауза","stop":"Стоп","previous":"Предыдущая","next":"Следующая","radio_roulette":"Радиорулетка","settings":"Настройки","show_window":"Показать окно","hide_window":"Скрыть окно","nothing_playing":"Ничего не играет","volume_up":"Громче","volume_down":"Тише","search":"Поиск","no_match":"Нет совпадений","retry":"Повторить","close":"Закрыть","favorites":"Избранное","history":"История","play_this_page":"Играть эту страницу","no_audio":"На этой странице не нашлось аудио.","importing":"Импортирую поток…","stream_rejected":"Поток отклонён.","add_favorite":"В избранное","remove_favorite":"Убрать из избранного","now_playing":"Сейчас играет","volume":"Громкость","theme":"Тема","theme_system":"Системная","theme_dark":"Тёмная","theme_light":"Светлая","about_station":"О станции","open_homepage":"Открыть сайт","state_playing":"в эфире","state_paused":"пауза","state_buffering":"буферизация","state_reconnecting":"переподключение","state_stopped":"остановлено","state_error":"ошибка"}}}
+{"ev":1,"type":"snapshot","status":{"schema":1,"app":"orbitfm","version":"0.18.0-rc.1","state":"playing","station":{"uuid":"…","name":"…","country":"Германия","countrycode":"de","tags":"…","favicon":"https://…","homepage":"https://…","bitrate":128,"codec":"MP3","source":"radio","favorite":false},"volume":0.75,"window":{"visible":true,"mode":"focus"},"theme":"dark","accent":"blue","language":"ru","can":{"previous":true,"next":true},"sleep":null,"ui":{"play_pause":"Пуск/Пауза","stop":"Стоп","previous":"Предыдущая","next":"Следующая","radio_roulette":"Радиорулетка","settings":"Настройки","show_window":"Показать окно","hide_window":"Скрыть окно","nothing_playing":"Ничего не играет","volume_up":"Громче","volume_down":"Тише","search":"Поиск","no_match":"Нет совпадений","retry":"Повторить","close":"Закрыть","favorites":"Избранное","history":"История","play_this_page":"Играть эту страницу","no_audio":"На этой странице не нашлось аудио.","importing":"Импортирую поток…","stream_rejected":"Поток отклонён.","add_favorite":"В избранное","remove_favorite":"Убрать из избранного","now_playing":"Сейчас играет","volume":"Громкость","theme":"Тема","theme_system":"Системная","theme_dark":"Тёмная","theme_light":"Светлая","about_station":"О станции","open_homepage":"Открыть сайт","state_playing":"в эфире","state_paused":"пауза","state_buffering":"буферизация","state_reconnecting":"переподключение","state_stopped":"остановлено","state_error":"ошибка"}}}
 ```
 
 `status` — ровно объект `status --json` схемы 1 (ADR-0037,
 `docs/interfaces/05-ipc.md` §4). Поля, их типы и правило совместимости
-(`schema` растёт только при удалении/переименовании) те же.
+(`schema` растёт только при удалении/переименовании) те же. `sleep` равен
+`{ minutes, remaining_secs }` при активном таймере и `null` без него; кадр
+`state` приходит и в момент срабатывания таймера, когда эфир остановлен
+(ADR-0046).
 
 ### 3.2. Изменение
 
@@ -182,3 +185,7 @@ for line in read_lines():
   companion-поиска браузерного попапа; конверт остаётся `ev: 1`, кадр не
   переигрывается новому подписчику и приходит только в ответ на `search`
   (ADR-0039, ревизия 0.16).
+- 2026-11-03 (0.18.0-rc.1): в `status` добавлено поле `sleep`
+  (`{ minutes, remaining_secs }` или `null`, ADR-0046); конверт и `schema`
+  не меняются — поле аддитивное, клиент обязан игнорировать его, если не
+  умеет.

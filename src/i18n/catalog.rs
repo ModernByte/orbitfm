@@ -179,6 +179,15 @@ pub(crate) struct SettingsText {
     /// Подсказка над слайдером: колесо мыши меняет громкость (ADR-0031 §7).
     pub volume_hint: &'static str,
     pub audio_hint: &'static str,
+    /// Таймер сна: остановка эфира через выбранное время (ADR-0046).
+    pub sleep_timer: &'static str,
+    pub sleep_timer_hint: &'static str,
+    pub sleep_off: &'static str,
+    /// Вариант длительности: `{minutes}` подставляется числом минут.
+    pub sleep_minutes: &'static str,
+    /// Кольцевой переход очереди после последней станции (ADR-0046).
+    pub queue_wrap: &'static str,
+    pub queue_wrap_hint: &'static str,
     pub motion_reactivity: &'static str,
     pub motion_spin_hint: &'static str,
     pub motion_style: &'static str,
@@ -365,6 +374,8 @@ pub(crate) struct NoticeText {
     pub language_not_saved: &'static str,
     pub visualizer_not_saved: &'static str,
     pub fft_unavailable: &'static str,
+    /// Таймер сна остановил эфир (ADR-0046).
+    pub sleep_expired: &'static str,
 }
 
 pub(crate) struct LabelText {

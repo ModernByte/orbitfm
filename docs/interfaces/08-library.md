@@ -20,6 +20,17 @@ pub enum LibraryError {
 
 pub struct StationLibrary { /* path: Option<PathBuf>, data: LibraryData */ }
 
+/// Версия схемы переноса (docs/interfaces/15-library-export.md).
+pub const EXPORT_SCHEMA: u32 = 1;
+
+/// Итог слияния импортированного файла с локальной библиотекой.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ImportSummary {
+    pub favorites_added: usize,
+    pub history_added: usize,
+    pub skipped: usize,
+}
+
 impl StationLibrary {
     /// Загружает библиотеку из файла. Отсутствующий файл — пустая библиотека.
     pub fn load(path: PathBuf) -> Result<Self, LibraryError>;
@@ -45,6 +56,18 @@ impl StationLibrary {
     pub fn record_played(&mut self, station: &Station) -> Result<(), LibraryError>;
 
     pub fn clear_history(&mut self) -> Result<(), LibraryError>;
+
+    /// Переносимый JSON схемы 1 (ADR-0046).
+    pub fn export_json(&self) -> Result<String, LibraryError>;
+
+    /// Атомарная запись экспорта; возвращает число избранных станций.
+    pub fn export_to(&self, path: &Path) -> Result<usize, LibraryError>;
+
+    /// Чтение файла и слияние с локальной библиотекой.
+    pub fn import_from(&mut self, path: &Path) -> Result<ImportSummary, LibraryError>;
+
+    /// Слияние байтов без файла: единица тестирования и будущий Android.
+    pub fn import_bytes(&mut self, bytes: &[u8]) -> Result<ImportSummary, LibraryError>;
 }
 
 /// Стандартный путь по XDG Base Directory Specification.
@@ -69,6 +92,9 @@ pub fn default_path() -> Result<PathBuf, LibraryError>;
 | `toggle_favorite` | Нет станции — добавить в конец избранного; есть — удалить; затем сохранить |
 | `record_played` | Удалить прежнее вхождение по `stationuuid`, вставить в начало, обрезать до `HISTORY_LIMIT`, сохранить |
 | `clear_history` | Очистить историю и сохранить; пустая история — успех без записи |
+| `export_json` | Снимок схемы 1: избранное и история в порядке хранения |
+| `export_to` | `export_json` → атомарная запись; на Unix права `0600` |
+| `import_from` / `import_bytes` | Слияние по `stationuuid`; локальная запись побеждает, некорректные станции пропускаются |
 
 Станции хранятся снимком `Station` целиком (включая `url_resolved`, `favicon`,
 `tags`), поэтому сохранённую станцию можно запустить без обращения к каталогу.
@@ -104,14 +130,31 @@ pub fn default_path() -> Result<PathBuf, LibraryError>;
   переключается на `ephemeral()` и показывает предупреждение.
 - Ошибки `Write` возвращаются вызывающему; состояние в памяти остаётся изменённым.
 
-## 5. Тесты
+## 5. Экспорт и импорт
+
+Перенос библиотеки между desktop и Android описан отдельным контрактом
+`docs/interfaces/15-library-export.md` (схема 1, ADR-0046). Ключевые
+инварианты:
+
+- импорт не заменяет библиотеку, а сливает её по `stationuuid`;
+- локальная запись при совпадении UUID не перезаписывается;
+- `url`/`url_resolved` обязаны быть публичным `http(s)` без userinfo
+  (ADR-0025); homepage/favicon проверяются отдельно и могут стать `null`;
+- файл ≤ 2 МиБ и ≤ 5000 станций; строки санитизируются;
+- экспорт на Unix получает права `0600` и пишется атомарно.
+
+## 6. Тесты
 
 Модульные тесты покрывают: выбор XDG-пути и fallback на `HOME`, загрузку без файла,
 roundtrip избранного и истории, переключение избранного, дедупликацию/перемещение
 в начало и лимит истории, ошибку разбора повреждённого файла, нормализацию при
-загрузке и работу эфемерной библиотеки без файла.
+загрузке, работу эфемерной библиотеки без файла, roundtrip экспорт → импорт,
+отказ неизвестной схемы и чужого `app`, потолки размера и числа станций,
+пропуск приватных/некорректных URL, санитизацию и Unix-права `0600`.
 
-## 6. Связанные документы
+## 7. Связанные документы
 
 - ADR-0013: Избранное и история станций
+- ADR-0046: Ритуалы слушания и перенос библиотеки
+- `docs/interfaces/15-library-export.md`
 - `docs/modules/09-library.md`

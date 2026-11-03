@@ -82,7 +82,7 @@ pub enum MediaCommand {
 | DesktopEntry | `org.modernbyte.OrbitFM` |
 | Track ID prefix | `/org/modernbyte/OrbitFM/track` |
 | Volume | из `PlaybackInfo`, `0.0..=1.0` |
-| Capabilities | `CanPlay`, `CanPause`, `CanControl`; `CanGoNext`/`CanGoPrevious` — по непустой видимой очереди; `CanSeek` выключен |
+| Capabilities | `CanPlay`, `CanPause`, `CanControl`; `CanGoNext`/`CanGoPrevious` — по `skip_availability()`: пустая очередь выключает оба, `queue_wrap` разрешает оба, без wrap — по позиции станции (ADR-0046); `CanSeek` выключен |
 
 ## 5. Потоки и пробуждение GUI
 
@@ -121,8 +121,9 @@ playwire вызывает колбэк в рабочем потоке D-Bus. К�
 
 ## 7. Ограничения
 
-- `Next` / `Previous` ходят по видимой очереди с циклом; при пустом списке это no-op,
-  и способности выключены. Отдельного плейлиста нет (ADR-0013).
+- `Next` / `Previous` ходят по видимой очереди; с включённым `queue_wrap` края
+  замыкаются, с выключенным шаг за край — no-op. При пустом списке это no-op,
+  и способности выключены. Отдельного плейлиста нет (ADR-0013, ADR-0046).
 - Перемотка (seek) не поддерживается для живого радио.
 - Windows-бэкенд SMTC и macOS Now Playing не проверялись в рантайме (Linux-окружение
   разработки); Windows-код проверяется компиляцией и clippy в CI.
