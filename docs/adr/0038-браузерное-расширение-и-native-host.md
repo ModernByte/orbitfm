@@ -288,7 +288,7 @@ Chrome и Firefox принимают в `manifest.json` версию из 1–4 
   обе находки живой приёмки 2026-10-31;
 - документация: `docs/interfaces/14-native-host.md`,
   `docs/modules/17-browser-companion.md`,
-  `docs/wiki/12-Браузерное-расширение.md`.
+  `docs/wiki/Интеграции-браузер.md`.
 
 Живая приёмка 2026-10-31 (Linux x86_64, niri/Wayland):
 
@@ -337,5 +337,5 @@ Chrome/Chromium с нестандартным `--user-data-dir` требует �
 - ADR-0039 — поток событий состояния
 - `docs/interfaces/14-native-host.md`
 - `docs/modules/17-browser-companion.md`
-- `docs/wiki/12-Браузерное-расширение.md`
+- `docs/wiki/Интеграции-браузер.md`
 - `SECURITY.md` — модель угроз проекта
