@@ -81,6 +81,7 @@ OrbitFM — 3D Interactive Global Radio Player
   volume-down          Тише на один шаг
   sleep <1-720>        Остановить эфир через заданное число минут
   sleep clear          Отменить таймер сна
+  network <профиль>    Профиль сети: unlimited, metered или offline-first
   theme <режим>        Тема: system, dark или light
   library-export <путь>
                        Выгрузить избранное и историю (JSON, схема 1)
