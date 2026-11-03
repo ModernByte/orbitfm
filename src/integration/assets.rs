@@ -303,11 +303,38 @@ static FIREFOX: [Asset; 6] = [
     ),
 ];
 
+/// Noctalia не получает файлов: регистрация источника — единственное действие.
+static NOCTALIA: [Asset; 0] = [];
+
+/// Правила niri: файл в каталоге оболочки + строка include в её конфиге.
+/// Содержимое — тот же сниппет, что показывает мастер (ADR-0051 §2).
+static NIRI: [Asset; 1] = [asset(
+    super::wm::NIRI_RULE_FILE,
+    super::wm::NIRI_SNIPPET,
+    false,
+    Escape::None,
+    false,
+)];
+
+/// Правила Hyprland: файл в каталоге оболочки; подключение печатается, но в
+/// чужой конфиг не пишется (ADR-0051 §2, раздел «Альтернативы»).
+static HYPRLAND: [Asset; 1] = [asset(
+    super::wm::HYPRLAND_RULE_FILE,
+    super::wm::HYPRLAND_SNIPPET,
+    false,
+    Escape::None,
+    false,
+)];
+
 pub(super) fn assets(target: Target) -> &'static [Asset] {
     match target {
         Target::Plasma6 => &PLASMA6,
         Target::Gnome => &GNOME,
         Target::Omarchy => &OMARCHY,
+        // Файлов у цели нет: след живёт в состоянии оболочки (ADR-0051 §3).
+        Target::Noctalia => &NOCTALIA,
+        Target::Niri => &NIRI,
+        Target::Hyprland => &HYPRLAND,
         Target::Waybar => &WAYBAR,
         Target::Polybar => &POLYBAR,
         Target::I3blocks => &I3BLOCKS,

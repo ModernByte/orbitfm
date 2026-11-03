@@ -11,7 +11,10 @@ use tokio::runtime::Handle;
 
 use super::reload::{self, ReloadOutcome};
 use super::waybar::{self, WaybarStatus};
-use super::{InstalledState, Layout, Target, current_binary, inspect, install_one, uninstall_one};
+use super::{
+    InstalledState, Layout, Target, current_binary, inspect, install_one, noctalia, uninstall_one,
+    wm,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Availability {
@@ -64,10 +67,13 @@ impl PanelAction {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub(crate) enum PanelOutcome {
     Completed,
     ManualReload,
+    /// Действие выполнено, но оболочка не ответила или остались ручные шаги:
+    /// причина/подсказка ложится в подробность строки (ADR-0051 §2).
+    NeedsAttention(String),
 }
 
 #[derive(Debug)]
@@ -143,6 +149,7 @@ impl IntegrationPanel {
                 self.receiver = None;
                 self.busy = None;
                 self.refresh();
+                self.apply_attention(&event);
                 Some(event)
             }
             Err(TryRecvError::Empty) => None,
@@ -155,6 +162,24 @@ impl IntegrationPanel {
                     detail: "фоновая задача завершилась без результата".to_owned(),
                 })
             }
+        }
+    }
+
+    /// Заметка цели после действия: деталь снимка пересчитывается по квитанции,
+    /// поэтому ручные шаги и отказ оболочки дописываются поверх (ADR-0051 §2).
+    fn apply_attention(&mut self, event: &PanelEvent) {
+        let PanelEvent::Done { action, outcome } = event else {
+            return;
+        };
+        let PanelOutcome::NeedsAttention(note) = outcome else {
+            return;
+        };
+        if let Some(status) = self
+            .statuses
+            .iter_mut()
+            .find(|status| status.target == action.target())
+        {
+            status.detail = Some(note.clone());
         }
     }
 }
@@ -220,6 +245,9 @@ fn status_for(layout: &Layout, target: Target) -> TargetStatus {
         },
         Err(err) => (InstallState::Problem, Some(format!("{err:#}"))),
     };
+    // Для целей правил окон и Noctalia подробность обязана быть видна: путь
+    // файла и готовая строка подключения — это ручные шаги пользователя (§2).
+    let detail = detail.or_else(|| handoff_note(layout, target, state));
 
     TargetStatus {
         target,
@@ -231,17 +259,50 @@ fn status_for(layout: &Layout, target: Target) -> TargetStatus {
     }
 }
 
+/// Что осталось сделать оболочке после установки цели (ADR-0051 §2).
+fn handoff_note(layout: &Layout, target: Target, state: InstallState) -> Option<String> {
+    if state != InstallState::Installed {
+        return None;
+    }
+    match target {
+        // Hyprland: установщик чужой конфиг не правит, строку подключает человек.
+        Target::Hyprland => Some(format!(
+            "файл правил {}; подключение в hyprland.conf: {}",
+            layout.root(target).join(wm::HYPRLAND_RULE_FILE).display(),
+            wm::HYPRLAND_SOURCE
+        )),
+        Target::Niri => Some(format!(
+            "строка {} добавлена в {}",
+            wm::NIRI_INCLUDE,
+            wm::niri_config_path(layout).display()
+        )),
+        Target::Noctalia => Some(format!(
+            "источник {} зарегистрирован средствами оболочки; виджет {}",
+            noctalia::SOURCE,
+            noctalia::PLUGIN_ID
+        )),
+        _ => None,
+    }
+}
+
 fn perform(action: PanelAction) -> Result<PanelOutcome, String> {
     let layout = Layout::from_env().map_err(|err| format!("{err:#}"))?;
     match action {
         PanelAction::Install(target) => {
             let binary = current_binary().map_err(|err| format!("{err:#}"))?;
-            install_one(&layout, target, false, &binary).map_err(|err| format!("{err:#}"))?;
-            Ok(PanelOutcome::Completed)
+            let report =
+                install_one(&layout, target, false, &binary).map_err(|err| format!("{err:#}"))?;
+            Ok(match report.note {
+                Some(note) => PanelOutcome::NeedsAttention(note),
+                None => PanelOutcome::Completed,
+            })
         }
         PanelAction::Uninstall(target) => {
-            uninstall_one(&layout, target, false).map_err(|err| format!("{err:#}"))?;
-            Ok(PanelOutcome::Completed)
+            let report = uninstall_one(&layout, target, false).map_err(|err| format!("{err:#}"))?;
+            Ok(match report.note {
+                Some(note) => PanelOutcome::NeedsAttention(note),
+                None => PanelOutcome::Completed,
+            })
         }
         PanelAction::EnableWaybar => {
             let report = waybar::enable(&layout).map_err(|err| format!("{err:#}"))?;

@@ -220,6 +220,7 @@ pub(crate) const CATALOG: Catalog = Catalog {
     integrations: IntegrationsText {
         group_bars: "Paski i panele",
         group_environments: "Środowiska pulpitu",
+        group_windows: "Zasady okien",
         group_browsers: "Przeglądarki",
         not_installed: "Niezainstalowane",
         installed: "Zainstalowane",

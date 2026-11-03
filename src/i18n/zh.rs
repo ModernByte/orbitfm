@@ -220,6 +220,7 @@ pub(crate) const CATALOG: Catalog = Catalog {
     integrations: IntegrationsText {
         group_bars: "状态栏与面板",
         group_environments: "桌面环境",
+        group_windows: "窗口规则",
         group_browsers: "浏览器",
         not_installed: "未安装",
         installed: "已安装",

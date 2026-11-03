@@ -220,6 +220,7 @@ pub(crate) const CATALOG: Catalog = Catalog {
     integrations: IntegrationsText {
         group_bars: "बार और पैनल",
         group_environments: "डेस्कटॉप वातावरण",
+        group_windows: "विंडो नियम",
         group_browsers: "ब्राउज़र",
         not_installed: "इंस्टॉल नहीं है",
         installed: "इंस्टॉल है",

@@ -220,6 +220,7 @@ pub(crate) const CATALOG: Catalog = Catalog {
     integrations: IntegrationsText {
         group_bars: "Bar dan panel",
         group_environments: "Lingkungan desktop",
+        group_windows: "Aturan jendela",
         group_browsers: "Peramban",
         not_installed: "Belum terpasang",
         installed: "Terpasang",

@@ -220,6 +220,7 @@ pub(crate) const CATALOG: Catalog = Catalog {
     integrations: IntegrationsText {
         group_bars: "Çubuklar ve paneller",
         group_environments: "Masaüstü ortamları",
+        group_windows: "Pencere kuralları",
         group_browsers: "Tarayıcılar",
         not_installed: "Kurulu değil",
         installed: "Kurulu",

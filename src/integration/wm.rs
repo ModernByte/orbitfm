@@ -6,12 +6,125 @@
 
 use std::env;
 use std::ffi::OsString;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+
+use anyhow::{Context, Result, bail};
+
+use super::{Layout, Target, reject_symlink};
 
 /// KDL-правила niri: runtime-интерфейса для window-rule в IPC нет.
 pub(crate) const NIRI_SNIPPET: &str = include_str!("../../wm-configs/orbitfm-niri.kdl");
 /// Конфиг Hyprland целиком: показывается кнопкой «Копировать», если IPC отказал.
 pub(crate) const HYPRLAND_SNIPPET: &str = include_str!("../../wm-configs/orbitfm-hyprland.conf");
+/// Файл правил niri относительно `~/.config/niri` (ADR-0051 §2).
+pub(crate) const NIRI_RULE_FILE: &str = "cfg/orbitfm.kdl";
+/// Главный конфиг niri: единственный чужой файл, который правит установщик.
+pub(crate) const NIRI_MAIN_CONFIG: &str = "config.kdl";
+/// Файл правил Hyprland относительно `~/.config/hypr` (ADR-0051 §2).
+pub(crate) const HYPRLAND_RULE_FILE: &str = "orbitfm.conf";
+/// Ровно одна строка, которую установщик добавляет в `config.kdl` (ADR-0051 §5).
+pub(crate) const NIRI_INCLUDE: &str = "include \"./cfg/orbitfm.kdl\"";
+/// Строка подключения для Hyprland: её только печатают, в конфиг не пишут.
+pub(crate) const HYPRLAND_SOURCE: &str = "source = ~/.config/hypr/orbitfm.conf";
+
+/// Главный конфиг niri — путь каталога оболочки, не каталога установщика.
+pub(super) fn niri_config_path(layout: &Layout) -> PathBuf {
+    layout.root(Target::Niri).join(NIRI_MAIN_CONFIG)
+}
+
+/// Добавляет строку подключения, если её ещё нет: идемпотентность ADR-0051 §2.
+///
+/// Возвращает `true`, когда строка добавлена (только тогда она попадает в
+/// квитанцию). Бэкап создаётся перед первой правкой и больше не обновляется.
+pub(crate) fn add_include(path: &Path, line: &str) -> Result<bool> {
+    reject_symlink(path)?;
+    let original = fs::read_to_string(path)
+        .with_context(|| format!("не удалось прочитать {}", path.display()))?;
+    if has_line(&original, line) {
+        return Ok(false);
+    }
+    super::backup_once(path, original.as_bytes())?;
+    let separator = if original.ends_with('\n') || original.is_empty() {
+        String::new()
+    } else {
+        "\n".to_string()
+    };
+    let updated = format!("{original}{separator}{line}\n");
+    // Повторная проверка после сборки текста: строка обязана появиться ровно одна.
+    if count_lines(&updated, line) != 1 {
+        bail!("строка подключения не появилась в {}", path.display());
+    }
+    crate::storage::write_atomic(path, &temp_name(path), updated.as_bytes())
+        .with_context(|| format!("не удалось записать {}", path.display()))?;
+    let read_back = fs::read_to_string(path)
+        .with_context(|| format!("не удалось перечитать {}", path.display()))?;
+    if count_lines(&read_back, line) != 1 {
+        bail!("{} изменился не так, как ожидалось", path.display());
+    }
+    Ok(true)
+}
+
+/// Убирает ровно свою целую строку; чужие строки остаются нетронутыми.
+///
+/// Файл отсутствует — не ошибка: цель уже снята или оболочка снесла конфиг.
+pub(crate) fn remove_include(path: &Path, line: &str) -> Result<bool> {
+    reject_symlink(path)?;
+    let Ok(original) = fs::read_to_string(path) else {
+        return Ok(false);
+    };
+    let mut dropped = false;
+    let kept: Vec<&str> = original
+        .lines()
+        .filter(|row| {
+            // Сравнение целой строки, не подстроки (ADR-0051 §2).
+            if !dropped && row.trim_end_matches('\r') == line {
+                dropped = true;
+                false
+            } else {
+                true
+            }
+        })
+        .collect();
+    if !dropped {
+        return Ok(false);
+    }
+    let updated = format_lines(&kept);
+    crate::storage::write_atomic(path, &temp_name(path), updated.as_bytes())
+        .with_context(|| format!("не удалось записать {}", path.display()))?;
+    Ok(true)
+}
+
+/// Есть ли в тексте целая строка `line`.
+fn has_line(text: &str, line: &str) -> bool {
+    text.lines().any(|row| row.trim_end_matches('\r') == line)
+}
+
+/// Сколько раз целая строка `line` встречается в тексте.
+fn count_lines(text: &str, line: &str) -> usize {
+    text.lines()
+        .filter(|row| row.trim_end_matches('\r') == line)
+        .count()
+}
+
+/// Собирает текст обратно: по строке в конце файла.
+fn format_lines(lines: &[&str]) -> String {
+    let mut text = lines.join("\n");
+    if !text.is_empty() {
+        text.push('\n');
+    }
+    text
+}
+
+/// Имя временного файла рядом с конфигом (нужен `write_atomic`).
+fn temp_name(path: &Path) -> String {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("config");
+    format!("{file_name}.orbitfm.tmp")
+}
 
 /// Рабочее окружение, для которого мастер умеет предложить правила окна.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -147,6 +260,8 @@ pub(crate) fn apply_hyprland_rules() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::integration::BACKUP_SUFFIX;
+    use tempfile::TempDir;
 
     fn value(text: &str) -> Option<OsString> {
         Some(OsString::from(text))
@@ -210,5 +325,105 @@ mod tests {
         }
         assert!(HYPRLAND_SNIPPET.contains("windowrulev2"));
         assert!(NIRI_SNIPPET.contains("window-rule"));
+    }
+
+    /// Строка include обязана ссылаться на тот файл, что пишет установщик.
+    #[test]
+    fn niri_include_points_at_the_installed_rule_file() {
+        assert_eq!(
+            NIRI_INCLUDE,
+            format!("include \"./{NIRI_RULE_FILE}\""),
+            "расходится с {NIRI_RULE_FILE}"
+        );
+        assert_eq!(NIRI_RULE_FILE, "cfg/orbitfm.kdl");
+        assert_eq!(HYPRLAND_RULE_FILE, "orbitfm.conf");
+        assert!(
+            HYPRLAND_SOURCE.ends_with(HYPRLAND_RULE_FILE),
+            "подсказка Hyprland ссылается на другой файл"
+        );
+    }
+
+    #[test]
+    fn add_include_is_idempotent_and_backs_up_once() {
+        let dir = TempDir::new().expect("temp dir");
+        let config = dir.path().join("config.kdl");
+        let original = "layout {\n  focus-follows-mouse\n}\n";
+        fs::write(&config, original).expect("config");
+
+        assert!(add_include(&config, NIRI_INCLUDE).expect("first add"));
+        let once = fs::read_to_string(&config).expect("read back");
+        assert!(once.contains(NIRI_INCLUDE));
+        assert_eq!(count_lines(&once, NIRI_INCLUDE), 1);
+
+        // Повторный вызов не дублирует строку и не трогает бэкап.
+        assert!(!add_include(&config, NIRI_INCLUDE).expect("second add"));
+        assert_eq!(fs::read_to_string(&config).expect("read back"), once);
+        fs::write(&config, "x\n").expect("replace");
+        assert!(add_include(&config, NIRI_INCLUDE).expect("third add"));
+        let backup = dir
+            .path()
+            .join(format!("{NIRI_MAIN_CONFIG}{BACKUP_SUFFIX}"));
+        assert_eq!(fs::read_to_string(backup).expect("backup"), original);
+    }
+
+    #[test]
+    fn add_include_appends_to_text_without_trailing_newline() {
+        let dir = TempDir::new().expect("temp dir");
+        let config = dir.path().join("config.kdl");
+        fs::write(&config, "include \"./other.kdl\"").expect("config");
+
+        add_include(&config, NIRI_INCLUDE).expect("add");
+        let text = fs::read_to_string(&config).expect("read back");
+        assert_eq!(text, format!("include \"./other.kdl\"\n{NIRI_INCLUDE}\n"));
+    }
+
+    #[test]
+    fn remove_include_drops_only_its_whole_line() {
+        let dir = TempDir::new().expect("temp dir");
+        let config = dir.path().join("config.kdl");
+        fs::write(
+            &config,
+            format!(
+                "// include \"./cfg/orbitfm.kdl\" — комментарий пользователя\n\
+                 include \"./cfg/orbitfm-extra.kdl\"\n{NIRI_INCLUDE}\n\
+                 layout {{\n}}\n"
+            ),
+        )
+        .expect("config");
+
+        assert!(remove_include(&config, NIRI_INCLUDE).expect("remove"));
+        let text = fs::read_to_string(&config).expect("read back");
+        assert!(!text.contains(&format!("{NIRI_INCLUDE}\n")));
+        // Сравнение целой строки: ни комментарий, ни чужое include не задеты.
+        assert!(text.contains("// include \"./cfg/orbitfm.kdl\" — комментарий пользователя"));
+        assert!(text.contains("include \"./cfg/orbitfm-extra.kdl\""));
+        assert!(text.contains("layout {"));
+
+        // Повторное снятие и отсутствующий файл — не ошибка.
+        assert!(!remove_include(&config, NIRI_INCLUDE).expect("second remove"));
+        assert!(!remove_include(&dir.path().join("missing.kdl"), NIRI_INCLUDE).expect("missing"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn include_edit_refuses_a_symlinked_config() {
+        use std::os::unix::fs::symlink;
+
+        let dir = TempDir::new().expect("temp dir");
+        let real = dir.path().join("dotfiles-config.kdl");
+        fs::write(&real, "layout {\n}\n").expect("real");
+        let config = dir.path().join(NIRI_MAIN_CONFIG);
+        symlink(&real, &config).expect("symlink");
+
+        let err = add_include(&config, NIRI_INCLUDE).expect_err("must refuse");
+        assert!(format!("{err:#}").contains("символическая"));
+        assert_eq!(fs::read_to_string(&real).expect("real"), "layout {\n}\n");
+        assert!(
+            !dir.path()
+                .join(format!("{NIRI_MAIN_CONFIG}{BACKUP_SUFFIX}"))
+                .exists()
+        );
+        let err = remove_include(&config, NIRI_INCLUDE).expect_err("must refuse");
+        assert!(format!("{err:#}").contains("символическая"));
     }
 }

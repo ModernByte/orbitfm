@@ -223,6 +223,7 @@ pub(crate) const CATALOG: Catalog = Catalog {
     integrations: IntegrationsText {
         group_bars: "الأشرطة واللوحات",
         group_environments: "بيئات سطح المكتب",
+        group_windows: "قواعد النوافذ",
         group_browsers: "المتصفحات",
         not_installed: "غير مثبّت",
         installed: "مثبّت",

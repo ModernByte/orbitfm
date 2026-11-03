@@ -1,9 +1,11 @@
-//! Установщик интеграций оболочек и баров (ADR-0037, п. 5).
+//! Установщик интеграций оболочек, баров и правил окон (ADR-0037 п. 5, ADR-0051).
 //!
 //! Ассеты встроены в бинарник; установка идёт в каталоги пользователя и
-//! сопровождается квитанцией. Чужие конфиги установщик не изменяет.
+//! сопровождается квитанцией. Из чужих конфигов правится ровно одна строка —
+//! `include` у niri, с резервной копией и снятием по квитанции.
 
 mod assets;
+mod noctalia;
 pub(crate) mod reload;
 pub(crate) mod status;
 pub(crate) mod waybar;
@@ -12,7 +14,7 @@ pub(crate) mod wm;
 use std::collections::HashSet;
 use std::env;
 use std::fs;
-use std::io::ErrorKind;
+use std::io::{ErrorKind, Write};
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -28,11 +30,13 @@ const HOST_NAME: &str = "org.modernbyte.orbitfm";
 /// него и не меняется между установками. Приватный ключ в репозитории не живёт.
 const CHROME_EXTENSION_ID: &str = "lfhmfgjblkebbalfdlbmnalghhjplfbg";
 const FIREFOX_EXTENSION_ID: &str = "orbitfm@modernbyte";
-const TARGET_LIST: &str = "plasma6, gnome, omarchy, waybar, polybar, i3blocks, swaybar, \
-i3status-rust, xfce, cinnamon, mate, lxqt, chrome, firefox";
+/// Суффикс первой резервной копии чужого конфига (ADR-0042 §2, ADR-0051 §2).
+const BACKUP_SUFFIX: &str = ".orbitfm.bak";
+const TARGET_LIST: &str = "plasma6, gnome, omarchy, noctalia, niri, hyprland, waybar, \
+polybar, i3blocks, swaybar, i3status-rust, xfce, cinnamon, mate, lxqt, chrome, firefox";
 
 const HELP: &str = "\
-Управление интеграциями оболочек и баров.
+Управление интеграциями оболочек, баров и правил окон.
 
 Использование:
   orbitfm integration status [цель]
@@ -40,18 +44,17 @@ const HELP: &str = "\
   orbitfm integration uninstall <цель> [--force]
 
 Цели (ставятся по одной):
-  plasma6, gnome, omarchy, waybar, polybar, i3blocks, swaybar,
-  i3status-rust, xfce, cinnamon, mate, lxqt, chrome, firefox
+  plasma6, gnome, omarchy, noctalia, niri, hyprland, waybar,
+  polybar, i3blocks, swaybar, i3status-rust, xfce, cinnamon, mate,
+  lxqt, chrome, firefox
 
 Установка идёт в каталоги пользователя и пишет квитанцию
-$XDG_DATA_HOME/orbitfm/integrations/<цель>.json. Конфиги оболочек
-не изменяются: команда печатает готовый сниппет и путь скрипта.";
+$XDG_DATA_HOME/orbitfm/integrations/<цель>.json. Команда печатает
+готовый сниппет и путь файла; из чужих конфигов правится только
+строка include у niri — с резервной копией config.kdl.orbitfm.bak.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Target {
-    Plasma6,
-    Gnome,
-    Omarchy,
     Waybar,
     Polybar,
     I3blocks,
@@ -61,24 +64,36 @@ pub(crate) enum Target {
     Cinnamon,
     Mate,
     Lxqt,
+    Plasma6,
+    Gnome,
+    Omarchy,
+    Noctalia,
+    Niri,
+    Hyprland,
     Chrome,
     Firefox,
 }
 
-/// Группы списка «Интеграции» (ADR-0042 §1): порядок страницы, не CLI.
+/// Группы списка «Интеграции» (ADR-0042 §1, ADR-0051 §1): порядок страницы, не CLI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TargetGroup {
     Bars,
     Environments,
+    Windows,
     Browsers,
 }
 
 impl TargetGroup {
-    pub(crate) const ALL: [Self; 3] = [Self::Bars, Self::Environments, Self::Browsers];
+    pub(crate) const ALL: [Self; 4] = [
+        Self::Bars,
+        Self::Environments,
+        Self::Windows,
+        Self::Browsers,
+    ];
 }
 
 impl Target {
-    pub(crate) const ALL: [Self; 14] = [
+    pub(crate) const ALL: [Self; 17] = [
         Self::Waybar,
         Self::Polybar,
         Self::I3blocks,
@@ -91,6 +106,9 @@ impl Target {
         Self::Plasma6,
         Self::Gnome,
         Self::Omarchy,
+        Self::Noctalia,
+        Self::Niri,
+        Self::Hyprland,
         Self::Chrome,
         Self::Firefox,
     ];
@@ -106,7 +124,10 @@ impl Target {
             | Self::Cinnamon
             | Self::Mate
             | Self::Lxqt => TargetGroup::Bars,
-            Self::Plasma6 | Self::Gnome | Self::Omarchy => TargetGroup::Environments,
+            Self::Plasma6 | Self::Gnome | Self::Omarchy | Self::Noctalia => {
+                TargetGroup::Environments
+            }
+            Self::Niri | Self::Hyprland => TargetGroup::Windows,
             Self::Chrome | Self::Firefox => TargetGroup::Browsers,
         }
     }
@@ -116,6 +137,10 @@ impl Target {
             Self::Plasma6 => "KDE Plasma 6",
             Self::Gnome => "GNOME",
             Self::Omarchy => "Omarchy",
+            // Собственные имена оболочек не переводятся (ADR-0051 §1).
+            Self::Noctalia => "Noctalia",
+            Self::Niri => "niri",
+            Self::Hyprland => "Hyprland",
             Self::Waybar => "Waybar",
             Self::Polybar => "Polybar",
             Self::I3blocks => "i3blocks",
@@ -135,6 +160,9 @@ impl Target {
             Self::Plasma6 => "plasma6",
             Self::Gnome => "gnome",
             Self::Omarchy => "omarchy",
+            Self::Noctalia => "noctalia",
+            Self::Niri => "niri",
+            Self::Hyprland => "hyprland",
             Self::Waybar => "waybar",
             Self::Polybar => "polybar",
             Self::I3blocks => "i3blocks",
@@ -154,6 +182,9 @@ impl Target {
             "plasma6" | "plasma" | "kde" => Some(Self::Plasma6),
             "gnome" | "gnome-shell" => Some(Self::Gnome),
             "omarchy" | "quickshell" => Some(Self::Omarchy),
+            "noctalia" => Some(Self::Noctalia),
+            "niri" => Some(Self::Niri),
+            "hyprland" | "hypr" | "hyprctl" => Some(Self::Hyprland),
             "waybar" => Some(Self::Waybar),
             "polybar" => Some(Self::Polybar),
             "i3blocks" => Some(Self::I3blocks),
@@ -324,11 +355,18 @@ fn run_uninstall(scope: Scope, force: bool) -> Result<()> {
             }
             Ok(report) => {
                 println!(
-                    "{:<14} удалено файлов: {} (каталог {})",
+                    "{:<14} удалено файлов: {}{}",
                     target.id(),
                     report.removed,
-                    report.root.display()
+                    if report.root.is_dir() {
+                        format!(" (каталог {})", report.root.display())
+                    } else {
+                        String::new()
+                    }
                 );
+                if let Some(note) = &report.note {
+                    println!("  внимание: {note}");
+                }
             }
             Err(err) => {
                 eprintln!("Не удалось удалить {}: {err:#}", target.id());
@@ -400,6 +438,7 @@ const CHROMIUM_BROWSERS: [ChromiumBrowser; 5] = [
 struct Layout {
     data_home: PathBuf,
     config_home: PathBuf,
+    state_home: PathBuf,
     home: PathBuf,
     root_override: Option<PathBuf>,
 }
@@ -417,6 +456,7 @@ impl Layout {
             return Ok(Self {
                 data_home: root.clone(),
                 config_home: root.clone(),
+                state_home: root.clone(),
                 home: root.clone(),
                 root_override: Some(root),
             });
@@ -428,6 +468,7 @@ impl Layout {
         Ok(Self {
             data_home: xdg_dir("XDG_DATA_HOME", &home.join(".local/share")),
             config_home: xdg_dir("XDG_CONFIG_HOME", &home.join(".config")),
+            state_home: xdg_dir("XDG_STATE_HOME", &home.join(".local/state")),
             home,
             root_override: None,
         })
@@ -447,6 +488,10 @@ impl Layout {
             Target::Omarchy => self
                 .config_home
                 .join("omarchy/plugins/io.github.modernbyte.orbitfm"),
+            // Файлы правил пишутся только в каталоги оболочки: она же по ним
+            // обнаруживается, и опустевший каталог снимается по квитанции (§3).
+            Target::Niri => self.config_home.join("niri"),
+            Target::Hyprland => self.config_home.join("hypr"),
             _ => self.data_home.join(DATA_SUBDIR).join(target.id()),
         }
     }
@@ -536,33 +581,46 @@ impl Layout {
     }
 
     /// Обнаружение цели для страницы «Интеграции»: конфиг или исполняемый файл
-    /// в `PATH`, без единой записи (ADR-0042 §1).
+    /// в `PATH`, без единой записи (ADR-0042 §1, ADR-0051 §3).
     fn target_detected(&self, target: Target) -> bool {
+        self.detected_with(target, command_in_path)
+    }
+
+    /// Обнаружение с подменяемой проверкой бинарника: тесты не зависят от PATH
+    /// машины, как `Desktop::classify` в `wm` (ADR-0041).
+    fn detected_with(&self, target: Target, binary_present: impl Fn(&str) -> bool) -> bool {
         match target {
-            Target::Waybar => waybar::config_path(self).is_some() || command_in_path("waybar"),
+            Target::Waybar => waybar::config_path(self).is_some() || binary_present("waybar"),
             Target::Polybar => {
                 self.config_file("polybar/config.ini")
                     || self.config_file("polybar/config")
-                    || command_in_path("polybar")
+                    || binary_present("polybar")
             }
-            Target::I3blocks => self.config_file("i3blocks/config") || command_in_path("i3blocks"),
-            Target::Swaybar => self.config_file("sway/config") || command_in_path("sway"),
+            Target::I3blocks => self.config_file("i3blocks/config") || binary_present("i3blocks"),
+            Target::Swaybar => self.config_file("sway/config") || binary_present("sway"),
             Target::I3statusRust => {
-                self.config_file("i3status-rust/config.toml") || command_in_path("i3status-rs")
+                self.config_file("i3status-rust/config.toml") || binary_present("i3status-rs")
             }
-            Target::Xfce => self.config_dir("xfce4") || command_in_path("xfce4-panel"),
-            Target::Cinnamon => self.config_dir("cinnamon") || command_in_path("cinnamon"),
-            Target::Mate => self.config_dir("mate") || command_in_path("mate-panel"),
-            Target::Lxqt => self.config_dir("lxqt") || command_in_path("lxqt-panel"),
+            Target::Xfce => self.config_dir("xfce4") || binary_present("xfce4-panel"),
+            Target::Cinnamon => self.config_dir("cinnamon") || binary_present("cinnamon"),
+            Target::Mate => self.config_dir("mate") || binary_present("mate-panel"),
+            Target::Lxqt => self.config_dir("lxqt") || binary_present("lxqt-panel"),
             Target::Plasma6 => {
                 self.config_file("kdeglobals")
-                    || command_in_path("plasmashell")
-                    || command_in_path("startplasma-wayland")
+                    || binary_present("plasmashell")
+                    || binary_present("startplasma-wayland")
             }
             Target::Gnome => {
-                self.data_home.join("gnome-shell").is_dir() || command_in_path("gnome-shell")
+                self.data_home.join("gnome-shell").is_dir() || binary_present("gnome-shell")
             }
-            Target::Omarchy => self.config_dir("omarchy") || command_in_path("omarchy"),
+            Target::Omarchy => self.config_dir("omarchy") || binary_present("omarchy"),
+            Target::Noctalia => {
+                binary_present("noctalia") || self.state_home.join("noctalia").is_dir()
+            }
+            Target::Niri => binary_present("niri") || self.config_file("niri/config.kdl"),
+            Target::Hyprland => {
+                binary_present("hyprland") || binary_present("hyprctl") || self.config_dir("hypr")
+            }
             Target::Chrome | Target::Firefox => !self.detected_browsers(target).is_empty(),
         }
     }
@@ -621,6 +679,41 @@ struct Receipt {
     version: String,
     binary: String,
     files: Vec<ReceiptFile>,
+    /// Каталоги, которые создал установщик. Снятие убирает только опустевшие,
+    /// чтобы каталог-обманка не держал цель в «обнаружено» (ADR-0051 §3, §4).
+    #[serde(default)]
+    dirs: Vec<String>,
+    /// Строки, добавленные в чужой конфиг: файл и точная строка. Снятие убирает
+    /// ровно их (ADR-0051 §4).
+    #[serde(default)]
+    lines: Vec<ReceiptLine>,
+    /// `noctalia`: источник `orbitfm` добавила эта установка (ADR-0051 §2).
+    #[serde(default)]
+    source_added: bool,
+    /// `noctalia`: виджет был включён до установки — его состояние возвращаем.
+    #[serde(default)]
+    was_enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct ReceiptLine {
+    path: String,
+    line: String,
+}
+
+impl Receipt {
+    /// Признаки `noctalia` из последней квитанции: при переустановке их нельзя
+    /// терять, иначе снятие удалит источник, который добавляли мы раньше.
+    fn flags(&self) -> noctalia::Flags {
+        noctalia::Flags {
+            source_added: self.source_added,
+            was_enabled: self.was_enabled,
+        }
+    }
+
+    fn dir_paths(&self) -> Vec<PathBuf> {
+        self.dirs.iter().map(PathBuf::from).collect()
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -757,6 +850,11 @@ struct InstallReport {
     receipt_path: PathBuf,
     binary: PathBuf,
     files: Vec<PathBuf>,
+    /// Цель поставлена, но действие оболочки не удалось: причина в заметку
+    /// строки, бейдж остаётся честным по квитанции (ADR-0051 §2).
+    note: Option<String>,
+    /// Признаки `noctalia` в квитанции — их печатает `integration status`.
+    flags: noctalia::Flags,
 }
 
 fn install_one(
@@ -780,9 +878,18 @@ fn install_one(
         check_writable(asset, old.as_ref(), force)?;
     }
     let stale = stale_files(old.as_ref(), &new_paths, &roots, force)?;
+    check_foreign_config(layout, target)?;
 
-    fs::create_dir_all(&root).with_context(|| format!("не удалось создать {}", root.display()))?;
+    // Каталоги помечаются только те, которых до этого не было: они и снимаются
+    // при uninstall, чтобы не оставить каталог-обманку для обнаружения (§3).
+    let mut dirs: Vec<PathBuf> = old.as_ref().map_or_else(Vec::new, Receipt::dir_paths);
+    if !rendered.is_empty() {
+        ensure_dir(&root, &mut dirs)?;
+    }
     for asset in &rendered {
+        if let Some(parent) = asset.absolute.parent() {
+            ensure_dir(parent, &mut dirs)?;
+        }
         write_asset(asset)?;
     }
     for path in &stale {
@@ -790,14 +897,11 @@ fn install_one(
         prune_for_roots(path.parent(), &roots);
     }
 
+    let step = apply_target_step(layout, target, old.as_ref())?;
     let mut files = Vec::with_capacity(rendered.len());
     for asset in &rendered {
-        let path = asset
-            .absolute
-            .to_str()
-            .ok_or_else(|| anyhow!("путь не в UTF-8: {}", asset.absolute.display()))?;
         files.push(ReceiptFile {
-            path: path.to_owned(),
+            path: utf8_path(&asset.absolute)?.to_owned(),
             kind: asset.kind,
             hash: hash_bytes(asset.content.as_bytes()),
         });
@@ -806,11 +910,12 @@ fn install_one(
         schema: RECEIPT_SCHEMA,
         target: target.id().to_owned(),
         version: env!("CARGO_PKG_VERSION").to_owned(),
-        binary: binary
-            .to_str()
-            .ok_or_else(|| anyhow!("путь к orbitfm не в UTF-8: {}", binary.display()))?
-            .to_owned(),
+        binary: utf8_path(binary)?.to_owned(),
         files,
+        dirs: owned_paths(&dirs)?,
+        lines: step.lines,
+        source_added: step.flags.source_added,
+        was_enabled: step.flags.was_enabled,
     };
     write_receipt(&receipt_path, &receipt)?;
 
@@ -820,7 +925,121 @@ fn install_one(
         receipt_path,
         binary: binary.to_owned(),
         files: rendered.into_iter().map(|asset| asset.absolute).collect(),
+        note: step.note,
+        flags: step.flags,
     })
+}
+
+/// Шаг цели после раскладки файлов (ADR-0051 §2): строка include у niri,
+/// правила на текущий сеанс у Hyprland, регистрация источника у Noctalia.
+/// Записи других целей остаются чисто файловыми.
+fn apply_target_step(layout: &Layout, target: Target, old: Option<&Receipt>) -> Result<TargetStep> {
+    // Тестовый root — песочница: живую оболочку командами не трогаем, иначе
+    // прогон зависел бы от того, какой композитор запущен на машине.
+    let sandbox = layout.root_override.is_some();
+    let mut step = TargetStep {
+        lines: old.map_or_else(Vec::new, |receipt| receipt.lines.clone()),
+        flags: old.map_or_else(noctalia::Flags::default, Receipt::flags),
+        note: None,
+    };
+
+    match target {
+        Target::Niri => {
+            let config = wm::niri_config_path(layout);
+            if wm::add_include(&config, wm::NIRI_INCLUDE)? {
+                push_line(&mut step.lines, &config, wm::NIRI_INCLUDE)?;
+            }
+        }
+        Target::Hyprland => {
+            if !sandbox {
+                step.note = wm::apply_hyprland_rules().err().map(|reason| {
+                    format!(
+                        "правила не применены на сеанс: {reason}; файл {}, подключение: {}",
+                        layout.root(target).join(wm::HYPRLAND_RULE_FILE).display(),
+                        wm::HYPRLAND_SOURCE
+                    )
+                });
+            }
+        }
+        // Файлов у цели нет: без ответившей оболочки регистрировать нечего,
+        // поэтому отказ команды валит установку, а не превращается в заметку.
+        Target::Noctalia => {
+            let flags = noctalia::register(sandbox).map_err(anyhow::Error::msg)?;
+            step.flags = noctalia::Flags {
+                source_added: old.map_or(flags.source_added, |receipt| receipt.source_added),
+                was_enabled: old.map_or(flags.was_enabled, |receipt| receipt.was_enabled),
+            };
+        }
+        _ => {}
+    }
+    Ok(step)
+}
+
+#[derive(Debug)]
+struct TargetStep {
+    lines: Vec<ReceiptLine>,
+    flags: noctalia::Flags,
+    note: Option<String>,
+}
+
+fn push_line(lines: &mut Vec<ReceiptLine>, path: &Path, line: &str) -> Result<()> {
+    let entry = ReceiptLine {
+        path: utf8_path(path)?.to_owned(),
+        line: line.to_owned(),
+    };
+    if !lines.contains(&entry) {
+        lines.push(entry);
+    }
+    Ok(())
+}
+
+/// Правка чужого конфига возможна только в обычный файл: у niri это проверяется
+/// до первой записи, чтобы отказ ничего не менял на диске (ADR-0051 §2, §5).
+fn check_foreign_config(layout: &Layout, target: Target) -> Result<()> {
+    if target != Target::Niri {
+        return Ok(());
+    }
+    let config = wm::niri_config_path(layout);
+    if !config.is_file() {
+        bail!(
+            "конфиг niri не найден: {} — создайте его и повторите установку",
+            config.display()
+        );
+    }
+    reject_symlink(&config)
+}
+
+/// Создаёт каталог и дописывает в `created` уровни, которых до этого не было.
+fn ensure_dir(path: &Path, created: &mut Vec<PathBuf>) -> Result<()> {
+    if path.is_dir() {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        ensure_dir(parent, created)?;
+    }
+    match fs::create_dir(path) {
+        Ok(()) => {
+            created.push(path.to_owned());
+            Ok(())
+        }
+        Err(err) if err.kind() == ErrorKind::AlreadyExists => Err(anyhow!(
+            "{} существует и не является каталогом",
+            path.display()
+        )),
+        Err(err) => Err(err).with_context(|| format!("не удалось создать {}", path.display())),
+    }
+}
+
+fn owned_paths(paths: &[PathBuf]) -> Result<Vec<String>> {
+    paths
+        .iter()
+        .map(|path| utf8_path(path).map(str::to_owned))
+        .collect()
+}
+
+fn utf8_path(path: &Path) -> Result<&str> {
+    path.to_str()
+        .ok_or_else(|| anyhow!("путь не в UTF-8: {}", path.display()))
 }
 
 fn check_writable(asset: &Rendered, old: Option<&Receipt>, force: bool) -> Result<()> {
@@ -918,10 +1137,6 @@ fn stale_files(
 }
 
 fn write_asset(asset: &Rendered) -> Result<()> {
-    if let Some(parent) = asset.absolute.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("не удалось создать {}", parent.display()))?;
-    }
     if let Some(meta) = metadata_opt(&asset.absolute)?
         && meta.file_type().is_symlink()
     {
@@ -985,6 +1200,12 @@ fn read_receipt_opt(path: &Path, target: Target, roots: &[PathBuf]) -> Result<Op
     for file in &receipt.files {
         ensure_within_roots(roots, Path::new(&file.path))?;
     }
+    for line in &receipt.lines {
+        ensure_within_roots(roots, Path::new(&line.path))?;
+    }
+    for dir in &receipt.dirs {
+        ensure_dir_within_scope(roots, Path::new(dir))?;
+    }
     Ok(Some(receipt))
 }
 
@@ -993,6 +1214,8 @@ struct UninstallReport {
     root: PathBuf,
     removed: usize,
     not_installed: bool,
+    /// Цель снята, но оболочка не ответила: причина в заметку строки.
+    note: Option<String>,
 }
 
 fn uninstall_one(layout: &Layout, target: Target, force: bool) -> Result<UninstallReport> {
@@ -1005,8 +1228,26 @@ fn uninstall_one(layout: &Layout, target: Target, force: bool) -> Result<Uninsta
             root,
             removed: 0,
             not_installed: true,
+            note: None,
         });
     };
+
+    // Сначала действия цели: строка include и регистрация источника, пока
+    // квитанция ещё описывает, что именно ставила эта установка.
+    let mut notes = Vec::new();
+    for entry in &receipt.lines {
+        notes.extend(
+            wm::remove_include(Path::new(&entry.path), &entry.line)
+                .err()
+                .map(|err| format!("{err:#}")),
+        );
+    }
+    if target == Target::Noctalia {
+        notes.extend(
+            noctalia::unregister(receipt.flags(), layout.root_override.is_some())
+                .map(|reason| format!("оболочка не сняла регистрацию: {reason}")),
+        );
+    }
 
     let mut removable = Vec::new();
     let mut blocked = Vec::new();
@@ -1062,12 +1303,90 @@ fn uninstall_one(layout: &Layout, target: Target, force: bool) -> Result<Uninsta
         }
     }
     prune_empty_dirs(Some(&root), &root);
+    prune_receipt_dirs(&receipt.dirs, &roots)?;
 
     Ok(UninstallReport {
         root,
         removed,
         not_installed: false,
+        note: if notes.is_empty() {
+            None
+        } else {
+            Some(notes.join("; "))
+        },
     })
+}
+
+/// Срезает каталоги, которые создал установщик, если к снятию они опустели:
+/// непустой остаётся как есть (ADR-0051 §4). Глубокие уровни идут первыми,
+/// иначе родитель ещё не будет пустым.
+fn prune_receipt_dirs(dirs: &[String], roots: &[PathBuf]) -> Result<()> {
+    let mut deepest_first: Vec<PathBuf> = dirs.iter().map(PathBuf::from).collect();
+    deepest_first.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+    for path in deepest_first {
+        ensure_dir_within_scope(roots, &path)?;
+        if !path.is_dir() {
+            continue;
+        }
+        if let Err(err) = fs::remove_dir(&path)
+            && err.kind() != ErrorKind::DirectoryNotEmpty
+            && err.kind() != ErrorKind::NotFound
+        {
+            return Err(err).with_context(|| format!("не удалось удалить {}", path.display()));
+        }
+    }
+    Ok(())
+}
+
+/// Правка чужого конфига допускается только в обычный файл (ADR-0042 §2).
+///
+/// Отсутствующий файл — не символическая ссылка: снятие цели должно проходить, а
+/// запись всё равно откажет на чтении.
+fn reject_symlink(path: &Path) -> Result<()> {
+    let meta = match fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(err) => {
+            return Err(err).with_context(|| format!("не удалось прочитать {}", path.display()));
+        }
+    };
+    if meta.file_type().is_symlink() {
+        bail!(
+            "{} — символическая ссылка; правка не поддерживается, оставьте конфиг как есть",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+/// Первая копия — оригинал: повторный вызов не перезаписывает бэкап
+/// (ADR-0042 §2, ADR-0051 §2).
+fn backup_once(path: &Path, bytes: &[u8]) -> Result<Option<PathBuf>> {
+    let backup = backup_path(path);
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&backup)
+    {
+        Ok(mut file) => {
+            file.write_all(bytes)
+                .with_context(|| format!("не удалось записать {}", backup.display()))?;
+            file.sync_all()
+                .with_context(|| format!("не удалось синхронизировать {}", backup.display()))?;
+            Ok(Some(backup))
+        }
+        Err(err) if err.kind() == ErrorKind::AlreadyExists => Ok(None),
+        Err(err) => Err(err).with_context(|| format!("не удалось создать {}", backup.display())),
+    }
+}
+
+/// Имя резервной копии рядом с конфигом: `<файл>.orbitfm.bak`.
+fn backup_path(path: &Path) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("config");
+    path.with_file_name(format!("{file_name}{BACKUP_SUFFIX}"))
 }
 
 fn remove_file(path: &Path) -> Result<()> {
@@ -1234,8 +1553,14 @@ fn print_install(layout: &Layout, report: &InstallReport) {
         report.target.id(),
         report.files.len()
     );
-    println!("  каталог: {}", report.root.display());
+    // Каталог есть не у всех целей: Noctalia не создаёт файлов (ADR-0051 §3).
+    if report.root.is_dir() {
+        println!("  каталог: {}", report.root.display());
+    }
     println!("  квитанция: {}", report.receipt_path.display());
+    if let Some(note) = &report.note {
+        println!("  внимание: {note}");
+    }
     if let Err(err) = print_instructions(layout, report) {
         println!("  не удалось напечатать шаги подключения: {err:#}");
     }
@@ -1266,6 +1591,70 @@ fn print_instructions(layout: &Layout, report: &InstallReport) -> Result<()> {
             println!("Подключение Omarchy/Quickshell:");
             println!("  omarchy-shell shell rescanPlugins");
             println!("  Включите виджет OrbitFM в конфигурации бара Omarchy.");
+        }
+        // Файлов у цели нет: установлен источник оболочки, и это надо показать —
+        // иначе вывод выглядит как установка без результата (ADR-0051 §2).
+        Target::Noctalia => {
+            println!("Подключение Noctalia:");
+            println!(
+                "  Источник {}: {} — загрузку плагина делает сама оболочка.",
+                noctalia::SOURCE,
+                if report.flags.source_added {
+                    "добавлен этой установкой"
+                } else {
+                    "был зарегистрирован ранее"
+                }
+            );
+            println!("  URL источника: {}", noctalia::SOURCE_URL);
+            println!(
+                "  Виджет {}: включён{}",
+                noctalia::PLUGIN_ID,
+                if report.flags.was_enabled {
+                    " и был включён до установки"
+                } else {
+                    ""
+                }
+            );
+            println!(
+                "  Обновления виджета: {} msg plugins update {}",
+                noctalia::PROGRAM,
+                noctalia::SOURCE
+            );
+        }
+        Target::Niri => {
+            let config = wm::niri_config_path(layout);
+            println!("Подключение niri:");
+            println!(
+                "  Файл правил: {}",
+                layout.root(target).join(wm::NIRI_RULE_FILE).display()
+            );
+            println!(
+                "  В {} добавлена ровно одна строка: {}",
+                config.display(),
+                wm::NIRI_INCLUDE
+            );
+            println!(
+                "  Резервная копия до правки: {}",
+                backup_path(&config).display()
+            );
+            println!("  Строку удаления и файл снимает orbitfm integration uninstall niri.");
+            println!("  niri 26.04+ перечитывает конфиг сам, отдельной команды нет.");
+        }
+        Target::Hyprland => {
+            println!("Подключение Hyprland:");
+            println!(
+                "  Файл правил: {}",
+                layout.root(target).join(wm::HYPRLAND_RULE_FILE).display()
+            );
+            println!(
+                "  Добавьте в свой hyprland.conf строку: {}",
+                wm::HYPRLAND_SOURCE
+            );
+            println!(
+                "  Строку в чужой конфиг установщик не пишет: ветка Hyprland переводит \
+                 конфиг на Lua, верифицированного синтаксиса include нет (ADR-0051 §2)."
+            );
+            println!("  Правила текущего сеанса применены через hyprctl keyword windowrulev2.");
         }
         Target::Chrome => {
             println!("Подключение Chrome/Chromium/Brave/Edge/Vivaldi:");
@@ -1410,7 +1799,14 @@ fn print_bar_hint(target: Target, layout: &Layout, binary: &Path, root: &Path) {
                 binary.display()
             );
         }
-        Target::Plasma6 | Target::Gnome | Target::Omarchy | Target::Chrome | Target::Firefox => {}
+        Target::Plasma6
+        | Target::Gnome
+        | Target::Omarchy
+        | Target::Noctalia
+        | Target::Niri
+        | Target::Hyprland
+        | Target::Chrome
+        | Target::Firefox => {}
     }
 }
 
@@ -1462,6 +1858,33 @@ fn ensure_within_roots(roots: &[PathBuf], path: &Path) -> Result<()> {
     )
 }
 
+/// Каталог из квитанции: внутри корня цели или его родитель.
+///
+/// Родители попадают в список, потому что `ensure_dir` дописывает уровни,
+/// которых до установки не было (например, каталог целей при первой установке).
+/// Снятие удалит только пустой каталог, а путь вне домашних каталогов пользователя
+/// удалять нельзя ни при каких обстоятельствах (ADR-0051 §4).
+fn ensure_dir_within_scope(roots: &[PathBuf], path: &Path) -> Result<()> {
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+    {
+        bail!("недопустимый каталог в квитанции: {}", path.display());
+    }
+    if roots
+        .iter()
+        .any(|root| path.starts_with(root) || root.starts_with(path))
+    {
+        return Ok(());
+    }
+    bail!(
+        "каталог {} вне каталогов установки цели ({})",
+        path.display(),
+        join_paths(roots)
+    )
+}
+
 fn metadata_opt(path: &Path) -> Result<Option<fs::Metadata>> {
     match fs::symlink_metadata(path) {
         Ok(meta) => Ok(Some(meta)),
@@ -1505,6 +1928,7 @@ mod tests {
         Layout {
             data_home: dir.path().join("data"),
             config_home: dir.path().join("config"),
+            state_home: dir.path().join("state"),
             home: dir.path().join("home"),
             root_override: Some(dir.path().join("root")),
         }
@@ -1536,6 +1960,10 @@ mod tests {
         assert_eq!(Target::parse("chromium"), Some(Target::Chrome));
         assert_eq!(Target::parse("google-chrome"), Some(Target::Chrome));
         assert_eq!(Target::parse("mozilla"), Some(Target::Firefox));
+        assert_eq!(Target::parse("noctalia"), Some(Target::Noctalia));
+        assert_eq!(Target::parse("niri"), Some(Target::Niri));
+        assert_eq!(Target::parse("hyprland"), Some(Target::Hyprland));
+        assert_eq!(Target::parse("hyprctl"), Some(Target::Hyprland));
         assert_eq!(Target::parse("bogus"), None);
     }
 
@@ -1834,6 +2262,155 @@ mod tests {
         assert!(!report.receipt_path.exists());
         assert_eq!(
             inspect(&layout, Target::Chrome).expect("inspect").state,
+            InstalledState::NotInstalled
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    fn include_count(path: &Path) -> usize {
+        fs::read_to_string(path)
+            .expect("конфиг читается")
+            .lines()
+            .filter(|row| *row == wm::NIRI_INCLUDE)
+            .count()
+    }
+
+    /// Новые цели видны по бинарнику или по каталогу оболочки, а не по квитанции.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn new_targets_are_detected_by_binary_or_config() {
+        fn no_binary(_: &str) -> bool {
+            false
+        }
+
+        let dir = TempDir::new().expect("temp dir");
+        // Обнаружение смотрит в каталоги оболочки, песочница установщика тут ни при чём.
+        let mut layout = test_layout(&dir);
+        layout.root_override = None;
+
+        assert!(!layout.detected_with(Target::Noctalia, no_binary));
+        assert!(!layout.detected_with(Target::Niri, no_binary));
+        assert!(!layout.detected_with(Target::Hyprland, no_binary));
+
+        assert!(layout.detected_with(Target::Noctalia, |name| name == "noctalia"));
+        assert!(layout.detected_with(Target::Niri, |name| name == "niri"));
+        assert!(layout.detected_with(Target::Hyprland, |name| name == "hyprctl"));
+
+        fs::create_dir_all(layout.state_home.join("noctalia")).expect("каталог состояния");
+        assert!(layout.detected_with(Target::Noctalia, no_binary));
+
+        fs::create_dir_all(layout.config_home.join("niri")).expect("каталог niri");
+        fs::write(layout.config_home.join("niri/config.kdl"), "layout {\n}\n").expect("конфиг");
+        assert!(layout.detected_with(Target::Niri, no_binary));
+
+        fs::create_dir_all(layout.config_home.join("hypr")).expect("каталог hypr");
+        assert!(layout.detected_with(Target::Hyprland, no_binary));
+    }
+
+    /// Каталог, созданный установщиком, не имеет права переживать снятие цели:
+    /// иначе цель остаётся «обнаружена» без оболочки (ADR-0051 §3).
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn installer_dirs_are_pruned_so_detection_stays_honest() {
+        fn no_binary(_: &str) -> bool {
+            false
+        }
+
+        let dir = TempDir::new().expect("temp dir");
+        let mut layout = test_layout(&dir);
+        layout.root_override = None;
+        let config_dir = layout.config_home.join("omarchy");
+        assert!(!layout.detected_with(Target::Omarchy, no_binary));
+
+        let report = install_one(&layout, Target::Omarchy, false, &fake_binary()).expect("install");
+        assert!(config_dir.is_dir());
+        assert!(layout.detected_with(Target::Omarchy, no_binary));
+        let receipt: Receipt =
+            serde_json::from_slice(&fs::read(&report.receipt_path).expect("receipt bytes"))
+                .expect("receipt json");
+        assert!(
+            receipt
+                .dirs
+                .iter()
+                .any(|path| Path::new(path) == config_dir.as_path()),
+            "каталог оболочки записан в квитанцию"
+        );
+
+        uninstall_one(&layout, Target::Omarchy, false).expect("uninstall");
+        assert!(!config_dir.exists());
+        assert!(!layout.detected_with(Target::Omarchy, no_binary));
+    }
+
+    /// niri: одна строка include в чужом конфиге, копия до правки и полный возврат.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn niri_install_edits_include_once_and_uninstall_restores() {
+        let dir = TempDir::new().expect("temp dir");
+        let layout = test_layout(&dir);
+        let config = wm::niri_config_path(&layout);
+        fs::create_dir_all(config.parent().expect("каталог конфига")).expect("каталог niri");
+        fs::write(&config, "layout {\n}\n").expect("конфиг niri");
+
+        let report = install_one(&layout, Target::Niri, false, &fake_binary()).expect("install");
+        assert!(report.root.join(wm::NIRI_RULE_FILE).is_file());
+        assert!(backup_path(&config).is_file(), "копия конфига до правки");
+        assert_eq!(include_count(&config), 1);
+        let receipt: Receipt =
+            serde_json::from_slice(&fs::read(&report.receipt_path).expect("receipt bytes"))
+                .expect("receipt json");
+        assert_eq!(receipt.lines.len(), 1);
+        assert_eq!(receipt.lines[0].line, wm::NIRI_INCLUDE);
+        assert!(
+            receipt
+                .dirs
+                .iter()
+                .any(|path| Path::new(path) == report.root.join("cfg").as_path()),
+            "каталог cfg записан в квитанцию"
+        );
+
+        // Переустановка идемпотентна: строка подключения не дублируется.
+        install_one(&layout, Target::Niri, false, &fake_binary()).expect("переустановка");
+        assert_eq!(include_count(&config), 1);
+
+        uninstall_one(&layout, Target::Niri, false).expect("uninstall");
+        assert_eq!(
+            fs::read_to_string(&config).expect("конфиг niri"),
+            "layout {\n}\n"
+        );
+        assert!(!report.root.join(wm::NIRI_RULE_FILE).exists());
+        assert!(!report.root.join("cfg").exists());
+        assert_eq!(
+            inspect(&layout, Target::Niri).expect("inspect").state,
+            InstalledState::NotInstalled
+        );
+    }
+
+    /// Noctalia: файлов у цели нет, но квитанция есть — по ней живёт бейдж и снятие.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn noctalia_round_trip_without_files() {
+        let dir = TempDir::new().expect("temp dir");
+        let layout = test_layout(&dir);
+        let report =
+            install_one(&layout, Target::Noctalia, false, &fake_binary()).expect("install");
+
+        assert_eq!(report.files.len(), 0, "цель не раскладывает файлов");
+        assert!(report.receipt_path.is_file(), "квитанция всё равно нужна");
+        let receipt: Receipt =
+            serde_json::from_slice(&fs::read(&report.receipt_path).expect("receipt bytes"))
+                .expect("receipt json");
+        assert!(receipt.source_added, "источник добавлен этой установкой");
+        assert!(!receipt.was_enabled);
+        assert_eq!(
+            inspect(&layout, Target::Noctalia).expect("inspect").state,
+            InstalledState::Installed
+        );
+
+        let removed = uninstall_one(&layout, Target::Noctalia, false).expect("uninstall");
+        assert_eq!(removed.removed, 0);
+        assert!(!report.receipt_path.exists());
+        assert_eq!(
+            inspect(&layout, Target::Noctalia).expect("inspect").state,
             InstalledState::NotInstalled
         );
     }

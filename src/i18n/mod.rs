@@ -329,6 +329,7 @@ mod tests {
             integrations {
                 group_bars,
                 group_environments,
+                group_windows,
                 group_browsers,
                 not_installed,
                 installed,

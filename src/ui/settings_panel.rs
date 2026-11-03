@@ -950,6 +950,14 @@ fn status_notes(text: &i18n::IntegrationsText, status: &TargetStatus) -> Vec<Str
     if !status.browsers.is_empty() {
         notes.push(status.browsers.join(", "));
     }
+    // Правила окон и Noctalia: путь файла и готовая строка подключения должны
+    // быть видны в строке, а не только на hover — это ручные шаги пользователя (ADR-0051 §2).
+    if matches!(
+        status.target,
+        Target::Noctalia | Target::Niri | Target::Hyprland
+    ) {
+        notes.extend(status.detail.iter().cloned());
+    }
     if let Some(waybar) = &status.waybar {
         if waybar.path.is_none() || waybar.error.is_some() {
             notes.push(text.config_missing.to_owned());
@@ -972,6 +980,7 @@ fn group_label(text: &i18n::IntegrationsText, group: TargetGroup) -> &'static st
     match group {
         TargetGroup::Bars => text.group_bars,
         TargetGroup::Environments => text.group_environments,
+        TargetGroup::Windows => text.group_windows,
         TargetGroup::Browsers => text.group_browsers,
     }
 }

@@ -248,6 +248,16 @@ impl<'a> OrbitApp<'a> {
                 PanelOutcome::ManualReload => {
                     self.toast.info(ctx, text.reload_manual.to_owned());
                 }
+                PanelOutcome::NeedsAttention(note) => {
+                    self.toast.info(
+                        ctx,
+                        format!(
+                            "{} ({}): {note}",
+                            text.operation_done,
+                            action.target().label()
+                        ),
+                    );
+                }
             },
             PanelEvent::Failed { action, detail } => {
                 self.toast.error(

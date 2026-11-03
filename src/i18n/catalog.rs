@@ -282,6 +282,8 @@ pub(crate) struct WelcomeText {
 pub(crate) struct IntegrationsText {
     pub group_bars: &'static str,
     pub group_environments: &'static str,
+    /// Группа правил окон: niri и Hyprland (ADR-0051 §1).
+    pub group_windows: &'static str,
     pub group_browsers: &'static str,
     pub not_installed: &'static str,
     pub installed: &'static str,

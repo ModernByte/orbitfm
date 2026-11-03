@@ -5,20 +5,18 @@
 //! а первая копия файла остаётся в `config.jsonc.orbitfm.bak`.
 
 use std::fs;
-use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use jsonc_parser::ParseOptions;
 use jsonc_parser::cst::{CstArray, CstInputValue, CstRootNode};
 
-use super::{Layout, Target, current_binary, inspect, shell_quote};
+use super::{Layout, Target, backup_once, current_binary, inspect, reject_symlink, shell_quote};
 
 pub(crate) const MODULE: &str = "custom/orbitfm";
 
 const CONFIG_DIR: &str = "waybar";
 const CONFIG_NAMES: [&str; 3] = ["config.jsonc", "config", "config.json"];
-const BACKUP_SUFFIX: &str = ".orbitfm.bak";
 /// Сторона вставки фиксирована (ADR-0042 §2): произвольные ключи не правятся.
 const SIDE_KEY: &str = "modules-right";
 
@@ -143,45 +141,9 @@ pub(super) fn enable(layout: &Layout) -> Result<EnableReport> {
     })
 }
 
-fn reject_symlink(path: &Path) -> Result<()> {
-    let meta = fs::symlink_metadata(path)
-        .with_context(|| format!("не удалось прочитать {}", path.display()))?;
-    if meta.file_type().is_symlink() {
-        bail!(
-            "{} — символическая ссылка; правка не поддерживается, оставьте конфиг как есть",
-            path.display()
-        );
-    }
-    Ok(())
-}
-
 fn parse(text: &str, path: &Path) -> Result<CstRootNode> {
     CstRootNode::parse(text, &ParseOptions::default())
         .map_err(|err| anyhow!("не удалось разобрать {}: {err}", path.display()))
-}
-
-/// Первая копия — оригинал: повторный вызов не перезаписывает бэкап.
-fn backup_once(path: &Path, bytes: &[u8]) -> Result<Option<PathBuf>> {
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| anyhow!("имя конфига не в UTF-8: {}", path.display()))?;
-    let backup = path.with_file_name(format!("{file_name}{BACKUP_SUFFIX}"));
-    match fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&backup)
-    {
-        Ok(mut file) => {
-            file.write_all(bytes)
-                .with_context(|| format!("не удалось записать {}", backup.display()))?;
-            file.sync_all()
-                .with_context(|| format!("не удалось синхронизировать {}", backup.display()))?;
-            Ok(Some(backup))
-        }
-        Err(err) if err.kind() == ErrorKind::AlreadyExists => Ok(None),
-        Err(err) => Err(err).with_context(|| format!("не удалось создать {}", backup.display())),
-    }
 }
 
 fn array_has_module(array: &CstArray) -> bool {
@@ -277,6 +239,7 @@ mod tests {
         Layout {
             data_home: dir.path().join("data"),
             config_home: dir.path().join("config"),
+            state_home: dir.path().join("state"),
             home: dir.path().join("home"),
             root_override: Some(dir.path().join("root")),
         }
