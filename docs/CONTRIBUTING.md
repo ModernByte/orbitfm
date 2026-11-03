@@ -47,6 +47,13 @@ cfg-пути. Контур поставки — отдельный job `supply-c
 имела дату пересмотра. Тот же скрипт стоит гейтом в релизном workflow, потому что
 пуш тега CI не триггерит.
 
+Подпись и нотаризация релизных артефактов (SmartScreen в Windows, Gatekeeper в
+macOS) в CI-контур не входят и описаны справочно в
+[`docs/audit/OrbitFM-code-signing-and-notarization.md`](audit/OrbitFM-code-signing-and-notarization.md):
+там сравнение провайдеров, ориентиры цен и напоминание, что self-signed
+сертификат предупреждения не убирает. Решение о подключении подписи оформляется
+отдельным ADR и меняет `.github/workflows/release.yml`.
+
 Локальный прогон на Linux **не видит** код под `#[cfg(target_os = "macos")]`,
 `#[cfg(windows)]` и `#[cfg(not(target_os = "linux"))]` — такие блоки просто не
 входят в tree, который разбирает clippy. Поэтому новый линт из `[lints.clippy]`
