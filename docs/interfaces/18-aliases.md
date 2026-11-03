@@ -47,7 +47,7 @@
 | Поле | Правило |
 |------|---------|
 | `stationuuid` | ключ; одна запись на станцию, повторная постановка заменяет |
-| `url` | как ввёл пользователь; схемы `http`/`https`; до `URL_LIMIT = 2048` байт |
+| `url` | как ввёл пользователь; схемы `http`/`https`; до `ALIAS_URL_LIMIT = 2048` байт |
 | `label` | хост из `url`, вычисляется при записи; его показывают CLI и UI |
 | `added_at` | Unix-время постановки, только для порядка и отладки |
 
@@ -57,8 +57,8 @@
 
 ## 3. Применение
 
-Единственная точка — `Session::start_station` (`src/session/playback.rs`),
-где из станции берётся адрес эфира:
+Единственная точка — `StationLibrary::launch_url` (`src/library/mod.rs`);
+`Session::start_station` (`src/session/playback.rs`) только зовёт её:
 
 1. адрес запуска = алиас по `stationuuid`, если он есть, иначе
    `station.url_resolved`;
