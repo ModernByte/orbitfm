@@ -5,6 +5,37 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),  
 проект следует [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [0.20.0-rc.5] - 2026-11-04
+
+PATCH-пакет: краш macOS при запуске `OrbitFM.app` (dyld / VapourSynth / Python.framework).
+Код приложения не менялся — чинится упаковка macOS.
+
+### Исправлено
+- macOS: `OrbitFM.app` больше не крашится на старте (`EXC_CRASH (SIGABRT)`, `Namespace DYLD,
+  Code 1 Library missing`; `Library not loaded: /tmp/*/Python.framework/Versions/3.13/Python`,
+  `Referenced from: .../Contents/Frameworks/libvapoursynth-script.0.dylib`). libmpv из бутылок
+  Homebrew собирается с VapourSynth, а `dylibbundler` переносит туда же цепочку
+  `libmpv → libvapoursynth-script → Python.framework`; на машине пользователя нет Python 3.13,
+  поэтому dyld abort'ил до `main()`. OrbitFM (только аудио-радио, mpv `load-scripts=no`) VapourSynth
+  не использует, поэтому ссылку libmpv → VapourSynth в `build-dmg.sh` заменяют на локальную no-op-заглушку
+  (`liborbitfm-vsscript-stub.0.dylib`), реальный `libvapoursynth*` удаляют из `Contents/Frameworks`, и
+  Python.framework в бандл не попадает и не требуется.
+
+### Добавлено
+- `packaging/macos/audit-app-dylibs.sh` — аудит `.app`: FAIL при абсолютных путях `/tmp/`, `/Users/`,
+  `/opt/homebrew/`, `/usr/local/`, ссылках на `Python.framework`, нез разрешаемых `@rpath`-ссылках и
+  наличии `libvapoursynth*` в `Frameworks`. Вызывается из smoke-теста DMG в CI/release и из
+  `build-dmg.sh` перед codesign.
+
+### Тесты
+- CI/release (`macos (DMG, …)`): smoke-test прогоняет аудит на свежем артефакте (зелёный) и падает на
+  специально сломанном fixture (ссылка через `install_name_tool` → `/tmp/Python.framework/Versions/3.13/Python`)
+  — регресс-гард для краша запуска.
+
+### Документация
+- Версия поднята до `0.20.0-rc.5` (схема `vMAJOR.MINOR.PATCH[-rc.N]`); release notes собираются из
+  секции `[0.20.0-rc.5]` в `docs/CHANGELOG.md`.
+
 ## [0.20.0-rc.4] - 2026-11-03
 
 Сборка под Intel Mac и возврат совместимости с macOS 13. Код приложения не

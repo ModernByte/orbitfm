@@ -1144,6 +1144,22 @@ macOS и конвейер релиза. Причина выката — живо
       workflow теперь триггерится и по push в main, тег собирается из версии
       Cargo.toml, если не существует)
 
+## Релиз 0.20.0-rc.5 — исправление краша macOS launch (dyld / VapourSynth / Python.framework) (2026-11-04)
+
+PATCH-пакет поверх 0.20.0-rc.4: код приложения не менялся, чинится упаковка macOS.
+Причина выката — краш Intel MacBook Air (macOS Sonoma 14.8.9): `EXC_CRASH (SIGABRT)`,
+`Library not loaded: /tmp/*/Python.framework/Versions/3.13/Python` через
+`libvapoursynth-script.0.dylib` в `.app`, из-за чего dyld abort'ил до `main()`.
+
+- [x] `build-dmg.sh`: после `dylibbundler` ссылка libmpv → VapourSynth выгружается в
+      локальную no-op-заглушку, реальный `libvapoursynth*` удаляется из `Frameworks`,
+      перед codesign запускается аудит `packaging/macos/audit-app-dylibs.sh`
+- [x] CI/release: smoke-test DMG с аудитом (зелёный на артефакте) и negative fixture
+      (fixture с `/tmp/Python.framework/Versions/3.13/Python` через `install_name_tool`)
+- [ ] Тег `v0.20.0-rc.5`, GitHub Release и локальная переустановка: ассеты сверены
+      `sha256sum -c`; AppImage, MSI, оба DMG, `.plasmoid`, `install-appimage.sh` и
+      SHA256SUMS — все ЦЕЛ; `orbitfm --version` — 0.20.0-rc.5
+
 ## Трек TUI на ratatui — спроектирован, код не начат (2026-11-03)
 
 Терминальный клиент к работающему ядру: ADR-0047, интерфейс 16, модуль 19.
