@@ -3,7 +3,7 @@
 | Поле | Значение |
 |------|----------|
 | **Дата** | 2026-11-03 |
-| **База** | OrbitFM `0.17.0-rc.3`; enabler-пункты §2 реализованы в `0.18.0-rc.1` |
+| **База** | OrbitFM `0.17.0-rc.3`; enabler-пункты §2 реализованы в `0.18.0-rc.1`–`0.19.0-rc.1` |
 | **Статус** | Продуктовые предложения; не ADR и не обязательство релиза |
 | **Приоритет владельца** | **Android-приложение — в приоритете** |
 
@@ -15,7 +15,7 @@
 
 Краткий снимок, чтобы не предлагать дубли:
 
-| Область | Состояние (0.18.0-rc.1) |
+| Область | Состояние (0.19.0-rc.1) |
 |---------|--------------------------|
 | Desktop Linux-first | eframe/egui/wgpu, libmpv, single-instance IPC |
 | Окно | Focus / Overlay / Listening / Panel |
@@ -26,6 +26,7 @@
 | Интеграции | Noctalia, Waybar, Plasma6, GNOME, Omarchy, polybar, swaybar, i3*, browser (Chrome/Firefox native host) и др. |
 | Устойчивость | offline stations snapshot, adaptive bitrate path |
 | Ритуалы | sleep timer, `queue_wrap`, экспорт/импорт библиотеки |
+| Сеть | профиль `unlimited`/`metered`/`offline-first` (ADR-0048) |
 | Packaging | AppImage, Flatpak, MSI, DMG |
 
 **Вывод:** desktop-ядро насыщено. Рост — через **мобильный companion**, ритуалы слушания и гигиену кода; не через «ещё один DE-виджет» как главный трек.
@@ -194,15 +195,18 @@
   `publishable`, ADR-0025), лимиты 2 МиБ / 5000 станций, санитизация строк;
   на Unix файл пишется с правами `0600`.
 
-### 2.4. Профиль сети (Network profile)
+### 2.4. Профиль сети (Network profile) — desktop в 0.19.0-rc.1 (ADR-0048)
 
 | Профиль | Поведение |
 |---------|-----------|
-| Unlimited | как сейчас |
-| Metered / Mobile | max bitrate cap, меньше prefetch favicon, реже world refresh |
-| Offline-first |优先 snapshot (ADR-0043), сеть только по действию пользователя |
+| Unlimited | как раньше: полный каталог, снимок 1000 станций, 8 favicon-запросов |
+| Metered | `bitrateMax=128` в discovery, снимок 250 станций, 2 favicon-запроса; эфир и библиотека без ограничения |
+| Offline-first | snapshot first (ADR-0043), фоновый мир и новые favicon не стартуют, сеть — по действию пользователя |
 
-На Android — чтение `ConnectivityManager` / OS metered flag + ручной override.
+Desktop реализован: `network_profile` в `settings.json`, IPC `network`,
+`status --json.network`, карточка «Сеть» в настройках. Android metered flag
+(`ConnectivityManager` + ручной override) остаётся за треком ADR-0045 и
+подключается вместе с A1–A2.
 
 ### 2.5. Локальная статистика прослушивания
 
@@ -347,7 +351,8 @@
 1. Android MediaSession polish, BT, notification actions.  
 2. Sleep timer на Android.  
 3. Queue/next-prev semantics на desktop (и упрощённо на Android).  
-4. Network profile (особенно Android metered).
+4. [x] Desktop: **Network profile** (0.19.0-rc.1, ADR-0048).  
+5. [ ] Android: системный metered flag и ручной override (вместе с A1–A2).
 
 ### Волна 3 — delight & scale
 
@@ -397,6 +402,7 @@ Discord RPC, D-Bus, desktop Actions, Telegram bot — по одному, по с
 | 2026-11-03 | Первая версия: идеи после 0.17.0-rc.2; Android Companion как приоритет A |
 | 2026-11-03 | Волна 1: Android Companion зафиксирован ADR-0045; sleep timer, `queue_wrap` и экспорт/импорт библиотеки реализованы в 0.18.0-rc.1 (ADR-0046, интерфейс 15); отмечены статусы §2 и артефакты §6 |
 | 2026-11-03 | Добавлен TUI-трек: ADR-0047, интерфейс 16, модуль 19; визуализаторы, btop-подобные модули, `spectrum`-расширение; поставка source-only |
+| 2026-11-03 | Волна 2: профиль сети реализован на desktop в 0.19.0-rc.1 (ADR-0048); Android metered — за ADR-0045 |
 
 ---
 

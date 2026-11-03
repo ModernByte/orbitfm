@@ -5,13 +5,31 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),  
 проект следует [Semantic Versioning](https://semver.org/lang/ru/).
 
-## [Unreleased]
+## [0.19.0-rc.1] - 2026-11-03
 
-Быстрый доступ к таймеру сна во всех интерфейсах, документация TUI,
-интеграция новых скиллов и уточнение импорта библиотеки. Схема `status --json`
-остаётся 1; кода TUI нет.
+Профиль сети, быстрый доступ к таймеру сна во всех интерфейсах, документация
+TUI, интеграция новых скиллов и уточнение импорта библиотеки. Схема
+`status --json` остаётся 1; кода TUI нет.
 
 ### Добавлено
+- Профиль сети (ADR-0048): `NetworkProfile` — `unlimited` (по умолчанию),
+  `metered`, `offline-first`; хранится в `settings.json` полем
+  `network_profile`, старые файлы читаются без миграции
+- `metered`: серверный фильтр `bitrateMax=128` для поиска, жанров, стран,
+  «показать ещё», Roulette и поиска браузерного попапа; мировой снимок — 250
+  станций; не более двух favicon-запросов в полёте. Эфир, избранное, история и
+  внешний поток не ограничиваются
+- `offline-first`: фоновый мировой запрос не стартует, летящий отменяется,
+  новые favicon-запросы не планируются; карта и обложки живут офлайн-снимком
+  ADR-0043 и процедурными обложками ADR-0044, поиск и запуск по действию
+  пользователя ходят в сеть без ограничения
+- IPC `network <unlimited|metered|offline-first>` с ответом
+  `ok network <профиль>`; неизвестный профиль — ошибка аргумента, браузерный
+  native host команду запрещает (ADR-0038)
+- `status --json` схемы 1 получает аддитивное поле `network`; текстовый
+  `status` и схема не меняются, поток `events` отдаёт поле в `snapshot`
+- Третья карточка «Сеть» в категории «Аудио» окна настроек: выпадающий список
+  и подсказка под ним, сохранение сразу; строки во всех 16 языках
 - Быстрый таймер сна (ADR-0046, ревизия 2026-11-03): кнопка-часы в HUD Focus,
   капсулах Overlay/Listening и шапке панели бар-виджета открывает
   Off/15/30/45/60/90; подменю `sleep_timer` в трее SNI и macOS; кнопка в
@@ -57,12 +75,18 @@
 
 ### Тесты
 - `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
-  `cargo test --locked` — 607 passed, 5 ignored; `node --check` для
+  `cargo test --locked` — 617 passed, 5 ignored; `node --check` для
   `popup.js` и `extension.js`; попап проверен headless-скриншотом (офлайн и
   открытое меню таймера)
 - Добавлен `export_import_skips_local_streams_by_public_url_policy`,
   `sleep_radio_marks_the_active_timer_and_sends_it`,
-  `sleep_label_shows_the_active_duration`, `every_choice_has_a_label`
+  `sleep_label_shows_the_active_duration`, `every_choice_has_a_label`,
+  `network_profile_maps_tokens_and_limits`, `parses_network_profiles`,
+  `metered_cap_is_sent_as_bitrate_max`,
+  `metered_cap_filters_offline_results_but_keeps_unknown_bitrate`,
+  `roulette_snapshot_fallback_respects_the_metered_cap`,
+  `metered_profile_limits_fetches_to_two`,
+  `offline_first_drops_pending_and_keeps_ready_textures`
 
 ## [0.18.0-rc.1] - 2026-11-03
 
