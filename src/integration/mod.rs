@@ -302,7 +302,10 @@ fn run_status(scope: Scope) -> Result<()> {
                 if matches!(scope, Scope::One(_))
                     && inspection.state != InstalledState::NotInstalled
                 {
-                    println!("  каталог: {}", inspection.root.display());
+                    // Каталог есть не у всех целей: `noctalia` не создаёт файлов.
+                    if inspection.root.is_dir() {
+                        println!("  каталог: {}", inspection.root.display());
+                    }
                     println!("  квитанция: {}", inspection.receipt_path.display());
                     println!("  бинарник: {}", inspection.binary);
                 }
@@ -855,6 +858,9 @@ struct InstallReport {
     note: Option<String>,
     /// Признаки `noctalia` в квитанции — их печатает `integration status`.
     flags: noctalia::Flags,
+    /// Строки, которые добавила именно эта установка: вывод не должен
+    /// обещать отмену того, чего установка не делала (ADR-0051 §5).
+    lines: Vec<ReceiptLine>,
 }
 
 fn install_one(
@@ -927,6 +933,7 @@ fn install_one(
         files: rendered.into_iter().map(|asset| asset.absolute).collect(),
         note: step.note,
         flags: step.flags,
+        lines: receipt.lines,
     })
 }
 
@@ -1640,21 +1647,39 @@ fn print_instructions(layout: &Layout, report: &InstallReport) -> Result<()> {
         }
         Target::Niri => {
             let config = wm::niri_config_path(layout);
+            // Копия и обещание «снимем строку» честны только тогда, когда
+            // строку добавил именно установщик (ADR-0051 §5).
+            let ours = report.lines.iter().any(|entry| {
+                Path::new(&entry.path) == config.as_path() && entry.line == wm::NIRI_INCLUDE
+            });
             println!("Подключение niri:");
             println!(
                 "  Файл правил: {}",
                 layout.root(target).join(wm::NIRI_RULE_FILE).display()
             );
-            println!(
-                "  В {} добавлена ровно одна строка: {}",
-                config.display(),
-                wm::NIRI_INCLUDE
-            );
-            println!(
-                "  Резервная копия до правки: {}",
-                backup_path(&config).display()
-            );
-            println!("  Строку удаления и файл снимает orbitfm integration uninstall niri.");
+            if ours {
+                println!(
+                    "  В {} добавлена ровно одна строка: {}",
+                    config.display(),
+                    wm::NIRI_INCLUDE
+                );
+                println!(
+                    "  Резервная копия до правки: {}",
+                    backup_path(&config).display()
+                );
+                println!("  Строку удаления и файл снимает orbitfm integration uninstall niri.");
+            } else {
+                println!(
+                    "  Строка {} уже была в {} — добавили её не мы, копии config.kdl \
+                     установка не делала",
+                    wm::NIRI_INCLUDE,
+                    config.display()
+                );
+                println!(
+                    "  Снятие уберёт файл правил и оставит эту строку, а вместе с ней и \
+                     нерабочий include — строку убираете сами."
+                );
+            }
             println!("  niri 26.04+ перечитывает конфиг сам, отдельной команды нет.");
         }
         Target::Hyprland => {

@@ -272,7 +272,8 @@ fn handoff_note(layout: &Layout, target: Target, state: InstallState) -> Option<
             wm::HYPRLAND_SOURCE
         )),
         Target::Niri => Some(format!(
-            "строка {} добавлена в {}",
+            "файл правил {}; конфиг подключает его строкой {} в {}",
+            layout.root(target).join(wm::NIRI_RULE_FILE).display(),
             wm::NIRI_INCLUDE,
             wm::niri_config_path(layout).display()
         )),
