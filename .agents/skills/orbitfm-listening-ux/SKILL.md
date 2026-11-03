@@ -8,7 +8,7 @@ description: Ритуалы слушания OrbitFM — sleep timer, конте
 Ты добавляешь функции **повседневного слушания**, а не новый 3D-эффект и не
 новый шелл. База sleep/очереди и переноса библиотеки реализована в
 0.18.0-rc.1; быстрый доступ к таймеру и профиль сети — в 0.19.0-rc.1; локальная
-статистика — в 0.19.0-rc.2. URL-алиасы ещё проектируются.
+статистика — в 0.19.0-rc.2; URL-алиасы — в 0.20.0-rc.1 (ADR-0050).
 
 ## Источники
 
@@ -16,11 +16,12 @@ description: Ритуалы слушания OrbitFM — sleep timer, конте
 2. `docs/adr/0046-ритуалы-слушания.md` — решения по sleep, очереди и схеме
 3. `docs/adr/0048-профиль-сети.md` — профили `unlimited`/`metered`/`offline-first`
 4. `docs/adr/0049-локальная-статистика-прослушивания.md` — сбор, файл и границы
-5. `docs/interfaces/01-audio.md`, `05-ipc.md`, `09-settings.md`, `10-session.md`,
-   `17-stats.md`
-6. ADR-0003 (аудио), ADR-0043 (офлайн/адаптивное аудио), ADR-0025 (URL),
+5. `docs/adr/0050-алиасы-url-станций.md` — точка подмены, ярус 1 и команды `alias`
+6. `docs/interfaces/01-audio.md`, `05-ipc.md`, `09-settings.md`, `10-session.md`,
+   `17-stats.md`, `18-aliases.md`
+7. ADR-0003 (аудио), ADR-0043 (офлайн/адаптивное аудио), ADR-0025 (URL),
    ADR-0038 (белый список native host)
-7. `docs/modules/11-session.md`, `docs/modules/20-stats.md`,
+8. `docs/modules/11-session.md`, `docs/modules/20-stats.md`,
    `docs/interfaces/13-events.md`
 
 ## Маршрутизация
@@ -48,7 +49,7 @@ description: Ритуалы слушания OrbitFM — sleep timer, конте
 | Network profile (Android metered flag) | не начато, вместе с A1–A2 |
 | Локальная статистика (desktop: файл, раздел, IPC) | реализовано в 0.19.0-rc.2 (ADR-0049) |
 | Статистика: «карта года», экспорт, Android | не в объёме 0.19.0-rc.2, нужен отдельный ADR |
-| URL-алиасы | не начато |
+| URL-алиасы (desktop) | реализовано в 0.20.0-rc.1 (ADR-0050, интерфейс 18) |
 
 ## Sleep timer
 
@@ -146,9 +147,21 @@ description: Ритуалы слушания OrbitFM — sleep timer, конте
 
 ## URL-алиасы
 
-- Локальный override stream URL для `stationuuid` с пометкой «ручная ссылка».
-- Перед play — та же SSRF/publishable проверка, что для URL Radio Browser.
-- Алиас не меняет экспортируемую станцию без явного решения о схеме.
+Реализовано в 0.20.0-rc.1 (ADR-0050, интерфейс `docs/interfaces/18-aliases.md`):
+
+- Алиас `stationuuid → url` живёт полем `aliases` в `library.json`; схема файла
+  не менялась, старые читатели получают пустой список.
+- Единственная точка подмены — `StationLibrary::launch_url`
+  (`src/library/mod.rs`), куда обращаются `Session::start_station`, publish
+  gate и `sync_media`; станция не переписывается, статистика, история и
+  click-трекинг остаются по `stationuuid`.
+- Адрес проходит ярус 1 SSRF наравне с каталожным (`ALIAS_URL_LIMIT = 2048`);
+  алиасная станция вне экономного подбора `ECO`.
+- Команды `alias <uuid> [url|remove]` и `alias list` (интерфейс 05); браузерный
+  native host их запрещает (ADR-0038). Экспорт библиотеки и `status --json`
+  алиасы не содержат.
+- UI: пометка «ручная ссылка» (хост-`label`) в строке списка и карточке
+  станции — часть контракта, а не украшение.
 
 ## Порядок внедрения
 
@@ -159,7 +172,8 @@ description: Ритуалы слушания OrbitFM — sleep timer, конте
    с A1–A2.
 5. Локальная статистика — desktop сделано в 0.19.0-rc.2 (ADR-0049); «карта года»,
    экспорт и статистика на Android в объём не вошли.
-6. URL-алиасы.
+6. URL-алиасы — desktop сделано в 0.20.0-rc.1 (ADR-0050, интерфейс 18);
+   перенос алиасов между машинами не решён (нужен отдельный ADR).
 
 ## Чего нельзя
 
