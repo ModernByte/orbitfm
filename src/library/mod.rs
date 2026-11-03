@@ -646,6 +646,42 @@ mod tests {
     }
 
     #[test]
+    fn export_import_skips_local_streams_by_public_url_policy() {
+        let public = station("11111111-1111-1111-1111-111111111111");
+        let mut local = station("url:16e83889014b9088");
+        local.url = "http://127.0.0.1:8765/tone.wav".to_owned();
+        local.url_resolved = local.url.clone();
+        local.source = crate::services::StationSource::Stream;
+
+        let mut source = StationLibrary::ephemeral();
+        source.toggle_favorite(&public).unwrap();
+        source.toggle_favorite(&local).unwrap();
+        let json = source.export_json().unwrap();
+
+        let mut target = StationLibrary::ephemeral();
+        let summary = target.import_bytes(json.as_bytes()).unwrap();
+        assert_eq!(
+            summary,
+            ImportSummary {
+                favorites_added: 1,
+                history_added: 0,
+                skipped: 1,
+            }
+        );
+        assert_eq!(target.favorites(), &[public]);
+
+        let again = target.import_bytes(json.as_bytes()).unwrap();
+        assert_eq!(
+            again,
+            ImportSummary {
+                favorites_added: 0,
+                history_added: 0,
+                skipped: 1,
+            }
+        );
+    }
+
+    #[test]
     fn import_rejects_unknown_schema_and_foreign_app() {
         let mut library = StationLibrary::ephemeral();
         let schema_two = br#"{"schema":2,"app":"orbitfm","favorites":[],"history":[]}"#;

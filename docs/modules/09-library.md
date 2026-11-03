@@ -109,6 +109,9 @@ $HOME/.local/share/orbitfm/library.json   (если XDG_DATA_HOME не зада�
   это слияние, а не зеркало.
 - Сетевой синхронизации нет: обмен идёт только файлом через
   `library-export`/`library-import` (ADR-0046).
+- Экспорт включает локальные `stream`-станции из `play-url`; импорт проверяет
+  публичность URL и такие записи пропускает (`skipped`). Перенос библиотеки с
+  локальными потоками поэтому не полный, в том числе при повторном импорте.
 
 ## 9. Тестирование
 
@@ -124,6 +127,7 @@ Unit-тесты в `src/library/mod.rs`:
 - `load_normalizes_duplicates_and_history_limit`
 - `ephemeral_library_keeps_changes_without_file`
 - `export_import_roundtrip_merges_and_deduplicates`
+- `export_import_skips_local_streams_by_public_url_policy`
 - `import_rejects_unknown_schema_and_foreign_app`
 - `import_rejects_oversized_payload_and_station_count`
 - `import_skips_hostile_stations_and_sanitizes_accepted_ones`
