@@ -55,6 +55,13 @@
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.17.0-rc.3" date="2026-11-03">
+      <description>
+        <p>Патч 0.17.0-rc.3 не меняет поведение: крупнейший UI-модуль widgets
+        разделён на подмодули с сохранением публичной поверхности, ROADMAP и
+        документация синхронизированы. Контракты и настройки не меняются.</p>
+      </description>
+    </release>
     <release version="0.17.0-rc.2" date="2026-11-01">
       <description>
         <p>Патч 0.17.0-rc.2 возвращает аудиовизуализатор на libmpv 0.37 из

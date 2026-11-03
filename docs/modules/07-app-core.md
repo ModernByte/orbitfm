@@ -194,13 +194,19 @@ src/ui/
 │                     # WindowMode, blocks_point для глобуса
 ├── capsule.rs        # капсулы Overlay (top с 16-полосной лентой, мини-глобус, избранное)
 │                     # и Listening
-├── widgets.rs        # кастомные контролы: pill, chip, search_field, tab_bar, live_badge,
-│                     # eq_bars_in, viz_bars с общими `NARROW_VIZ_SIZE` 62×16 и
-│                     # `NARROW_VIZ_BARS` 16 плюс прореживание `bucket_max` (капсула
-│                     # Overlay и шапка панели), volume_slider_width (клавиатурный
-│                     # шаг, колесо ±5 % и `SliderResponse { changed, committed }`), circle_button, avatar,
-│                     # logo_mark, flag_emoji, glass_panel (стеклянный градиент),
-│                     # focus_ring/circle_focus_ring, capsule_button, faded/faded_group/faded_palette
+├── widgets/          # кастомные контролы; фасад `ui::widgets` — ре-экспорт без смены API
+│   ├── mod.rs        # фасад: публичная поверхность и тесты контролов
+│   ├── shared.rs     # faded/faded_group/faded_palette, control_motion, focus_ring,
+│   │                 # circle_focus_ring, pop_scale, меши стекла (gradient_fill, top_rim)
+│   ├── chrome.rs     # glass_panel (стеклянный градиент), pill, chip, segmented_tabs
+│   ├── inputs.rs     # search_field, volume_slider_width (клавиатурный шаг, колесо ±5 %,
+│   │                 # `SliderResponse { changed, committed }`)
+│   ├── media.rs      # live_badge, eq_bars_in, viz_bars с `NARROW_VIZ_SIZE` 62×16 и
+│   │                 # `NARROW_VIZ_BARS` 16, прореживание `bucket_max`
+│   ├── buttons.rs    # circle_button(_sized), capsule_button (+ `CapsuleDisc`), action_pill,
+│   │                 # quiet_button
+│   └── content.rs    # empty_state (+ `EmptyMark`/`EmptyState`), error_card, skeleton_rows,
+│                     # avatar, flag_emoji, contrast_color, logo_mark
 ├── images.rs         # FaviconCache: машина состояний Queued/Loading/Ready/Failed (ADR-0016)
 ├── hud.rs            # верхний HUD: логотип, Country/Genre, поиск станции/страны,
 │                     # индикатор эфира (live-бейдж), тема-луна, шестерёнка (открывает
