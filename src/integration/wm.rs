@@ -97,7 +97,7 @@ pub(crate) fn remove_include(path: &Path, line: &str) -> Result<bool> {
 }
 
 /// Есть ли в тексте целая строка `line`.
-fn has_line(text: &str, line: &str) -> bool {
+pub(crate) fn has_line(text: &str, line: &str) -> bool {
     text.lines().any(|row| row.trim_end_matches('\r') == line)
 }
 

@@ -1305,6 +1305,23 @@ fn uninstall_one(layout: &Layout, target: Target, force: bool) -> Result<Uninsta
     prune_empty_dirs(Some(&root), &root);
     prune_receipt_dirs(&receipt.dirs, &roots)?;
 
+    // Снятие убирает только свою строку. Если `include` появился в конфиге до
+    // установки, файл правил исчезает, а ссылка на него остаётся — молчать
+    // нельзя, niri не разберёт конфиг (ADR-0051 §5).
+    if target == Target::Niri {
+        let config = wm::niri_config_path(layout);
+        let survives =
+            fs::read_to_string(&config).is_ok_and(|text| wm::has_line(&text, wm::NIRI_INCLUDE));
+        if survives {
+            notes.push(format!(
+                "в {} осталась строка {}, а файла правил больше нет — уберите строку или \
+                 подключите свой файл",
+                config.display(),
+                wm::NIRI_INCLUDE
+            ));
+        }
+    }
+
     Ok(UninstallReport {
         root,
         removed,
@@ -2382,6 +2399,44 @@ mod tests {
         assert_eq!(
             inspect(&layout, Target::Niri).expect("inspect").state,
             InstalledState::NotInstalled
+        );
+    }
+
+    /// `include`, добавленный пользователем до установки, остаётся в конфиге —
+    /// снятие обязано сказать об этом, иначе niri не разберёт висящий include.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn niri_uninstall_reports_include_it_did_not_add() {
+        let dir = TempDir::new().expect("temp dir");
+        let layout = test_layout(&dir);
+        let config = wm::niri_config_path(&layout);
+        fs::create_dir_all(config.parent().expect("каталог niri")).expect("каталог niri");
+        fs::write(&config, format!("{}\n", wm::NIRI_INCLUDE)).expect("ручной include");
+
+        let report = install_one(&layout, Target::Niri, false, &fake_binary()).expect("install");
+        assert_eq!(
+            include_count(&config),
+            1,
+            "дубля строки установка не делает"
+        );
+        let receipt: Receipt =
+            serde_json::from_slice(&fs::read(&report.receipt_path).expect("receipt bytes"))
+                .expect("receipt json");
+        assert!(
+            receipt.lines.is_empty(),
+            "строку добавили не мы — в квитанции её нет"
+        );
+
+        let gone = uninstall_one(&layout, Target::Niri, false).expect("uninstall");
+        assert!(
+            !report.root.join(wm::NIRI_RULE_FILE).exists(),
+            "файл правил снят"
+        );
+        assert_eq!(include_count(&config), 1, "чужую строку не трогаем");
+        let note = gone.note.expect("подсказка о оставшейся строке");
+        assert!(
+            note.contains(wm::NIRI_INCLUDE),
+            "в подсказке есть сама строка: {note}"
         );
     }
 

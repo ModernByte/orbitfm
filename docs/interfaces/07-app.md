@@ -470,13 +470,18 @@ focusable, ↑/↓ переводят фокус на соседа по види
   `Session::set_motion_style`, `UiAction::SetAllowFlips` →
   `Session::set_allow_flips`); переключатель переворотов недоступен при
   `Off`/Reduce motion; ошибка сохранения показывается тостом;
-- категория `Integrations` (ADR-0042): три группы — Bars (`Waybar`, `Polybar`,
+- категория `Integrations` (ADR-0042): четыре группы — Bars (`Waybar`, `Polybar`,
   `i3blocks`, `swaybar`, `i3status-rust`, `XFCE`, `Cinnamon`, `MATE`, `LXQt`),
-  Environments (`KDE Plasma 6`, `GNOME`, `Omarchy`) и Browsers
+  Environments (`KDE Plasma 6`, `GNOME`, `Omarchy`, `Noctalia`), Windows (`niri`,
+  `Hyprland`) и Browsers
   (`Chrome / Chromium` — Chrome, Chromium, Brave, Edge, Vivaldi — и `Firefox`);
   состояние каждой цели `NotInstalled`/`Installed`/`UpdateAvailable`/`Problem`
   («Требует внимания»), кнопки «Установить»/«Удалить», для Waybar — «Включить в
-  конфиг», для установленного — «Перезапустить». Снимок обновляется при открытии
+  конфиг», для установленного — «Перезапустить». У установленных целей `noctalia`,
+  `niri` и `hyprland` строка дополнительно показывает оставшийся ручной шаг —
+  строку `source` для Hyprland, добавленную строку `include` для niri и
+  регистрацию источника с виджетом для Noctalia (`handoff_note`,
+  ADR-0051). Снимок обновляется при открытии
   страницы, операции идут по одной в фоне; успех, необходимость ручного
   перезапуска и ошибки приходят тостами. Правки Waybar — только JSONC CST с
   сохранением комментариев, одноразовым `<имя>.orbitfm.bak` и повторным разбором
@@ -580,6 +585,8 @@ accent_swatch, row}`,
 интеграции — CST-вставкой с сохранением комментариев и форматирования,
 идемпотентностью и единственным backup, отказом битым конфигам, симлинкам и
 отсутствующему `modules-right`, поиском конфига без расширения
-(`src/integration/waybar.rs`), правилами обнаружения окружения и фиксированными
-аргументами Hyprland (`src/integration/wm.rs`), выбором ручного перезапуска для
+(`src/integration/waybar.rs`), правилами обнаружения окружения, фиксированными
+аргументами Hyprland и идемпотентной строкой `include` niri
+(`src/integration/wm.rs`), фиксированным argv моста Noctalia
+(`src/integration/noctalia.rs`), выбором ручного перезапуска для
 неподдерживаемых целей (`src/integration/reload.rs`).
