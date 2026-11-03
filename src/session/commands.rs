@@ -210,6 +210,36 @@ impl super::Session {
                 Ok(()) => "ok stats cleared".to_owned(),
                 Err(err) => format!("error {err}"),
             },
+            // Алиасы URL (ADR-0050 § 7): полный адрес отвечает только CLI,
+            // в UI и статусе показывается хост-подпись.
+            IpcCommand::AliasQuery { station_uuid } => match self.library.alias_url(station_uuid) {
+                Some(url) => format!("alias {station_uuid} {url}"),
+                None => "alias none".to_owned(),
+            },
+            IpcCommand::SetAlias { station_uuid, url } => {
+                match self.library.set_alias(station_uuid, url) {
+                    Ok(label) => format!("ok alias {label}"),
+                    Err(err) => format!("error {err}"),
+                }
+            }
+            IpcCommand::RemoveAlias { station_uuid } => {
+                match self.library.remove_alias(station_uuid) {
+                    Ok(()) => "ok alias removed".to_owned(),
+                    Err(err) => format!("error {err}"),
+                }
+            }
+            IpcCommand::AliasList => {
+                let aliases = self.library.aliases();
+                if aliases.is_empty() {
+                    "alias none".to_owned()
+                } else {
+                    aliases
+                        .iter()
+                        .map(|alias| format!("alias {} {}", alias.stationuuid, alias.url))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                }
+            }
             IpcCommand::Raw(raw) => format!("error неизвестная команда: {raw}"),
         }
     }

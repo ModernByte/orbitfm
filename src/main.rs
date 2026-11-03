@@ -87,6 +87,10 @@ OrbitFM — 3D Interactive Global Radio Player
   stats                Сводка прослушанного: время и топ станции, страны, жанры
   stats --json         Сводка прослушанного в JSON (схема 1)
   stats clear          Стереть счётчики прослушанного
+  alias <uuid>         Показать ручной адрес станции
+  alias <uuid> <url>   Подставить станции её адрес вручную
+  alias <uuid> remove  Снять ручной адрес, играть по каталогу
+  alias list           Показать все ручные адреса станций
   theme <режим>        Тема: system, dark или light
   library-export <путь>
                        Выгрузить избранное и историю (JSON, схема 1)
@@ -104,8 +108,9 @@ OrbitFM — 3D Interactive Global Radio Player
 Команда mode без аргумента спрашивает режим; mode <режим> при отсутствии
 запущенного экземпляра запускает OrbitFM сразу в этом режиме.
 Команды search, library, favorite, play-result, play-library и play-url
-обслуживают браузерное расширение, а sleep, library-export и library-import
-управляют уже запущенным плеером — новый экземпляр они не запускают.";
+обслуживают браузерное расширение, а sleep, stats, alias, library-export и
+library-import управляют уже запущенным плеером — новый экземпляр они не
+запускают.";
 
 enum Invocation {
     Help,

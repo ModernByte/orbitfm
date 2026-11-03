@@ -12,3 +12,4 @@ pub use radio_browser::{
     CountryCount, RadioBrowserClient, RadioError, SearchParams, Station, StationSource,
 };
 pub(crate) use radio_browser::{USER_AGENT, random_below};
+pub(crate) use ssrf::classify_reference;

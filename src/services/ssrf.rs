@@ -25,6 +25,8 @@ pub(crate) enum PolicyReject {
     ZeroPort,
     /// Адрес входит в приватный или служебный диапазон.
     PrivateAddress,
+    /// Строка не разбирается как URL вовсе.
+    Malformed,
 }
 
 impl std::fmt::Display for PolicyReject {
@@ -37,9 +39,19 @@ impl std::fmt::Display for PolicyReject {
             Self::HasUserinfo => "userinfo в ссылке",
             Self::ZeroPort => "порт 0",
             Self::PrivateAddress => "приватный или служебный адрес",
+            Self::Malformed => "адрес не разобран",
         };
         f.write_str(label)
     }
+}
+
+/// Разбирает ссылку и возвращает вердикт яруса 1 вместе с причиной отказа.
+///
+/// Нужен там, где отказ видно пользователю (алиас URL, ADR-0050 § 5):
+/// `parse_publishable` теряет причину, а `publishable` отвечает только «да/нет».
+pub(crate) fn classify_reference(raw: &str) -> Result<Url, PolicyReject> {
+    let parsed = Url::parse(raw).map_err(|_| PolicyReject::Malformed)?;
+    classify(&parsed)
 }
 
 /// Разбирает ссылку и проверяет её ярусом 1; `Some(Url)` — цель допустима.

@@ -95,16 +95,25 @@ impl super::Session {
         }
     }
 
+    /// Адрес запуска станции: алиас пользователя, иначе `url_resolved` каталога
+    /// (ADR-0050 § 4). Подмена живёт ровно здесь — `Station` не переписывается,
+    /// поэтому поиск, снимок мира, избранное и статистика видят каталог.
+    pub(crate) fn launch_url(&self, station: &Station) -> String {
+        self.library.launch_url(station)
+    }
+
     /// Запуск станции: mpv, история, click-трекинг и витрина MPRIS.
     pub(crate) fn start_station(&mut self, station: Station) -> Result<(), StationStartError> {
-        let url = station.url_resolved.trim().to_owned();
+        let url = self.launch_url(&station);
         if url.is_empty() {
             return Err(StationStartError::NoUrl);
         }
         // Запись Radio Browser — общая база, а не явный выбор пользователя:
         // её ссылка не должна уводить mpv на loopback или в LAN (ADR-0025).
         // Внешний поток (`url:`) приходит из явного `play-url` и проверяется
-        // собственной политикой импорта (ADR-0040).
+        // собственной политикой импорта (ADR-0040). Алиас — тоже запись
+        // пользователя, но он подставляется под каталожную станцию, поэтому
+        // проверяется наравне с каталожным адресом (ADR-0050 § 5).
         if station.source == StationSource::Radio && publishable(&url).is_none() {
             return Err(StationStartError::PrivateUrl);
         }
@@ -452,22 +461,28 @@ impl super::Session {
             String::new()
         };
         let (base_title, artist, art_url, url) = match &self.current_station {
-            Some(station) => (
-                single_line(&station.name),
-                mpris_artist(station),
-                station
-                    .favicon
-                    .as_deref()
-                    .filter(|reference| self.publish_gate.permits(reference))
-                    .map(str::to_owned),
-                if station.url_resolved.trim().is_empty() {
-                    published_fallback
-                } else if self.publish_gate.permits(&station.url_resolved) {
-                    station.url_resolved.clone()
-                } else {
-                    String::new()
-                },
-            ),
+            Some(station) => {
+                // Наружу уходит фактический адрес эфира: гейт публикации обязан
+                // проверять его, а не каталожную ссылку, под которую мог встать
+                // алиас (ADR-0050 § 5).
+                let stream_url = self.launch_url(station);
+                (
+                    single_line(&station.name),
+                    mpris_artist(station),
+                    station
+                        .favicon
+                        .as_deref()
+                        .filter(|reference| self.publish_gate.permits(reference))
+                        .map(str::to_owned),
+                    if stream_url.is_empty() {
+                        published_fallback
+                    } else if self.publish_gate.permits(&stream_url) {
+                        stream_url
+                    } else {
+                        String::new()
+                    },
+                )
+            }
             None => (fallback_url, None, None, published_fallback),
         };
         let title = if has_track {

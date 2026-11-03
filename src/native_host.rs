@@ -248,6 +248,12 @@ fn forbidden(command: &IpcCommand) -> Option<(&'static str, &'static str)> {
         IpcCommand::Stats | IpcCommand::StatsJson | IpcCommand::ClearStats => {
             Some(("forbidden", "команда статистики запрещена"))
         }
+        // Ручной адрес станции страница ни ставит, ни читает: алиас
+        // подставляется под безобидную на вид каталожную станцию (ADR-0050 § 5).
+        IpcCommand::AliasQuery { .. }
+        | IpcCommand::SetAlias { .. }
+        | IpcCommand::RemoveAlias { .. }
+        | IpcCommand::AliasList => Some(("forbidden", "команда alias запрещена")),
         IpcCommand::Raw(_) => Some(("forbidden", "неизвестная команда")),
         _ => None,
     }
@@ -355,7 +361,26 @@ mod tests {
         assert!(forbidden(&command("stats")).is_some());
         assert!(forbidden(&command("stats --json")).is_some());
         assert!(forbidden(&command("stats clear")).is_some());
+        // Ручные адреса: страница не читает и не подставляет ссылки (ADR-0050 § 5).
+        assert!(forbidden(&command("alias list")).is_some());
         assert!(forbidden(&IpcCommand::Raw("future".into())).is_some());
+    }
+
+    #[test]
+    fn native_host_forbids_alias() {
+        for raw in [
+            "alias 9604b0f1-aaaa",
+            "alias 9604b0f1-aaaa https://live.example.org/stream",
+            "alias 9604b0f1-aaaa remove",
+            "alias list",
+        ] {
+            let verdict = forbidden(&command(raw));
+            assert_eq!(
+                verdict.map(|(code, _)| code),
+                Some("forbidden"),
+                "{raw} браузерному хосту недоступна"
+            );
+        }
     }
 
     #[test]

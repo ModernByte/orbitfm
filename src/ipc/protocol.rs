@@ -209,6 +209,21 @@ pub enum IpcCommand {
     StatsJson,
     /// `stats clear`: сбросить счётчики статистики (ADR-0049).
     ClearStats,
+    /// `alias <uuid>`: спросить ручной адрес станции (ADR-0050 § 7).
+    AliasQuery {
+        station_uuid: String,
+    },
+    /// `alias <uuid> <url>`: поставить или заменить алиас (ADR-0050 § 7).
+    SetAlias {
+        station_uuid: String,
+        url: String,
+    },
+    /// `alias <uuid> remove`: снять алиас, вернувшись к каталожному адресу.
+    RemoveAlias {
+        station_uuid: String,
+    },
+    /// `alias list`: показать все алиасы.
+    AliasList,
     /// Неизвестная команда сохраняется для расширения протокола.
     Raw(String),
 }
@@ -400,6 +415,34 @@ impl IpcCommand {
                     "stats: ожидаются --json или clear, получено {other}"
                 ))),
             },
+            // `list` и `remove` — служебные слова на своей позиции: UUID их
+            // занять не может, конфликта с адресом нет (ADR-0050 § 7).
+            "alias" => match parts.next() {
+                None => Err(IpcError::InvalidArgument(
+                    "alias: ожидается stationuuid или list".into(),
+                )),
+                Some("list") => {
+                    reject_extra_args(parts.next())?;
+                    Ok(Self::AliasList)
+                }
+                Some(raw_uuid) => {
+                    let station_uuid = required_uuid(Some(raw_uuid), "alias")?;
+                    match parts.next() {
+                        None => Ok(Self::AliasQuery { station_uuid }),
+                        Some("remove") => {
+                            reject_extra_args(parts.next())?;
+                            Ok(Self::RemoveAlias { station_uuid })
+                        }
+                        Some(raw_url) => {
+                            reject_extra_args(parts.next())?;
+                            Ok(Self::SetAlias {
+                                station_uuid,
+                                url: raw_url.to_owned(),
+                            })
+                        }
+                    }
+                }
+            },
             "quit" => {
                 reject_extra_args(parts.next())?;
                 Ok(Self::Quit)
@@ -490,6 +533,10 @@ impl IpcCommand {
             Self::Stats => "stats".to_owned(),
             Self::StatsJson => "stats --json".to_owned(),
             Self::ClearStats => "stats clear".to_owned(),
+            Self::AliasQuery { station_uuid } => format!("alias {station_uuid}"),
+            Self::SetAlias { station_uuid, url } => format!("alias {station_uuid} {url}"),
+            Self::RemoveAlias { station_uuid } => format!("alias {station_uuid} remove"),
+            Self::AliasList => "alias list".to_owned(),
             Self::Raw(raw) => raw.clone(),
         }
     }
@@ -931,10 +978,58 @@ mod tests {
             IpcCommand::Stats,
             IpcCommand::StatsJson,
             IpcCommand::ClearStats,
+            IpcCommand::AliasQuery {
+                station_uuid: "uuid".to_owned(),
+            },
+            IpcCommand::SetAlias {
+                station_uuid: "uuid".to_owned(),
+                url: "https://live.example.org/stream".to_owned(),
+            },
+            IpcCommand::RemoveAlias {
+                station_uuid: "uuid".to_owned(),
+            },
+            IpcCommand::AliasList,
             IpcCommand::Raw("custom arg".to_owned()),
         ];
         for command in commands {
             assert_eq!(IpcCommand::parse(&command.to_wire()).unwrap(), command);
         }
+    }
+
+    #[test]
+    fn alias_commands_parse_and_answer() {
+        assert_eq!(
+            IpcCommand::parse("alias uuid").unwrap(),
+            IpcCommand::AliasQuery {
+                station_uuid: "uuid".to_owned()
+            }
+        );
+        assert_eq!(
+            IpcCommand::parse("alias uuid https://live.example.org/stream").unwrap(),
+            IpcCommand::SetAlias {
+                station_uuid: "uuid".to_owned(),
+                url: "https://live.example.org/stream".to_owned(),
+            }
+        );
+        assert_eq!(
+            IpcCommand::parse("alias uuid remove").unwrap(),
+            IpcCommand::RemoveAlias {
+                station_uuid: "uuid".to_owned()
+            }
+        );
+        assert_eq!(
+            IpcCommand::parse("alias list").unwrap(),
+            IpcCommand::AliasList
+        );
+        assert_eq!(
+            IpcCommand::AliasList.to_wire(),
+            "alias list",
+            "ответ списка — по одной записи `alias <uuid> <url>` на строку"
+        );
+
+        assert!(IpcCommand::parse("alias").is_err(), "без uuid непонятно");
+        assert!(IpcCommand::parse("alias uuid a b").is_err());
+        assert!(IpcCommand::parse("alias uuid remove extra").is_err());
+        assert!(IpcCommand::parse("alias list extra").is_err());
     }
 }

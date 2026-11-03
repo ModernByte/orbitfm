@@ -10,7 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::services::{Station, publishable};
+use crate::services::{Station, classify_reference, publishable};
 
 const DATA_DIR: &str = "orbitfm";
 const FILE_NAME: &str = "library.json";
@@ -18,6 +18,11 @@ const TMP_FILE_NAME: &str = "library.json.tmp";
 const EXPORT_TMP_NAME: &str = "library-export.json.tmp";
 /// Сколько последних станций хранит история.
 pub const HISTORY_LIMIT: usize = 20;
+/// Потолок алиасов URL: сценарий точечный («чиню мёртвую станцию»), а не
+/// плейлист (ADR-0050 § 3).
+pub const ALIAS_LIMIT: usize = 200;
+/// Потолок длины алиасного адреса: тот же предел, что у `play-url`.
+pub const ALIAS_URL_LIMIT: usize = 2048;
 /// Версия схемы экспорта/импорта библиотеки (docs/interfaces/15-library-export.md).
 pub const EXPORT_SCHEMA: u32 = 1;
 /// Потолок импортируемого файла: библиотека в разы меньше.
@@ -36,6 +41,8 @@ pub enum LibraryError {
     Parse(String),
     #[error("не удалось сохранить библиотеку: {0}")]
     Write(String),
+    #[error("алиас отклонён: {0}")]
+    Alias(String),
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -43,6 +50,21 @@ pub enum LibraryError {
 struct LibraryData {
     favorites: Vec<Station>,
     history: Vec<Station>,
+    aliases: Vec<StationAlias>,
+}
+
+/// Локальная подмена адреса эфира для станции каталога (ADR-0050 § 3).
+///
+/// Станция остаётся собой — тот же `stationuuid`, имя, страна, теги, избранное,
+/// история и минуты; адрес меняется только в момент запуска.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StationAlias {
+    pub stationuuid: String,
+    pub url: String,
+    /// Хост из `url`: его показывают CLI и UI вместо длинного адреса.
+    pub label: String,
+    pub added_at: u64,
 }
 
 /// Переносимый снимок библиотеки для desktop → Android и обратно.
@@ -160,6 +182,115 @@ impl StationLibrary {
         }
         self.data.history.clear();
         self.save()
+    }
+
+    /// Все алиасы URL в порядке постановки (ADR-0050 § 3).
+    pub fn aliases(&self) -> &[StationAlias] {
+        &self.data.aliases
+    }
+
+    /// Адрес эфира станции, если пользователь поставил алиас.
+    pub fn alias_url(&self, station_uuid: &str) -> Option<&str> {
+        self.find_alias(station_uuid)
+            .map(|alias| alias.url.as_str())
+    }
+
+    /// Подпись алиаса — хост адреса: её показывают CLI и UI вместо длинного URL.
+    pub fn alias_label(&self, station_uuid: &str) -> Option<&str> {
+        self.find_alias(station_uuid)
+            .map(|alias| alias.label.as_str())
+    }
+
+    pub fn has_alias(&self, station_uuid: &str) -> bool {
+        self.find_alias(station_uuid).is_some()
+    }
+
+    /// Адрес эфира станции: алиас пользователя, иначе каталожный `url_resolved`
+    /// (ADR-0050 § 4). Правило живёт здесь, а `Session` только зовёт его, —
+    /// так единственная точка подмены проверяется тестом без аудио-ядра.
+    pub fn launch_url(&self, station: &Station) -> String {
+        match self.alias_url(&station.stationuuid) {
+            Some(alias) => alias.trim().to_owned(),
+            None => station.url_resolved.trim().to_owned(),
+        }
+    }
+
+    fn find_alias(&self, station_uuid: &str) -> Option<&StationAlias> {
+        self.data
+            .aliases
+            .iter()
+            .find(|alias| alias.stationuuid == station_uuid)
+    }
+
+    /// Ставит или заменяет алиас и отдаёт хост принятого адреса.
+    ///
+    /// Адрес обязан пройти ярус 1 ровно так же, как `url_resolved` станции, —
+    /// послаблений у алиаса нет (ADR-0050 § 5). Переполнение отказывает, а не
+    /// вытесняет: молча потерять починенную станцию хуже отказа.
+    pub fn set_alias(&mut self, station_uuid: &str, url: &str) -> Result<String, LibraryError> {
+        let station_uuid = clean(station_uuid, 64);
+        if station_uuid.is_empty() {
+            return Err(LibraryError::Alias("stationuuid пустой".to_owned()));
+        }
+        // Синтетическая станция `url:…` — это и есть её адрес: подменять нечего.
+        if station_uuid.starts_with("url:") {
+            return Err(LibraryError::Alias(
+                "внешнему потоку алиас не нужен".to_owned(),
+            ));
+        }
+        let url = url.trim();
+        if url.is_empty() {
+            return Err(LibraryError::Alias("адрес пустой".to_owned()));
+        }
+        if url.len() > ALIAS_URL_LIMIT {
+            return Err(LibraryError::Alias(format!(
+                "адрес длиннее {ALIAS_URL_LIMIT} байт"
+            )));
+        }
+        let parsed =
+            classify_reference(url).map_err(|reject| LibraryError::Alias(reject.to_string()))?;
+        let label = parsed.host_str().unwrap_or_default().to_owned();
+
+        if let Some(existing) = self.find_alias_mut(&station_uuid) {
+            existing.url = url.to_owned();
+            existing.label.clone_from(&label);
+            existing.added_at = unix_now();
+        } else {
+            if self.data.aliases.len() >= ALIAS_LIMIT {
+                return Err(LibraryError::Alias(format!(
+                    "алиасов уже {ALIAS_LIMIT}: снимите ненужный — alias <uuid> remove"
+                )));
+            }
+            self.data.aliases.push(StationAlias {
+                stationuuid: station_uuid,
+                url: url.to_owned(),
+                label: label.clone(),
+                added_at: unix_now(),
+            });
+        }
+        self.save()?;
+        Ok(label)
+    }
+
+    /// Снимает алиас: станция снова играет по каталожному `url_resolved`.
+    ///
+    /// Снятие несуществовавшего алиаса — no-op, файл не переписывается.
+    pub fn remove_alias(&mut self, station_uuid: &str) -> Result<(), LibraryError> {
+        let before = self.data.aliases.len();
+        self.data
+            .aliases
+            .retain(|alias| alias.stationuuid != station_uuid);
+        if self.data.aliases.len() == before {
+            return Ok(());
+        }
+        self.save()
+    }
+
+    fn find_alias_mut(&mut self, station_uuid: &str) -> Option<&mut StationAlias> {
+        self.data
+            .aliases
+            .iter_mut()
+            .find(|alias| alias.stationuuid == station_uuid)
     }
 
     /// Переносимый JSON схемы 1: избранное и история без локальных путей.
@@ -453,6 +584,16 @@ fn normalize(data: &mut LibraryData) {
     deduplicate(&mut data.favorites);
     deduplicate(&mut data.history);
     data.history.truncate(HISTORY_LIMIT);
+    deduplicate_aliases(&mut data.aliases);
+}
+
+/// Алиасы правят и руками, поэтому файл доводится до инвариантов: один адрес на
+/// станцию, без пустых ключей и не больше `ALIAS_LIMIT` записей. Лишнее — самые
+/// новые дубли и хвост списка, порядок постановки сохраняется.
+fn deduplicate_aliases(aliases: &mut Vec<StationAlias>) {
+    let mut seen = HashSet::new();
+    aliases.retain(|alias| !alias.stationuuid.is_empty() && seen.insert(alias.stationuuid.clone()));
+    aliases.truncate(ALIAS_LIMIT);
 }
 
 fn deduplicate(stations: &mut Vec<Station>) {
@@ -593,6 +734,7 @@ mod tests {
         let data = LibraryData {
             favorites: vec![saved.clone(), saved.clone()],
             history,
+            aliases: Vec::new(),
         };
         fs::write(&path, serde_json::to_vec(&data).unwrap()).unwrap();
 
@@ -779,5 +921,162 @@ mod tests {
         let mut target = StationLibrary::ephemeral();
         assert_eq!(target.import_from(&path).unwrap().favorites_added, 1);
         assert_eq!(target.import_from(&path).unwrap().favorites_added, 0);
+    }
+
+    #[test]
+    fn alias_roundtrip_sets_replaces_and_removes() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("library.json");
+        fs::write(&path, r#"{"favorites":[],"history":[]}"#).unwrap();
+        let pristine = fs::read(&path).unwrap();
+
+        let mut library = StationLibrary::load(path.clone()).unwrap();
+        assert!(
+            library.aliases().is_empty(),
+            "файл без поля читается пустым списком"
+        );
+        assert_eq!(fs::read(&path).unwrap(), pristine, "чтение файл не трогает");
+
+        let uuid = "11111111-1111-1111-1111-111111111111";
+        let label = library
+            .set_alias(uuid, "https://live.example.org/stream")
+            .unwrap();
+        assert_eq!(label, "live.example.org", "подпись — хост адреса");
+        assert_eq!(
+            library.alias_url(uuid),
+            Some("https://live.example.org/stream")
+        );
+
+        library
+            .set_alias(uuid, "https://backup.example.org:8443/radio")
+            .unwrap();
+        assert_eq!(library.aliases().len(), 1, "замена не плодит дублей");
+        assert_eq!(library.alias_label(uuid), Some("backup.example.org"));
+
+        let reloaded = StationLibrary::load(path.clone()).unwrap();
+        assert_eq!(
+            reloaded.alias_url(uuid),
+            Some("https://backup.example.org:8443/radio")
+        );
+
+        library.remove_alias(uuid).unwrap();
+        assert!(!library.has_alias(uuid));
+        let emptied = fs::read(&path).unwrap();
+        assert!(
+            String::from_utf8(emptied.clone())
+                .unwrap()
+                .contains("\"aliases\": []")
+        );
+
+        library.remove_alias(uuid).unwrap();
+        assert_eq!(
+            fs::read(&path).unwrap(),
+            emptied,
+            "снятие несуществовавшего алиаса файл не переписывает"
+        );
+    }
+
+    #[test]
+    fn alias_rejects_private_and_oversized_urls() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("library.json");
+        let mut library = StationLibrary::load(path.clone()).unwrap();
+        let uuid = "11111111-1111-1111-1111-111111111111";
+
+        for rejected in [
+            "http://127.0.0.1/stream",
+            "http://192.168.1.20:8000/radio",
+            "http://localhost:8000/stream",
+            "ftp://live.example.org/stream",
+            "не-адрес",
+            "",
+        ] {
+            assert!(
+                matches!(
+                    library.set_alias(uuid, rejected),
+                    Err(LibraryError::Alias(_))
+                ),
+                "{rejected} обязан быть отклонён"
+            );
+        }
+        let oversized = format!("https://live.example.org/{}", "a".repeat(ALIAS_URL_LIMIT));
+        assert!(matches!(
+            library.set_alias(uuid, &oversized),
+            Err(LibraryError::Alias(_))
+        ));
+        // Внешнему потоку `url:…` алиас не ставится: его адрес и есть станция.
+        assert!(matches!(
+            library.set_alias("url:https://live.example.org/s", "https://other.example/s"),
+            Err(LibraryError::Alias(_))
+        ));
+        assert!(library.aliases().is_empty());
+        assert!(
+            !path.exists(),
+            "ни одна отклонённая постановка файл не создала"
+        );
+
+        // Потолок — отказ, а не вытеснение: починенная станция не теряется молча.
+        for index in 0..ALIAS_LIMIT {
+            library
+                .set_alias(
+                    &format!("station-{index}"),
+                    "https://live.example.org/stream",
+                )
+                .unwrap();
+        }
+        assert!(matches!(
+            library.set_alias("station-overflow", "https://live.example.org/stream"),
+            Err(LibraryError::Alias(_))
+        ));
+    }
+
+    #[test]
+    fn alias_url_is_used_at_start() {
+        let mut library = StationLibrary::ephemeral();
+        let catalog = station("11111111-1111-1111-1111-111111111111");
+        assert_eq!(library.launch_url(&catalog), "https://example.com/stream");
+
+        library
+            .set_alias(&catalog.stationuuid, "https://manual.example.org/live")
+            .unwrap();
+        assert_eq!(
+            library.launch_url(&catalog),
+            "https://manual.example.org/live",
+            "эфир стартует по адресу пользователя"
+        );
+        assert_eq!(
+            catalog.url_resolved, "https://example.com/stream",
+            "запись каталога не переписывается"
+        );
+
+        library.remove_alias(&catalog.stationuuid).unwrap();
+        assert_eq!(library.launch_url(&catalog), "https://example.com/stream");
+    }
+
+    #[test]
+    fn alias_key_keeps_stats_and_history() {
+        let mut library = StationLibrary::ephemeral();
+        let saved = station("11111111-1111-1111-1111-111111111111");
+        library
+            .set_alias(&saved.stationuuid, "https://manual.example.org/live")
+            .unwrap();
+
+        library.record_played(&saved).unwrap();
+        library.toggle_favorite(&saved).unwrap();
+
+        assert_eq!(library.history()[0].stationuuid, saved.stationuuid);
+        assert_eq!(library.history()[0].url_resolved, saved.url_resolved);
+        assert!(library.is_favorite(&saved.stationuuid));
+        assert_eq!(
+            library.alias_url(&saved.stationuuid),
+            Some("https://manual.example.org/live")
+        );
+        // Экспорт схемы 1 про алиас ничего не знает: переносимая библиотека
+        // остаётся каталожной (ADR-0050 §3).
+        let export: serde_json::Value =
+            serde_json::from_str(&library.export_json().unwrap()).unwrap();
+        assert_eq!(export["favorites"][0]["stationuuid"], saved.stationuuid);
+        assert_eq!(export["favorites"][0]["url"], "https://example.com/stream");
+        assert!(export["favorites"][0].get("alias").is_none());
     }
 }

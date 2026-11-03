@@ -10,6 +10,7 @@ use tokio::sync::mpsc;
 use tracing::warn;
 
 use crate::audio::{AudioEvent, PlaybackState};
+use crate::library::StationLibrary;
 use crate::services::{SearchParams, Station, StationSource, publishable};
 
 use super::notice::NoticeKey;
@@ -180,8 +181,11 @@ impl super::Session {
             return;
         };
         // У внешнего потока нет записи в каталоге, а его URL — явный выбор
-        // пользователя: подменять его нечем (ADR-0040, 0043 §4).
-        if current.source != StationSource::Radio || current.stationuuid.starts_with("url:") {
+        // пользователя: подменять его нечем (ADR-0040, 0043 §4). Станция с
+        // алиасом вне подмены так же: альтернатива выбросила бы адрес, который
+        // выбрал пользователь, и перевела бы счётчик минут на другой
+        // `stationuuid` (ADR-0050 §6).
+        if !substitution_allowed(&current, &self.library) {
             return;
         }
         if !self.economy.begin_attempt(&current.stationuuid) {
@@ -265,9 +269,25 @@ impl super::Session {
     }
 
     /// Показывать ли индикатор ECO рядом с битрейтом (ADR-0043 §4).
+    ///
+    /// Для станции с алиасом индикатор гаснет: подмена к её адресу не
+    /// применялась, даже если ECO остался от предыдущего запуска (ADR-0050 §6).
     pub(crate) fn economy_stream(&self) -> bool {
         self.economy.eco_active()
+            && self
+                .current_station
+                .as_ref()
+                .is_none_or(|current| substitution_allowed(current, &self.library))
     }
+}
+
+/// Поддаётся ли станция экономной подмене: только запись каталога без ручной
+/// ссылки (ADR-0040, 0043 §4, 0050 §6). Отделена от `Session`, чтобы запрет
+/// проверялся тестом без аудио-ядра.
+fn substitution_allowed(current: &Station, library: &StationLibrary) -> bool {
+    current.source == StationSource::Radio
+        && !current.stationuuid.starts_with("url:")
+        && !library.has_alias(&current.stationuuid)
 }
 
 /// Кандидат «легче» текущего: при неизвестном битрейте годится любой поток
@@ -469,5 +489,44 @@ mod tests {
         assert!(!economy.begin_attempt("current"));
         economy.on_station_selected("next");
         assert!(economy.begin_attempt("next"));
+    }
+
+    #[test]
+    fn eco_skips_station_with_alias() {
+        let mut library = StationLibrary::ephemeral();
+        let catalog = current();
+        assert!(
+            substitution_allowed(&catalog, &library),
+            "обычная запись каталога подменяется"
+        );
+
+        library
+            .set_alias(&catalog.stationuuid, "https://manual.example.org/live")
+            .unwrap();
+        assert!(
+            !substitution_allowed(&catalog, &library),
+            "алиасная станция вне подмены (ADR-0050 §6)"
+        );
+
+        let mut foreign = catalog.clone();
+        foreign.stationuuid = "other".to_owned();
+        assert!(
+            substitution_allowed(&foreign, &library),
+            "алиас чужой станции её не касается"
+        );
+
+        let mut external = catalog.clone();
+        external.stationuuid = "url:https://nova.example/hi".to_owned();
+        external.source = StationSource::Stream;
+        assert!(
+            !substitution_allowed(&external, &library),
+            "внешний поток вне подмены и без алиаса (ADR-0040)"
+        );
+
+        library.remove_alias(&catalog.stationuuid).unwrap();
+        assert!(
+            substitution_allowed(&catalog, &library),
+            "снятый алиас возвращает станцию в подмену"
+        );
     }
 }
