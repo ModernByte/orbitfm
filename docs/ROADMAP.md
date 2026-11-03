@@ -976,10 +976,17 @@ MINOR-пакет поверх 0.19.0-rc.1. Закрывает §2.5 аудита
 - [x] `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`
       (в том числе `--no-default-features`), `cargo test --locked` —
       645 passed, 5 ignored
-- [ ] Live-приёмка: намотка секунд на реальном эфире, смена станции, закрытое
-      окно, `stats clear` и уведомление о повреждённом файле
-- [ ] Тег `v0.19.0-rc.2`, GitHub Release и локальная переустановка приложения,
-      плагина Noctalia и браузерных интеграций
+- [x] Live-приёмка на установленном 0.19.0-rc.2: намотка секунд на реальном
+      эфире (SomaFM Groove Salad, 30 с за сброс), смена станции, накопление с
+      закрытым окном (`hide` → +41 с за 40 с), `stats clear` → `ok stats
+      cleared` и пустые `stations`/`days`, повреждённый файл — нетронут до
+      первой успешной записи, счётчики с нуля, тост `stats_damaged` один раз за
+      запуск
+- [x] Тег `v0.19.0-rc.2`, GitHub Release (AppImage, MSI, DMG, `.plasmoid`,
+      `install-appimage.sh`, `SHA256SUMS`) и локальная переустановка: приложение
+      в `~/.local/bin/orbitfm` (`orbitfm 0.19.0-rc.2`), 14 интеграций через
+      `integration install --force`, плагин Noctalia обновлён из git-источника
+      (`modernbyte/orbitfm 1.1.0`), браузерные расширения chrome/firefox
 
 ## Трек TUI на ratatui — спроектирован, код не начат (2026-11-03)
 
