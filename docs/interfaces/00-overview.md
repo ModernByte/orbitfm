@@ -25,6 +25,7 @@
 | `14-native-host.md` | Native messaging host для расширений Chromium и Firefox: фрейминг, allowlist, конверт `{"ok":…}` (ADR-0038) |
 | `15-library-export.md` | Экспорт и импорт библиотеки: схема 1, слияние по UUID, безопасность файлов (ADR-0046) |
 | `16-tui.md` | Контракт `orbitfm-tui` ↔ ядро: CLI-адаптер, `events`, поиск, библиотека, кадр `spectrum`, выход `q`/`Q` (ADR-0047, план) |
+| `17-stats.md` | Локальная статистика прослушивания: файл `stats.json` схемы 1, накопление секунд, команды `stats`, `stats --json`, `stats clear` (ADR-0049) |
 
 ## Принципы
 

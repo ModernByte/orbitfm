@@ -1,8 +1,8 @@
 # Модуль: Модальное окно настроек
 
-**Путь в коде:** `src/ui/settings_panel.rs`, `src/ui/onboarding.rs`, примитивы строк — `src/ui/controls.rs`  
+**Путь в коде:** `src/ui/settings_panel.rs`, `src/ui/onboarding.rs`, раздел «Статистика» — `src/ui/stats_view.rs`, примитивы строк — `src/ui/controls.rs`  
 **Ответственность:** Содержимое модального окна настроек и мастера первого запуска: шапка, категории, карточки и подвал; scrim и каркас стекла — в `app.rs`.  
-**Зависимости:** egui, `ui::animation`, `ui::controls`, `ui::palette`, `ui::widgets`, `ui::icons`, `i18n`, `settings`, `session::WindowMode`, `integration::{status, wm}`.
+**Зависимости:** egui, `ui::animation`, `ui::controls`, `ui::palette`, `ui::widgets`, `ui::icons`, `i18n`, `settings`, `stats` (снимок счётчиков, ADR-0049), `session::WindowMode`, `integration::{status, wm}`.
 
 ---
 
@@ -30,6 +30,8 @@
 | `OrbitApp` | `settings_rect: Option<Rect>` | прямоугольник с последнего открытого кадра |
 | `OrbitApp` | `settings_category: SettingsCategory` | открытая категория, состояние представления |
 | `OrbitApp` | `integrations: IntegrationPanel` | снимок целей и текущая фоновая операция |
+| `OrbitApp` | `stats: Option<StatsSnapshot>` | снимок счётчиков для раздела «Статистика»: читается при открытии окна и после сброса, а не на каждый кадр (тот же приём, что у `IntegrationPanel`, ADR-0042) |
+| `OrbitApp` | `stats_confirm_clear: bool` | первая ступень подтверждения очистки; снимается закрытием окна и сменой категории |
 | `Session` | `onboarding_open: bool` | мастер первого запуска открыт |
 | `Session` | `onboarding_desktop: Desktop` | окружение, обнаруженное для шага 2 |
 | `OrbitApp` | `onboarding: onboarding::View` | шаг мастера, отклик правил и «Скопировано» |
@@ -101,8 +103,10 @@ drag, начатые над ним. В `Listening` зоны нет: `Session::op
 ## 3. Категории
 
 Категории задаёт `SettingsCategory { Appearance, Language, Audio, Motion, Window,
-Integrations, About }`; порядок навигации — `ALL`, иконки — `Moon`, `Globe`,
-`Volume`, `Sparkles`, `AppWindow`, `Panel`, `Help`. Выбранная категория залита accent-подложкой,
+Stats, Integrations, About }`; порядок навигации — `ALL`, иконки — `Moon`, `Globe`,
+`Volume`, `Sparkles`, `AppWindow`, `Clock`, `Panel`, `Help`. Глиф новой категории
+берётся из уже собранного набора `ui::icons` (ADR-0034); новых SVG решение
+ADR-0049 не требует. Выбранная категория залита accent-подложкой,
 роль — `Tab`; в рейке подпись заменяется подсказкой при наведении. У каждой
 страницы есть заголовок 18 px и короткий подзаголовок 11.5 px из
 `SettingsText`: подзаголовок не повторяет подсказку отдельной строки.
@@ -124,6 +128,18 @@ Integrations, About }`; порядок навигации — `ALL`, иконк�
   показывается `flips_unavailable`.
 - **Window** — `dropdown` по `WindowMode::ALL` с `window_hint`, `switch_row`
   карточки управления.
+- **Stats** — раздел «Статистика» (ADR-0049 § 7): суммарные минуты и минуты за
+  последние 7 и 30 дней, топ-10 станций, топ-10 стран и топ-10 тегов строками
+  `controls::row` с полоской-долей (порядок — по убыванию `seconds`, большие
+  первыми, как в ответе `stats --json`), `switch_row` тумблера `stats_enabled` и
+  кнопка «Очистить» (`stats_clear`, `widgets::quiet_button`) с подтверждением.
+  Пустой снимок показывает `stats_empty`; при `stats_enabled = false` раздел
+  остаётся видимым и нулевым, а подсказка `stats_enabled_hint` предлагает
+  включить учёт — существующий файл при этом не трогается (интерфейс 09).
+  Подтверждение инлайн: первое нажатие меняет подпись кнопки на
+  `stats_clear_confirm`, второе даёт `UiAction::ClearStats`; отдельного диалога
+  в модалке нет — `src/ui` диалогов не знает. Тумблер даёт
+  `UiAction::SetStatsEnabled(bool)`.
 - **Integrations** — три группы `TargetGroup::ALL`: панели и бары, окружения
   рабочего стола, браузеры. Строка цели показывает состояние
   (`NotInstalled`/`Installed`/`UpdateAvailable`/`Problem`), найденные браузеры
@@ -137,6 +153,18 @@ Integrations, About }`; порядок навигации — `ALL`, иконк�
   «Очистить офлайн-снимок» (`UiAction::ClearOfflineSnapshot`, ADR-0043) и
   единственная кнопка выхода — «Выход» (`widgets::quiet_button` в цвете ошибки,
   `UiAction::Quit`).
+
+Отрисовку раздела «Статистика» целиком держит `src/ui/stats_view.rs`: он
+получает палитру, `SettingsText` и `StatsSnapshot` и возвращает `UiAction` —
+форматирование минут, полоски-доли и порядок строк живут там же (модуль 20).
+`settings_panel.rs` добавляет только вариант `SettingsCategory::Stats`, его
+подпись в `category_label`, подзаголовок `stats_page_hint`, иконку и один вызов
+в `draw_category`; панель не считает сводки и не хранит счётчики. Снимок
+передаётся в `SettingsState` наряду с `integrations`, поэтому страница не читает
+файл на каждый кадр. `OrbitApp` обрабатывает действия как остальные строки:
+`SetStatsEnabled` идёт в `Settings::set_stats_enabled` (интерфейс 09),
+`ClearStats` — в сброс `StatsStore` с немедленной записью на диск
+(интерфейс 17 § 3), после чего снимок обновляется, чтобы кадр показал нули.
 
 Подвал окна (`HEADER_MARGIN` слева и справа, высота 32) отделён линией и
 показывает `saved_hint` по центру: «Настройки сохраняются автоматически».
@@ -260,7 +288,14 @@ Scrim — `egui::Area` на весь viewport в `Order::Foreground`, затем
 - `settings_panel`: reduce motion даёт конечную альфу без перехода, блоки идут
   по порядку на входе и в обратном порядке на выходе, альфа не выходит из
   `0..=1` включая NaN; `narrow_modal_falls_back_to_the_icon_rail`;
-  `every_category_has_a_label_and_a_hint`;
+  `every_category_has_a_label_and_a_hint` — проверка распространяется и на
+  новую категорию `Stats`;
+- `stats_view`: пустой снимок и `stats_enabled = false` дают нули и
+  `stats_empty`; полоска-доля не выходит из `0..=1` и не ломается при нулевом
+  максимуме; строки упорядочены по убыванию `seconds`; «Очистить» первым
+  нажатием только запрашивает подтверждение и не порождает `UiAction`, второе
+  даёт `ClearStats` и снимает подтверждение; закрытие окна сбрасывает
+  подтверждение;
 - `widgets`: `wheel_over_slider_steps_volume_and_commits`,
   `wheel_is_deduplicated_within_one_input_time`,
   `wheel_outside_slider_leaves_volume_and_scroll_alone`,

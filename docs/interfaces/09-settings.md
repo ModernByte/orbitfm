@@ -144,6 +144,9 @@ pub struct Settings {
     pub queue_wrap: bool,
     /// Профиль сети: фон, discovery и favicon (ADR-0048).
     pub network_profile: NetworkProfile,
+    /// Вести ли локальную статистику прослушивания (ADR-0049). По умолчанию
+    /// `true`: счётчики живут только на устройстве и никуда не отправляются.
+    pub stats_enabled: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -184,6 +187,7 @@ impl SettingsStore {
     pub fn set_queue_wrap(&mut self, wrap: bool) -> Result<(), SettingsError>;
     pub fn set_network_profile(&mut self, profile: NetworkProfile)
         -> Result<(), SettingsError>;
+    pub fn set_stats_enabled(&mut self, enabled: bool) -> Result<(), SettingsError>;
 }
 
 /// Стандартный путь по XDG Base Directory Specification.
@@ -219,6 +223,7 @@ pub fn default_path() -> Result<PathBuf, SettingsError>;
 | `set_allow_flips` | Разрешает перевороты камеры; по умолчанию `false`, сохраняет только при изменении |
 | `set_queue_wrap` | Включает кольцевой переход очереди; по умолчанию `true`, сохраняет только при изменении (ADR-0046) |
 | `set_network_profile` | Меняет профиль сети (`unlimited`/`metered`/`offline-first`); по умолчанию `unlimited`, сохраняет только при изменении (ADR-0048) |
+| `set_stats_enabled` | Включает или выключает учёт локальной статистики прослушивания; по умолчанию `true`, сохраняет только при изменении (ADR-0049). При `false` накопление и запись `stats.json` останавливаются, текущий накопитель сбрасывается, а существующий файл остаётся нетронутым — удаление счётчиков делает только `stats clear` (интерфейс 17) |
 
 ## 3. Расположение и формат
 
@@ -244,7 +249,8 @@ pub fn default_path() -> Result<PathBuf, SettingsError>;
   "allow_flips": false,
   "reduce_motion": false,
   "queue_wrap": true,
-  "network_profile": "unlimited"
+  "network_profile": "unlimited",
+  "stats_enabled": true
 }
 ```
 
@@ -256,7 +262,10 @@ pub fn default_path() -> Result<PathBuf, SettingsError>;
 `network_profile` — `unlimited`/`metered`/`offline-first`. `viz_bars` при
 загрузке притягивается к ближайшему из 16/24/32, `volume` клампится в
 `0.0..=1.0`. Отсутствующие поля заменяются значениями по умолчанию (включая
-`queue_wrap: true` и `network_profile: "unlimited"` в старых файлах). Неизвестное
+`queue_wrap: true`, `network_profile: "unlimited"` и `stats_enabled: true` в
+старых файлах): `#[serde(default)]` на структуре уже есть, поэтому
+`settings.json` до ADR-0049 читается без миграции и даёт включённый учёт.
+Неизвестное
 значение enum — ошибка разбора, кроме `language`: неизвестный код языка даёт
 `System` и не стоит остальных настроек (`language::deserialize_language`).
 
@@ -315,6 +324,9 @@ Application Core затемняет акцент для текста (ссылк
 - `motion_styles_have_ids_and_band_requirements`
 - `roundtrip_persists_visualizer_and_help`
 - `roundtrip_persists_network_profile`, `network_profile_maps_tokens_and_limits`
+- `roundtrip_persists_stats_enabled` — `stats_enabled` по умолчанию `true`,
+  старый файл без поля читается как `true` и не перезаписывается без изменения
+  (ADR-0049)
 - `out_of_range_bar_count_snaps_to_nearest_choice`
 - `corrupt_file_returns_parse_error`
 - `ephemeral_store_keeps_changes_without_file`
@@ -332,4 +344,6 @@ Application Core затемняет акцент для текста (ссылк
 - ADR-0041: Встроенные шрифты и мастер первого запуска (`onboarding_done`,
   `existed_at_load`)
 - ADR-0048: Профиль сети (`network_profile`)
+- ADR-0049: Локальная статистика прослушивания (`stats_enabled`)
 - `docs/modules/10-settings.md`, `docs/modules/14-ui-settings.md`
+- `docs/interfaces/17-stats.md` — файл `stats.json` схемы 1 и команды `stats`

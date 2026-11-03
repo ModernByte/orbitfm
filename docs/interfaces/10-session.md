@@ -18,7 +18,7 @@ Application Core — слой, который переживает закрыт�
 | Элемент | Сигнатура | Поведение |
 |---------|-----------|-----------|
 | `Session::new` | `pub(crate) fn new(commands: mpsc::Receiver<IpcRequest>, wake: WakeHandle, services: AppServices) -> Self` | Собирает ядро из подсистем; подписывается на `audio.subscribe()`, восстанавливает громкость из настроек, берёт `visualizer_enabled` и `show_help` из них же, разворачивает `language = stored.language.resolve()`, вычисляет `onboarding_open = !settings.existed_at_load() && !stored.onboarding_done`, определяет `onboarding_desktop`, подставляет офлайн-снимок (`load_snapshot`), запускает `start_world`, помечает окно `visible = true`, `settings_open = false` и публикует первый `status` кадр |
-| `tick` | `pub(crate) fn tick(&mut self)` | Один кадр фонового обслуживания; вызывается UI-циклом при открытом окне |
+| `tick` | `pub(crate) fn tick(&mut self)` | Один кадр фонового обслуживания; вызывается UI-циклом при открытом окне. Здесь же копятся секунды статистики прослушивания и сбрасываются на диск по достижении `FLUSH_SECS = 30` (§ 3.2, ADR-0049) |
 | `take_intent` | `pub(crate) fn take_intent(&mut self) -> Option<UiIntent>` | Забирает и снимает запрос к окну |
 | `take_notices` | `pub(crate) fn take_notices(&mut self) -> VecDeque<Notice>` | Забирает всю очередь сообщений (очередь очищается) |
 | `notify_info` | `pub(crate) fn notify_info(&mut self, key: NoticeKey)` | Ставит `Notice::Info(key)` в конец очереди |
@@ -264,6 +264,8 @@ pub(crate) struct AppServices {
     pub(crate) tray: Option<TrayHandle>,
     pub(crate) library: StationLibrary,
     pub(crate) settings: SettingsStore,
+    /// Локальная статистика прослушивания (ADR-0049).
+    pub(crate) stats: StatsStore,
     /// Публикация кадров `events` (ADR-0039).
     pub(crate) status: StatusFeed,
     /// Публикация кадров `search` для попапа (ADR-0039, ревизия 0.16).
@@ -379,6 +381,33 @@ pub(crate) const PANEL_TITLE: &str = "OrbitFM · Panel";
 Ни один из этих путей не меняет IPC-, MPRIS- или `status`-контракты: меняется
 только буфер libmpv, выбранная станция и индикатор ECO в presentation.
 
+### 3.2. Накопление статистики прослушивания (ADR-0049)
+
+Секунды копятся в `Session` и принадлежат ей: модуль `src/stats/` только хранит
+счётчики (файл `stats.json` схемы 1, `docs/interfaces/17-stats.md`), а решение
+«какая станция и сколько» Core уже знает.
+
+| Правило | Поведение |
+|---------|-----------|
+| Что считается | Только секунды состояния `Playing` активной станции — той же, что отдают `status`, MPRIS и панель (ADR-0046). `Paused`, `Buffering`, `Reconnecting`, `Error`, `Stopped` времени не добавляют |
+| Чья станция | `current_station` на момент секунды; источник запуска (мышь, CLI, попап, трей, MPRIS) не важен. Внешний поток без каталожного UUID получает ключ `external:<sha256(url)[0..16]>` (ADR-0025, ADR-0040) |
+| Громкость | Не влияет: станция на нулевой громкости считается прослушанной |
+| `sessions` | Увеличивается при каждом запуске станции, включая перезапуск того же потока после реконнекта |
+| Сброс на диск | `tick()` пишет файл, когда накоплено `FLUSH_SECS = 30` секунд; накопленное схлопывается в одну атомарную запись, пока станция играет и счётчик не изменился, записи нет |
+| Внеочередные сбросы | Уход из `Playing` в любое другое состояние, смена станции, `stats clear`, выключение `stats_enabled` и завершение процесса |
+| `stats_enabled = false` | Накопление и запись останавливаются, текущий накопитель сбрасывается; `stats.json` остаётся нетронутым (интерфейс 09, ADR-0049 § 5) |
+| Ошибки | Сбой чтения или записи не прерывает воспроизведение: `warn!` плюс существующий тост `NoticeKey::SettingNotSaved` |
+
+Граница кадра: накопление относится к фоновому обслуживанию `Session` — `tick()`
+при открытом окне и `park()` при закрытом, — а не к presentation. Порядок шагов
+§ 3 оно не меняет и новых методов `Session` не требует: хранилище живёт в
+`AppServices::stats`, а окно настроек получает снимок как состояние
+представления — тем же приёмом, что `IntegrationPanel`, и не на каждый кадр
+(ADR-0042, `docs/modules/14-ui-settings.md` § 2). Внешние читатели получают
+счётчики командами `stats` и `stats --json` (§ 4), а не `status`, который
+остаётся прежним (ADR-0037). Потери при аварийном завершении процесса ограничены
+`FLUSH_SECS` секунд — это принято ADR-0049 сознательно.
+
 ## 4. Реакция на IPC-команды
 
 `Session::execute` (`src/session/commands.rs`) — единственная точка разбора;
@@ -408,6 +437,9 @@ ADR-0037).
 | `ClearSleep` | `clear_sleep()` | `ok` |
 | `LibraryExport { path }` | `library.export_to(path)` — атомарный JSON схемы 1 | `ok exported <favorites>`, иначе `error` |
 | `LibraryImport { path }` | `library.import_from(path)` — слияние с локальной библиотекой | `ok imported …`, иначе `error` |
+| `Stats` | Сводка по счётчикам `Session` (ADR-0049): суммарное время и топ-5 станций, стран, тегов | `stats total <seconds>` и три списка, иначе `error` |
+| `StatsJson` | Та же сводка, посчитанная приложением в JSON схемы 1 (`docs/interfaces/17-stats.md` § 5) | одна строка JSON |
+| `ClearStats` | Сбросить накопленное и записать пустую схему 1; избранное и история не затронуты | `ok stats cleared` |
 | `Roulette` | `start_roulette()` (повтор игнорируется, пока ответ в пути) | `ok` |
 | `VolumeUp` / `VolumeDown` | `nudge_volume(±VOLUME_STEP)` с `clamp` к `0.0..=1.0` | `ok`, иначе `error <ошибка>` |
 | `Theme { mode }` | `set_theme(ThemeMode::from(mode))` | `ok`, иначе `error <ошибка>` |
@@ -535,6 +567,7 @@ mode <focus|overlay|listening|panel>
 | Медиа-контролы | `Option<MediaControls>` | `AppServices::media`; `None` — MPRIS недоступен |
 | Трей | `Option<TrayHandle>` | `AppServices::tray` из `tray::spawn`; `None` — SNI-хоста нет или сборка без фичи `tray` |
 | Библиотека и настройки | `StationLibrary`, `SettingsStore` | `AppServices` |
+| Статистика прослушивания | `StatsStore` (`src/stats/`) | `AppServices`; поле `Session` копит секунды активной станции и сбрасывает их по `FLUSH_SECS = 30` (ADR-0049, `docs/interfaces/17-stats.md`) |
 | Публикатор кадров `events` | `StatusFeed` | `AppServices::status`; получатель `watch` — у IPC-сервера (ADR-0039) |
 | Публикатор кадров `search` | `SearchFeed` | `AppServices::search`; подписка `events` для попапа (ADR-0039, ревизия 0.16) |
 | Tokio-рантайм | `tokio::runtime::Handle` | `AppServices::runtime` |
@@ -656,6 +689,15 @@ mode <focus|overlay|listening|panel>
 - `marker_groups_stations_with_shared_coordinates`,
   `markers_skip_missing_invalid_and_zero_coordinates`, `markers_deduplicate_by_uuid`,
   `popularity_signal_is_votes_only`, `grouped_markers_keep_the_loudest_station`
+- `stats_time_accrues_only_for_active_playing_station` — `Paused`, `Buffering`,
+  `Reconnecting`, `Error` и `Stopped` счётчик не двигают, ноль на громкости тоже
+  считает (§ 3.2);
+  `stats_flush_at_threshold_and_on_leaving_playing` — порог `FLUSH_SECS = 30`
+  даёт ровно одну запись, уход из `Playing`, смена станции и `park()` пишут
+  вне очереди; `stats_disabled_never_writes_and_keeps_the_file` — при
+  `stats_enabled = false` накопитель сброшен, файл не тронут;
+  `stats_clear_writes_empty_schema_once` — `stats clear` пишет пустую схему 1 и
+  отвечает `ok stats cleared` даже при нулевых счётчиках (`ADR-0049`)
 - контракты трея — в тестах `src/tray/` (`clicks_publish_a_command_and_wake_the_core`,
   `status_is_active_only_when_something_happens`, `tooltip_shows_the_station_or_silence`,
   `menu_offers_window_playback_volume_theme_settings_and_quit`, `theme_radio_marks_the_current_mode`,
@@ -676,6 +718,8 @@ mode <focus|overlay|listening|panel>
 - ADR-0041: Встроенные шрифты и мастер первого запуска
 - ADR-0042: Управление интеграциями из GUI (AST/JSONC, backup, reload без kill)
 - ADR-0043: Офлайн-снимок станций и адаптация к плохой сети
+- ADR-0049: Локальная статистика прослушивания (§ 3.2 — накопление секунд и
+  сброс на диск)
 - `docs/modules/11-session.md` — модульная спецификация пакета
 - `docs/modules/16-integrations.md` — обнаружение окружения и runtime-правила
   (`integration::wm`)
@@ -684,4 +728,6 @@ mode <focus|overlay|listening|panel>
   подписи (`labels`)
 - `docs/interfaces/07-app.md` — контракт presentation-слоя (`OrbitApp`)
 - `docs/interfaces/05-ipc.md`, `docs/interfaces/06-media.md` — протоколы команд
+- `docs/interfaces/17-stats.md`, `docs/modules/20-stats.md` — файл `stats.json`
+  схемы 1 и модуль-хранитель счётчиков
 - `docs/architecture/00-overview.md` § 4, § 4.1
