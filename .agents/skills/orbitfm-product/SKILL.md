@@ -34,7 +34,7 @@ product-документы и принятые ADR, а не на спонтан�
 |------|--------|
 | Android Companion | ADR-0045 принят, документация готова, кода нет; приоритет A |
 | Sleep / queue / library export | база реализована в 0.18.0-rc.1; быстрый sleep — 0.19.0-rc.1 |
-| Network profile / stats / URL-алиасы | профиль сети — desktop 0.19.0-rc.1 (ADR-0048); stats и aliases не начаты, приоритет B |
+| Network profile / stats / URL-алиасы | профиль сети — desktop 0.19.0-rc.1 (ADR-0048); локальная статистика — desktop 0.19.0-rc.2 (ADR-0049), без экспорта и «карты года»; из приоритета B остались URL-алиасы и Android metered flag |
 | Desktop tech debt | распил монстр-файлов и релизный контур закрыты в 0.17; хвосты по мере необходимости |
 | TUI ratatui | ADR-0047 принят, T0 docs выполнен, код T1+ не начат; parallel track, не впереди Android v1 |
 | Web Explorer, Telegram, Discord RPC, D-Bus | приоритет D, только отдельный ADR по спросу |
