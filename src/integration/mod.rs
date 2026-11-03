@@ -1591,6 +1591,14 @@ fn print_install(layout: &Layout, report: &InstallReport) {
     println!();
 }
 
+/// Добавил ли строку `include` именно установщик: вывод обещает её снятие и
+/// резервную копию только по квитанции (ADR-0051 §5).
+fn include_is_ours(lines: &[ReceiptLine], config: &Path) -> bool {
+    lines
+        .iter()
+        .any(|entry| Path::new(&entry.path) == config && entry.line == wm::NIRI_INCLUDE)
+}
+
 fn print_instructions(layout: &Layout, report: &InstallReport) -> Result<()> {
     let target = report.target;
     println!();
@@ -1649,9 +1657,7 @@ fn print_instructions(layout: &Layout, report: &InstallReport) -> Result<()> {
             let config = wm::niri_config_path(layout);
             // Копия и обещание «снимем строку» честны только тогда, когда
             // строку добавил именно установщик (ADR-0051 §5).
-            let ours = report.lines.iter().any(|entry| {
-                Path::new(&entry.path) == config.as_path() && entry.line == wm::NIRI_INCLUDE
-            });
+            let ours = include_is_ours(&report.lines, &config);
             println!("Подключение niri:");
             println!(
                 "  Файл правил: {}",
@@ -2462,6 +2468,37 @@ mod tests {
         assert!(
             note.contains(wm::NIRI_INCLUDE),
             "в подсказке есть сама строка: {note}"
+        );
+    }
+
+    /// Вывод установки обещает копию и снятие строки только когда строку добавили мы.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn install_promises_include_removal_only_for_our_line() {
+        let dir = TempDir::new().expect("temp dir");
+        let layout = test_layout(&dir);
+        let config = wm::niri_config_path(&layout);
+        fs::create_dir_all(config.parent().expect("каталог niri")).expect("каталог niri");
+        fs::write(&config, "window {\n}\n").expect("конфиг без подключения");
+        let ours = install_one(&layout, Target::Niri, false, &fake_binary()).expect("install");
+        assert!(
+            include_is_ours(&ours.lines, &config),
+            "конфиг без подключения: строку добавила установка"
+        );
+
+        let other = TempDir::new().expect("temp dir");
+        let layout = test_layout(&other);
+        let config = wm::niri_config_path(&layout);
+        fs::create_dir_all(config.parent().expect("каталог niri")).expect("каталог niri");
+        fs::write(
+            &config,
+            format!("include \"./my.kdl\"\n{}\n", wm::NIRI_INCLUDE),
+        )
+        .expect("ручной include");
+        let theirs = install_one(&layout, Target::Niri, false, &fake_binary()).expect("install");
+        assert!(
+            !include_is_ours(&theirs.lines, &config),
+            "строка пользователя: копий нет и снимать её мы не обещаем"
         );
     }
 
