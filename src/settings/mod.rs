@@ -284,6 +284,15 @@ pub struct Settings {
     pub queue_wrap: bool,
     /// Профиль сети: фоновая загрузка, битрейт и favicon (ADR-0048).
     pub network_profile: NetworkProfile,
+    /// Вести ли локальную статистику прослушивания (ADR-0049). Счётчики живут
+    /// только на устройстве и никуда не отправляются, поэтому учёт включён по
+    /// умолчанию; старые `settings.json` без поля читаются как `true`.
+    #[serde(default = "default_stats_enabled")]
+    pub stats_enabled: bool,
+}
+
+fn default_stats_enabled() -> bool {
+    true
 }
 
 /// Доступные варианты числа столбцов визуализатора.
@@ -314,6 +323,7 @@ impl Default for Settings {
             onboarding_done: false,
             queue_wrap: true,
             network_profile: NetworkProfile::Unlimited,
+            stats_enabled: default_stats_enabled(),
         }
     }
 }
@@ -508,6 +518,17 @@ impl SettingsStore {
             return Ok(());
         }
         self.settings.network_profile = profile;
+        self.save()
+    }
+
+    /// Локальный учёт прослушанного (ADR-0049): при `false` накопление и запись
+    /// `stats.json` останавливаются, а существующий файл остаётся — удаляет
+    /// счётчики только `stats clear`. Сохраняет только при изменении.
+    pub fn set_stats_enabled(&mut self, enabled: bool) -> Result<(), SettingsError> {
+        if self.settings.stats_enabled == enabled {
+            return Ok(());
+        }
+        self.settings.stats_enabled = enabled;
         self.save()
     }
 
@@ -772,6 +793,35 @@ mod tests {
 
         let store = SettingsStore::load(path).unwrap();
         assert_eq!(store.settings().network_profile, NetworkProfile::Metered);
+    }
+
+    #[test]
+    fn roundtrip_persists_stats_enabled() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        assert!(
+            Settings::default().stats_enabled,
+            "учёт включён по умолчанию (ADR-0049 § 5)"
+        );
+
+        // Старый файл без поля читается как `true` и не перезаписывается.
+        fs::write(&path, b"{\"theme\":\"dark\"}").unwrap();
+        let before = fs::read_to_string(&path).unwrap();
+        let store = SettingsStore::load(path.clone()).unwrap();
+        assert!(store.settings().stats_enabled);
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+
+        {
+            let mut store = SettingsStore::load(path.clone()).unwrap();
+            store.set_stats_enabled(false).unwrap();
+            // Повторное то же значение — без записи.
+            let written = fs::read_to_string(&path).unwrap();
+            store.set_stats_enabled(false).unwrap();
+            assert_eq!(fs::read_to_string(&path).unwrap(), written);
+        }
+
+        let store = SettingsStore::load(path).unwrap();
+        assert!(!store.settings().stats_enabled);
     }
 
     #[test]

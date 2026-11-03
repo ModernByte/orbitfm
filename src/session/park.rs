@@ -48,6 +48,9 @@ enum Parked {
     QueueClosed,
     /// Дедлайн таймера сна: эфир останавливается без кадра окна.
     Sleep,
+    /// Пора сбросить статистику прослушивания: секунды считаются и в простое
+    /// без окна (ADR-0049 § 4).
+    Stats,
 }
 
 impl super::Session {
@@ -56,6 +59,7 @@ impl super::Session {
     pub(crate) fn park(&mut self) -> ParkOutcome {
         loop {
             let sleep_deadline = self.sleep_deadline();
+            let stats_deadline = self.stats_deadline();
             let event = self.runtime.block_on(wait_on(
                 &mut self.commands,
                 &mut self.audio_events,
@@ -65,6 +69,7 @@ impl super::Session {
                 &mut self.pending_stream,
                 &mut self.companion.rx,
                 sleep_deadline,
+                stats_deadline,
             ));
             match event {
                 Parked::Ipc(request) => {
@@ -87,7 +92,11 @@ impl super::Session {
                 }
                 Parked::QueueClosed => self.quit(),
                 Parked::Sleep => self.poll_sleep(),
+                Parked::Stats => {}
             }
+            // Секунды эфира считаются и без кадра окна, иначе спрятанное окно
+            // обнулило бы счётчики прослушанного (ADR-0049 § 1).
+            self.poll_stats();
             self.sync_media();
             self.sync_tray();
             // Подписки `events` получают изменения и без окна (ADR-0039).
@@ -112,6 +121,7 @@ async fn wait_on(
     stream: &mut Option<PendingStream>,
     companion: &mut Option<mpsc::UnboundedReceiver<CompanionResponse>>,
     sleep_deadline: Option<Instant>,
+    stats_deadline: Option<Instant>,
 ) -> Parked {
     loop {
         let event = tokio::select! {
@@ -133,6 +143,7 @@ async fn wait_on(
             outcome = stream_recv(stream) => Parked::Stream(outcome),
             response = companion_recv(companion) => Parked::CompanionSearch(response),
             () = sleep_until(sleep_deadline) => Parked::Sleep,
+            () = sleep_until(stats_deadline) => Parked::Stats,
         };
         return event;
     }

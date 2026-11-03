@@ -282,6 +282,7 @@ pub(crate) const CATALOG: Catalog = Catalog {
         visualizer_not_saved: "Visualisator tidak tersimpan",
         fft_unavailable: "FFT tidak tersedia",
         sleep_expired: "Pengatur waktu tidur menghentikan pemutaran",
+        stats_damaged: "Statistik mendengarkan tidak dapat dibaca — penghitung mulai dari nol",
     },
     labels: LabelText {
         theme_system: "Sistem",

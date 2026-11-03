@@ -124,9 +124,12 @@ Windows. Named pipe занимает первый экземпляр как пр
 `stats`, `stats --json` и `stats clear` читают и сбрасывают локальную статистику
 прослушивания (ADR-0049, `docs/interfaces/17-stats.md`). Все три команды
 обслуживает **уже запущенный** экземпляр, как `sleep`: новый процесс они не
-запускают, без запущенного — `error OrbitFM не запущен`. `stats`
-печатает суммарное время строкой `stats total <seconds>` и три списка топ-5
-(станции, страны, теги); `stats clear` идемпотентен и всегда отвечает
+запускают, без запущенного — `error OrbitFM не запущен`. `stats` отвечает
+одной многострочной сводкой: `stats total <seconds>`, `stats enabled <true|false>`
+(значение `stats_enabled`, чтобы нули после выключения учёта не выглядели потерей)
+и три списка топ-5 — `stats station <seconds> <имя>`, `stats country <seconds> <КОД>`
+и `stats tag <seconds> <тег>`; имена станций схлопываются в одну строку, как в
+`status`. `stats clear` идемпотентен и всегда отвечает
 `ok stats cleared`, в том числе при нулевых счётчиках. `status --json` эти
 команды не меняют — поле статистики в схему 1 не добавляется, интеграторы не
 платят парсингом за неиспользуемые данные. Браузерный native host их не
@@ -202,9 +205,15 @@ ok imported 3 favorites, 1 history, 2 skipped
 `stats` и `stats clear` отвечают (ADR-0049):
 ```
 stats total 246000
+stats enabled true
+stats station 5400 Radio Swiss Pop
+stats country 9000 CH
+stats tag 42000 pop
 ok stats cleared
 ```
-После `stats total` идут три списка топ-5: станции, страны и теги. `stats clear`
+Первые пять строк — сводка `stats`: суммарное время, признак учёта и по одной
+строке каждого из трёх списков топ-5 (станции, страны, теги) — в примере
+списки сокращены. `stats clear`
 всегда отдаёт `ok stats cleared`, даже когда счётчики нулевые.
 
 `status` принимает значения `stopped`, `playing`, `paused`, `buffering`, `reconnecting`,

@@ -18,6 +18,7 @@ pub(crate) mod playback;
 pub(crate) mod publish_gate;
 pub(crate) mod search;
 pub(crate) mod sleep;
+pub(crate) mod stats;
 pub(crate) mod stream_import;
 pub(crate) mod tray;
 pub(crate) mod window;
@@ -40,6 +41,7 @@ use crate::settings::{
     AccentColor, Language, MotionReactivity, NetworkProfile, SettingsStore, ThemeMode,
 };
 use crate::station_filter::CountryFilterState;
+use crate::stats::StatsStore;
 use crate::text::single_line;
 use crate::tray::{TrayHandle, TraySnapshot};
 
@@ -114,6 +116,9 @@ pub(crate) struct AppServices {
     pub(crate) media: Option<MediaControls>,
     pub(crate) tray: Option<TrayHandle>,
     pub(crate) library: StationLibrary,
+    /// Счётчики прослушанного (ADR-0049): отдельный приватный файл, не часть
+    /// переносимой библиотеки.
+    pub(crate) stats: StatsStore,
     pub(crate) settings: SettingsStore,
     /// Публикация полного кадра подписчикам `events` (ADR-0039).
     pub(crate) status: StatusFeed,
@@ -132,6 +137,11 @@ pub(crate) struct Session {
     pub(crate) media: Option<MediaControls>,
     pub(crate) tray: Option<TrayHandle>,
     pub(crate) library: StationLibrary,
+    pub(crate) stats: StatsStore,
+    /// Отрезок эфира, которому принадлежат засчитанные секунды (ADR-0049 § 1):
+    /// считается только `Playing`, поэтому отрезок живёт, пока играет та же
+    /// станция, а `stats::Segment` хранит и станцию, и часы с остатком.
+    pub(crate) stats_segment: stats::Segment,
     pub(crate) settings: SettingsStore,
     pub(crate) runtime: tokio::runtime::Handle,
     pub(crate) wake: WakeHandle,
@@ -204,6 +214,7 @@ impl Session {
             media,
             tray,
             library,
+            stats,
             settings,
             status,
             search,
@@ -230,6 +241,8 @@ impl Session {
             media,
             tray,
             library,
+            stats,
+            stats_segment: stats::Segment::default(),
             settings,
             runtime,
             wake,
@@ -272,12 +285,18 @@ impl Session {
         // Первый кадр публикуется до появления окна: подписка `events`,
         // пришедшая на старте, получает snapshot, а не ждёт кадра UI (ADR-0039).
         session.publish_status();
+        // Неразбираемый `stats.json` — тост один раз при старте: счётчики
+        // начались с нуля, воспроизведению это не мешает (ADR-0049 § 2).
+        if session.stats_damaged() {
+            session.notify_error(NoticeKey::StatsDamaged);
+        }
         session
     }
 
     /// Один кадр фонового обслуживания: вызывается UI-циклом при открытом окне.
     pub(crate) fn tick(&mut self) {
         self.poll_sleep();
+        self.poll_stats();
         self.process_audio_events();
         self.poll_economy();
         self.process_commands();

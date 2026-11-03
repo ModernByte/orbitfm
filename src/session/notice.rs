@@ -45,4 +45,6 @@ pub(crate) enum NoticeKey {
     FftUnavailable,
     /// Таймер сна остановил эфир (ADR-0046).
     SleepExpired,
+    /// Файл статистики при старте не разобрался: счётчики с нуля (ADR-0049 § 2).
+    StatsDamaged,
 }

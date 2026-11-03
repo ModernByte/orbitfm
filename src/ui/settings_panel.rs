@@ -19,12 +19,14 @@ use crate::settings::{
     AccentColor, Language, MotionReactivity, MotionStyle, NetworkProfile, SLEEP_CHOICES, Settings,
     ThemeMode, VIZ_BAR_CHOICES,
 };
+use crate::stats::StatsSnapshot;
 
 use super::UiAction;
 use super::animation;
 use super::controls::{accent_swatch, dropdown, row, switch_row};
 use super::icons::{self, Icon, close_button};
 use super::palette::{Palette, accent_color, mix_colors};
+use super::stats_view::{self, StatsView};
 use super::widgets::{
     action_pill, chip, control_motion, faded, faded_palette, focus_ring, quiet_button,
     volume_slider_width,
@@ -60,18 +62,21 @@ pub(crate) enum SettingsCategory {
     Audio,
     Motion,
     Window,
+    /// Локальная статистика прослушивания (ADR-0049).
+    Stats,
     /// Установка панелей, окружений и расширений браузеров (ADR-0042).
     Integrations,
     About,
 }
 
 impl SettingsCategory {
-    pub(crate) const ALL: [Self; 7] = [
+    pub(crate) const ALL: [Self; 8] = [
         Self::Appearance,
         Self::Language,
         Self::Audio,
         Self::Motion,
         Self::Window,
+        Self::Stats,
         Self::Integrations,
         Self::About,
     ];
@@ -83,6 +88,7 @@ impl SettingsCategory {
             Self::Audio => Icon::Volume,
             Self::Motion => Icon::Sparkles,
             Self::Window => Icon::AppWindow,
+            Self::Stats => Icon::Clock,
             Self::Integrations => Icon::Panel,
             Self::About => Icon::Help,
         }
@@ -103,6 +109,12 @@ pub(crate) struct SettingsState<'a> {
     pub category: &'a mut SettingsCategory,
     /// Снимок интеграций: страница не ходит по файлам на каждый кадр (ADR-0042).
     pub integrations: IntegrationsView<'a>,
+    /// Снимок счётчиков прослушанного: раздел их только рисует (ADR-0049).
+    pub stats: &'a StatsSnapshot,
+    /// Кнопка «Очистить» ждёт второго нажатия (диалога подтверждения нет).
+    pub stats_clear_armed: bool,
+    /// Счётчики только что стёрты: строка-ответ в разделе.
+    pub stats_just_cleared: bool,
 }
 
 pub(crate) fn show(
@@ -379,6 +391,21 @@ fn draw_category(
                 &text.settings,
                 &text.labels,
                 state,
+                cards,
+                actions,
+            );
+        }
+        SettingsCategory::Stats => {
+            stats_view::draw(
+                ui,
+                palette,
+                &text.settings,
+                &StatsView {
+                    snapshot: state.stats,
+                    enabled: state.settings.stats_enabled,
+                    clear_armed: state.stats_clear_armed,
+                    just_cleared: state.stats_just_cleared,
+                },
                 cards,
                 actions,
             );
@@ -998,7 +1025,12 @@ fn about(
 }
 
 /// Карточка строк: фон и обводка палитры, поля задают общий ритм.
-fn card(ui: &mut egui::Ui, palette: &Palette, alpha: f32, body: impl FnOnce(&mut egui::Ui)) {
+pub(super) fn card(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    alpha: f32,
+    body: impl FnOnce(&mut egui::Ui),
+) {
     egui::Frame::new()
         .fill(faded(palette.card_fill, 0.55 * alpha))
         .stroke(egui::Stroke::new(
@@ -1015,7 +1047,7 @@ fn card(ui: &mut egui::Ui, palette: &Palette, alpha: f32, body: impl FnOnce(&mut
 
 /// Тонкая линия между строками внутри карточки; всегда занимает одну и ту же
 /// высоту, поэтому stagger не двигает раскладку.
-fn divider(ui: &mut egui::Ui, palette: &Palette, alpha: f32) {
+pub(super) fn divider(ui: &mut egui::Ui, palette: &Palette, alpha: f32) {
     ui.add_space(2.0);
     let (rect, _) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
@@ -1028,7 +1060,7 @@ fn divider(ui: &mut egui::Ui, palette: &Palette, alpha: f32) {
 }
 
 /// Поясняющая строка мелким приглушённым шрифтом.
-fn hint(ui: &mut egui::Ui, palette: &Palette, text: &str, alpha: f32) {
+pub(super) fn hint(ui: &mut egui::Ui, palette: &Palette, text: &str, alpha: f32) {
     ui.label(
         egui::RichText::new(text)
             .size(10.5)
@@ -1068,6 +1100,7 @@ fn category_label(strings: &i18n::SettingsText, category: SettingsCategory) -> &
         SettingsCategory::Audio => strings.audio,
         SettingsCategory::Motion => strings.motion,
         SettingsCategory::Window => strings.window,
+        SettingsCategory::Stats => strings.stats,
         SettingsCategory::Integrations => strings.integrations,
         SettingsCategory::About => strings.about,
     }
@@ -1081,6 +1114,7 @@ fn category_hint(strings: &i18n::SettingsText, category: SettingsCategory) -> &'
         SettingsCategory::Audio => strings.audio_page_hint,
         SettingsCategory::Motion => strings.motion_page_hint,
         SettingsCategory::Window => strings.window_page_hint,
+        SettingsCategory::Stats => strings.stats_page_hint,
         SettingsCategory::Integrations => strings.integrations_page_hint,
         SettingsCategory::About => strings.about_page_hint,
     }

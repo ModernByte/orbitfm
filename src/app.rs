@@ -5,7 +5,7 @@
 //! `Session`. Здесь остаются кадры, стеклянные зоны, текстуры иконок станций и
 //! превращение [`UiAction`] в команды ядра.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use eframe::egui;
 use tracing::{debug, warn};
@@ -23,6 +23,7 @@ use crate::session::heat::CountryMetric;
 use crate::session::search::SearchMode;
 use crate::session::{Notice, NoticeKey, Session, StationStartError, UiIntent, WindowMode};
 use crate::settings::{Language, MotionReactivity, MotionStyle, Settings};
+use crate::stats::StatsSnapshot;
 use crate::ui::UiAction;
 use crate::ui::animation::{self, FrameMotion, Transitions, ZoneFlags};
 use crate::ui::country_map::{CountryHeatCache, HeatScope, HeatSource};
@@ -43,6 +44,8 @@ const SPECTRUM_REPAINT: Duration = Duration::from_millis(33);
 const MOTION_IDLE_REPAINT: Duration = Duration::from_millis(66);
 /// Опрос фоновых favicon-загрузок.
 const FAVICON_REPAINT: Duration = Duration::from_millis(120);
+/// Как часто раздел «Статистика» пересобирает снимок счётчиков, пока открыт.
+const STATS_REFRESH: Duration = Duration::from_secs(1);
 /// Скругление крупных зон (HUD, панель станции).
 const GLASS_RADIUS_MAJOR: f32 = 16.0;
 /// Скругление маленьких зон (легенда, карточка управления).
@@ -92,6 +95,7 @@ fn notice_text(
         NoticeKey::VisualizerNotSaved => notices.visualizer_not_saved,
         NoticeKey::FftUnavailable => notices.fft_unavailable,
         NoticeKey::SleepExpired => notices.sleep_expired,
+        NoticeKey::StatsDamaged => notices.stats_damaged,
     };
     match detail {
         Some(detail) => format!("{base}: {detail}"),
@@ -127,6 +131,14 @@ pub(crate) struct OrbitApp<'a> {
     settings_category: SettingsCategory,
     /// Снимок интеграций и очередь фоновых операций (ADR-0042).
     integrations: IntegrationPanel,
+    /// Раздел «Статистика»: снимок счётчиков держится, пока раздел открыт,
+    /// и обновляется не чаще `STATS_REFRESH` (ADR-0049 § 7).
+    stats: StatsSnapshot,
+    stats_refreshed_at: Option<Instant>,
+    /// Кнопка «Очистить» в разделе статистики ждёт второго нажатия (ADR-0049).
+    stats_clear_armed: bool,
+    /// Раздел открыт сразу после `stats clear`: показываем строку-ответ.
+    stats_just_cleared: bool,
     /// Шаг и отклики мастера первого запуска (ADR-0041).
     onboarding: onboarding::View,
     /// Режим тепловой карты стран из легенды Focus-стола.
@@ -187,6 +199,10 @@ impl<'a> OrbitApp<'a> {
             settings_rect: None,
             settings_category: SettingsCategory::default(),
             integrations: IntegrationPanel::default(),
+            stats: StatsSnapshot::default(),
+            stats_refreshed_at: None,
+            stats_clear_armed: false,
+            stats_just_cleared: false,
             onboarding: onboarding::View::default(),
             country_metric: CountryMetric::default(),
             country_heat: CountryHeatCache::default(),
@@ -893,14 +909,38 @@ impl<'a> OrbitApp<'a> {
             self.integrations.ensure_loaded();
         }
         let integrations = self.integrations.view();
+        // Снимок счётчиков пересобирается, пока открыт раздел «Статистика»,
+        // и не чаще секунды: сводка — не горячий путь UI (ADR-0049 § 7).
+        if session.settings_open && self.settings_category == SettingsCategory::Stats {
+            let stale = self
+                .stats_refreshed_at
+                .is_none_or(|refreshed| refreshed.elapsed() >= STATS_REFRESH);
+            if stale {
+                self.stats = session.stats_snapshot();
+                self.stats_refreshed_at = Some(Instant::now());
+            }
+        }
+        if !session.settings_open {
+            self.stats_clear_armed = false;
+            self.stats_just_cleared = false;
+            // Модальное окно закрыто — снимок и его память не держим.
+            self.stats = StatsSnapshot::default();
+            self.stats_refreshed_at = None;
+        }
+        let stats = &self.stats;
         actions.extend(draw_settings(
             ui,
             frame,
             &ui_motion,
-            self.settings_rect,
-            &mut self.settings_category,
-            session.sleep_minutes(),
-            integrations,
+            SettingsInputs {
+                last_settings_rect: self.settings_rect,
+                category: &mut self.settings_category,
+                sleep_minutes: session.sleep_minutes(),
+                integrations,
+                stats,
+                stats_clear_armed: self.stats_clear_armed,
+                stats_just_cleared: self.stats_just_cleared,
+            },
         ));
 
         if session.onboarding_open() {
@@ -1034,6 +1074,24 @@ impl<'a> OrbitApp<'a> {
                 }
                 self.favicons.set_network_profile(profile);
             }
+            UiAction::SetStatsEnabled(enabled) => {
+                if let Err(err) = self.session.set_stats_enabled(enabled) {
+                    self.error_toast(ctx, &NoticeKey::SettingNotSaved, Some(err.as_str()));
+                }
+                // Раздел тут же показывает новое значение и счётчики.
+                self.stats_refreshed_at = None;
+            }
+            UiAction::ArmStatsClear => self.stats_clear_armed = true,
+            UiAction::ClearStats => match self.session.clear_stats() {
+                Ok(()) => {
+                    self.stats_clear_armed = false;
+                    self.stats_just_cleared = true;
+                    self.stats_refreshed_at = None;
+                }
+                Err(err) => {
+                    self.error_toast(ctx, &NoticeKey::SettingNotSaved, Some(err.as_str()));
+                }
+            },
             UiAction::SetArtworkAllowHttp(allow) => {
                 if let Err(err) = self.session.set_artwork_allow_http(allow) {
                     self.error_toast(ctx, &NoticeKey::SettingNotSaved, Some(err.as_str()));
@@ -1265,15 +1323,34 @@ impl Frame {
 /// На выходе `layout.settings` уже `None`, поэтому каркас берёт последний
 /// прямоугольник `last_settings_rect`: геометрия кадра не меняется, зоны стола
 /// не дёргаются. Гаснущее окно рисует содержимое, но не принимает ввод.
+/// Всё, что модалка настроек получает из представления на кадр. Один пакет
+/// вместо десяти аргументов: переходы, категория и снимки фоновых состояний
+/// всегда берутся из одного места (`OrbitApp`).
+struct SettingsInputs<'a> {
+    last_settings_rect: Option<egui::Rect>,
+    category: &'a mut SettingsCategory,
+    sleep_minutes: Option<u16>,
+    integrations: IntegrationsView<'a>,
+    stats: &'a StatsSnapshot,
+    stats_clear_armed: bool,
+    stats_just_cleared: bool,
+}
+
 fn draw_settings(
     ui: &mut egui::Ui,
     frame: &Frame,
     motion: &FrameMotion<'_>,
-    last_settings_rect: Option<egui::Rect>,
-    category: &mut SettingsCategory,
-    sleep_minutes: Option<u16>,
-    integrations: IntegrationsView<'_>,
+    inputs: SettingsInputs<'_>,
 ) -> Vec<UiAction> {
+    let SettingsInputs {
+        last_settings_rect,
+        category,
+        sleep_minutes,
+        integrations,
+        stats,
+        stats_clear_armed,
+        stats_just_cleared,
+    } = inputs;
     let palette = &frame.palette;
     let mut volume = frame.volume;
     let mut actions = Vec::new();
@@ -1345,6 +1422,9 @@ fn draw_settings(
                     sleep_minutes,
                     category,
                     integrations,
+                    stats,
+                    stats_clear_armed,
+                    stats_just_cleared,
                 },
             ));
         });

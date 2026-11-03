@@ -282,6 +282,7 @@ pub(crate) const CATALOG: Catalog = Catalog {
         visualizer_not_saved: "Nie zapisano wizualizatora",
         fft_unavailable: "FFT niedostępne",
         sleep_expired: "Wyłącznik czasowy zatrzymał odtwarzanie",
+        stats_damaged: "Nie udało się odczytać statystyk słuchania — liczniki zaczęły od zera",
     },
     labels: LabelText {
         theme_system: "Systemowy",

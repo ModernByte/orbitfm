@@ -689,15 +689,23 @@ mode <focus|overlay|listening|panel>
 - `marker_groups_stations_with_shared_coordinates`,
   `markers_skip_missing_invalid_and_zero_coordinates`, `markers_deduplicate_by_uuid`,
   `popularity_signal_is_votes_only`, `grouped_markers_keep_the_loudest_station`
-- `stats_time_accrues_only_for_active_playing_station` — `Paused`, `Buffering`,
-  `Reconnecting`, `Error` и `Stopped` счётчик не двигают, ноль на громкости тоже
-  считает (§ 3.2);
-  `stats_flush_at_threshold_and_on_leaving_playing` — порог `FLUSH_SECS = 30`
-  даёт ровно одну запись, уход из `Playing`, смена станции и `park()` пишут
-  вне очереди; `stats_disabled_never_writes_and_keeps_the_file` — при
-  `stats_enabled = false` накопитель сброшен, файл не тронут;
-  `stats_clear_writes_empty_schema_once` — `stats clear` пишет пустую схему 1 и
-  отвечает `ok stats cleared` даже при нулевых счётчиках (`ADR-0049`)
+- статистика — `src/session/stats.rs` (`ADR-0049`): `only_playing_state_counts`
+  — `Paused`, `Buffering`, `Reconnecting`, `Error` и `Stopped` счётчик не
+  двигают (§ 3.2); `segment_credits_whole_seconds_and_keeps_remainder` —
+  снимаются только целые секунды, остаток остаётся на часах отрезка, поэтому
+  долгий эфир не теряет время на каждом кадре, а отрезок короче секунды не
+  засчитывается; `closed_segment_credits_nothing` и
+  `other_station_is_detected_by_stats_key` — закрытый отрезок не пишет, смена
+  станции по ключу `station_key` замечается и закрывает прежний отрезок;
+  `thirty_seconds_of_air_reach_the_flush_threshold` — ровно `FLUSH_SECS`
+  накопленных секунд дают одну попытку записи; `text_report_*` и
+  `json_payload_*` — формат ответов `stats` и `stats --json` схемы 1.
+  Порог и внеочередные сбросы на уровне файла закреплены тестами
+  `flush_writes_once_per_threshold` и `clear_is_idempotent_and_writes_empty_schema`
+  (`src/stats/mod.rs`). Гейт `stats_enabled` — ветка `poll_stats` и
+  `note_stats_start`, отдельного теста с настоящим `Session` нет: конструктор
+  требует libmpv и рантайм, поэтому проверка остаётся за приёмкой раздела
+  настроек (модуль 20 § 9)
 - контракты трея — в тестах `src/tray/` (`clicks_publish_a_command_and_wake_the_core`,
   `status_is_active_only_when_something_happens`, `tooltip_shows_the_station_or_silence`,
   `menu_offers_window_playback_volume_theme_settings_and_quit`, `theme_radio_marks_the_current_mode`,

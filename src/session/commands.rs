@@ -198,6 +198,18 @@ impl super::Session {
                     Err(err) => format!("error {err}"),
                 }
             }
+            IpcCommand::Stats => {
+                let enabled = self.settings.settings().stats_enabled;
+                super::stats::format_stats_text(&self.stats_snapshot(), enabled)
+            }
+            IpcCommand::StatsJson => {
+                let enabled = self.settings.settings().stats_enabled;
+                super::stats::build_stats_payload(&self.stats_snapshot(), enabled, self.language)
+            }
+            IpcCommand::ClearStats => match self.clear_stats() {
+                Ok(()) => "ok stats cleared".to_owned(),
+                Err(err) => format!("error {err}"),
+            },
             IpcCommand::Raw(raw) => format!("error неизвестная команда: {raw}"),
         }
     }

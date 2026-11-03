@@ -282,6 +282,7 @@ pub(crate) const CATALOG: Catalog = Catalog {
         visualizer_not_saved: "频谱未保存",
         fft_unavailable: "FFT 不可用",
         sleep_expired: "睡眠定时器已停止播放",
+        stats_damaged: "无法读取收听统计 — 计数已从 0 开始",
     },
     labels: LabelText {
         theme_system: "系统",

@@ -244,6 +244,10 @@ fn forbidden(command: &IpcCommand) -> Option<(&'static str, &'static str)> {
         }
         // Сетевой профиль — решение пользователя в настройках, не страницы.
         IpcCommand::Network { .. } => Some(("forbidden", "команда network запрещена")),
+        // Приватная статистика прослушивания странице не показывается (ADR-0049 § 6).
+        IpcCommand::Stats | IpcCommand::StatsJson | IpcCommand::ClearStats => {
+            Some(("forbidden", "команда статистики запрещена"))
+        }
         IpcCommand::Raw(_) => Some(("forbidden", "неизвестная команда")),
         _ => None,
     }
@@ -347,6 +351,10 @@ mod tests {
         assert!(forbidden(&command("library-export /tmp/a.json")).is_some());
         assert!(forbidden(&command("library-import /tmp/a.json")).is_some());
         assert!(forbidden(&command("network metered")).is_some());
+        // Приватные счётчики не должны читаться и тем более стираться из браузера.
+        assert!(forbidden(&command("stats")).is_some());
+        assert!(forbidden(&command("stats --json")).is_some());
+        assert!(forbidden(&command("stats clear")).is_some());
         assert!(forbidden(&IpcCommand::Raw("future".into())).is_some());
     }
 

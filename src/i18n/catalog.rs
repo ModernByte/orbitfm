@@ -221,55 +221,35 @@ pub(crate) struct SettingsText {
     pub about_page_hint: &'static str,
     // Строки раздела «Статистика» (ADR-0049 § 7, интерфейс 12): их читает
     // `src/ui/stats_view.rs` и `ui`-блок ответа `stats --json` (интерфейс 17 § 5).
-    // Перевод каталога не ждёт вёрстки, поэтому до появления потребителей поля
-    // не читаются в бинаре — dead_code разрешён точечно, по полю на строку.
     /// Категория «Статистика» прослушивания: раздел окна настроек.
-    #[allow(dead_code)]
     pub stats: &'static str,
     /// Подзаголовок страницы категории: счётчики живут только на устройстве.
-    #[allow(dead_code)]
     pub stats_page_hint: &'static str,
     /// Подсказка под суммарной строкой: считаются только минуты в эфире.
-    #[allow(dead_code)]
     pub stats_hint: &'static str,
-    #[allow(dead_code)]
     pub stats_total: &'static str,
-    #[allow(dead_code)]
     pub stats_week: &'static str,
-    #[allow(dead_code)]
     pub stats_month: &'static str,
     /// Заголовки трёх списков топ-10: станции, страны и грубые теги.
-    #[allow(dead_code)]
     pub stats_stations: &'static str,
-    #[allow(dead_code)]
     pub stats_countries: &'static str,
-    #[allow(dead_code)]
     pub stats_tags: &'static str,
     /// Тумблер учёта (`controls::switch_row`, настройка `stats_enabled`).
-    #[allow(dead_code)]
     pub stats_enabled: &'static str,
-    #[allow(dead_code)]
     pub stats_enabled_hint: &'static str,
     /// Кнопка сброса счётчиков и её инлайн-подтверждение (диалога нет).
-    #[allow(dead_code)]
     pub stats_clear: &'static str,
-    #[allow(dead_code)]
     pub stats_clear_confirm: &'static str,
     /// Пустое состояние раздела, когда счётчиков ещё нет.
-    #[allow(dead_code)]
     pub stats_empty: &'static str,
     /// Ответная строка раздела сразу после очистки; новый тост не вводится
     /// (ADR-0049 § 7), поэтому строка лежит здесь, а не в `NoticeText`.
-    #[allow(dead_code)]
     pub stats_cleared: &'static str,
     /// Длительность строки списка: `{hours}` часов и `{minutes}` минут.
-    #[allow(dead_code)]
     pub stats_duration: &'static str,
     /// Только минуты: `{minutes}` — число минут, как в `sleep_minutes`.
-    #[allow(dead_code)]
     pub stats_duration_minutes: &'static str,
     /// Только часы: `{hours}` — когда остаток меньше минуты.
-    #[allow(dead_code)]
     pub stats_duration_hours: &'static str,
 }
 
@@ -433,6 +413,8 @@ pub(crate) struct NoticeText {
     pub fft_unavailable: &'static str,
     /// Таймер сна остановил эфир (ADR-0046).
     pub sleep_expired: &'static str,
+    /// Файл статистики не читается — счётчики начались с нуля (ADR-0049).
+    pub stats_damaged: &'static str,
 }
 
 pub(crate) struct LabelText {

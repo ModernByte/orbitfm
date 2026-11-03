@@ -282,6 +282,7 @@ pub(crate) const CATALOG: Catalog = Catalog {
         visualizer_not_saved: "Візуалізатор не збережено",
         fft_unavailable: "FFT недоступний",
         sleep_expired: "Ефір зупинено таймером сну",
+        stats_damaged: "Статистику слухання не вдалося прочитати — лічильники почали з нуля",
     },
     labels: LabelText {
         theme_system: "Системна",

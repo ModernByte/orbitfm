@@ -417,6 +417,7 @@ mod tests {
                 visualizer_not_saved,
                 fft_unavailable,
                 sleep_expired,
+                stats_damaged,
             }
         );
         assert_group_non_empty!(

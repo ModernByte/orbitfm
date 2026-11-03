@@ -19,6 +19,7 @@ mod services;
 mod session;
 mod settings;
 mod station_filter;
+mod stats;
 mod storage;
 mod text;
 mod tray;
@@ -33,6 +34,7 @@ use media::MediaControls;
 use services::RadioBrowserClient;
 use session::{AppServices, ParkOutcome, Session, WINDOW_TITLE, WakeHandle, WindowMode};
 use settings::SettingsStore;
+use stats::StatsStore;
 
 const APP_ID: &str = "org.modernbyte.OrbitFM";
 /// Секция About модального окна настроек (ADR-0031): версия и лицензия из манифеста.
@@ -82,6 +84,9 @@ OrbitFM — 3D Interactive Global Radio Player
   sleep <1-720>        Остановить эфир через заданное число минут
   sleep clear          Отменить таймер сна
   network <профиль>    Профиль сети: unlimited, metered или offline-first
+  stats                Сводка прослушанного: время и топ станции, страны, жанры
+  stats --json         Сводка прослушанного в JSON (схема 1)
+  stats clear          Стереть счётчики прослушанного
   theme <режим>        Тема: system, dark или light
   library-export <путь>
                        Выгрузить избранное и историю (JSON, схема 1)
@@ -261,6 +266,19 @@ fn launch(runtime: &tokio::runtime::Runtime, command: &IpcCommand, explicit: boo
             StationLibrary::ephemeral()
         }
     };
+    let stats = match StatsStore::load_default() {
+        Ok(stats) => {
+            info!(path = ?stats.path(), "статистика прослушивания загружена");
+            stats
+        }
+        Err(err) => {
+            warn!(
+                error = %err,
+                "не удалось загрузить статистику прослушивания; счётчики живут до конца процесса"
+            );
+            StatsStore::ephemeral()
+        }
+    };
     let settings = match SettingsStore::load_default() {
         Ok(settings) => {
             info!(path = ?settings.path(), "настройки оформления загружены");
@@ -311,6 +329,7 @@ fn launch(runtime: &tokio::runtime::Runtime, command: &IpcCommand, explicit: boo
         media,
         tray,
         library,
+        stats,
         settings,
         status,
         search,
@@ -400,6 +419,7 @@ fn run_session(
         session.end_window();
 
         if session.is_quitting() {
+            session.flush_stats_on_exit();
             return Ok(());
         }
         if session.take_reopen() {
@@ -412,6 +432,7 @@ fn run_session(
         session.close_settings();
         session.settle_analysis();
         if matches!(session.park(), ParkOutcome::Quit) {
+            session.flush_stats_on_exit();
             return Ok(());
         }
     }

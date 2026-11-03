@@ -282,6 +282,7 @@ pub(crate) const CATALOG: Catalog = Catalog {
         visualizer_not_saved: "スペクトル未保存",
         fft_unavailable: "FFT利用不可",
         sleep_expired: "スリープタイマーが再生を停止しました",
+        stats_damaged: "聴取統計を読み込めませんでした — 集計はゼロから開始します",
     },
     labels: LabelText {
         theme_system: "システム",

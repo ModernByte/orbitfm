@@ -282,6 +282,7 @@ pub(crate) const CATALOG: Catalog = Catalog {
         visualizer_not_saved: "Görselleştirici kaydedilmedi",
         fft_unavailable: "FFT kullanılamıyor",
         sleep_expired: "Uyku zamanlayıcısı oynatmayı durdurdu",
+        stats_damaged: "Dinleme istatistikleri okunamadı — sayaçlar sıfırdan başladı",
     },
     labels: LabelText {
         theme_system: "Sistem",

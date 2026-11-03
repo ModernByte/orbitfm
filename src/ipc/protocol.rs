@@ -203,6 +203,12 @@ pub enum IpcCommand {
     LibraryImport {
         path: String,
     },
+    /// `stats`: человекочитаемая сводка статистики прослушивания (ADR-0049).
+    Stats,
+    /// `stats --json`: сводка статистики одной строкой JSON схемы 1 (ADR-0049).
+    StatsJson,
+    /// `stats clear`: сбросить счётчики статистики (ADR-0049).
+    ClearStats,
     /// Неизвестная команда сохраняется для расширения протокола.
     Raw(String),
 }
@@ -380,6 +386,20 @@ impl IpcCommand {
                     path: path.to_owned(),
                 })
             }
+            "stats" => match parts.next() {
+                None => Ok(Self::Stats),
+                Some("--json") => {
+                    reject_extra_args(parts.next())?;
+                    Ok(Self::StatsJson)
+                }
+                Some("clear") => {
+                    reject_extra_args(parts.next())?;
+                    Ok(Self::ClearStats)
+                }
+                Some(other) => Err(IpcError::InvalidArgument(format!(
+                    "stats: ожидаются --json или clear, получено {other}"
+                ))),
+            },
             "quit" => {
                 reject_extra_args(parts.next())?;
                 Ok(Self::Quit)
@@ -467,6 +487,9 @@ impl IpcCommand {
             Self::ClearSleep => "sleep clear".to_owned(),
             Self::LibraryExport { path } => format!("library-export {path}"),
             Self::LibraryImport { path } => format!("library-import {path}"),
+            Self::Stats => "stats".to_owned(),
+            Self::StatsJson => "stats --json".to_owned(),
+            Self::ClearStats => "stats clear".to_owned(),
             Self::Raw(raw) => raw.clone(),
         }
     }
@@ -831,6 +854,22 @@ mod tests {
     }
 
     #[test]
+    fn parses_stats_commands() {
+        for (wire, command) in [
+            ("stats", IpcCommand::Stats),
+            ("stats --json", IpcCommand::StatsJson),
+            ("stats clear", IpcCommand::ClearStats),
+        ] {
+            assert_eq!(IpcCommand::parse(wire).unwrap(), command, "{wire}");
+            assert_eq!(command.to_wire(), wire);
+        }
+        assert!(IpcCommand::parse("stats --xml").is_err());
+        assert!(IpcCommand::parse("stats json").is_err());
+        assert!(IpcCommand::parse("stats clear now").is_err());
+        assert!(IpcCommand::parse("stats --json extra").is_err());
+    }
+
+    #[test]
     fn keeps_unknown_commands_as_raw() {
         assert_eq!(
             IpcCommand::parse("future-command payload").unwrap(),
@@ -889,6 +928,9 @@ mod tests {
             IpcCommand::LibraryImport {
                 path: "/home/user/library.json".to_owned(),
             },
+            IpcCommand::Stats,
+            IpcCommand::StatsJson,
+            IpcCommand::ClearStats,
             IpcCommand::Raw("custom arg".to_owned()),
         ];
         for command in commands {

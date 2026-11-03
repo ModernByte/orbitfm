@@ -124,6 +124,7 @@ impl super::Session {
             tracing::warn!(error = %err, "не удалось сохранить историю станций");
             self.notify_error_detail(NoticeKey::HistoryNotSaved, err.to_string());
         }
+        self.note_stats_start(&station);
         // У внешнего потока нет записи в Radio Browser: click отправлять некуда.
         if !station.stationuuid.starts_with("url:") {
             self.spawn_click(station.stationuuid);

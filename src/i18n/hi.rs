@@ -282,6 +282,7 @@ pub(crate) const CATALOG: Catalog = Catalog {
         visualizer_not_saved: "विज़ुअलाइज़र सहेजा नहीं गया",
         fft_unavailable: "FFT उपलब्ध नहीं",
         sleep_expired: "स्लीप टाइमर ने प्लेबैक रोक दिया",
+        stats_damaged: "सुनने के आँकड़े पढ़े नहीं जा सके — काउंटर शून्य से शुरू हुए",
     },
     labels: LabelText {
         theme_system: "सिस्टम",

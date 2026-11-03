@@ -285,6 +285,7 @@ pub(crate) const CATALOG: Catalog = Catalog {
         visualizer_not_saved: "لم يُحفظ المصور المرئي",
         fft_unavailable: "FFT غير متاح",
         sleep_expired: "أوقف مؤقت النوم التشغيل",
+        stats_damaged: "تعذّرت قراءة إحصائيات الاستماع — بدأت العدادات من الصفر",
     },
     labels: LabelText {
         theme_system: "النظام",

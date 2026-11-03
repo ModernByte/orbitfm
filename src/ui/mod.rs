@@ -23,6 +23,7 @@ pub(crate) mod settings_panel;
 pub(crate) mod sleep_picker;
 pub(crate) mod station_panel;
 pub(crate) mod station_row;
+pub(crate) mod stats_view;
 pub(crate) mod toast;
 pub(crate) mod transport;
 pub(crate) mod widgets;
@@ -79,6 +80,12 @@ pub(crate) enum UiAction {
     SetQueueWrap(bool),
     /// Профиль сети: фоновая загрузка, битрейт и favicon (ADR-0048).
     SetNetworkProfile(NetworkProfile),
+    /// Учёт статистики прослушивания (ADR-0049, `stats_enabled`).
+    SetStatsEnabled(bool),
+    /// Первое нажатие «Очистить»: кнопка просит подтверждения.
+    ArmStatsClear,
+    /// Второе нажатие: счётчики стираются.
+    ClearStats,
     /// Реактивность аудио-движения глобуса (ADR-0028).
     SetMotion(MotionReactivity),
     /// Характер движения: Auto или один из шести стилей.
