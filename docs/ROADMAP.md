@@ -898,11 +898,13 @@ MINOR-пакет поверх 0.17.0-rc.3. Закрывает приоритет
       модули 05/06/07/09/10/11, CHANGELOG, VERSIONMAP, README, wiki, метаинфо
 - [x] `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
       `cargo test --locked` — 603 passed, 5 ignored
-- [ ] Релизная сборка AppImage в GitHub Actions и сверка SHA256SUMS
+- [x] Релизная сборка AppImage в GitHub Actions, релиз опубликован и
+      SHA256SUMS сверен; AppImage установлен локально, Chrome и Firefox
+      переустановлены на 0.18.0-rc.1
 - [ ] Live-приёмка: таймер сна в открытом окне и в простое, `queue_wrap` на
       краях списка, экспорт → импорт библиотеки, previously отложенные
       reduce motion и перетаскивание громкости
-- [ ] Тег `v0.18.0-rc.1`, GitHub Release и локальная переустановка приложения,
+- [x] Тег `v0.18.0-rc.1`, GitHub Release и локальная переустановка приложения,
       плагина Noctalia и браузерных интеграций
 
 ## Без версии в этом репозитории
