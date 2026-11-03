@@ -88,7 +88,9 @@ Omarchy читают `ui` из `orbitfm status --json` (ADR-0037). Бар-скр
 карточка с мягкой рамкой, монограмма станции, точка состояния и акцент из
 `status.accent` (ADR-0037, ревизия 0.16). Plasma 6 показывает компакт-пилюлю и
 полную карточку с транспортом, слайдером громкости, темой, избранным и
-homepage; GNOME — карточку в меню индикатора и собственный `stylesheet.css`;
+homepage; GNOME — карточку в меню индикатора, подменю таймера сна (пункты
+`ui.sleep_off` и шаблон `ui.sleep_minutes` с `{minutes}`, отметка активного
+варианта по `status.sleep`, ADR-0046) и собственный `stylesheet.css`;
 Omarchy — глиф состояния и tooltip без сторонних API Quickshell. Бар-скрипт
 отдаёт Waybar `text`/`alt`/`tooltip`/`class`, swaybar — цвет панели, остальным
 — глиф и имя; `Volume · NN%` есть в tooltip всех режимов.

@@ -20,6 +20,7 @@ pub(crate) mod overlays;
 pub(crate) mod palette;
 pub(crate) mod procedural;
 pub(crate) mod settings_panel;
+pub(crate) mod sleep_picker;
 pub(crate) mod station_panel;
 pub(crate) mod station_row;
 pub(crate) mod toast;

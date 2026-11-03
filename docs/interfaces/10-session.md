@@ -469,7 +469,9 @@ mode <focus|overlay|listening|panel>
 `station` (полные метаданные или `null`), `volume` (округление до тысячных),
 `window { visible, mode }`, `theme`, `language`, `can { previous, next }`,
 `sleep` (`{ minutes, remaining_secs }` или `null`), `ui` — локализованные
-подписи `TrayText` из `i18n::catalog`. `can` учитывает `queue_wrap`: на краю
+подписи `TrayText` из `i18n::catalog` плюс `sleep_timer`, `sleep_off` и шаблон
+`sleep_minutes` с `{minutes}` для быстрых меню расширений (ADR-0046). `can`
+учитывает `queue_wrap`: на краю
 очереди при выключенном wrap соответствующий флаг `false`; `sleep` отражает
 активный таймер (ADR-0046). `window.visible`
 на macOS отражает `mark_hidden`, а не только закрытие вьюпорта (ADR-0026).

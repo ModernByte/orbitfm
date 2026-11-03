@@ -14,6 +14,9 @@ const MAX_CANDIDATES = 20;
 const MAX_URL_LENGTH = 2048;
 const MAX_QUERY_LENGTH = 128;
 const THEME_MODES = ["system", "dark", "light"];
+// Быстрые длительности таймера сна (ADR-0046); совпадает с
+// `settings::SLEEP_CHOICES`, `0` — выключен.
+const SLEEP_CHOICES = [0, 15, 30, 45, 60, 90];
 
 const ACCENTS = {
   blue: [108, 176, 255],
@@ -43,6 +46,8 @@ const els = {
   next: $("next"),
   roulette: $("roulette"),
   window: $("window"),
+  sleep: $("sleep"),
+  sleepMenu: $("sleep-menu"),
   theme: $("theme"),
   settings: $("settings"),
   volume: $("volume"),
@@ -85,6 +90,7 @@ let library = { favorites: [], history: [] };
 let activeTab = "search";
 let pageBusy = false;
 let draggingVolume = false;
+let sleepBuilt = false;
 
 let reconnectAttempt = 0;
 let reconnectTimer = 0;
@@ -588,9 +594,115 @@ function updateControls() {
   els.theme.disabled = !online;
   els.settings.disabled = !online;
   els.window.disabled = !online;
+  els.sleep.disabled = !online;
+  if (!online) {
+    closeSleepMenu();
+  }
+  renderSleep();
   els.page.disabled = !online || pageBusy;
   els.query.disabled = !online;
   els.searchRetry.disabled = !online;
+}
+
+/* ------------------------------------------------------------------ */
+/* Быстрый таймер сна (ADR-0046)                                      */
+/* ------------------------------------------------------------------ */
+
+function sleepOptionLabel(minutes) {
+  if (minutes === 0) {
+    return labels.sleep_off ?? "Off";
+  }
+  const template = labels.sleep_minutes ?? "{minutes} min";
+  return template.replace("{minutes}", String(minutes));
+}
+
+function activeSleepMinutes() {
+  if (!connected || !currentStatus) {
+    return null;
+  }
+  const minutes = Number(currentStatus.sleep?.minutes);
+  return Number.isFinite(minutes) && minutes > 0 ? minutes : null;
+}
+
+function buildSleepMenu() {
+  const fragment = document.createDocumentFragment();
+  for (const minutes of SLEEP_CHOICES) {
+    const option = document.createElement("button");
+    option.type = "button";
+    option.className = "sleep-option";
+    option.dataset.minutes = String(minutes);
+    option.setAttribute("role", "menuitemradio");
+    option.setAttribute("aria-checked", "false");
+
+    const label = document.createElement("span");
+    label.className = "sleep-option-label";
+
+    const check = document.createElement("span");
+    check.className = "check";
+    check.setAttribute("aria-hidden", "true");
+    check.textContent = "✓";
+
+    option.append(label, check);
+    option.addEventListener("click", () => {
+      closeSleepMenu();
+      sendCommand(minutes === 0 ? "sleep clear" : `sleep ${minutes}`);
+    });
+    fragment.append(option);
+  }
+  els.sleepMenu.replaceChildren(fragment);
+  sleepBuilt = true;
+}
+
+function renderSleep() {
+  if (!sleepBuilt) {
+    buildSleepMenu();
+  }
+  const active = activeSleepMinutes();
+  const activeLabel = active === null
+    ? (labels.sleep_off ?? "Off")
+    : sleepOptionLabel(active);
+  const hint = `${labels.sleep_timer ?? "Sleep timer"}: ${activeLabel}`;
+  els.sleep.classList.toggle("is-active", active !== null);
+  els.sleep.setAttribute("aria-label", hint);
+  els.sleep.title = hint;
+
+  for (const option of els.sleepMenu.querySelectorAll(".sleep-option")) {
+    const minutes = Number(option.dataset.minutes);
+    option.querySelector(".sleep-option-label").textContent = sleepOptionLabel(minutes);
+    option.setAttribute("aria-checked", minutes === (active ?? 0) ? "true" : "false");
+  }
+}
+
+function openSleepMenu() {
+  if (!connected || !els.sleepMenu.hidden) {
+    return;
+  }
+  renderSleep();
+  els.sleepMenu.hidden = false;
+  els.sleep.setAttribute("aria-expanded", "true");
+  const rect = els.sleep.getBoundingClientRect();
+  const width = els.sleepMenu.offsetWidth;
+  const height = els.sleepMenu.offsetHeight;
+  els.sleepMenu.style.left = `${clamp(rect.right - width, 8, window.innerWidth - width - 8)}px`;
+  const below = rect.bottom + 6;
+  const top = below + height <= window.innerHeight - 8
+    ? below
+    : Math.max(8, rect.top - height - 6);
+  els.sleepMenu.style.top = `${top}px`;
+  els.sleepMenu
+    .querySelector('[aria-checked="true"]')
+    ?.focus({ preventScroll: true });
+}
+
+function closeSleepMenu(restoreFocus = false) {
+  if (els.sleepMenu.hidden) {
+    return;
+  }
+  els.sleepMenu.hidden = true;
+  els.sleep.setAttribute("aria-expanded", "false");
+  if (restoreFocus) {
+    els.sleep.focus({ preventScroll: true });
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1106,6 +1218,23 @@ function bind() {
 
   els.volumeDown.addEventListener("click", () => nudgeVolume(-5));
   els.volumeUp.addEventListener("click", () => nudgeVolume(5));
+  els.sleep.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (els.sleepMenu.hidden) {
+      openSleepMenu();
+    } else {
+      closeSleepMenu();
+    }
+  });
+  document.addEventListener("pointerdown", (event) => {
+    if (
+      !els.sleepMenu.hidden &&
+      !els.sleepMenu.contains(event.target) &&
+      !els.sleep.contains(event.target)
+    ) {
+      closeSleepMenu();
+    }
+  });
   els.theme.addEventListener("click", cycleTheme);
   els.favorite.addEventListener("click", toggleFavorite);
   els.page.addEventListener("click", onPlayThisPage);
@@ -1179,7 +1308,15 @@ function bind() {
   });
 
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !els.picker.hidden) {
+    if (event.key !== "Escape") {
+      return;
+    }
+    if (!els.sleepMenu.hidden) {
+      event.preventDefault();
+      closeSleepMenu(true);
+      return;
+    }
+    if (!els.picker.hidden) {
       event.preventDefault();
       hidePicker();
     }

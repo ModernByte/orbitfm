@@ -62,6 +62,17 @@ pub(crate) fn fill(template: &str, args: &[(&str, &str)]) -> String {
     result
 }
 
+/// Подпись варианта таймера сна: `0` — выключен, иначе минуты из шаблона.
+/// Общая для настроек, быстрых меню и трея (ADR-0046).
+pub(crate) fn sleep_option_label(language: Language, minutes: u16) -> String {
+    let text = &catalog(language).settings;
+    if minutes == 0 {
+        text.sleep_off.to_owned()
+    } else {
+        fill(text.sleep_minutes, &[("minutes", &minutes.to_string())])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

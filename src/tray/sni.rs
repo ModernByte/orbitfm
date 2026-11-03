@@ -14,7 +14,7 @@ use tracing::{info, warn};
 use super::{TrayCommand, TraySnapshot, icon, text};
 use crate::i18n;
 use crate::ipc::WakeFn;
-use crate::settings::ThemeMode;
+use crate::settings::{SLEEP_CHOICES, ThemeMode};
 
 /// Каталог hicolor, если он установлен: тогда хост может взять векторную иконку
 /// из упаковки вместо нашего pixmap'а.
@@ -195,7 +195,7 @@ impl Tray for OrbitTray {
         // (ADR-0030, п. 8–9).
         let catalog = i18n::catalog(self.snapshot.language);
         let tray = &catalog.tray;
-        let mut items = Vec::with_capacity(24);
+        let mut items = Vec::with_capacity(27);
 
         // Карточка станции — витрина: строки не нажимаются и не переводятся.
         for line in text::card_lines(&self.snapshot) {
@@ -257,6 +257,31 @@ impl Tray for OrbitTray {
             "audio-volume-low-symbolic",
             |tray| tray.send(TrayCommand::VolumeDown),
         ));
+
+        items.push(MenuItem::Separator);
+        items.push(MenuItem::SubMenu(SubMenu {
+            label: text::sleep_label(&self.snapshot),
+            icon_name: "preferences-system-time-symbolic".to_owned(),
+            submenu: vec![MenuItem::RadioGroup(RadioGroup {
+                selected: SLEEP_CHOICES
+                    .iter()
+                    .position(|minutes| *minutes == self.snapshot.sleep_minutes.unwrap_or(0))
+                    .unwrap_or_default(),
+                select: Box::new(|tray: &mut Self, index| {
+                    if let Some(minutes) = SLEEP_CHOICES.get(index) {
+                        tray.send(TrayCommand::SetSleep((*minutes > 0).then_some(*minutes)));
+                    }
+                }),
+                options: SLEEP_CHOICES
+                    .iter()
+                    .map(|minutes| RadioItem {
+                        label: i18n::sleep_option_label(self.snapshot.language, *minutes),
+                        ..Default::default()
+                    })
+                    .collect(),
+            })],
+            ..Default::default()
+        }));
 
         items.push(MenuItem::Separator);
         items.push(MenuItem::SubMenu(SubMenu {
@@ -434,12 +459,26 @@ mod tests {
         }
     }
 
-    fn radio_group(menu: &[MenuItem<OrbitTray>]) -> Option<&RadioGroup<OrbitTray>> {
-        menu.iter().find_map(|item| match item {
-            MenuItem::RadioGroup(group) => Some(group),
-            MenuItem::SubMenu(submenu) => radio_group(&submenu.submenu),
-            _ => None,
-        })
+    /// Радиогруппа подменю с заданной подписью: в меню их несколько
+    /// (сон и тема), и порядок не должен решать, какую проверяет тест.
+    fn radio_group<'a>(
+        menu: &'a [MenuItem<OrbitTray>],
+        label: &str,
+    ) -> Option<&'a RadioGroup<OrbitTray>> {
+        for item in menu {
+            if let MenuItem::SubMenu(submenu) = item {
+                if submenu.label == label {
+                    return submenu.submenu.iter().find_map(|child| match child {
+                        MenuItem::RadioGroup(group) => Some(group),
+                        _ => None,
+                    });
+                }
+                if let Some(group) = radio_group(&submenu.submenu, label) {
+                    return Some(group);
+                }
+            }
+        }
+        None
     }
 
     fn station() -> TrayStation {
@@ -485,6 +524,8 @@ mod tests {
         assert!(items.contains(&"Radio Roulette".to_owned()));
         assert!(items.contains(&"Volume · 0%".to_owned()));
         assert!(items.contains(&"Volume Up".to_owned()));
+        assert!(items.contains(&"Sleep timer · Off".to_owned()));
+        assert!(items.contains(&"Off/15 min/30 min/45 min/60 min/90 min".to_owned()));
         assert!(items.contains(&"Appearance".to_owned()));
         assert!(items.contains(&"System/Dark/Light".to_owned()));
         assert!(items.contains(&"About station".to_owned()));
@@ -565,6 +606,15 @@ mod tests {
                     volume,
                     text.tray.volume_up.to_owned(),
                     text.tray.volume_down.to_owned(),
+                    format!(
+                        "{} · {}",
+                        text.settings.sleep_timer, text.settings.sleep_off
+                    ),
+                    SLEEP_CHOICES
+                        .iter()
+                        .map(|minutes| i18n::sleep_option_label(language, *minutes))
+                        .collect::<Vec<_>>()
+                        .join("/"),
                     text.tray.appearance.to_owned(),
                     themes,
                     text.tray.about_station.to_owned(),
@@ -589,7 +639,36 @@ mod tests {
             ..Default::default()
         })
         .menu();
-        assert_eq!(radio_group(&menu).map(|group| group.selected), Some(2));
+        let appearance = i18n::catalog(Language::English).tray.appearance;
+        assert_eq!(
+            radio_group(&menu, appearance).map(|group| group.selected),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn sleep_radio_marks_the_active_timer_and_sends_it() {
+        let snapshot = TraySnapshot {
+            sleep_minutes: Some(45),
+            ..english()
+        };
+        let menu = tray(snapshot.clone()).menu();
+        let label = text::sleep_label(&snapshot);
+        let group = radio_group(&menu, &label).expect("подменю таймера сна");
+        assert_eq!(group.selected, 3, "45 минут — четвёртый вариант");
+
+        let (commands, mut sink) = tokio::sync::mpsc::unbounded_channel();
+        let mut tray = OrbitTray {
+            app_id: "org.modernbyte.OrbitFM",
+            title: "OrbitFM",
+            snapshot,
+            commands,
+            wake: Arc::new(|| {}),
+        };
+        (group.select)(&mut tray, 1);
+        (group.select)(&mut tray, 0);
+        assert_eq!(sink.try_recv(), Ok(TrayCommand::SetSleep(Some(15))));
+        assert_eq!(sink.try_recv(), Ok(TrayCommand::SetSleep(None)));
     }
 
     #[test]
@@ -700,7 +779,8 @@ mod tests {
             panic!("вторым идёт домашняя страница");
         };
         (homepage.activate)(&mut tray);
-        let group = radio_group(&menu).expect("подменю темы");
+        let appearance = i18n::catalog(Language::English).tray.appearance;
+        let group = radio_group(&menu, appearance).expect("подменю темы");
         (group.select)(&mut tray, 0);
 
         assert_eq!(sink.try_recv(), Ok(TrayCommand::ToggleFavorite));

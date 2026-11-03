@@ -10,6 +10,9 @@ import St from 'gi://St';
 const POLL_SECONDS = 2;
 const MAX_LABEL_LENGTH = 48;
 const MAX_TAGS = 2;
+// Быстрые длительности таймера сна (ADR-0046); совпадает с
+// `settings::SLEEP_CHOICES`, `0` — выключен.
+const SLEEP_CHOICES = [0, 15, 30, 45, 60, 90];
 
 const STATE_CLASSES = ['playing', 'paused', 'loading', 'error', 'stopped', 'offline'];
 
@@ -66,6 +69,8 @@ export default class OrbitFMExtension extends Extension {
         this._ui = {};
         this._items = null;
         this._themeItems = null;
+        this._sleepMenu = null;
+        this._sleepItems = [];
     }
 
     _buildMenu() {
@@ -92,6 +97,17 @@ export default class OrbitFMExtension extends Extension {
         menu.addMenuItem(this._volumeItem);
         this._addItem(menu, 'volume_up', 'volume-up', 'audio-volume-high-symbolic');
         this._addItem(menu, 'volume_down', 'volume-down', 'audio-volume-low-symbolic');
+
+        this._sleepMenu = new PopupMenu.PopupSubMenuMenuItem('...');
+        this._sleepItems = [];
+        for (const minutes of SLEEP_CHOICES) {
+            const item = new PopupMenu.PopupMenuItem('...');
+            item.connect('activate', () => this._run(
+                minutes === 0 ? 'sleep clear' : `sleep ${minutes}`));
+            this._sleepItems.push({minutes, item});
+            this._sleepMenu.menu.addMenuItem(item);
+        }
+        menu.addMenuItem(this._sleepMenu);
 
         menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         this._themeMenu = new PopupMenu.PopupSubMenuMenuItem('...');
@@ -196,6 +212,18 @@ export default class OrbitFMExtension extends Extension {
             item.setSensitive(Boolean(enabled));
     }
 
+    _sleepLabel(ui, minutes) {
+        if (minutes === 0)
+            return ui.sleep_off || 'Off';
+        const template = ui.sleep_minutes || '{minutes} min';
+        return template.replace('{minutes}', String(minutes));
+    }
+
+    _sleepMinutes(status) {
+        const minutes = Number(status && status.sleep ? status.sleep.minutes : 0);
+        return Number.isFinite(minutes) && minutes > 0 ? minutes : 0;
+    }
+
     _applyLabels(ui, station) {
         const labels = {
             play_pause: ui.play_pause,
@@ -216,6 +244,8 @@ export default class OrbitFMExtension extends Extension {
             const label = ui[`theme_${mode}`] || mode;
             item.label.set_text(label);
         }
+        for (const {minutes, item} of this._sleepItems)
+            item.label.set_text(this._sleepLabel(ui, minutes));
         this._aboutMenu.label.set_text(ui.about_station || 'About station');
         this._favoriteItem.label.set_text(
             station && station.favorite
@@ -252,6 +282,18 @@ export default class OrbitFMExtension extends Extension {
 
         for (const [mode, item] of Object.entries(this._themeItems)) {
             item.setOrnament(status.theme === mode
+                ? PopupMenu.Ornament.DOT
+                : PopupMenu.Ornament.NONE);
+        }
+
+        const activeSleep = this._sleepMinutes(status);
+        this._sleepMenu.setSensitive(true);
+        this._sleepMenu.label.set_text(activeSleep > 0
+            ? `${ui.sleep_timer || 'Sleep timer'} · ${this._sleepLabel(ui, activeSleep)}`
+            : (ui.sleep_timer || 'Sleep timer'));
+        for (const {minutes, item} of this._sleepItems) {
+            item.setSensitive(true);
+            item.setOrnament(minutes === activeSleep
                 ? PopupMenu.Ornament.DOT
                 : PopupMenu.Ornament.NONE);
         }
@@ -322,6 +364,14 @@ export default class OrbitFMExtension extends Extension {
         }
         if (this._volumeItem)
             this._volumeItem.label.set_text(`${ui.volume || 'Volume'} · 0%`);
+        if (this._sleepMenu) {
+            this._sleepMenu.setSensitive(false);
+            this._sleepMenu.label.set_text(ui.sleep_timer || 'Sleep timer');
+        }
+        for (const {item} of this._sleepItems) {
+            item.setOrnament(PopupMenu.Ornament.NONE);
+            this._setEnabled(item, false);
+        }
         for (const key of ['play_pause', 'previous', 'next', 'stop', 'radio_roulette'])
             this._setEnabled(this._items[key], false);
         this._setEnabled(this._favoriteItem, false);

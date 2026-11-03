@@ -38,9 +38,9 @@ OrbitFM. Native messaging — единственный штатный канал
 |------|-----------------|
 | `src/native_host.rs` | `run`, `run_loop`, `read_frame`/`write_frame`, allowlist, ответы, пересылка `events`, лимиты |
 | `src/main.rs` | Служебный маршрут `orbitfm native-host` без аргументов |
-| `integrations/browser/popup.html` | Разметка панели: шапка, карточка станции, транспорт, громкость, мини-визуализатор, вкладки «Поиск/Избранное/История», футер «Play this page» |
-| `integrations/browser/popup.css` | Оформление popup токенами панели Noctalia: стекло, рамка, акцент, тёмная и светлая темы |
-| `integrations/browser/popup.js` | `connectNative`, `events`, поиск с debounce, библиотека, избранное, скан вкладки, громкость, тема, офлайн-fallback |
+| `integrations/browser/popup.html` | Разметка панели: шапка с часами сна, карточка станции, транспорт, громкость, мини-визуализатор, вкладки «Поиск/Избранное/История», футер «Play this page» |
+| `integrations/browser/popup.css` | Оформление popup токенами панели Noctalia: стекло, рамка, акцент, тёмная и светлая темы, всплывающий список таймера |
+| `integrations/browser/popup.js` | `connectNative`, `events`, поиск с debounce, библиотека, избранное, скан вкладки, громкость, тема, быстрый таймер сна, офлайн-fallback |
 | `integrations/browser/orbitfm-native-host` | Wrapper `exec "<orbitfm>" native-host` (0755) |
 | `integrations/chrome/manifest.json` | MV3, фиксированный `key`, popup, `nativeMessaging` + `activeTab` + `scripting` |
 | `integrations/firefox/manifest.json` | MV3, gecko ID `orbitfm@modernbyte`, popup, те же три разрешения |
@@ -72,7 +72,9 @@ popup.js
 3. Кнопки шлют `playpause`, `next`, `previous`, `stop`, `roulette`,
    `settings`, `panel`, `overlay`, `show`/`hide`.
 4. Слайдер шлёт `volume 0.74` при отпускании, кнопки ±5 % — `volume` по шагу,
-   кнопка темы — `theme dark|light|system`, сердце — `favorite`.
+   кнопка темы — `theme dark|light|system`, сердце — `favorite`; часы сна
+   открывают список Off/15/30/45/60/90 и шлют `sleep <n>`/`sleep clear`,
+   отметка активного варианта приходит из `status.sleep` (ADR-0046).
 5. Вкладки «Избранное/История» запрашивают `library`; поиск идёт глаголом
    `search`, результат приходит кадром `search`, запуск — `play-result` или
    `play-library`.
@@ -95,9 +97,9 @@ Popup не опрашивает `status`: каждый кадр `state` само
   `status --json`, `playpause`, `stop`, `next`, `previous`, `roulette`,
   `volume`, `volume-up`, `volume-down`, `theme`, `settings`, `panel`,
   `overlay`, `search`, `library`, `favorite`, `play-result`, `play-library`,
-  `play-url`. Запрещены `quit`, `play`, `mode` (query и set) и `Raw`. Играть
-  можно только результат выдачи, элемент библиотеки или явный URL — не
-  произвольный UUID.
+  `play-url`, `sleep <1…720>`, `sleep clear`. Запрещены `quit`, `play`, `mode`
+  (query и set) и `Raw`. Играть можно только результат выдачи, элемент
+  библиотеки или явный URL — не произвольный UUID.
 - **Ответы.** `{"id"?, "ok":true, "response":"…"}` или
   `{"id"?, "ok":false, "code":"…", "error":"…"}`. `id` возвращается как есть.
   Ошибки исполнения (`play-result`, `play-library`, `play-url`, `favorite`,
@@ -126,6 +128,12 @@ Popup не опрашивает `status`: каждый кадр `state` само
   декоративный мини-визуализатор на 16 полос, вкладки, футер. Hit-target
   ≥ 36 px, `focus-visible`, `aria-live` для станции, визуализатор
   `aria-hidden`, `prefers-reduced-motion` отключает анимацию.
+- **Таймер сна.** Кнопка-часы в строке громкости (`aria-haspopup="menu"`)
+  открывает всплывающий список Off/15/30/45/60/90; активный вариант подсвечен
+  и отмечен `aria-checked`, подсказка кнопки показывает
+  `Sleep timer · 45 min`. Список закрывается по клику вне и `Escape`, офлайн
+  гасит кнопку. Подписи — `ui.sleep_timer`, `ui.sleep_off`,
+  `ui.sleep_minutes` с `{minutes}`.
 - **Идентичность.** Chrome-ID
   `lfhmfgjblkebbalfdlbmnalghhjplfbg` выводится из публичного `key` в
   манифесте; Firefox-ID — `orbitfm@modernbyte`. Native-манифесты перечисляют

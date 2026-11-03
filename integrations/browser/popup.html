@@ -70,6 +70,10 @@
     <symbol id="i-close" viewBox="0 0 24 24">
       <path d="M6.5 6.5l11 11M17.5 6.5l-11 11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
     </symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="7.6" fill="none" stroke="currentColor" stroke-width="1.7"></circle>
+      <path d="M12 7.6V12l3.2 2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></path>
+    </symbol>
   </svg>
 
   <main class="panel">
@@ -150,6 +154,9 @@
         <button id="volume-down" class="icon-button small" type="button" aria-label="Volume down" title="Volume down">&minus;</button>
         <input id="volume" type="range" min="0" max="100" step="1" value="0" aria-label="Volume">
         <button id="volume-up" class="icon-button small" type="button" aria-label="Volume up" title="Volume up">+</button>
+        <button id="sleep" class="icon-button small sleep-button" type="button" aria-label="Sleep timer" title="Sleep timer" aria-haspopup="menu" aria-expanded="false" aria-controls="sleep-menu">
+          <svg class="icon" aria-hidden="true"><use href="#i-clock"></use></svg>
+        </button>
       </div>
     </div>
 
@@ -191,6 +198,8 @@
     </section>
 
     <p id="message" class="message" role="status" hidden></p>
+
+    <div id="sleep-menu" class="sleep-menu" role="menu" aria-label="Sleep timer" hidden></div>
 
     <footer class="footer">
       <button id="page" class="page-button" type="button">

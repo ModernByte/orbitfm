@@ -256,6 +256,12 @@ h1 {
   flex: none;
 }
 
+.sleep-button.is-active {
+  color: var(--accent);
+  border-color: rgba(var(--accent-rgb), 0.38);
+  background: rgba(var(--accent-rgb), 0.12);
+}
+
 .icon-button {
   display: grid;
   place-items: center;
@@ -645,6 +651,59 @@ input[type="range"]:focus-visible {
 input[type="range"]:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+/* Быстрый выбор таймера сна (ADR-0046) */
+
+.sleep-menu {
+  position: fixed;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 148px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow:
+    0 10px 28px var(--shadow),
+    inset 0 1px 0 var(--rim);
+}
+
+.sleep-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--text);
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.sleep-option:hover {
+  background: var(--chip);
+}
+
+.sleep-option[aria-checked="true"] {
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.12);
+}
+
+.sleep-option .check {
+  margin-left: auto;
+  visibility: hidden;
+}
+
+.sleep-option[aria-checked="true"] .check {
+  visibility: visible;
 }
 
 /* Вкладки */

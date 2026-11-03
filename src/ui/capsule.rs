@@ -32,7 +32,7 @@ use super::widgets::{
     CapsuleDisc, NARROW_VIZ_BARS, NARROW_VIZ_SIZE, avatar, bucket_max, capsule_button, faded,
     faded_group, faded_palette, pop_scale, viz_bars, volume_slider_width,
 };
-use super::{UiAction, playback_label, single_line, truncate};
+use super::{UiAction, playback_label, single_line, sleep_picker, truncate};
 
 /// Сколько избранных показывает капсула Overlay (design-vision §6: 5–8).
 const FAVORITE_LIMIT: usize = 8;
@@ -51,13 +51,13 @@ const PLAY_LISTENING: &str = "orbitfm_capsule_play_color_listening";
 const PRESS_TOP: &str = "orbitfm_capsule_press_top";
 const PRESS_LISTENING: &str = "orbitfm_capsule_press_listening";
 
-/// Ширина правого блока контролов капсулы Overlay в покое: все семь
+/// Ширина правого блока контролов капсулы Overlay в покое: все восемь
 /// аллокаций ряда (визуализатор, диск play, stop, громкость, gear, expand,
-/// close) плюс промежутки между ними. Sizes берутся из тех же констант,
-/// которыми контролы аллоцируются, поэтому резерв совпадает с блоком без
-/// ручного дублирования цифр. Аллокации контролов от текста не зависят
-/// (ADR-0032 §7), и наоборот: резерв текстовой колонки — чистая арифметика
-/// по константам.
+/// close и часы сна) плюс промежутки между ними. Sizes берутся из тех же
+/// констант, которыми контролы аллоцируются, поэтому резерв совпадает с
+/// блоком без ручного дублирования цифр. Аллокации контролов от текста не
+/// зависят (ADR-0032 §7), и наоборот: резерв текстовой колонки — чистая
+/// арифметика по константам.
 fn cap_controls_width(spacing_x: f32) -> f32 {
     NARROW_VIZ_SIZE.0
         + CAP_DISC_SIZE
@@ -66,7 +66,8 @@ fn cap_controls_width(spacing_x: f32) -> f32 {
         + SIDE
         + SMALL_SIDE
         + SIDE
-        + 6.0 * spacing_x
+        + SIDE
+        + 7.0 * spacing_x
 }
 
 /// Максимум текстовой колонки (имя + подпись): остаток после блока
@@ -89,6 +90,8 @@ pub(crate) struct OverlayTop<'a> {
     /// Модель стола: капсула прореживает её до 16 полос (ADR-0022).
     pub visualizer: &'a VisualizerModel,
     pub visualizer_enabled: bool,
+    /// Активный таймер сна: `None` — выключен (ADR-0046).
+    pub sleep_minutes: Option<u16>,
     /// Разрешённый язык интерфейса (ADR-0030).
     pub language: Language,
 }
@@ -110,6 +113,8 @@ pub(crate) struct Listening<'a> {
     pub favicons: &'a mut FaviconCache,
     /// Играет подобранный лёгкий поток: индикатор ECO (ADR-0043 §4).
     pub eco: bool,
+    /// Активный таймер сна: `None` — выключен (ADR-0046).
+    pub sleep_minutes: Option<u16>,
     /// Разрешённый язык интерфейса (ADR-0030).
     pub language: Language,
 }
@@ -228,6 +233,7 @@ pub(crate) fn overlay_top(
         favicons,
         visualizer,
         visualizer_enabled,
+        sleep_minutes,
         language,
     } = state;
     let is_playing = playing(playback);
@@ -294,6 +300,7 @@ pub(crate) fn overlay_top(
                     if gear_button(ui, palette, text.common.settings).clicked() {
                         actions.push(UiAction::ToggleSettings);
                     }
+                    actions.extend(sleep_picker::show(ui, palette, sleep_minutes, language));
                 });
                 let slider =
                     volume_slider_width(ui, &shell, &mut volume, OVERLAY_VOLUME_WIDTH, language);
@@ -470,6 +477,7 @@ pub(crate) fn listening(
         pulse,
         favicons,
         eco,
+        sleep_minutes,
         language,
     } = state;
     let is_playing = playing(playback);
@@ -551,6 +559,7 @@ pub(crate) fn listening(
                             actions.push(UiAction::ToggleFavorite(station.clone()));
                         }
                     }
+                    actions.extend(sleep_picker::show(ui, palette, sleep_minutes, language));
                 });
                 let hint = if is_playing {
                     text.common.pause
@@ -622,9 +631,9 @@ mod tests {
     #[test]
     fn overlay_text_column_is_bounded_by_the_controls_block() {
         let spacing = 8.0;
-        // Семь фиксированных аллокаций: 62 + 30 + 32 + 72 + 30 + 28 + 30 и
-        // шесть промежутков между ними.
-        assert_eq!(cap_controls_width(spacing), 284.0 + 6.0 * spacing);
+        // Восемь фиксированных аллокаций: 62 + 30 + 32 + 72 + 30 + 28 + 30 +
+        // 30 и семь промежутков между ними.
+        assert_eq!(cap_controls_width(spacing), 314.0 + 7.0 * spacing);
         assert_eq!(
             cap_text_width(400.0, spacing),
             400.0 - spacing - cap_controls_width(spacing),

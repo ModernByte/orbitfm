@@ -26,7 +26,9 @@ use super::widgets::{
     NARROW_VIZ_BARS, NARROW_VIZ_SIZE, bucket_max, faded_group, live_badge, logo_mark, search_field,
     viz_bars, volume_slider_width,
 };
-use super::{SearchMode, UiAction, country_label, mode_switch, single_line, truncate};
+use super::{
+    SearchMode, UiAction, country_label, mode_switch, single_line, sleep_picker, truncate,
+};
 
 const TIGHT_HUD_WIDTH: f32 = 840.0;
 const COUNTRY_SUGGESTIONS: usize = 6;
@@ -62,6 +64,8 @@ pub(crate) struct HudState<'a> {
     pub playback: &'a PlaybackState,
     pub panel_open: bool,
     pub help_open: bool,
+    /// Активный таймер сна: `None` — выключен (ADR-0046).
+    pub sleep_minutes: Option<u16>,
     /// Разрешённый язык интерфейса (ADR-0030).
     pub language: Language,
 }
@@ -167,13 +171,13 @@ fn content_alpha(scene: f32) -> f32 {
     animation::alpha(animation::stagger(SCENE_INDEX, scene))
 }
 
-/// Несгибаемая ширина правого блока: «×», кнопки окна, тема и бейдж «● LIVE»
-/// с промежутками между ними. Числа берутся из тех же констант, которыми
-/// контролы аллоцируются в [`right_side`], поэтому резерв поля поиска совпадает
-/// с блоком без ручного дублирования цифр.
+/// Несгибаемая ширина правого блока: «×», кнопки окна, часы сна, тема и бейдж
+/// «● LIVE» с промежутками между ними. Числа берутся из тех же констант,
+/// которыми контролы аллоцируются в [`right_side`], поэтому резерв поля поиска
+/// совпадает с блоком без ручного дублирования цифр.
 fn right_block_width(tight: bool, spacing: f32) -> f32 {
-    // «×», панель, «?» и шестерёка рисуются при любой плотности.
-    let mut controls = 4.0f32;
+    // «×», панель, «?», шестерёка и часы рисуются при любой плотности.
+    let mut controls = 5.0f32;
     let mut width = ICON_BUTTON * controls + CLOSE_GAP;
     if !tight {
         // Тема и бейдж эфира.
@@ -222,6 +226,8 @@ pub(crate) struct PanelHeaderState<'a> {
     pub roulette_pending: bool,
     pub playback: &'a PlaybackState,
     pub volume: f64,
+    /// Активный таймер сна: `None` — выключен (ADR-0046).
+    pub sleep_minutes: Option<u16>,
     /// Модель стола: шапка панели прореживает её до 16 полос (ADR-0022).
     pub visualizer: &'a VisualizerModel,
     pub visualizer_enabled: bool,
@@ -301,6 +307,12 @@ pub(crate) fn panel_header(
                                     if gear_button(ui, palette, text.common.settings).clicked() {
                                         actions.push(UiAction::ToggleSettings);
                                     }
+                                    actions.extend(sleep_picker::show(
+                                        ui,
+                                        palette,
+                                        state.sleep_minutes,
+                                        state.language,
+                                    ));
                                     if roulette_button(
                                         ui,
                                         palette,
@@ -509,6 +521,13 @@ fn right_side(
         actions.push(UiAction::ToggleSettings);
     }
 
+    actions.extend(sleep_picker::show(
+        ui,
+        palette,
+        state.sleep_minutes,
+        state.language,
+    ));
+
     if !tight {
         let dark = matches!(ui.ctx().theme(), egui::Theme::Dark);
         let hint = if dark {
@@ -667,6 +686,7 @@ mod tests {
                         playback: &playback,
                         panel_open: false,
                         help_open: false,
+                        sleep_minutes: None,
                         language: Language::Russian,
                     };
                     right_side(ui, &palette, &mut state, true, tight);
@@ -731,6 +751,7 @@ mod tests {
                         playback: &playback,
                         panel_open: false,
                         help_open: false,
+                        sleep_minutes: None,
                         language: Language::Russian,
                     };
                     right_side(ui, &palette, &mut state, false, tight);
@@ -763,7 +784,9 @@ mod tests {
         );
 
         // Узкая шапка: поиск уступает правому блоку, но не право на жизнь.
-        let narrow = 400.0;
+        // Нижняя граница строки — минимум поиска плюс резерв контролов
+        // (включая часы сна) и оба промежутка.
+        let narrow = MIN_SEARCH_WIDTH + right_block_width(false, spacing) + 2.0 * spacing;
         let yielded = search_width(narrow, false, spacing);
         assert!(
             (MIN_SEARCH_WIDTH..narrow).contains(&yielded),

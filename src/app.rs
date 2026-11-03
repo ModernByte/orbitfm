@@ -512,6 +512,9 @@ impl<'a> OrbitApp<'a> {
                 let transport_in = animation::alpha(animation::stagger(3, ui_motion.scene));
 
                 if let Some(hud_rect) = layout.hud {
+                    // Снимок таймера берём до мутабельных займов поиска в снимке
+                    // HUD: `sleep_minutes` читает сессию целиком.
+                    let sleep_minutes = session.sleep_minutes();
                     widgets::glass_panel(
                         ui.painter(),
                         hud_rect,
@@ -536,6 +539,7 @@ impl<'a> OrbitApp<'a> {
                                     playback: &frame.playback,
                                     panel_open: session.panel_open,
                                     help_open: session.show_help,
+                                    sleep_minutes,
                                     language: frame.language,
                                 },
                             )
@@ -688,6 +692,7 @@ impl<'a> OrbitApp<'a> {
                                     favicons,
                                     visualizer,
                                     visualizer_enabled: session.visualizer_enabled,
+                                    sleep_minutes: session.sleep_minutes(),
                                     language: frame.language,
                                 },
                             )
@@ -749,6 +754,7 @@ impl<'a> OrbitApp<'a> {
                                     pulse,
                                     favicons,
                                     eco: session.economy_stream(),
+                                    sleep_minutes: session.sleep_minutes(),
                                     language: frame.language,
                                 },
                             )
@@ -782,6 +788,7 @@ impl<'a> OrbitApp<'a> {
                 }
 
                 if let Some(header_rect) = layout.hud {
+                    let sleep_minutes = session.sleep_minutes();
                     actions.extend(
                         ui.scope_builder(vertical(header_rect), |ui| {
                             hud::panel_header(
@@ -801,6 +808,7 @@ impl<'a> OrbitApp<'a> {
                                     roulette_pending: session.search.roulette_pending,
                                     playback: &frame.playback,
                                     volume: frame.volume,
+                                    sleep_minutes,
                                     visualizer,
                                     visualizer_enabled: session.visualizer_enabled,
                                     language: frame.language,

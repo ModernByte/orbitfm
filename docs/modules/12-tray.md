@@ -41,7 +41,7 @@ ADR-0026 «macOS: меню-бар и Now Playing при скрытом окне�
 | `mod.rs` | Контракт слоя: типы-сообщения (`TrayCommand`, `TraySnapshot`, `TrayStation`), `TrayHandle`, точка входа и её no-op-заглушка; на macOS — «неподключённый» `Slot` и отложенный `attach` | `VOLUME_STEP`, `TrayCommand`, `TrayStation`, `TraySnapshot`, `TrayHandle::{publish, attach, commands}`, `spawn` |
 | `sni.rs` | Реализация `ksni::Tray`, поток-владелец, меню, деградация (`#[cfg(all(target_os = "linux", feature = "tray"))]`) | `OrbitTray`, `start` — только для `mod.rs` |
 | `macos.rs` | Элемент строки меню на `tray-icon`/`muda`: `Slot`, сборка меню, стабильные `MenuId`, глобальный `MenuEvent` (`#[cfg(all(target_os = "macos", feature = "tray"))]`) | `Slot::{new, publish, attach}` — только для `mod.rs` |
-| `text.rs` | Общие подписи обоих бэкендов: карточка станции, Show/Hide, громкость с процентом, избранное, обрезка длинных названий | `now_playing_label`, `nothing_playing`, `toggle_label`, `card_lines`, `station_name`, `station_details`, `station_tags`, `station_summary`, `volume_label`, `favorite_label` |
+| `text.rs` | Общие подписи обоих бэкендов: карточка станции, Show/Hide, громкость с процентом, таймер сна, избранное, обрезка длинных названий | `now_playing_label`, `nothing_playing`, `toggle_label`, `card_lines`, `station_name`, `station_details`, `station_tags`, `station_summary`, `volume_label`, `sleep_label`, `favorite_label` |
 | `icon.rs` | Платформенно-нейтральный RGBA-растеризатор орбитального знака 22/32/48; Linux-адаптер конвертирует в ARGB32, macOS — в `tray_icon::Icon` | `SIZES`, `rgba` — для `sni.rs`/`macos.rs` |
 
 `mod.rs` компилируется всегда, чтобы `src/session/` не обрастал `cfg`-ветками:
@@ -98,6 +98,7 @@ ADR-0026 «macOS: меню-бар и Now Playing при скрытом окне�
 | `Menu` | `/MenuBar`, собирается из снимка на каждое обновление |
 | Карточка станции | 1–3 неактивные строки: `text.tray.now_playing` или `paused` с `{station}`, либо `text.tray.nothing_playing`; затем `страна · NN kbps` и теги — из `station`, `playing`, `language` |
 | Групповой заголовок громкости | неактивная строка `Volume · NN%` из `volume_percent` |
+| Подменю таймера сна | `text::sleep_label` собирает `settings.sleep_timer · <вариант>` из `sleep_minutes`; радиогруппа Off/15/30/45/60/90, клик шлёт `SetSleep` |
 | Подменю «О станции» | `common.add_favorite`/`remove_favorite` по `favorite` и `text.tray.open_homepage`; без станции подменю неактивно, без `homepage` — неактивен пункт |
 | `ItemIsMenu` | `false` (константа `MENU_ON_ACTIVATE` по умолчанию) — только тогда хост вызывает `Activate` |
 
@@ -123,21 +124,26 @@ freedesktop-иконками:
 4. неактивный заголовок `Volume · NN%`; `volume_up`
    (`audio-volume-high-symbolic`), `volume_down`
    (`audio-volume-low-symbolic`) · разделитель;
-5. подменю `appearance` (`preferences-desktop-theme-symbolic`): радиогруппа
+5. подменю `sleep_timer` (`preferences-system-time-symbolic`, ADR-0046):
+   радиогруппа `Off`/15/30/45/60/90 из `settings::SLEEP_CHOICES`, подписи
+   `i18n::sleep_option_label`; выбранные минуты приходят в снимке, клик шлёт
+   `TrayCommand::SetSleep`;
+6. подменю `appearance` (`preferences-desktop-theme-symbolic`): радиогруппа
    System/Dark/Light · разделитель;
-6. подменю `about_station` (`help-about-symbolic`): избранное
+7. подменю `about_station` (`help-about-symbolic`): избранное
    (`emblem-favorite-symbolic`, подпись по состоянию `favorite`) и
    `open_homepage` (`web-browser-symbolic`) · разделитель;
-7. `settings` (`preferences-system-symbolic`) · `quit`
+8. `settings` (`preferences-system-symbolic`) · `quit`
    (`application-exit-symbolic`).
 
 Меню macOS повторяет тот же порядок и те же подписи. Сведения о станции — одна
 строка `страна · битрейт · теги` под заголовком: когда показывать нечего, она
 снимается с меню и возвращается на своё место при появлении данных. Выбранная
-тема, `play_pause` и избранное — чекбоксы; стабильные `MenuId` не меняются,
-новые — `orbitfm.favorite-toggle` и `orbitfm.homepage`. Подписи темы даёт
-`i18n::theme_label`: presentation-слой (`ui::palette`) модулю трея по-прежнему
-недоступен.
+тема, таймер сна, `play_pause` и избранное — чекбоксы; стабильные `MenuId` не
+меняются, новые — `orbitfm.favorite-toggle`, `orbitfm.homepage` и
+`orbitfm.sleep.{off|15|30|45|60|90}`. Подписи темы даёт `i18n::theme_label`,
+таймера — `text::sleep_label`/`i18n::sleep_option_label`: presentation-слой
+(`ui::palette`) модулю трея по-прежнему недоступен.
 
 ## 5. Ошибки и деградация
 
@@ -189,20 +195,22 @@ freedesktop-иконками:
 
 Unit-тесты покрывают контракт, не касаясь D-Bus и AppKit:
 
-- `mod.rs` — значения `Default` и сравнение снимков, где смена языка и
-  громкости — тоже изменение;
+- `mod.rs` — значения `Default` и сравнение снимков, где смена языка,
+  громкости и таймера сна — тоже изменение;
 - `sni.rs` — `icon_stays_active_while_the_process_lives`,
   `menu_groups_playback_volume_appearance_and_station`,
   `menu_card_shows_the_current_station_without_being_a_command`,
-  `menu_actions_publish_their_commands`, равенство всех подписей каталогу на
-  каждом языке, правило «одно действие = одна команда + одно пробуждение» и
-  байтовый порядок пикселей;
-- `macos.rs` — каждый `MenuId` переводится в свою `TrayCommand`, ID уникальны,
-  чужие ID игнорируются;
+  `menu_actions_publish_their_commands`,
+  `sleep_radio_marks_the_active_timer_and_sends_it`, равенство всех подписей
+  каталогу на каждом языке, правило «одно действие = одна команда + одно
+  пробуждение» и байтовый порядок пикселей;
+- `macos.rs` — каждый `MenuId` (включая `orbitfm.sleep.*`) переводится в свою
+  `TrayCommand`, ID уникальны, чужие ID игнорируются;
 - `text.rs` — `card_shows_name_meta_and_tags`, `details_skip_empty_parts`,
   `tags_drop_empty_segments`, `long_labels_are_clipped_by_chars`,
   `summary_joins_meta_and_tags_for_the_macos_menu`,
   `volume_and_favorite_labels_follow_the_state`,
+  `sleep_label_shows_the_active_duration`,
   `toggle_label_follows_the_window`, `station_name_falls_back_to_nothing_playing`;
 - `icon.rs` — все размерности RGBA, непрозрачное ядро планеты и пустые углы,
   выход орбиты за диск, наличие точки эфира.

@@ -723,6 +723,10 @@ struct StatusUi {
     theme_system: &'static str,
     theme_dark: &'static str,
     theme_light: &'static str,
+    sleep_timer: &'static str,
+    sleep_off: &'static str,
+    /// Шаблон варианта: `{minutes}` подставляет число минут.
+    sleep_minutes: &'static str,
     about_station: &'static str,
     open_homepage: &'static str,
     state_playing: &'static str,
@@ -768,6 +772,9 @@ impl StatusUi {
             theme_system: catalog.labels.theme_system,
             theme_dark: catalog.labels.theme_dark,
             theme_light: catalog.labels.theme_light,
+            sleep_timer: catalog.settings.sleep_timer,
+            sleep_off: catalog.settings.sleep_off,
+            sleep_minutes: catalog.settings.sleep_minutes,
             about_station: tray.about_station,
             open_homepage: tray.open_homepage,
             state_playing: catalog.labels.playback_on_air,
@@ -1126,6 +1133,9 @@ mod tests {
             assert_eq!(value["ui"]["theme_system"], catalog.labels.theme_system);
             assert_eq!(value["ui"]["theme_dark"], catalog.labels.theme_dark);
             assert_eq!(value["ui"]["theme_light"], catalog.labels.theme_light);
+            assert_eq!(value["ui"]["sleep_timer"], catalog.settings.sleep_timer);
+            assert_eq!(value["ui"]["sleep_off"], catalog.settings.sleep_off);
+            assert_eq!(value["ui"]["sleep_minutes"], catalog.settings.sleep_minutes);
             assert_eq!(value["ui"]["close"], catalog.common.close);
             assert_eq!(value["ui"]["no_audio"], catalog.common.no_audio);
             assert_eq!(value["ui"]["importing"], catalog.common.importing);

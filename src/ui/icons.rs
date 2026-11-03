@@ -304,6 +304,31 @@ pub(crate) fn moon_button(ui: &mut egui::Ui, palette: &Palette, hint: &str) -> R
     )
 }
 
+/// Кнопка быстрого таймера сна: часы, активный таймер подсвечен акцентом.
+pub(crate) fn sleep_button(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    hint: &str,
+    active: bool,
+) -> Response {
+    icon_button(
+        ui,
+        palette,
+        Vec2::splat(SIDE),
+        true,
+        active,
+        hint,
+        move |ui, rect, base, hover| {
+            let tint = if active {
+                palette.accent
+            } else {
+                icon_tint(base, palette.accent, hover)
+            };
+            paint_icon(ui, Icon::Clock, rect.center(), GLYPH, tint);
+        },
+    )
+}
+
 /// Кнопка раскрытия/сворачивания панели списка.
 pub(crate) fn panel_button(ui: &mut egui::Ui, palette: &Palette, hint: &str) -> Response {
     icon_button(

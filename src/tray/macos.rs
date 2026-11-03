@@ -23,7 +23,7 @@ use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 use super::{TrayCommand, TraySnapshot, icon, text};
 use crate::i18n;
 use crate::ipc::WakeFn;
-use crate::settings::ThemeMode;
+use crate::settings::{SLEEP_CHOICES, ThemeMode};
 
 /// Пиксельный размер знака: `tray-icon` ужимает иконку до 22 pt строки меню,
 /// а запас в 48 px даёт чёткость на Retina. Число берётся из верхнего края
@@ -41,6 +41,12 @@ const ID_NEXT: &str = "orbitfm.next";
 const ID_ROULETTE: &str = "orbitfm.roulette";
 const ID_VOLUME_UP: &str = "orbitfm.volume-up";
 const ID_VOLUME_DOWN: &str = "orbitfm.volume-down";
+const ID_SLEEP_OFF: &str = "orbitfm.sleep.off";
+const ID_SLEEP_15: &str = "orbitfm.sleep.15";
+const ID_SLEEP_30: &str = "orbitfm.sleep.30";
+const ID_SLEEP_45: &str = "orbitfm.sleep.45";
+const ID_SLEEP_60: &str = "orbitfm.sleep.60";
+const ID_SLEEP_90: &str = "orbitfm.sleep.90";
 const ID_THEME_SYSTEM: &str = "orbitfm.theme.system";
 const ID_THEME_DARK: &str = "orbitfm.theme.dark";
 const ID_THEME_LIGHT: &str = "orbitfm.theme.light";
@@ -150,6 +156,8 @@ struct MenuHandle {
     volume: MenuItem,
     volume_up: MenuItem,
     volume_down: MenuItem,
+    sleep: Submenu,
+    sleeps: [CheckMenuItem; 6],
     appearance: Submenu,
     themes: [CheckMenuItem; 3],
     about: Submenu,
@@ -175,6 +183,11 @@ impl MenuHandle {
         self.volume.set_text(text::volume_label(snapshot));
         self.volume_up.set_text(catalog.tray.volume_up);
         self.volume_down.set_text(catalog.tray.volume_down);
+        self.sleep.set_text(text::sleep_label(snapshot));
+        for (item, minutes) in self.sleeps.iter().zip(SLEEP_CHOICES) {
+            item.set_text(i18n::sleep_option_label(snapshot.language, minutes));
+            item.set_checked(snapshot.sleep_minutes.unwrap_or(0) == minutes);
+        }
         self.appearance.set_text(catalog.tray.appearance);
         for (item, mode) in self.themes.iter().zip(ThemeMode::ALL) {
             item.set_text(i18n::theme_label(snapshot.language, mode));
@@ -249,6 +262,58 @@ fn build_menu(snapshot: &TraySnapshot) -> Option<(Menu, MenuHandle)> {
     let volume = MenuItem::with_id("orbitfm.volume", text::volume_label(snapshot), false, None);
     let volume_up = MenuItem::with_id(ID_VOLUME_UP, catalog.tray.volume_up, true, None);
     let volume_down = MenuItem::with_id(ID_VOLUME_DOWN, catalog.tray.volume_down, true, None);
+    let sleeps = [
+        CheckMenuItem::with_id(
+            ID_SLEEP_OFF,
+            i18n::sleep_option_label(snapshot.language, 0),
+            true,
+            snapshot.sleep_minutes.is_none(),
+            None,
+        ),
+        CheckMenuItem::with_id(
+            ID_SLEEP_15,
+            i18n::sleep_option_label(snapshot.language, 15),
+            true,
+            snapshot.sleep_minutes == Some(15),
+            None,
+        ),
+        CheckMenuItem::with_id(
+            ID_SLEEP_30,
+            i18n::sleep_option_label(snapshot.language, 30),
+            true,
+            snapshot.sleep_minutes == Some(30),
+            None,
+        ),
+        CheckMenuItem::with_id(
+            ID_SLEEP_45,
+            i18n::sleep_option_label(snapshot.language, 45),
+            true,
+            snapshot.sleep_minutes == Some(45),
+            None,
+        ),
+        CheckMenuItem::with_id(
+            ID_SLEEP_60,
+            i18n::sleep_option_label(snapshot.language, 60),
+            true,
+            snapshot.sleep_minutes == Some(60),
+            None,
+        ),
+        CheckMenuItem::with_id(
+            ID_SLEEP_90,
+            i18n::sleep_option_label(snapshot.language, 90),
+            true,
+            snapshot.sleep_minutes == Some(90),
+            None,
+        ),
+    ];
+    let sleep = Submenu::with_items(
+        text::sleep_label(snapshot),
+        true,
+        &[
+            &sleeps[0], &sleeps[1], &sleeps[2], &sleeps[3], &sleeps[4], &sleeps[5],
+        ],
+    )
+    .ok()?;
     let themes = [
         CheckMenuItem::with_id(
             ID_THEME_SYSTEM,
@@ -323,6 +388,8 @@ fn build_menu(snapshot: &TraySnapshot) -> Option<(Menu, MenuHandle)> {
         .and_then(|()| menu.append(&volume_up))
         .and_then(|()| menu.append(&volume_down))
         .and_then(|()| menu.append(&PredefinedMenuItem::separator()))
+        .and_then(|()| menu.append(&sleep))
+        .and_then(|()| menu.append(&PredefinedMenuItem::separator()))
         .and_then(|()| menu.append(&appearance))
         .and_then(|()| menu.append(&PredefinedMenuItem::separator()))
         .and_then(|()| menu.append(&about))
@@ -351,6 +418,8 @@ fn build_menu(snapshot: &TraySnapshot) -> Option<(Menu, MenuHandle)> {
         volume,
         volume_up,
         volume_down,
+        sleep,
+        sleeps,
         appearance,
         themes,
         about,
@@ -387,6 +456,12 @@ fn command_for(id: &MenuId) -> Option<TrayCommand> {
         ID_ROULETTE => Some(TrayCommand::Roulette),
         ID_VOLUME_UP => Some(TrayCommand::VolumeUp),
         ID_VOLUME_DOWN => Some(TrayCommand::VolumeDown),
+        ID_SLEEP_OFF => Some(TrayCommand::SetSleep(None)),
+        ID_SLEEP_15 => Some(TrayCommand::SetSleep(Some(15))),
+        ID_SLEEP_30 => Some(TrayCommand::SetSleep(Some(30))),
+        ID_SLEEP_45 => Some(TrayCommand::SetSleep(Some(45))),
+        ID_SLEEP_60 => Some(TrayCommand::SetSleep(Some(60))),
+        ID_SLEEP_90 => Some(TrayCommand::SetSleep(Some(90))),
         ID_THEME_SYSTEM => Some(TrayCommand::SetTheme(ThemeMode::System)),
         ID_THEME_DARK => Some(TrayCommand::SetTheme(ThemeMode::Dark)),
         ID_THEME_LIGHT => Some(TrayCommand::SetTheme(ThemeMode::Light)),
@@ -431,6 +506,30 @@ mod tests {
             Some(TrayCommand::VolumeDown)
         );
         assert_eq!(
+            command_for(&MenuId::new(ID_SLEEP_OFF)),
+            Some(TrayCommand::SetSleep(None))
+        );
+        assert_eq!(
+            command_for(&MenuId::new(ID_SLEEP_15)),
+            Some(TrayCommand::SetSleep(Some(15)))
+        );
+        assert_eq!(
+            command_for(&MenuId::new(ID_SLEEP_30)),
+            Some(TrayCommand::SetSleep(Some(30)))
+        );
+        assert_eq!(
+            command_for(&MenuId::new(ID_SLEEP_45)),
+            Some(TrayCommand::SetSleep(Some(45)))
+        );
+        assert_eq!(
+            command_for(&MenuId::new(ID_SLEEP_60)),
+            Some(TrayCommand::SetSleep(Some(60)))
+        );
+        assert_eq!(
+            command_for(&MenuId::new(ID_SLEEP_90)),
+            Some(TrayCommand::SetSleep(Some(90)))
+        );
+        assert_eq!(
             command_for(&MenuId::new(ID_THEME_SYSTEM)),
             Some(TrayCommand::SetTheme(ThemeMode::System))
         );
@@ -471,6 +570,12 @@ mod tests {
             ID_ROULETTE,
             ID_VOLUME_UP,
             ID_VOLUME_DOWN,
+            ID_SLEEP_OFF,
+            ID_SLEEP_15,
+            ID_SLEEP_30,
+            ID_SLEEP_45,
+            ID_SLEEP_60,
+            ID_SLEEP_90,
             ID_THEME_SYSTEM,
             ID_THEME_DARK,
             ID_THEME_LIGHT,

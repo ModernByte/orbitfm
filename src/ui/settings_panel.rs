@@ -16,7 +16,8 @@ use crate::integration::status::{Availability, InstallState, IntegrationsView, T
 use crate::integration::{Target, TargetGroup};
 use crate::session::WindowMode;
 use crate::settings::{
-    AccentColor, Language, MotionReactivity, MotionStyle, Settings, ThemeMode, VIZ_BAR_CHOICES,
+    AccentColor, Language, MotionReactivity, MotionStyle, SLEEP_CHOICES, Settings, ThemeMode,
+    VIZ_BAR_CHOICES,
 };
 
 use super::UiAction;
@@ -44,8 +45,6 @@ const SWATCH_SLOT: (f32, f32) = (184.0, 26.0);
 const SWATCH_GAP: f32 = 4.0;
 /// Насколько гаснет контрол, недоступный из-за другой настройки.
 const DISABLED: f32 = 0.45;
-/// Варианты таймера сна в минутах; 0 — выключен (ADR-0046).
-const SLEEP_CHOICES: [u16; 6] = [0, 15, 30, 45, 60, 90];
 /// Порядок stagger: шапка, навигация, заголовок категории, затем карточки.
 const BLOCK_HEADER: usize = 0;
 const BLOCK_NAV: usize = 1;

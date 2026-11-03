@@ -60,6 +60,8 @@ pub(crate) enum TrayCommand {
     Roulette,
     VolumeUp,
     VolumeDown,
+    /// Таймер сна: `Some(minutes)` включает, `None` выключает (ADR-0046).
+    SetSleep(Option<u16>),
     SetTheme(ThemeMode),
     /// Избранное текущей станции (ADR-0020, ревизия 0.16).
     ToggleFavorite,
@@ -97,6 +99,8 @@ pub(crate) struct TraySnapshot {
     pub(crate) favorite: bool,
     /// Громкость в процентах: подпись группы громкости.
     pub(crate) volume_percent: u8,
+    /// Активный таймер сна: выбранный пункт меню (ADR-0046).
+    pub(crate) sleep_minutes: Option<u16>,
     /// Текущая тема: активный пункт группы System/Dark/Light.
     pub(crate) theme: ThemeMode,
     /// Разрешённый язык интерфейса: смена языка перестраивает меню (ADR-0030).
@@ -205,6 +209,7 @@ mod tests {
         assert_eq!(snapshot.station, None);
         assert!(!snapshot.favorite);
         assert_eq!(snapshot.volume_percent, 0);
+        assert_eq!(snapshot.sleep_minutes, None);
         assert_eq!(snapshot.theme, ThemeMode::default());
         assert_eq!(snapshot.language, Language::default());
     }
@@ -223,6 +228,7 @@ mod tests {
             }),
             favorite: true,
             volume_percent: 70,
+            sleep_minutes: Some(45),
             theme: ThemeMode::Dark,
             language: Language::French,
         };
@@ -236,5 +242,8 @@ mod tests {
         hidden.language = Language::French;
         hidden.volume_percent = 60;
         assert_ne!(hidden, same, "громкость видна в подписи группы");
+        hidden.volume_percent = 70;
+        hidden.sleep_minutes = None;
+        assert_ne!(hidden, same, "таймер сна виден в подписи группы");
     }
 }

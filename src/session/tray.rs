@@ -64,6 +64,14 @@ impl super::Session {
             TrayCommand::Roulette => self.start_roulette(),
             TrayCommand::VolumeUp => self.nudge_volume(VOLUME_STEP),
             TrayCommand::VolumeDown => self.nudge_volume(-VOLUME_STEP),
+            TrayCommand::SetSleep(minutes) => match minutes {
+                Some(minutes) => {
+                    if let Err(err) = self.set_sleep(minutes) {
+                        tracing::warn!(error = %err, "не удалось включить таймер сна из трея");
+                    }
+                }
+                None => self.clear_sleep(),
+            },
             TrayCommand::SetTheme(theme) => {
                 if let Err(err) = self.set_theme(theme) {
                     self.notify_error_detail(NoticeKey::ThemeNotSaved, err);
@@ -151,6 +159,7 @@ impl super::Session {
             station,
             favorite,
             volume_percent: volume_percent(self.audio.volume()),
+            sleep_minutes: self.sleep_minutes(),
             theme: self.settings.settings().theme,
             language: self.language,
         }

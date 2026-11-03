@@ -7,10 +7,19 @@
 
 ## [Unreleased]
 
-Документация TUI и уточнение импорта библиотеки. Кода TUI нет; поведение
-0.18.0-rc.1 не меняется.
+Быстрый доступ к таймеру сна во всех интерфейсах, документация TUI и
+уточнение импорта библиотеки. Схема `status --json` остаётся 1; кода TUI нет.
 
 ### Добавлено
+- Быстрый таймер сна (ADR-0046, ревизия 2026-11-03): кнопка-часы в HUD Focus,
+  капсулах Overlay/Listening и шапке панели бар-виджета открывает
+  Off/15/30/45/60/90; подменю `sleep_timer` в трее SNI и macOS; кнопка в
+  браузерном попапе и подменю GNOME Shell. Активный таймер подсвечен,
+  офлайн гасит контрол
+- `status.ui` дополнен `sleep_timer`, `sleep_off` и шаблоном `sleep_minutes`
+  с `{minutes}` — расширения локализуются без дублирования каталога
+- `TraySnapshot.sleep_minutes` и `TrayCommand::SetSleep(Option<u16>)`;
+  `settings::SLEEP_CHOICES` — единый ряд пресетов для всех поверхностей
 - ADR-0047: `orbitfm-tui` — отдельный терминальный клиент к работающему ядру,
   не второй libmpv/MPRIS; CLI-адаптер `CoreClient`, `q`/`Q`, лимит библиотеки
   20+20, headless отдельным треком
@@ -36,8 +45,12 @@
 
 ### Тесты
 - `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
-  `cargo test --locked` — 604 passed, 5 ignored
-- Добавлен `export_import_skips_local_streams_by_public_url_policy`
+  `cargo test --locked` — 607 passed, 5 ignored; `node --check` для
+  `popup.js` и `extension.js`; попап проверен headless-скриншотом (офлайн и
+  открытое меню таймера)
+- Добавлен `export_import_skips_local_streams_by_public_url_policy`,
+  `sleep_radio_marks_the_active_timer_and_sends_it`,
+  `sleep_label_shows_the_active_duration`, `every_choice_has_a_label`
 
 ## [0.18.0-rc.1] - 2026-11-03
 

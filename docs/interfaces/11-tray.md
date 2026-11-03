@@ -30,6 +30,8 @@ pub(crate) enum TrayCommand {
     Roulette,
     VolumeUp,
     VolumeDown,
+    /// Быстрый таймер сна (ADR-0046): `Some(minutes)` включает, `None` снимает.
+    SetSleep(Option<u16>),
     SetTheme(ThemeMode),
     /// Избранное текущей станции (ADR-0020, ревизия 0.16).
     ToggleFavorite,
@@ -57,6 +59,8 @@ pub(crate) struct TraySnapshot {
     pub(crate) station: Option<TrayStation>,
     pub(crate) favorite: bool,
     pub(crate) volume_percent: u8,
+    /// Активный таймер сна в минутах; `None` — выключен (ADR-0046).
+    pub(crate) sleep_minutes: Option<u16>,
     pub(crate) theme: ThemeMode,
     pub(crate) language: Language,
 }
@@ -92,8 +96,8 @@ pub(crate) fn spawn(
 | Элемент | Сигнатура | Поведение |
 |---------|-----------|-----------|
 | `VOLUME_STEP` | `pub(crate) const f64 = 0.1` | Единый шаг для `VolumeUp`/`VolumeDown` (колесо и меню): 10 шагов от `0.0` до `1.0` |
-| `TrayCommand` | `enum`, 14 вариантов, `Copy + Eq` | Ровно один вариант на каждое действие пользователя; `Hide` нет — окно прячут тем же `Toggle`, что Noctalia-виджет и IPC; `Settings` открывает окно настроек (ADR-0031); `ToggleFavorite` и `OpenHomepage` — подменю «О станции» (ред. 0.16) |
-| `TraySnapshot` | `struct`, 7 полей, `Default + Eq` | Снимок витрины; `Default` — окно скрыто, эфира нет, громкость 0 %, тема и язык дефолтные. `Eq` нужен `sync_tray`: публикуется только изменение, и смена языка — тоже изменение |
+| `TrayCommand` | `enum`, 15 вариантов, `Copy + Eq` | Ровно один вариант на каждое действие пользователя; `Hide` нет — окно прячут тем же `Toggle`, что Noctalia-виджет и IPC; `Settings` открывает окно настроек (ADR-0031); `ToggleFavorite` и `OpenHomepage` — подменю «О станции» (ред. 0.16); `SetSleep` — подменю таймера сна (ADR-0046) |
+| `TraySnapshot` | `struct`, 8 полей, `Default + Eq` | Снимок витрины; `Default` — окно скрыто, эфира нет, громкость 0 %, таймер сна выключен, тема и язык дефолтные. `Eq` нужен `sync_tray`: публикуется только изменение, и смена языка или таймера — тоже изменение |
 | `TrayHandle` | `struct` | Владелец обеих очередей живого трея; `None` в `Session::tray` означает «трея нет» |
 | `TrayHandle::publish` | `fn publish(&self, snapshot: &TraySnapshot) -> bool` | Non-blocking отправка снимка в поток-владелец; `false` — канал закрыт, трей умер |
 | `TrayHandle::commands` | `UnboundedReceiver<TrayCommand>` | Единственный путь команд наружу из dbus-потока |
@@ -115,6 +119,7 @@ pub(crate) fn spawn(
 | `Previous` / `Next` | `StandardItem` `previous` / `next` | `play_relative(∓1)` по видимой очереди |
 | `Roulette` | `StandardItem` `radio_roulette` | `start_roulette()`; ответ придёт в `tick()` или в `Parked::Roulette` |
 | `VolumeUp` / `VolumeDown` | колесо (`Scroll`) и пункты `volume_up` / `volume_down` | `nudge_volume(±VOLUME_STEP)` с `clamp` к `0.0..=1.0` |
+| `SetSleep(minutes)` | `RadioGroup` внутри подменю таймера сна, подписи `i18n::sleep_option_label` | `Some(n)` → `set_sleep(n)`, `None` → `clear_sleep()` (ADR-0046) |
 | `SetTheme(mode)` | `RadioGroup` внутри подменю `appearance`, подписи `i18n::theme_label` | `set_theme(mode)` в `SettingsStore` |
 | `ToggleFavorite` | `StandardItem` в подменю `about_station`, подпись `common.add_favorite`/`remove_favorite` | `toggle_favorite(active_station)`; без станции пункт недоступен |
 | `OpenHomepage` | `StandardItem` в подменю `about_station`, подпись `tray.open_homepage` | `open_station_homepage()`: только `http(s)` с непустым хостом и без userinfo, запуск `xdg-open`/`open` без shell и без новых зависимостей |
@@ -136,6 +141,7 @@ pub(crate) fn spawn(
 | `station` | карточка: имя, `страна · NN kbps`, до 2 тегов; `ToolTip.description` — имя; `None` → `nothing_playing` и «Nothing playing» в карточке |
 | `favorite` | подпись пункта в подменю `about_station`: `common.add_favorite` или `common.remove_favorite` |
 | `volume_percent` | строка группы громкости `Volume · NN%`; громкость публикуется при каждом изменении |
+| `sleep_minutes` | выбранный пункт подменю `sleep_timer` (`Sleep timer · Off`/`45 min`); `None` отмечает «выключен» (ADR-0046) |
 | `theme` | `selected` в `RadioGroup` System / Dark / Light внутри подменю `appearance` |
 | `language` | язык всех подписей меню и заглушки тултипа: `i18n::catalog(language)`; смена языка меняет снимок, поэтому меню перестраивается без перезапуска (ADR-0030) |
 
@@ -148,11 +154,12 @@ pub(crate) fn spawn(
 
 Меню (ред. 0.16) сгруппировано: карточка станции (неактивные строки) ·
 разделитель · окно · разделитель · `playback` + транспорт · разделитель ·
-`volume` + громкость · разделитель · подменю `appearance` · разделитель ·
-подменю `about_station` (избранное, homepage) · разделитель · настройки ·
-выход. На macOS тот же порядок и подписи: `Submenu`, чекбоксы темы,
-`play_pause` и избранного, стабильные строковые `MenuId`
-(`orbitfm.favorite-toggle`, `orbitfm.homepage`).
+`volume` + громкость · разделитель · подменю `sleep_timer` (Off/15/30/45/60/90,
+ADR-0046) · подменю `appearance` · разделитель · подменю `about_station`
+(избранное, homepage) · разделитель · настройки · выход. На macOS тот же
+порядок и подписи: `Submenu`, чекбоксы темы, `play_pause`, избранного и
+таймера сна, стабильные строковые `MenuId`
+(`orbitfm.favorite-toggle`, `orbitfm.homepage`, `orbitfm.sleep-*`).
 
 ## 4. Инварианты потоков и блокировок
 

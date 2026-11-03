@@ -193,7 +193,7 @@ src/ui/
 ├── layout.rs         # DeskLayout: геометрия плавающих зон и окна настроек, LayoutDensity из
 │                     # WindowMode, blocks_point для глобуса
 ├── capsule.rs        # капсулы Overlay (top с 16-полосной лентой, мини-глобус, избранное)
-│                     # и Listening
+│                     # и Listening; быстрые часы таймера сна в группе контролов
 ├── widgets/          # кастомные контролы; фасад `ui::widgets` — ре-экспорт без смены API
 │   ├── mod.rs        # фасад: публичная поверхность и тесты контролов
 │   ├── shared.rs     # faded/faded_group/faded_palette, control_motion, focus_ring,
@@ -210,7 +210,9 @@ src/ui/
 ├── images.rs         # FaviconCache: машина состояний Queued/Loading/Ready/Failed (ADR-0016)
 ├── hud.rs            # верхний HUD: логотип, Country/Genre, поиск станции/страны,
 │                     # индикатор эфира (live-бейдж), тема-луна, шестерёнка (открывает
-│                     # настройки), кнопки списка/?/скрытия; шапка выпадающей панели
+│                     # настройки), часы сна, кнопки списка/?/скрытия; шапка выпадающей панели
+├── sleep_picker.rs   # быстрые часы таймера сна (ADR-0046): кнопка `Icon::Clock`,
+│                     # popup Off/15/30/45/60/90, `UiAction::SetSleepTimer`
 ├── mode_switch.rs    # pill-переключатель «Country | Genre»; клик по Genre сразу
 │                     # открывает popup выбора жанра (без отдельной кнопки)
 ├── station_filter.rs # локальные фильтры: текст, мультивыбор жанров (OR),
@@ -256,7 +258,8 @@ src/ui/
   выполняют `Play`, `ToggleFavorite`, `SelectCountry`, `SwitchMode`, `SelectGenre`,
   `RunSearch`, `LoadMore`, `Roulette`, `ClearHistory`, `SetTheme`, `SetAccent`, `SetLanguage`,
   `ToggleSpectrum`, `SetVizBars`, `SetMotion`, `SetMotionStyle`, `SetAllowFlips`,
-  `SetReduceMotion`, `PreviewVolume`, `CommitVolume`, `TogglePlayback`, `Stop`,
+  `SetReduceMotion`, `SetSleepTimer`, `PreviewVolume`, `CommitVolume`, `TogglePlayback`,
+  `Stop`,
   `PlayRelative`, `Hide`, `Quit`, `TogglePanel`, `ToggleHelp`, `ToggleSettings`,
   `CloseSettings`, `SetWindowMode`, превращая каждое в вызов метода
   `Session`, и после каждого действия просят repaint.
@@ -294,15 +297,16 @@ country-режим выключены, `pulse` считается в `draw_layer
 переключателем Country/Genre, список станций и подвал транспорта; в строке
 режимов шапки стоят 16-полосная лента (`NARROW_VIZ_SIZE` 62×16 — тот же размер,
 что у капсулы Overlay) и громкость `PANEL_VOLUME_WIDTH = 96` px (не рисуется ниже
-`PANEL_VOLUME_MIN = 56` px), в строке бренда — `×`, «Открыть Focus», шестерёнка и
-кубик рулетки; оформление остаётся в окне настроек. `Panel` не входит в
+`PANEL_VOLUME_MIN = 56` px), в строке бренда — `×`, «Открыть Focus», шестерёнка,
+часы таймера сна и кубик рулетки; оформление остаётся в окне настроек. `Panel`
+не входит в
 `WindowMode::ALL` и открывается IPC-командой `orbitfm panel` — её же посылает клик
 бар-виджета (ADR-0033, ред. 2026-10-28); ярлык приложения зовёт `orbitfm mode
 focus` и всегда даёт стол Focus.
 
 | Зона | Содержимое |
 |------|------------|
-| HUD | логотип, `Country/Genre`, поиск (у страны — popup подсказок), индикатор эфира «● LIVE», луна, шестерёнка, кнопка списка, `?`, `×` в правом углу строки; станция и её логотип в HUD не рисуются |
+| HUD | логотип, `Country/Genre`, поиск (у страны — popup подсказок), индикатор эфира «● LIVE», луна, шестерёнка, часы таймера сна, кнопка списка, `?`, `×` в правом углу строки; станция и её логотип в HUD не рисуются |
 | Панель | `Results / Favorites / History` с иконками, локальные фильтры (поле, выпадающий мультивыбор жанров, бейджи выбранных с ×, кнопки «показать/скрыть» и «очистить», `Sort by`, `Compact`), строки станций, «загружено из всего» и «Загрузить ещё» |
 | Transport | favicon 44 px, имя/город/`Now Playing: теги`; группа контролов (`⏮ play ⏭`, stop, heart, `Radio Roulette`) — по центру строки; справа громкость и мини-спектр, у них остаток ширины; зоны текста, контролов и правой группы не пересекаются и клиппятся |
 | Help-карточка | мыши-пиктограммы: Right-drag — orbit, Left click — country/station, Scroll — zoom |
@@ -727,6 +731,14 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
   диапазона показывается `NoticeKey::SettingNotSaved`. Тумблер `queue_wrap`
   даёт `UiAction::SetQueueWrap` → `Session::set_queue_wrap` и сохраняется сразу;
   от него зависят `can` и `skip_availability`.
+- Быстрый таймер сна (ADR-0046, ревизия 2026-11-03): `ui::sleep_picker` рисует
+  часы в правом блоке HUD, в группе контролов капсул Overlay/Listening и в
+  шапке панели бар-виджета. Активный таймер подсвечивается акцентом, подсказка
+  показывает выбранные минуты, popup предлагает Off/15/30/45/60/90 из
+  `settings::SLEEP_CHOICES` и закрывается по клику вне. `HudState`,
+  `OverlayTop`, `Listening` и `PanelHeaderState` несут `sleep_minutes`;
+  `right_block_width` резервирует часы при любой плотности Focus, иначе поиск
+  наезжал бы на контролы.
 - `Palette` и `configure_style` живут в `ui/palette.rs`. `Palette::for_ui(ctx.theme(), accent)`
   вызывается в `Frame::capture` и задаёт цвета панелей, обводки, приглушённого и
   ошибочного текста, подложек и глобуса. В тёмной теме акцент совпадает с цветом маркеров;

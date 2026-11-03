@@ -121,6 +121,15 @@ pub(crate) fn volume_label(snapshot: &TraySnapshot) -> String {
     )
 }
 
+/// Заголовок группы таймера сна: `Sleep timer · 45 min` или `… · Off`.
+pub(crate) fn sleep_label(snapshot: &TraySnapshot) -> String {
+    format!(
+        "{} · {}",
+        i18n::catalog(snapshot.language).settings.sleep_timer,
+        i18n::sleep_option_label(snapshot.language, snapshot.sleep_minutes.unwrap_or(0))
+    )
+}
+
 /// Пункт избранного: добавить или убрать.
 pub(crate) fn favorite_label(snapshot: &TraySnapshot) -> &'static str {
     let common = &i18n::catalog(snapshot.language).common;
@@ -264,6 +273,14 @@ mod tests {
         assert_eq!(favorite_label(&snapshot), "Add to favorites");
         snapshot.favorite = true;
         assert_eq!(favorite_label(&snapshot), "Remove from favorites");
+    }
+
+    #[test]
+    fn sleep_label_shows_the_active_duration() {
+        let mut snapshot = english(Some(wfmu()));
+        assert_eq!(sleep_label(&snapshot), "Sleep timer · Off");
+        snapshot.sleep_minutes = Some(45);
+        assert_eq!(sleep_label(&snapshot), "Sleep timer · 45 min");
     }
 
     #[test]

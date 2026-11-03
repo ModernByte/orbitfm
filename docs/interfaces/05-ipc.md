@@ -238,6 +238,8 @@ error <сообщение>
     "now_playing": "Now playing", "volume": "Volume", "theme": "Theme",
     "theme_system": "System", "theme_dark": "Dark", "theme_light": "Light",
     "about_station": "About station", "open_homepage": "Open homepage",
+    "sleep_timer": "Sleep timer", "sleep_off": "Off",
+    "sleep_minutes": "{minutes} min",
     "state_playing": "on air", "state_paused": "paused",
     "state_buffering": "buffering", "state_reconnecting": "reconnecting",
     "state_stopped": "stopped", "state_error": "error"
@@ -256,7 +258,9 @@ error <сообщение>
   дублируют каталог на 16 языках. Неизвестный язык клиента не влияет — язык
   берётся из настроек приложения. `ui.state_*` — подписи состояний
   воспроизведения для бейджа попапа, `ui.close` — кнопка закрытия
-  выбора страницы.
+  выбора страницы. `ui.sleep_timer`, `ui.sleep_off` и шаблон
+  `ui.sleep_minutes` с `{minutes}` дают быстрым меню расширений те же подписи,
+  что и desktop (ADR-0046).
 - `accent` — токен акцента интерфейса (`blue`, `green`, `amber`, `violet`,
   `rose`, `cyan`): попап и виджеты панелей красят акцент, не дублируя палитру.
 - `sleep` — активный таймер сна (ADR-0046): `minutes` — выбранная
