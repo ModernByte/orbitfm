@@ -1,7 +1,7 @@
 # OrbitFM
 
 **Плеер интернет-радио с 3D-глобусом**  
-Под эгидой [ModernByte](https://github.com/ModernByte) · версия `0.19.0-rc.1`
+Под эгидой [ModernByte](https://github.com/ModernByte) · версия `0.19.0-rc.2`
 
 [![Релиз](https://img.shields.io/github/v/release/ModernByte/orbitfm?include_prereleases)](https://github.com/ModernByte/orbitfm/releases)
 [![Статус CI](https://img.shields.io/github/actions/workflow/status/ModernByte/orbitfm/ci.yml?branch=main)](https://github.com/ModernByte/orbitfm/actions/workflows/ci.yml)
@@ -14,7 +14,7 @@ OrbitFM — плеер интернет-радио, где каталог пок
 и её станции лежат рядом в списке; так же можно искать по жанру или по названию станции. Закрытие окна музыку не
 останавливает: приложение работает одним процессом, живёт в системном трее и принимает команды из терминала и от
 медиа-клавиш. Для экрана есть три режима — от большого рабочего стола с глобусом до компактной капсулы в углу.
-Приоритетная платформа — Linux (Wayland и X11), сборки есть для Windows и macOS; версия `0.19.0-rc.1` —
+Приоритетная платформа — Linux (Wayland и X11), сборки есть для Windows и macOS; версия `0.19.0-rc.2` —
 пре-релиз, отдельные детали ещё могут меняться.
 
 ## Что умеет
@@ -42,8 +42,8 @@ OrbitFM — плеер интернет-радио, где каталог пок
   Now Playing на macOS — в том числе при скрытом окне.
 - **17 языков интерфейса** — «Системный» плюс 16 языков, смена без перезапуска.
 - **Настройки.** Тема (системная / тёмная / светлая), акцент, язык, громкость, визуализатор, реактивность и стиль
-  движения, «Уменьшить движение», компоновка окна, таймер сна, зацикливание очереди и профиль сети.
-  Сохраняются автоматически.
+  движения, «Уменьшить движение», компоновка окна, таймер сна, зацикливание очереди, профиль сети и учёт
+  статистики. Сохраняются автоматически.
 - **Таймер сна.** `orbitfm sleep 30` (15 / 30 / 45 / 60 / 90 минут в настройках) останавливает эфир по истечении
   срока и работает при закрытом окне; оставшееся время видно в `orbitfm status --json`, отмена — `sleep clear`.
 - **Очередь без тупиков.** `Next`/`Previous` идут по текущему видимому списку, а настройка «Зациклить очередь»
@@ -55,6 +55,11 @@ OrbitFM — плеер интернет-радио, где каталог пок
 - **Перенос библиотеки.** `orbitfm library-export <файл>` и `orbitfm library-import <файл>` сохраняют и
   принимают избранное и историю в JSON-схеме 1 с теми же проверками публичных URL, что у каталога: импорт
   сливается по UUID, локальная запись побеждает, приватные адреса отбрасываются.
+- **Статистика прослушивания.** `orbitfm stats` говорит, сколько и чего вы слушали: секунды эфира по станциям,
+  странам и тегам, итоги за всё время и за 7 и 30 суток; `stats --json` отдаёт ту же сводку схемой 1,
+  `stats clear` обнуляет. Засчитываются только секунды играющей станции, раздел «Статистика» в настройках
+  показывает топ-10 с долями и позволяет выключить учёт. Счётчики лежат в `stats.json` в папке пользователя,
+  никуда не отправляются и браузерным расширением не читаются.
 - **Три режима окна** — Focus / Overlay / Listening, переключение из интерфейса и командой `orbitfm mode …`.
 - **Виджет для панели Noctalia v5** и готовые правила окон для niri и Hyprland.
 - **Машиночитаемый статус для интеграций.** `orbitfm status --json` (схема 1) отдаёт состояние, станцию,
@@ -94,19 +99,19 @@ MSI, DMG, `.plasmoid` для Plasma 6 и `install-appimage.sh`; рядом ле�
 
 ### AppImage (Linux x86_64)
 
-Файл называется `OrbitFM-<версия>-x86_64.AppImage`, например `OrbitFM-0.19.0-rc.1-x86_64.AppImage`. Права root и
+Файл называется `OrbitFM-<версия>-x86_64.AppImage`, например `OrbitFM-0.19.0-rc.2-x86_64.AppImage`. Права root и
 установка не нужны — приложение rootless по определению, и `libmpv` с FFmpeg уже внутри:
 
 ```bash
-chmod +x OrbitFM-0.19.0-rc.1-x86_64.AppImage
-./OrbitFM-0.19.0-rc.1-x86_64.AppImage
+chmod +x OrbitFM-0.19.0-rc.2-x86_64.AppImage
+./OrbitFM-0.19.0-rc.2-x86_64.AppImage
 ```
 
 Чтобы добавить приложение в меню и `PATH` без root и без ручного `chmod +x`, положите рядом `install-appimage.sh`
 из релиза и запустите:
 
 ```bash
-bash install-appimage.sh OrbitFM-0.19.0-rc.1-x86_64.AppImage
+bash install-appimage.sh OrbitFM-0.19.0-rc.2-x86_64.AppImage
 ```
 
 Скрипт копирует образ в `~/.local/bin/orbitfm`, ставит desktop entry с абсолютным `Exec`, иконки и metainfo в
@@ -115,7 +120,7 @@ bash install-appimage.sh OrbitFM-0.19.0-rc.1-x86_64.AppImage
 Для обновления запустите скрипт с новым образом.
 
 Если FUSE недоступен (контейнеры, минимальные образы) или не нужна интеграция через монтирование, запускайте в
-режиме распаковки: `APPIMAGE_EXTRACT_AND_RUN=1 ./OrbitFM-0.19.0-rc.1-x86_64.AppImage`. Виджету Noctalia и командам
+режиме распаковки: `APPIMAGE_EXTRACT_AND_RUN=1 ./OrbitFM-0.19.0-rc.2-x86_64.AppImage`. Виджету Noctalia и командам
 `orbitfm …` нужен запускаемый `orbitfm` в `PATH` — скрипт выше ставит его, либо сделайте символьную ссылку на
 AppImage.
 
@@ -250,7 +255,7 @@ kbuildsycoca6 --noincremental
 Виджет также публикуется в Releases отдельным архивом `OrbitFM-<версия>-plasma.plasmoid`:
 
 ```bash
-kpackagetool6 -t Plasma/Applet -i OrbitFM-0.19.0-rc.1-plasma.plasmoid
+kpackagetool6 -t Plasma/Applet -i OrbitFM-0.19.0-rc.2-plasma.plasmoid
 ```
 
 Или в графическом интерфейсе: режим редактирования панели → «Добавить виджеты» → «Установить из файла» → выбрать
@@ -489,6 +494,9 @@ orbitfm network metered     # unlimited | metered | offline-first
 orbitfm theme dark          # system | dark | light
 orbitfm library-export ~/orbitfm-library.json  # избранное и история, схема 1
 orbitfm library-import ~/orbitfm-library.json  # слить с текущей библиотекой по UUID
+orbitfm stats               # сводка прослушанного: всего, станции, страны, теги
+orbitfm stats --json        # та же сводка JSON-схемой 1 (для скриптов)
+orbitfm stats clear         # обнулить счётчики статистики
 orbitfm settings            # открыть настройки (запускает приложение, если нужно)
 orbitfm integration status [цель]            # какие интеграции установлены
 orbitfm integration install <цель>           # плагин, бар-модуль или расширение браузера
