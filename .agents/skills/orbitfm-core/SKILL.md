@@ -92,7 +92,8 @@ orbitfm/
 
 ## Связанные скиллы
 
-При узких задачах дополнительно активируй профильный скилл:
+При узких задачах дополнительно активируй профильный скилл по матрице
+`docs/AGENTS.md` §2.1:
 - `orbitfm-architect` — архитектура и ADR
 - `orbitfm-rust` — стиль и практики Rust
 - `orbitfm-gui` — egui / wgpu / глобус
@@ -101,5 +102,14 @@ orbitfm/
 - `orbitfm-geo` — geo / rstar
 - `orbitfm-ipc` — single-instance и IPC
 - `orbitfm-integration` — Noctalia, MPRIS, WM
+- `orbitfm-product` — приоритеты, scope релизов и порядок волн
+- `orbitfm-android` — Android Companion (Kotlin/Compose, Media3)
+- `orbitfm-tui` — терминальный клиент `orbitfm-tui` на ratatui
+- `orbitfm-listening-ux` — sleep, очередь, profile сети, stats, URL-алиасы
+- `orbitfm-library-portability` — схема 1 export/import библиотеки
 - `orbitfm-docs` — синхронизация документации
 - `orbitfm-patterns` — паттерны (`docs/patterns/00-overview.md`)
+
+Правила применения скиллов главным агентом и субагентами — `docs/AGENTS.md`
+§2.2. При конфликте `SKILL.md` с принятым ADR действует ADR, а скилл
+исправляется в той же задаче.

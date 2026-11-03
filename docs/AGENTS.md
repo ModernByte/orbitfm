@@ -3,7 +3,7 @@
 **Проект:** OrbitFM  
 **Организация:** ModernByte (https://github.com/ModernByte)  
 **Статус:** Обязателен для всех агентов  
-**Последнее обновление:** 2026-10-22  
+**Последнее обновление:** 2026-11-03
 
 Этот документ — единый источник правил для любого AI-агента, работающего с репозиторием.  
 Нарушение правил считается дефектом работы агента.
@@ -63,17 +63,57 @@
 | **orbitfm-geo**           | geo / geojson / rstar, raycasting, Point-in-Polygon       | Гео и выбор страны |
 | **orbitfm-ipc**           | Single-instance, сокет/pipe, протокол команд              | IPC, CLI, lifetime процесса |
 | **orbitfm-integration**   | Noctalia, MPRIS/playwire, window rules                    | Интеграции с окружением |
+| **orbitfm-product**       | Продуктовые приоритеты, scope релизов, порядок волн        | Планирование релиза, оценка фичи, спор «что делать раньше» |
+| **orbitfm-android**       | Android Companion: Kotlin/Compose, Media3, FGS, MediaSession | Любая работа по мобильному клиенту, mobile import и playback |
+| **orbitfm-tui**           | `orbitfm-tui` на ratatui: IPC-клиент, экраны, визуализаторы | Проектирование, реализация и ревью TUI |
+| **orbitfm-listening-ux**  | Sleep timer, очередь next/previous, network profile, stats, URL-алиасы | Изменение повседневных сценариев слушания на desktop и в Android |
+| **orbitfm-library-portability** | Схема 1 export/import, слияние, URL-политика импорта | Формат библиотеки, Settings → Data, связка desktop ↔ Android |
 | **orbitfm-docs**          | Синхронизация SRS, ADR, modules, interfaces, patterns, CHANGELOG | Любое изменение контрактов или документации |
 | **orbitfm-patterns**      | Каталог паттернов, выбор структуры кода                   | Проектирование модулей, рефакторинг структуры |
 
 ### Правила делегирования
 
 1. `orbitfm-core` подгружается **первым** при любой задаче.
-2. Профильный скилл вызывается при входе в соответствующую подсистему.
-3. Если задача затрагивает публичный контракт — обязательно `orbitfm-architect` + `orbitfm-docs`.
-4. При проектировании структуры модуля — `orbitfm-patterns` + `docs/patterns/00-overview.md`.
-5. Код пишется только в связке `orbitfm-rust` + профильный скилл.
-6. Агент не имеет права «перепрыгивать» через ADR при спорных решениях.
+2. Профильный скилл вызывается при входе в соответствующую подсистему по матрице §2.1.
+3. `orbitfm-product` отвечает только за scope и порядок работ; он не отменяет принятый ADR и не расширяет полномочия на код.
+4. Если задача затрагивает публичный контракт — обязательно `orbitfm-architect` + `orbitfm-docs` + профильный скилл.
+5. Rust-код пишется только в связке `orbitfm-rust` + профильный скилл. Для Kotlin/Android обязателен `orbitfm-android`; `orbitfm-rust` к Kotlin не применяется.
+6. Код TUI пишется в связке `orbitfm-tui` + `orbitfm-rust` + `orbitfm-ipc`.
+7. При проектировании структуры модуля — `orbitfm-patterns` + `docs/patterns/00-overview.md`.
+8. Субагент получает в задании явный список скиллов; отчёт начинается со строки «Скиллы: …».
+9. Агент не имеет права «перепрыгивать» через ADR при спорных решениях.
+
+### 2.1. Матрица маршрутизации
+
+| Тип задачи | Основной скилл | Обязательные спутники | Документы до старта |
+|------------|----------------|-----------------------|---------------------|
+| Планирование релиза, scope, «что дальше» | `orbitfm-product` | `orbitfm-core`, `orbitfm-docs`; `orbitfm-architect` при смене контракта | `docs/audit/OrbitFM-future-features.md`, ROADMAP, VERSIONMAP, принятые ADR |
+| Desktop: аудио и эфир | `orbitfm-audio` | `orbitfm-core`, `orbitfm-rust` | ADR-0003, interface 01, module 01 |
+| Desktop: GUI, глобус, визуализаторы | `orbitfm-gui` | `orbitfm-core`, `orbitfm-rust` | ADR-0002, interfaces 04/07, modules 04/07 |
+| Radio Browser, поиск, discovery | `orbitfm-radio` | `orbitfm-core`, `orbitfm-rust` | ADR-0004, interface 02, module 02 |
+| IPC, CLI, single-instance | `orbitfm-ipc` | `orbitfm-core`, `orbitfm-rust` | ADR-0005, interface 05, module 05 |
+| Трей, MPRIS, Noctalia, browser/GNOME | `orbitfm-integration` | `orbitfm-core`, `orbitfm-rust` | interfaces 06/11/14, modules 06/08/12/16/17 |
+| Sleep, очередь, network profile, stats, URL-алиасы | `orbitfm-listening-ux` | `orbitfm-core` + `orbitfm-rust`/`orbitfm-gui`/`orbitfm-ipc` по слою | ADR-0046, interfaces 01/05/09/10 |
+| Экспорт/импорт библиотеки | `orbitfm-library-portability` | `orbitfm-core` + `orbitfm-rust`/`orbitfm-ipc`; `orbitfm-android` для мобильного импорта | ADR-0046, interface 15, module 09, ADR-0025 |
+| Android Companion | `orbitfm-android` | `orbitfm-core`, `orbitfm-product`; `orbitfm-library-portability` и/или `orbitfm-listening-ux` по сценарию | ADR-0045, interface 15, audit §1 |
+| TUI на ratatui | `orbitfm-tui` | `orbitfm-core`, `orbitfm-rust`, `orbitfm-ipc`; `orbitfm-product` для scope | ADR-0047, interface 16, module 19, audit TUI |
+| ADR или публичный контракт | `orbitfm-architect` | `orbitfm-core`, профильный скилл, `orbitfm-docs` | `docs/templates/`, interfaces, modules |
+| Документация и синхронизация | `orbitfm-docs` | `orbitfm-core`, профильный скилл | AGENTS, CONTRIBUTING, затрагиваемые ADR/interfaces/modules |
+
+### 2.2. Правила использования скиллов
+
+Правила обязательны для главного агента и всех субагентов.
+
+1. **Маршрут до работы.** Сначала `orbitfm-core`, затем основной скилл из §2.1 и его обязательные спутники. Порядок источников: принятый ADR → SRS → interfaces/modules → `SKILL.md` → общая практика.
+2. **Конфликт скилла и ADR.** Если `SKILL.md` противоречит принятому ADR или интерфейсу, действует ADR; расхождение в скилле исправляется в той же задаче. Нельзя молча следовать устаревшему скиллу.
+3. **Передача субагенту.** В задании перечисляются: загружаемые скиллы, обязательные документы, границы изменений и ожидаемый отчёт. Отчёт субагента начинается со строки «Скиллы: …»; отсутствие нужного скилла — дефект.
+4. **Скилл не расширяет полномочия.** `orbitfm-product` не разрешает начинать код вне ROADMAP; `orbitfm-android` и `orbitfm-tui` не запускают реализацию без соответствующего ADR и решения владельца; `orbitfm-listening-ux` не ослабляет SSRF/publishable-политику.
+5. **Минимальный набор.** Один основной скилл и только реально нужные поддерживающие, обычно не более двух сверх `orbitfm-core`; условные спутники из §2.1 подключаются лишь при соответствующем сценарии. На стыке подсистем основной — тот, чей контракт или поведение меняется. Не загружать скиллы «для галочки» и не пересказывать их в отчёте.
+6. **Публичный контракт.** Любое изменение IPC, схемы, CLI, статуса или экспорта проходит через `orbitfm-architect` + `orbitfm-docs` и отражается в ADR/interface/module/CHANGELOG.
+7. **Языки и платформы.** Rust — `orbitfm-rust`; Kotlin/Android — `orbitfm-android`; общие правила URL и схемы — из `orbitfm-library-portability`/`orbitfm-listening-ux`. Именование ModernByte из `orbitfm-core` действует везде.
+8. **Достоверность источников.** Каждый скилл ссылается только на существующие пути репозитория и принятые ADR. Новый скилл или изменение маршрута требует записи в §2 и §8 и в CHANGELOG.
+9. **Запрет на самовольную правку правил.** Субагент не меняет `docs/AGENTS.md`, принятые ADR и `.agents/skills/**` без явного указания владельца.
+10. **Итоговый отчёт.** Главный агент указывает использованные скиллы, изменённые документы и выполненные проверки.
 
 ---
 
@@ -85,9 +125,10 @@
 2. `docs/architecture/00-overview.md`
 3. Релевантные ADR в `docs/adr/`
 4. `docs/modules/` и `docs/interfaces/` затронутых модулей
-5. `docs/patterns/00-overview.md` — при проектировании структуры
-6. `docs/CONTRIBUTING.md` и `docs/templates/`
-7. Этот файл (`docs/AGENTS.md`)
+5. `docs/audit/` — исследования и приоритеты (product-контекст)
+6. `docs/patterns/00-overview.md` — при проектировании структуры
+7. `docs/CONTRIBUTING.md` и `docs/templates/`
+8. Этот файл (`docs/AGENTS.md`)
 
 При конфликте документов приоритет: **принятый ADR > SRS > modules/interfaces > код**.
 
@@ -353,7 +394,7 @@ bitflags::bitflags! {
 
 ```
 .agents/skills/
-├── orbitfm-core/
+├── orbitfm-core/                 # обязательная база
 ├── orbitfm-architect/
 ├── orbitfm-rust/
 ├── orbitfm-patterns/
@@ -363,11 +404,20 @@ bitflags::bitflags! {
 ├── orbitfm-geo/
 ├── orbitfm-ipc/
 ├── orbitfm-integration/
+├── orbitfm-product/
+├── orbitfm-android/
+├── orbitfm-tui/
+├── orbitfm-listening-ux/
+├── orbitfm-library-portability/
 └── orbitfm-docs/
 ```
 
-Каждый скилл — `SKILL.md` в своём каталоге.  
+Каждый скилл — `SKILL.md` в своём каталоге.
+
 `orbitfm-core` — обязательная база.
+
+Маршрутизация и правила применения — §2.1–2.2. Скилл, отсутствующий в этой
+таблице или ссылающийся на несуществующие пути, считается дефектом интеграции.
 
 ---
 

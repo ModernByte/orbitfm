@@ -39,6 +39,9 @@
 - [x] README
 - [x] CONTRIBUTING
 - [x] AGENTS.md
+- [x] Маршрутизация скиллов `product`/`android`/`tui`/`listening-ux`/
+      `library-portability` и правила для агентов и субагентов
+      (`docs/AGENTS.md` §2.1–2.2)
 - [x] Модульные спецификации (`docs/modules/`)
 - [x] Интерфейсы (`docs/interfaces/`)
 - [x] Паттерны (`docs/patterns/`) + скилл orbitfm-patterns
