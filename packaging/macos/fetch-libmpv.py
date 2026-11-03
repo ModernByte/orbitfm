@@ -559,21 +559,29 @@ def main() -> None:
         fail(f"неизвестная архитектура: {args.arch}")
 
     args.cache = args.cache.expanduser().resolve()
-    args.prefix = args.prefix.expanduser().resolve()
-    if len(str(args.prefix)) + len(CELLAR_SUFFIX) > PLACEHOLDER_LEN:
+    # ВАЖНО: префикс не резолвим (resolve): на macOS /tmp — симлинк на /private/tmp,
+    # а для бутылок Homebrew нужен сегмент не длиннее 19 символов
+    # (строки вида @@HOMEBREW_PREFIX@@/@@HOMEBREW_CELLAR@@ должны помещаться в
+    # командные структуры Mach-O). `/tmp/orbitfm` — 12 символов, ок; резолв
+    # дал бы `/private/tmp/orbitfm` — 20+ и отказывал бы скрипт.
+    prefix = args.prefix.expanduser()
+    if not prefix.is_absolute():
+        prefix = Path.cwd() / prefix
+    prefix = prefix.absolute()
+    if len(str(prefix)) + len(CELLAR_SUFFIX) > PLACEHOLDER_LEN:
         fail(
-            f"префикс {args.prefix} слишком длинный для бутылок Homebrew "
+            f"префикс {prefix} слишком длинный для бутылок Homebrew "
             f"(нужен сегмент не длиннее {PLACEHOLDER_LEN}): "
-            f"{len(str(args.prefix)) + len(CELLAR_SUFFIX)}"
+            f"{len(str(prefix)) + len(CELLAR_SUFFIX)}"
         )
 
     paths, _ = collect_bottles(args.arch, args.cache)
-    prepare_prefix(args.prefix, args.arch)
-    extract_bottles(paths, args.prefix)
-    changed = relocate_tree(args.prefix)
-    verify(args.prefix, args.arch)
-    print(f"libmpv: {args.prefix}/opt/mpv/lib/libmpv.2.dylib")
-    print(f"dylibbundler: {args.prefix}/opt/dylibbundler/bin/dylibbundler")
+    prepare_prefix(prefix, args.arch)
+    extract_bottles(paths, prefix)
+    changed = relocate_tree(prefix)
+    verify(prefix, args.arch)
+    print(f"libmpv: {prefix}/opt/mpv/lib/libmpv.2.dylib")
+    print(f"dylibbundler: {prefix}/opt/dylibbundler/bin/dylibbundler")
 
 
 if __name__ == "__main__":
