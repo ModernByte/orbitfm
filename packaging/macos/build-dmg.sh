@@ -61,7 +61,7 @@ stub_ref="@executable_path/../Frameworks/liborbitfm-vsscript-stub.0.dylib"
 cat > "$tmp/vsscript-stub.c" <<'EOF'
 void orbitfm_vsscript_stub_init(void) {}
 EOF
-clang -shared -fPIC -o "$stub" "$tmp/vsscript-stub.c"
+clang -shared -fPIC -mmacosx-version-min=13.0 -o "$stub" "$tmp/vsscript-stub.c"
 install_name_tool -id "$stub_ref" "$stub"
 libmpv="$app/Contents/Frameworks/libmpv.2.dylib"
 vsscript_ref="@executable_path/../Frameworks/libvapoursynth-script.0.dylib"
