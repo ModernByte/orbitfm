@@ -27,8 +27,8 @@ APPIMAGETOOL="${APPIMAGETOOL:-$TOOLS_DIR/appimagetool.AppImage}"
 # continuous-ассеты обновляются без смены URL, поэтому скачанный инструмент
 # сверяется с зафиксированным дайджестом. Обновление хеша — осознанная правка
 # вместе с проверкой нового AppImage; свои сборки задаются через env.
-LINUXDEPLOY_SHA256="${LINUXDEPLOY_SHA256:-d900b99faf8656aa613038dafbd2cc23ca7f90794a9a00c9546f0ab572af94dd}"
-APPIMAGETOOL_SHA256="${APPIMAGETOOL_SHA256:-ac7fd56feade6002c2f57db39587113275d351fce911a5fbb29ea84cd0666cab}"
+LINUXDEPLOY_SHA256="${LINUXDEPLOY_SHA256:-df908b19f1ed1cdafa79508d415aa12d6c56ce4d56d4149aa8c09286718706e5}"
+APPIMAGETOOL_SHA256="${APPIMAGETOOL_SHA256:-62aebc77c2149e96b593b94da9bbd1881e0984a56399ff6d7a03b7ddd7c9ce68}"
 
 ensure_tool() {
     local path="$1"

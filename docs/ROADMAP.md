@@ -862,6 +862,9 @@ rc.2 читает карты `af-metadata/level` и `af-metadata/spectrum` це�
       публичная поверхность `ui::widgets` сохранена один в один
 - [x] `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
       `cargo test --locked`: 594 passed, 5 ignored
+- [x] Релизный контур: SHA256-пины `linuxdeploy`/`appimagetool` обновлены
+      после пересборки upstream; AppImage собран локально и отвечает
+      `0.17.0-rc.3`
 - [x] ROADMAP: отмечены опубликованные релизы `v0.13.0-rc.1`/`v0.13.0-rc.2`,
       обновлены размеры и статус заморозки крупных файлов
 - [ ] Тег `v0.17.0-rc.3`, GitHub Release и локальная переустановка приложения,
