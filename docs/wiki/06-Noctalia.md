@@ -53,6 +53,13 @@ flowchart LR
 
 ## Установка
 
+С 0.20.0-rc.2 той же кнопкой это делает установщик интеграций: **«Настройки →
+Интеграции» → Noctalia → «Установить»** или `orbitfm integration install
+noctalia`. Цель не копирует файлов — она регистрирует git-источник и включает
+виджет теми же командами оболочки, а `orbitfm integration uninstall noctalia`
+возвращает состояние включённости, которое было до установки (ADR-0051).
+Ручные команды ниже работают так же и остаются запасным путём.
+
 Команды проверены на Noctalia v5.3.0. Команды `install` у `noctalia msg plugins` **нет** — установка идёт
 через git-источник плагинов:
 
@@ -132,8 +139,11 @@ ls ~/.local/state/noctalia/plugins/materialized/
 На тайловых композиторах Overlay, Listening и Panel без правил растянутся на всю высоту тайла, а Focus встанет в
 центр экрана вместо места под панелью. Готовые файлы из `wm-configs/` фиксируют размеры всех четырёх поверхностей по
 заголовку (`OrbitFM`, `OrbitFM · Overlay`, `OrbitFM · Listening`, `OrbitFM · Panel`), поэтому правила не пересекаются.
+Ставить их вручную не нужно: с 0.20.0-rc.2 за это отвечают цели `niri` и `hyprland` того же установщика интеграций —
+одна кнопка на странице «Интеграции» или `orbitfm integration install niri` (ADR-0051, подробности на странице
+[Интеграции оболочек](11-Интеграции-оболочек)). Ниже — что именно они делают и как проверить результат.
 
-**niri.** Правила удобно подключить отдельным `include`, не трогая остальной конфиг:
+**niri.** Правила подключаются отдельным `include`, остальной конфиг не трогается:
 
 ```kdl
 // ~/.config/niri/config.kdl
@@ -167,7 +177,9 @@ NIRI_SOCKET=<сокет> niri msg windows
 Смотрите `Tile size`, `Window size`, `Workspace-view position`: у Overlay ожидаемое `Window size` 500×620, у
 Listening — 420×152, у Panel — 400×640; цифры, равные размеру тайла, означают, что правило не сработало (`niri validate -c <файл>`).
 
-**Hyprland.** Подключите `wm-configs/orbitfm-hyprland.conf` — там `windowrulev2` с `float`, `center`,
+**Hyprland.** Цель `hyprland` кладёт эти правила в `~/.config/hypr/orbitfm.conf` и применяет их текущему сеансу
+командами `hyprctl keyword windowrulev2 …`; `hyprland.conf` она не редактирует — строку `source` добавляет
+пользователь. Файл `wm-configs/orbitfm-hyprland.conf` — это `windowrulev2` с `float`, `center`,
 `stayfocused`, размерами по заголовку и `noborder`/`noshadow` у капсул и панели:
 
 ```ini

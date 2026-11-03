@@ -1,18 +1,22 @@
 # Модуль: Интеграции оболочек и баров (`src/integration/`, `integrations/`)
 
-**Путь в коде:** `src/integration/{mod,assets,status,reload,waybar,wm}.rs`,
+**Путь в коде:** `src/integration/{mod,assets,status,reload,waybar,noctalia,wm}.rs`,
 `integrations/`  
-**Ответственность:** CLI `orbitfm integration status|install|uninstall`, встроенные
-ассеты оболочек, установка и удаление в пользовательские каталоги, квитанции,
-печать шагов подключения, снимок состояния для окна «Интеграции», CST-правка
-Waybar, перезагрузка баров и runtime-правила Hyprland. Модуль не запускает GUI и
-не общается с IPC; CLI не меняет чужие конфиги. Единственное исключение —
-явная кнопка «Включить в конфиге» в GUI (ADR-0042).  
+**Ответственность:** CLI `orbitfm integration status|install|uninstall` по 17 целям,
+встроенные ассеты оболочек, установка и удаление в пользовательские каталоги,
+квитанции, печать шагов подключения, снимок состояния для окна «Интеграции»,
+CST-правка Waybar, перезагрузка баров, регистрация git-источника Noctalia и
+правила окон niri и Hyprland. Модуль не запускает GUI и не общается с IPC. Из
+чужих конфигов правится ровно одна строка — `include` у niri, с копией
+`config.kdl.orbitfm.bak` и снятием по квитанции; конфиг Waybar меняется только
+явной кнопкой «Включить в конфиге» в GUI (ADR-0042, ADR-0051 § 5). Внешним
+оболочкам командуют только фиксированным argv без shell.  
 **Зависимости:** `anyhow`, `serde`, `serde_json`, `jsonc-parser`, `libc`,
 `tokio` (фоновая операция), `std::fs`, `tempfile` (тесты); ассеты встроены через
 `include_str!`.  
 **Решение:** ADR-0037 «Единая поверхность интеграции — JSON-статус, CLI-команды
-и установщик», ADR-0042 «Управление интеграциями из GUI»
+и установщик», ADR-0042 «Управление интеграциями из GUI», ADR-0051 «Noctalia и
+правила окон как цели интеграции»
 
 ---
 
@@ -23,14 +27,18 @@ Waybar, перезагрузка баров и runtime-правила Hyprland. 
 исключение со штатным форматом KPackage. Установщик живёт внутри бинарника: он раскладывает
 текстовые ассеты по XDG-каталогам пользователя, пишет квитанцию и печатает
 готовый фрагмент конфигурации. CLI-установщик конфиги Waybar, Polybar, i3, sway,
-Quickshell, Plasma и GNOME не редактирует. Исключение — GUI-кнопка «Включить
+Quickshell, Plasma, GNOME и Hyprland не редактирует. Правится ровно одна чужая
+строка — `include` в `~/.config/niri/config.kdl` (цель `niri`, ADR-0051 § 2);
+группа «Правила окон» ограничена ею одной. Второе исключение — GUI-кнопка «Включить
 в конфиге» для Waybar: она через CST добавляет `custom/orbitfm` в `modules-right`,
-сохраняя комментарии и форматирование (ADR-0042 § 2).
+сохраняя комментарии и форматирование (ADR-0042 § 2). Команды оболочкам
+(`noctalia msg plugins …`, `hyprctl keyword windowrulev2 …`) собираются только
+кодом, без подстановки пользовательских строк и без shell (ADR-0051 § 5).
 
 | Живёт в модуле | Не живёт в модуле |
 |---|---|
-| Разбор `integration`, цели, обзор `status` по всем целям, рендер ассетов, проверки путей, квитанции, установка/удаление одной цели, `status` | IPC-протокол (`src/ipc/`), состояние эфира и подписи (`Session`, `i18n`), отрисовка окна и трея |
-| Снимок `TargetStatus` для GUI, фоновая операция установки/удаления, CST-правка Waybar, перезагрузка баров, обнаружение композитора и runtime-правила Hyprland | Запуск оболочки, включение виджета, произвольная правка конфигураций; страница рисуется в `src/ui/settings_panel.rs` (модуль 14) |
+| Разбор `integration`, 17 целей и четыре группы, обзор `status` по всем целям, рендер ассетов, проверки путей, квитанции, установка/удаление одной цели, `status` | IPC-протокол (`src/ipc/`), состояние эфира и подписи (`Session`, `i18n`), отрисовка окна и трея |
+| Снимок `TargetStatus` для GUI, фоновая операция установки/удаления, CST-правка Waybar, перезагрузка баров, обнаружение композитора и runtime-правила Hyprland, регистрация git-источника Noctalia, строка `include` у niri | Запуск самой оболочки и загрузка плагина (её делает Noctalia), произвольная правка конфигураций и произвольные argv; страница рисуется в `src/ui/settings_panel.rs` (модуль 14) |
 
 `parse_invocation` в `src/main.rs` перехватывает `integration` до создания
 tokio-runtime и до маршрутизации IPC, поэтому команда работает без запущенного
@@ -47,7 +55,8 @@ Linux-оболочки.
 | `src/integration/status.rs` | `IntegrationPanel`: снимок `TargetStatus`, состояния `InstallState`, фоновая операция `PanelAction`, события `PanelEvent` |
 | `src/integration/waybar.rs` | Поиск `config.jsonc`/`config`/`config.json`, чтение состояния, CST-вставка `custom/orbitfm`, бэкап `.orbitfm.bak` |
 | `src/integration/reload.rs` | `waybar-msg` → адресный `SIGUSR2` процессам `waybar` → просьба перезапустить вручную; `polybar-msg` |
-| `src/integration/wm.rs` | `Desktop::detect`, `RuntimeRules`, `hyprctl keyword` с фиксированными аргументами, KDL-сниппет niri |
+| `src/integration/noctalia.rs` | Построение фиксированного argv `noctalia msg plugins {list, source list, source add, source remove, enable, disable}`, разбор ответов оболочки, `Flags { source_added, was_enabled }`, регистрация и снятие источника (ADR-0051 § 2) |
+| `src/integration/wm.rs` | `Desktop::detect`, `RuntimeRules`, `hyprctl keyword` с фиксированными аргументами; пути и тексты правил целей (`NIRI_RULE_FILE`, `HYPRLAND_RULE_FILE`, `NIRI_INCLUDE`, `HYPRLAND_SOURCE`), `add_include`/`remove_include` для конфига niri |
 | `integrations/common/orbitfm-bar.sh` | Мост для баров: чтение `orbitfm status`, форматы text/waybar/polybar/i3blocks/swaybar/i3status-rust/genmon, клики |
 | `integrations/common/bar-README.md` | Общая справка по бару |
 | `integrations/{plasma6,gnome,omarchy}/` | Метаданные и код виджетов: Plasmoid, GNOME Shell extension с `stylesheet.css`, Quickshell `BarWidget` |
@@ -55,13 +64,17 @@ Linux-оболочки.
 | `integrations/{xfce,cinnamon,mate,lxqt}/usage.txt` | Инструкции для апплетов вывода команды |
 | `integrations/browser/` | Общий popup и wrapper native host (модуль 17) |
 | `integrations/{chrome,firefox}/` | Манифесты и README браузерных целей |
+| `wm-configs/orbitfm-niri.kdl`, `wm-configs/orbitfm-hyprland.conf` | Тексты правил окон целей `niri` и `hyprland`; встроены в бинарник через `include_str!` и показываются мастером первого запуска (ADR-0041) |
 
 Для бар-целей установка — `orbitfm-bar` (0755), файл конфигурации и `README.md`
 (0644); Waybar дополнительно получает `style.css`. Для оболочек — метаданные,
 код виджета и `README.md`; GNOME дополнительно получает `stylesheet.css`,
 который Shell загружает из каталога расширения автоматически. Итого: Plasma 6 и
 Omarchy — 3 файла, GNOME и Waybar — 4, Polybar, i3blocks, swaybar,
-i3status-rust и апплеты XFCE/Cinnamon/MATE/LXQt — 3. Браузерные цели
+i3status-rust и апплеты XFCE/Cinnamon/MATE/LXQt — 3. У целей группы «Правила
+окон» один файл правил: `cfg/orbitfm.kdl` у niri и `orbitfm.conf` у Hyprland;
+у цели `noctalia` файлов ноль — её след живёт в состоянии оболочки (§ 4.5).
+Браузерные цели
 (`chrome`, `firefox`) устанавливают шесть файлов расширения и дополнительно
 native-манифест в каждый обнаруженный браузер; их раскладка и протокол описаны
 в модуле 17.
@@ -120,8 +133,42 @@ Omarchy — глиф состояния и tooltip без сторонних API
 `изменено пользователем: …`, `отсутствуют файлы: …`.
 
 При чтении квитанции проверяются схема, имя цели и каждый путь: абсолютный,
-без `..` и строго внутри каталога установки. Квитанция пишется во временный
+без `..` и строго внутри каталога установки; для `dirs` дополнительно разрешён
+родитель корня цели — `ensure_dir` помечает уровни, которых до установки не было
+(например, каталог целей при первой установке). Квитанция пишется во временный
 `*.json.tmp` с последующим `rename`, чтобы не оставить половину записанного файла.
+
+Схема остаётся `1`, поля цели `niri` и `noctalia` аддитивны и читаются под
+`#[serde(default)]` (ADR-0051 § 4):
+
+- `dirs[]` — каталоги, которые создал установщик. При снятии удаляется только
+  опустевший каталог, deepest-first; непустой остаётся как есть;
+- `lines[]` — пары «файл + точная строка», добавленные в чужой конфиг. Снятие
+  убирает ровно эти строки и больше ничего;
+- `source_added` и `was_enabled` — признаки `noctalia`: добавляли ли источник
+  `orbitfm` мы и был ли виджет включён до установки. На них опирается снятие,
+  чтобы не удалить чужой источник и не выключить виджет, который пользователь
+  включал сам.
+
+Квитанция цели `niri` выглядит так:
+
+```json
+{
+  "schema": 1,
+  "target": "niri",
+  "version": "0.20.0-rc.1",
+  "binary": "/home/user/.local/bin/orbitfm",
+  "files": [{"path": "…/.config/niri/cfg/orbitfm.kdl", "kind": "asset", "hash": "…"}],
+  "dirs": ["…/.config/niri/cfg"],
+  "lines": [
+    {"path": "…/.config/niri/config.kdl", "line": "include \"./cfg/orbitfm.kdl\""}
+  ]
+}
+```
+
+Файл `config.kdl` лежит вне каталога установки, поэтому путь строки проверяется
+на принадлежность цели так же, как пути файлов, а правка допускается только в
+обычный файл: символическая ссылка отклоняется до первой записи.
 
 ### 4.1. Снимок для страницы «Интеграции»
 
@@ -131,6 +178,13 @@ Omarchy — глиф состояния и tooltip без сторонних API
 `UpdateAvailable`, `Problem`), техническая подробность для hover, найденные
 браузеры и `WaybarStatus` (путь, включён ли модуль, ошибка разбора). Страница
 только читает этот снимок и возвращает `UiAction` (ADR-0042 § 1).
+
+Для целей «Правил окон» и `noctalia` пустая подробность доказывается заметкой
+о шаге, который остался за человеком (`handoff_note`): путь файла правил и строка
+`source = ~/.config/hypr/orbitfm.conf` у Hyprland, добавленная строка `include`
+и её конфиг у niri, зарегистрированный источник и `modernbyte/orbitfm` у
+Noctalia. Заметка появляется только при `Installed` — снятая цель её не
+дублирует (ADR-0051 § 2).
 
 Первичная подпись строки — не прямое отражение `InstallState`: для `NotDetected`
 presentation-слой показывает `не обнаружено` приглушённым цветом независимо от
@@ -187,7 +241,96 @@ Waybar сначала получает документированную ком
 фиксированным набором из 14 правил, без shell и без правки конфига. Для niri
 показывает KDL-блок из `wm-configs/orbitfm-niri.kdl` с кнопкой «Копировать»:
 runtime-интерфейса для window-rule у niri нет. KDE, GNOME и прочие окружения
-получают `Unsupported` и никаких действий (ADR-0041 § 2).
+получают `Unsupported` и никаких действий (ADR-0041 § 2). Мастер первого запуска
+конфиги пользователя по-прежнему не редактирует: точечная правка одной строки
+появилась только у цели `niri` установщика (§ 4.5, ADR-0051).
+
+### 4.5. Цели `noctalia`, `niri` и `hyprland`
+
+Три цели группы «Правила окон» и цели `noctalia` из «Окружений» ставят то, что
+раньше делалось двумя командами и `cp` из README (ADR-0051 § 1–2). Шаг цели
+идёт после раскладки файлов (`apply_target_step`); у остальных целей записи
+остаются чисто файловыми.
+
+**`noctalia`** файлов не раскладывает вообще: цель регистрирует официальный
+git-источник проекта средствами самой оболочки и включает виджет —
+`noctalia msg plugins source add orbitfm git https://github.com/ModernByte/orbitfm`
+и `noctalia msg plugins enable modernbyte/orbitfm`. Загрузку плагина делает
+оболочка, установщик не качает ничего. До включения читаются `plugins list` и
+`source list`: по ним решаются `was_enabled` и `source_added`, а `source add`
+пропускается, если источник `orbitfm` уже зарегистрирован — переустановка на
+машине владельца просто включает виджет. Если `noctalia` нет в `PATH` или
+оболочка не ответила, установка возвращает причину в `detail` и ничего не
+пишет: без оболочки регистрировать нечего.
+
+Снятие — `disable modernbyte/orbitfm`, затем `source remove orbitfm` только за
+наш источник (`source_added`), после чего прежняя включённость возвращается
+(`enable`), если виджет всё ещё доступен из чужого источника. Отказ оболочки
+снятие не отменяет: причина уходит в заметку строки `внимание: …`.
+
+**`niri`** пишет `~/.config/niri/cfg/orbitfm.kdl` (текст —
+`wm-configs/orbitfm-niri.kdl`) и добавляет в `~/.config/niri/config.kdl` ровно
+одну строку `include "./cfg/orbitfm.kdl"`, если такой там ещё нет. Перед первой
+правкой создаётся копия `config.kdl.orbitfm.bak` — тот же приём, что у правки
+Waybar (§ 4.2). Отсутствие `config.kdl` — ошибка установки с указанием пути,
+символическая ссылка тоже отклоняется; запись атомарна и проверяется
+перечитыванием (строка обязана появиться ровно одна). Снятие убирает ровно эту
+целую строку (сравнение по всей строке, не по подстроке), затем файл правил и
+свой каталог `cfg`. Отдельной команды перезагрузки нет: niri 26.04+ перечитывает
+конфиг сам.
+
+**`hyprland`** пишет `~/.config/hypr/orbitfm.conf` (текст —
+`wm-configs/orbitfm-hyprland.conf`) и применяет те же 14 правил на текущий сеанс
+через `hyprctl keyword windowrulev2 <правило из кода>` — по одному вызову на
+правило, без shell. `hyprland.conf` установщик **не** правит: ветка Hyprland
+переводит конфиг на Lua, и верифицированного синтаксиса include на момент
+решения нет (ADR-0051, «Альтернативы»). Поэтому строку подключения
+`source = ~/.config/hypr/orbitfm.conf` показывают в заметке строки страницы
+«Интеграции» и в выводе CLI после установки. Невозможность применить правила на
+сеанс целью не считается: файл остаётся установленным, а причина уходит в
+заметку.
+
+### 4.6. Обнаружение целей
+
+Обнаружение обязано смотреть на оболочку, а не на собственную запись
+установщика (ADR-0051 § 3):
+
+| Цель | Считается обнаруженной, если |
+|---|---|
+| `noctalia` | `noctalia` в `PATH` или `~/.local/state/noctalia` — каталог |
+| `niri` | `niri` в `PATH` или `~/.config/niri/config.kdl` — файл |
+| `hyprland` | `hyprland` либо `hyprctl` в `PATH` или `~/.config/hypr` — каталог |
+
+Файлы правил пишутся только в каталоги, принадлежащие оболочке
+(`~/.config/niri`, `~/.config/hypr`), а `noctalia` файлов не создаёт вовсе.
+Каталоги, которые создал установщик, помечаются в `dirs` и снимаются при
+`uninstall`, если к снятию опустели: тот же механизм освобождает от обманки и
+старые цели `omarchy`, `gnome`, `plasma6`.
+
+### 4.7. Вывод установки: шаги подключения
+
+`install` печатает заголовок `Установлено: <цель> (N файлов)`, затем каталог (если
+он есть), путь квитанции, заметку `внимание: …` при незавершённом действии
+оболочки и блок шагов конкретной цели. Для целей `noctalia`, `niri` и `hyprland`
+файловых сниппетов больше нет, поэтому блок печатает суть:
+
+- `Noctalia` — имя источника, добавлен ли он этой установкой, его URL, состояние
+  виджета `modernbyte/orbitfm` (включён; был включён и до установки) и команда
+  обновления `noctalia msg plugins update orbitfm`;
+- `niri` — путь файла правил, ровно одна добавленная строка
+  `include "./cfg/orbitfm.kdl"` с путём конфига, путь копии `config.kdl.orbitfm.bak`,
+  указание, что строку и файл снимает `orbitfm integration uninstall niri`, и
+  заметка про автоперечитывание niri 26.04+;
+- `Hyprland` — путь файла правил, готовая строка `source = ~/.config/hypr/orbitfm.conf`,
+  которую пользователь добавляет сам, объяснение, почему установщик не пишет её в
+  чужой конфиг, и отметка, что правила текущего сеанса применены через
+  `hyprctl keyword windowrulev2`.
+
+У бар-целей вывод остался прежним: сниппет целиком печатается на stdout,
+конфиги оболочки не трогаются. Строка `каталог:` печатается только когда каталог
+цели действительно существует — у `noctalia` файлов нет, поэтому вместо него
+видно только квитанцию. `status <цель>` по-прежнему печатает каталог, путь
+квитанции и бинарник из неё.
 
 ## 5. Безопасность установки и удаления
 
@@ -201,8 +344,19 @@ runtime-интерфейса для window-rule у niri нет. KDE, GNOME и п
   перезапись и удаление требуют `--force`.
 - Удаление трогает только файлы из квитанции. Пользовательские файлы рядом
   остаются; пустые каталоги установки вычищаются до корня цели, но не выше.
+- Из чужого конфига правится ровно одна строка (`include` у niri), только в
+  обычный файл, только с одноразовой копией `<имя>.orbitfm.bak` и только с
+  удалением по квитанции. Это распространение ADR-0042 § 2 на новый формат, а не
+  разрешение редактора конфигов (ADR-0051 § 5).
+- Каталоги, созданные установщиком, снимаются при `uninstall`, если опустели;
+  непустой каталог не трогается (§ 4.6).
+- Внешние команды — только фиксированный argv из кода (`noctalia msg plugins …`,
+  `hyprctl keyword windowrulev2 …`) без shell и без подстановки пользовательских
+  строк; вывод оболочки только читается и в argv не попадает.
 - `ORBITFM_INTEGRATION_ROOT` подменяет XDG-корни для тестов; путь обязан быть
   абсолютным. Раскладка: `<root>/targets/<цель>` и `<root>/receipts/<цель>.json`.
+  В песочнице живой оболочке не командуют: `hyprctl` и `noctalia` не запускаются,
+  владение источником фиксируется как «наш».
 - Операции GUI вызывают те же `install_one`/`uninstall_one`, поэтому проверки
   путей и квитанций не дублируются и не ослабляются.
 
@@ -213,6 +367,7 @@ runtime-интерфейса для window-rule у niri нет. KDE, GNOME и п
 | `plasma6` | `$XDG_DATA_HOME/plasma/plasmoids/org.modernbyte.orbitfm` | `kbuildsycoca6 --noincremental`, добавить виджет |
 | `gnome` | `$XDG_DATA_HOME/gnome-shell/extensions/orbitfm@modernbyte` | `gnome-extensions enable orbitfm@modernbyte` |
 | `omarchy` | `$XDG_CONFIG_HOME/omarchy/plugins/io.github.modernbyte.orbitfm` | `omarchy-shell shell rescanPlugins`, включить виджет |
+| `noctalia` | файлов нет; квитанция в `$XDG_DATA_HOME/orbitfm/integrations/noctalia.json` | `noctalia msg plugins enable modernbyte/orbitfm` делает сама цель; виджет положить в бар |
 | `waybar` | `$XDG_DATA_HOME/orbitfm/integrations/waybar` | модуль `custom/orbitfm` |
 | `polybar` | `$XDG_DATA_HOME/orbitfm/integrations/polybar` | `[module/orbitfm]` |
 | `i3blocks` | `$XDG_DATA_HOME/orbitfm/integrations/i3blocks` | секция `[orbitfm]` |
@@ -222,10 +377,19 @@ runtime-интерфейса для window-rule у niri нет. KDE, GNOME и п
 | `cinnamon` | `$XDG_DATA_HOME/orbitfm/integrations/cinnamon` | апплет вывода команды |
 | `mate` | `$XDG_DATA_HOME/orbitfm/integrations/mate` | апплет вывода команды |
 | `lxqt` | `$XDG_DATA_HOME/orbitfm/integrations/lxqt` | Command Output / Custom Command |
+| `niri` | `$XDG_CONFIG_HOME/niri` (`cfg/orbitfm.kdl` + строка `include` в `config.kdl`) | строку подключения добавляет установка; niri 26.04+ перечитывает конфиг сам |
+| `hyprland` | `$XDG_CONFIG_HOME/hypr/orbitfm.conf` | правила текущего сеанса ставит `hyprctl keyword`; строку `source = ~/.config/hypr/orbitfm.conf` добавляет пользователь |
 | `chrome` | `$XDG_DATA_HOME/orbitfm/integrations/chrome` + `$XDG_CONFIG_HOME/<браузер>/NativeMessagingHosts` | загрузить `extension` распакованным; см. модуль 17 |
 | `firefox` | `$XDG_DATA_HOME/orbitfm/integrations/firefox` + `~/.mozilla/native-messaging-hosts` | временное дополнение; см. модуль 17 |
 
-Цели ставятся по одной; `status` без цели — обзор всех квитанций. Для Plasma 6
+Целей 17, они разложены по четырём группам `TargetGroup` — бары, окружения,
+правила окон, браузеры (порядок страницы «Интеграции», не CLI). Собственные
+имена оболочек в подписях не переводятся: `Noctalia`, `niri`, `Hyprland`;
+подпись группы «Правила окон» — ключ `group_windows` во всех 16 каталогах i18n
+(ADR-0051 § 1). В CLI цель задаётся именем из `TARGET_LIST`, у части целей есть
+алиасы: `hypr` и `hyprctl` ведут на `hyprland`, `plasma`/`kde` — на `plasma6`,
+`quickshell` — на `omarchy`. Цели ставятся по одной; `status` без цели — обзор
+всех квитанций. Для Plasma 6
 дополнительно собирается `OrbitFM-<версия>-plasma.plasmoid`
 (`packaging/linux/build-plasmoid.py`): детерминированный ZIP с `metadata.json`
 и `contents/ui/main.qml`, где `@VERSION@` и `@ORBITFM@` подставлены. Архив
@@ -256,14 +420,23 @@ Cinnamon/MATE/LXQt управление выносится на отдельны
 stderr. `status` возвращает ошибку, только если не удалось прочитать квитанцию
 (битая схема, чужой путь), а не из-за отсутствия установки.
 
+Отказ записи — ошибка с ненулевым кодом: `noctalia` без команды в `PATH`
+(`нет команды noctalia в PATH`, ничего не написано), `niri` без `config.kdl`
+(`конфиг niri не найден: <путь> — создайте его и повторите установку`),
+симлинк на месте конфига niri. Невыполненное действие оболочки ошибкой не
+считается: Hyprland без отвечающего `hyprctl` остаётся установленным и
+печатает `внимание: правила не применены на сеанс: …`, отказ `noctalia` при
+снятии — заметку той же формы.
+
 ## 8. Тесты и доказательность
 
-Автотесты (`cargo test`, модуль `integration::tests`): разбор целей и `--force`,
+Автотесты (`cargo test`, модуль `integration::tests`): разбор 17 целей, их
+алиасов и `--force`,
 установка и квитанция, идемпотентность, отказ при изменённом файле и успех с
 `--force`, удаление только файлов квитанции, отказ при изменённом файле при
 удалении, `status` для отсутствующего файла, отказ при пути вне каталога.
 
-Отдельно покрыты новые поверхности ADR-0041/0042:
+Отдельно покрыты новые поверхности ADR-0041/0042/0051:
 
 - `integration::waybar`: `injects_module_and_preserves_comments_and_layout`
   (комментарии и отступы на месте), `second_enable_is_idempotent_and_keeps_first_backup`,
@@ -272,7 +445,20 @@ stderr. `status` возвращает ошибку, только если не �
   `finds_config_without_extension`;
 - `integration::wm`: `compositor_variables_win_over_desktop_names`,
   `desktop_names_are_matched_case_insensitively`,
-  `hyprland_rules_are_single_line_fixed_arguments`;
+  `hyprland_rules_are_single_line_fixed_arguments`,
+  `niri_include_points_at_the_installed_rule_file` (строка `include` ссылается на
+  записанный файл), `add_include_is_idempotent_and_backs_up_once`,
+  `add_include_appends_to_text_without_trailing_newline`,
+  `remove_include_drops_only_its_whole_line` (ни комментарий, ни чужое `include`
+  не задеты), `include_edit_refuses_a_symlinked_config`;
+- `integration::noctalia`: `argv_is_the_fixed_command_vector` (argv совпадает с
+  ADR-0051 § 5, shell-символов нет), `plugin_parsers_read_the_shell_listing`,
+  `source_parser_reads_the_source_listing` (источники различаются по имени, не по
+  подстроке адреса), `sandbox_never_commands_the_shell`;
+- обнаружение и раскладка целей: `new_targets_are_detected_by_binary_or_config`,
+  `installer_dirs_are_pruned_so_detection_stays_honest` (каталог-обманка не
+  переживает снятие), `niri_install_edits_include_once_and_uninstall_restores`,
+  `noctalia_round_trip_without_files` (нул файлов, квитанция и бейдж есть);
 - `integration::reload`: `unsupported_targets_ask_for_a_manual_restart` —
   неподдерживаемая цель не получает сигнал;
 - браузерные установки: `installs_chrome_extension_and_native_manifests`,
@@ -299,11 +485,18 @@ stderr. `status` возвращает ошибку, только если не �
 Браузерные цели проверены отдельно: установщик в подставном `HOME` ставит
 6 файлов расширения и native-манифесты для обнаруженных браузеров, `uninstall`
 удаляет их по квитанции; протокол и живая приёмка Chrome/Firefox — в модуле 17.
-Локальная установка 0.16.0-rc.2 разложила все 14 целей в реальный `$HOME`
-командами по одной: Chrome/Firefox — по 6 файлов и native-манифесту (7 записей
-в квитанции), GNOME/Waybar — по 4 файла, `status` подтвердил «установлено».
-Сборка `.plasmoid` проверяется `unzip -l` и релизным workflow; сам формат
-KPackage на машине приёмки не запускался.
+Локальная установка 0.16.0-rc.2 разложила все цели того релиза (14) в реальный
+`$HOME` командами по одной: Chrome/Firefox — по 6 файлов и native-манифесту
+(7 записей в квитанции), GNOME/Waybar — по 4 файла, `status` подтвердил
+«установлено». Сборка `.plasmoid` проверяется `unzip -l` и релизным workflow; сам
+формат KPackage на машине приёмки не запускался.
+
+Формат команд Noctalia и поведение `source remove` сверены с живой оболочкой
+5.4.0 на этапе принятия ADR-0051 § 2 (оттуда же вывод: чужой `path`-источник
+перекрывает виджет, а снятие источника оставляет его выключенным). Ритуал
+локальной выкатки ставит обнаруженные цели; на машине приёмки это `chrome`,
+`firefox`, `noctalia`, `niri`, а `hyprland` остаётся «не обнаружено»
+(ADR-0051, «Последствия»).
 
 Ограничение доказательности: Plasma 6, GNOME Shell, Omarchy/Quickshell,
 Waybar, Polybar, i3blocks, swaybar, i3status-rust, XFCE, Cinnamon, MATE и LXQt
@@ -319,7 +512,9 @@ Waybar, Polybar, i3blocks, swaybar, i3status-rust, XFCE, Cinnamon, MATE и LXQt
 - ADR-0039 — поток событий `orbitfm events`
 - ADR-0041 — мастер первого запуска и runtime-правила Hyprland
 - ADR-0042 — управление интеграциями из GUI, CST-правка Waybar, перезагрузка
-- `docs/interfaces/05-ipc.md` — `status --json` и IPC-глаголы
+- ADR-0051 — Noctalia, niri и Hyprland как цели установщика
+- `docs/interfaces/05-ipc.md` — `status --json`, IPC-глаголы и `integration`
 - `docs/modules/14-ui-settings.md` — страница «Интеграции»
 - `docs/modules/17-browser-companion.md` — браузерные цели
+- `docs/modules/08-noctalia-wm.md` — плагин Noctalia и тексты правил окон
 - `docs/wiki/11-Интеграции-оболочек.md` — пользовательская инструкция

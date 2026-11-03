@@ -128,15 +128,18 @@ root-вьюпорта: цикл завершается, управление в�
     открывает категорию `Integrations`. Арабский язык зеркалит раскладку
     (`Layout::right_to_left`).
 16. Управлять интеграциями из окна настроек (ADR-0042): вкладка `Integrations` показывает
-    группы Bars / Environments / Browsers и состояния `NotInstalled` / `Installed` /
-    `UpdateAvailable` / `Problem`; действия `UiAction::IntegrationInstall/Uninstall/
+    группы Bars / Environments / Windows / Browsers (ADR-0051) и состояния `NotInstalled` /
+    `Installed` / `UpdateAvailable` / `Problem`; действия `UiAction::IntegrationInstall/Uninstall/
     EnableWaybar/Reload` уходят в `IntegrationPanel` и исполняются по одной фоновой
     операции за раз. Правка конфигов — только JSONC CST (`jsonc-parser`) с сохранением
     комментариев и форматирования, одноразовый backup `<имя>.orbitfm.bak`, повторный
-    разбор перед атомарной записью; симлинки отклоняются. Перезапуск — `waybar-msg cmd
-    reload`, targeted `SIGUSR2` или `polybar-msg cmd restart`; `killall`/`pkill` не
-    используются. Операции требуют явного нажатия в GUI, установка native-host берёт
-    абсолютный путь к бинарнику.
+    разбор перед атомарной записью; симлинки отклоняются. Из чужих конфигов оболочек
+    установка правит ровно одну строку: `include` цели `niri` с таким же одноразовым
+    backup `config.kdl.orbitfm.bak`; остальные цели раскладывают только свои файлы,
+    а `noctalia` не пишет ничего и регистрирует источник оболочки командой
+    (ADR-0051). Перезапуск — `waybar-msg cmd reload`, targeted `SIGUSR2` или
+    `polybar-msg cmd restart`; `killall`/`pkill` не используются. Операции требуют
+    явного нажатия в GUI, установка native-host берёт абсолютный путь к бинарнику.
 17. Показывать офлайн-данные и экономный режим (ADR-0043): при `search.offline` панель
     помечает выдачу как локальную, при `session.world.offline()` легенда карты подписывает
     источник снимком; `Session::economy_stream()` включает индикатор `ECO` рядом с

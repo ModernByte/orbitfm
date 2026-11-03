@@ -1,8 +1,10 @@
 # Модуль: Noctalia Plugin и Window Manager Rules
 
 **Путь в коде:**
-- Плагин: `orbitfm/` и каталог `catalog.toml`
-- Правила WM: `wm-configs/` и `src/wm/` (опциональная генерация)
+- Плагин: `orbitfm/` и каталог `catalog.toml`; целью `noctalia` управляет
+  `src/integration/noctalia.rs` (модуль 16)
+- Правила WM: `wm-configs/`; цели `niri` и `hyprland` и правила текущего сеанса —
+  `src/integration/wm.rs` (модуль 16, ADR-0051)
 
 **Ответственность:** Тонкая интеграция с Noctalia v5 и оконными менеджерами.
 
@@ -128,7 +130,13 @@ noctalia plugins lint orbitfm
   `orbitfm`) и `## Usage`.
 - Подключение как источника:
   `noctalia msg plugins source add orbitfm git https://github.com/ModernByte/orbitfm`,
-  затем `noctalia msg plugins enable modernbyte/orbitfm`.
+  затем `noctalia msg plugins enable modernbyte/orbitfm`. Те же два вызова делает
+  цель `noctalia` установщика интеграций (модуль 16 § 4.5, ADR-0051): файлов у неё
+  нет, она регистрирует источник и включает виджет фиксированным argv без shell-оболочки.
+  Перед установкой читаются `noctalia msg plugins list` и
+  `noctalia msg plugins source list`, поэтому `source remove orbitfm` при снятии
+  выполняется только за наш источник, а заранее включённый виджет возвращается к
+  прежней включённости.
 - Внешняя публикация в `noctalia-dev/community-plugins` не выполняется: плагин
   распространяется как git-источник `ModernByte/orbitfm`. Если решение изменится,
   понадобится отдельный PR; в общем магазине `catalog.toml` генерируется CI.
@@ -211,7 +219,13 @@ Plugin API Noctalia не отдаёт прямоугольник виджета,
 углы экрана/выхода.
 
 Файл проверен командой `niri validate -c wm-configs/orbitfm-niri.kdl`.
-Локально его удобно положить отдельным include, не меняя основной конфиг:
+Локально его удобно положить отдельным include; цель `niri` установщика интеграций
+(модуль 16 § 4.5, ADR-0051) делает это за пользователя: пишет
+`~/.config/niri/cfg/orbitfm.kdl` и добавляет в `~/.config/niri/config.kdl` ровно
+одну строку `include "./cfg/orbitfm.kdl"`, снимая перед первой правкой резервную
+копию `config.kdl.orbitfm.bak`. Повторная установка строку не дублирует, а
+`orbitfm integration uninstall niri` убирает ровно свою целую строку и свой файл.
+Так выглядит добавленная строка:
 
 ```kdl
 // ~/.config/niri/config.kdl
@@ -255,8 +269,18 @@ windowrulev2 = noblur, title:^OrbitFM · Panel$
 Начиная с 0.53 он помечен deprecated (новый формат — `windowrule { ... }`), поэтому
 при обновлении файла нужно проверить актуальную документацию Hyprland.
 
-Файлы правил поставляются в `wm-configs/` и копируются пользователем. Модуль
-`src/wm/` для автоматической генерации пока не реализован.
+Файлы правил поставляются в `wm-configs/`, а ставит их цели `niri` и `hyprland`
+установщика интеграций (модуль 16 § 4.5, ADR-0051). `niri` получает
+`~/.config/niri/cfg/orbitfm.kdl` и единственную строку `include` в основном
+конфиге с резервной копией `config.kdl.orbitfm.bak`. `hyprland` получает
+`~/.config/hypr/orbitfm.conf`, и 14 правил из него дополнительно применяются к
+текущему сеансу фиксированными вызовами `hyprctl keyword windowrulev2 …` (без
+shell-оболочки, ADR-0041). `hyprland.conf` установщик не редактирует: строку
+`source = ~/.config/hypr/orbitfm.conf` он только показывает в строке
+«Интеграции» и в выводе CLI — верифицированного синтаксиса подключения на момент
+принятия решения не было, а новая ветка Hyprland переводит конфиг на Lua.
+Модуль `src/wm/` для автоматической генерации правил по-прежнему не реализован:
+установка работает с готовыми файлами из `wm-configs/`, а не генерирует их.
 
 ## 3. Принципы
 
@@ -268,3 +292,7 @@ windowrulev2 = noblur, title:^OrbitFM · Panel$
 
 - ADR-0007: Интеграция с Noctalia v5
 - ADR-0005: Single-instance и IPC
+- ADR-0041: правила окна текущего сеанса (`hyprctl keyword`, сниппет для niri)
+  без правки конфигов пользователем — мастер первого запуска
+- ADR-0051: Noctalia и правила окон как цели интеграции (`noctalia`, `niri`,
+  `hyprland`); установка файлов и регистрация источника — модуль 16 § 4.5

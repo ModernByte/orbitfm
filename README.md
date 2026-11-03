@@ -1,7 +1,7 @@
 # OrbitFM
 
 **Плеер интернет-радио с 3D-глобусом**  
-Под эгидой [ModernByte](https://github.com/ModernByte) · версия `0.20.0-rc.1`
+Под эгидой [ModernByte](https://github.com/ModernByte) · версия `0.20.0-rc.2`
 
 [![Релиз](https://img.shields.io/github/v/release/ModernByte/orbitfm?include_prereleases)](https://github.com/ModernByte/orbitfm/releases)
 [![Статус CI](https://img.shields.io/github/actions/workflow/status/ModernByte/orbitfm/ci.yml?branch=main)](https://github.com/ModernByte/orbitfm/actions/workflows/ci.yml)
@@ -14,7 +14,7 @@ OrbitFM — плеер интернет-радио, где каталог пок
 и её станции лежат рядом в списке; так же можно искать по жанру или по названию станции. Закрытие окна музыку не
 останавливает: приложение работает одним процессом, живёт в системном трее и принимает команды из терминала и от
 медиа-клавиш. Для экрана есть три режима — от большого рабочего стола с глобусом до компактной капсулы в углу.
-Приоритетная платформа — Linux (Wayland и X11), сборки есть для Windows и macOS; версия `0.20.0-rc.1` —
+Приоритетная платформа — Linux (Wayland и X11), сборки есть для Windows и macOS; версия `0.20.0-rc.2` —
 пре-релиз, отдельные детали ещё могут меняться.
 
 ## Что умеет
@@ -66,16 +66,19 @@ OrbitFM — плеер интернет-радио, где каталог пок
   снять подмену — `alias <uuid> remove`. Алиасы живут в локальной библиотеке, экспорт и статус их не
   содержат, браузерное расширение команду ставить не может.
 - **Три режима окна** — Focus / Overlay / Listening, переключение из интерфейса и командой `orbitfm mode …`.
-- **Виджет для панели Noctalia v5** и готовые правила окон для niri и Hyprland.
+- **Виджет для панели Noctalia v5** и готовые правила окон для niri и Hyprland — ставятся той же кнопкой или
+  командой `orbitfm integration install …`, что и остальные цели.
 - **Машиночитаемый статус для интеграций.** `orbitfm status --json` (схема 1) отдаёт состояние, станцию,
   громкость, окно, тему, язык, профиль сети, доступные действия, таймер сна и локализованные подписи;
   `orbitfm events` отдаёт тот же снимок потоком — на нём строятся плагины оболочек и браузерная панель.
-- **Готовые интеграции оболочек.** Каждая цель ставится отдельной командой `orbitfm integration install <цель>`:
-  плагин Plasma 6, расширение GNOME 45–51, виджет Omarchy/Quickshell и модули Waybar, Polybar, i3blocks,
-  swaybar, i3status-rust, а для XFCE, Cinnamon, MATE и LXQt — скрипт и шаги для штатного апплета вывода команды.
-  Виджет Plasma 6 дополнительно публикуется как `.plasmoid` в разделе Releases. Конфиги оболочек не изменяются:
-  установщик раскладывает файлы, печатает готовый сниппет, а квитанции позволяют обновлять и удалять только
-  свои файлы. Подробные шаги для каждой цели — в разделе «Интеграции оболочек и баров».
+- **Готовые интеграции оболочек — 17 целей.** Каждая ставится отдельной командой
+  `orbitfm integration install <цель>` или кнопкой «Установить» в «Настройки → Интеграции»: плагин Plasma 6,
+  расширение GNOME 45–51, виджеты Omarchy/Quickshell и Noctalia, правила окон niri и Hyprland и модули Waybar,
+  Polybar, i3blocks, swaybar, i3status-rust, а для XFCE, Cinnamon, MATE и LXQt — скрипт и шаги для штатного
+  апплета вывода команды. Виджет Plasma 6 дополнительно публикуется как `.plasmoid` в разделе Releases. Конфиги
+  оболочек установщик не переписывает: он раскладывает файлы, печатает готовый сниппет, а из чужих конфигов правит
+  ровно одну строку — `include` у niri (с резервной копией и снятием по квитанции). Подробные шаги для каждой цели —
+  в разделе «Интеграции оболочек и баров».
 - **Панель в браузере.** `orbitfm integration install chrome|firefox` раскладывает popup и native host для
   Chrome, Chromium, Brave, Edge, Vivaldi и Firefox. Панель повторяет выпадающую панель Noctalia: карточка
   станции, транспорт, громкость, тема, избранное, поиск, история и «Play this page» для аудио на открытой
@@ -104,19 +107,19 @@ MSI, DMG, `.plasmoid` для Plasma 6 и `install-appimage.sh`; рядом ле�
 
 ### AppImage (Linux x86_64)
 
-Файл называется `OrbitFM-<версия>-x86_64.AppImage`, например `OrbitFM-0.20.0-rc.1-x86_64.AppImage`. Права root и
+Файл называется `OrbitFM-<версия>-x86_64.AppImage`, например `OrbitFM-0.20.0-rc.2-x86_64.AppImage`. Права root и
 установка не нужны — приложение rootless по определению, и `libmpv` с FFmpeg уже внутри:
 
 ```bash
-chmod +x OrbitFM-0.20.0-rc.1-x86_64.AppImage
-./OrbitFM-0.20.0-rc.1-x86_64.AppImage
+chmod +x OrbitFM-0.20.0-rc.2-x86_64.AppImage
+./OrbitFM-0.20.0-rc.2-x86_64.AppImage
 ```
 
 Чтобы добавить приложение в меню и `PATH` без root и без ручного `chmod +x`, положите рядом `install-appimage.sh`
 из релиза и запустите:
 
 ```bash
-bash install-appimage.sh OrbitFM-0.20.0-rc.1-x86_64.AppImage
+bash install-appimage.sh OrbitFM-0.20.0-rc.2-x86_64.AppImage
 ```
 
 Скрипт копирует образ в `~/.local/bin/orbitfm`, ставит desktop entry с абсолютным `Exec`, иконки и metainfo в
@@ -125,7 +128,7 @@ bash install-appimage.sh OrbitFM-0.20.0-rc.1-x86_64.AppImage
 Для обновления запустите скрипт с новым образом.
 
 Если FUSE недоступен (контейнеры, минимальные образы) или не нужна интеграция через монтирование, запускайте в
-режиме распаковки: `APPIMAGE_EXTRACT_AND_RUN=1 ./OrbitFM-0.20.0-rc.1-x86_64.AppImage`. Виджету Noctalia и командам
+режиме распаковки: `APPIMAGE_EXTRACT_AND_RUN=1 ./OrbitFM-0.20.0-rc.2-x86_64.AppImage`. Виджету Noctalia и командам
 `orbitfm …` нужен запускаемый `orbitfm` в `PATH` — скрипт выше ставит его, либо сделайте символьную ссылку на
 AppImage.
 
@@ -169,7 +172,11 @@ cargo build --release
 OrbitFM поставляет виджет панели как плагин `modernbyte/orbitfm`: кнопка открывает выпадающую панель
 без рамок и заголовка (`orbitfm panel`), повторное нажатие скрывает её. Ярлык приложения в доке или на
 рабочем столе всегда ведёт в полный стол Focus (`orbitfm mode focus`). Нужен Noctalia v5 с Plugin API 3 и `orbitfm`
-в `PATH`. Команды `install` у `noctalia msg plugins` нет — установка идёт через источник плагинов:
+в `PATH`. Команды `install` у `noctalia msg plugins` нет — установка идёт через источник плагинов, и целиком её
+делает одна команда `orbitfm integration install noctalia` (или кнопка «Установить» в «Настройки →
+Интеграции»): цель регистрирует git-источник `orbitfm` и включает виджет командами оболочки, ничего не копируя
+и ничего не скачивая — загрузку плагина делает сама Noctalia. Ручные команды ниже остаются валидной
+альтернативой:
 
 ```bash
 noctalia msg plugins source add orbitfm git https://github.com/ModernByte/orbitfm
@@ -178,7 +185,9 @@ noctalia msg plugins enable modernbyte/orbitfm
 ```
 
 Дальше виджет добавляется в интерфейсе: настройки бара → «Add widget» → **OrbitFM**. Проверить, что плагин на
-месте, можно командой `noctalia msg plugins list`. В настройках виджета («Содержимое виджета») выбирается
+месте, можно командой `noctalia msg plugins list`. Снятие — `orbitfm integration uninstall noctalia`: оно
+выключает виджет и убирает источник `orbitfm`, только если источник добавила эта установка, а если виджет был
+включён вами раньше, прежняя включённость возвращается. В настройках виджета («Содержимое виджета») выбирается
 «Иконка и текст» или только иконка; цвет и глиф отражают `orbitfm status`: зелёный — играет, тёмно-серый
 перечёркнутый — нет сети, красный — ошибка, цвет темы — выключено или пауза. Плагин версии 1.1.0 опрашивает
 состояние раз в две секунды и не владеет воспроизведением.
@@ -186,22 +195,37 @@ noctalia msg plugins enable modernbyte/orbitfm
 ### Правила окон для niri и Hyprland
 
 В тайловых окружениях компактные капсулы без правил растянутся на всю высоту тайла. Готовые файлы лежат в
-`wm-configs/` и фиксируют размеры всех трёх режимов по заголовку окна:
+`wm-configs/` и фиксируют размеры всех трёх режимов по заголовку окна; ставятся они теми же целями установщика —
+`orbitfm integration install niri` и `orbitfm integration install hyprland` (или кнопкой «Установить» в
+«Настройки → Интеграции»), поэтому вручную их подключать больше не нужно.
+
+У niri установка пишет `~/.config/niri/cfg/orbitfm.kdl` и добавляет в `~/.config/niri/config.kdl` ровно одну
+строку:
 
 ```kdl
 // ~/.config/niri/config.kdl
-include "./cfg/orbitfm.kdl"   // скопированный wm-configs/orbitfm-niri.kdl
+include "./cfg/orbitfm.kdl"   // wm-configs/orbitfm-niri.kdl, подключённый установщиком
 ```
 
-Для Hyprland подключите `wm-configs/orbitfm-hyprland.conf` (`windowrulev2`: `float`, `center`, `stayfocused` и
-размеры); этот синтаксис работает в Hyprland 0.52 и в совместимом режиме 0.53+, где помечен как устаревший, — при
-обновлении проверяйте документацию Hyprland. Правила niri дополнительно ставят окно под панель Noctalia (якорь к
-правому верхнему углу) вместо центра экрана; отступ `x` при другой раскладке бара подбирается вручную.
+Перед первой правкой рядом ложится копия `config.kdl.orbitfm.bak`, повторная установка строку не дублирует, а
+`orbitfm integration uninstall niri` убирает ровно эту строку и свой файл. Отдельной команды перечитки нет:
+niri 26.04+ перечитывает конфиг сам.
+
+Hyprland получает `~/.config/hypr/orbitfm.conf`, а 14 правил из него дополнительно ставятся на текущий сеанс
+командами `hyprctl keyword windowrulev2 …` — перезапуск для этого не нужен. Чужой `hyprland.conf` установщик
+**не** правит: ветка Hyprland переводит конфиг на Lua, и верифицированного синтаксиса include нет. Готовую строку
+`source = ~/.config/hypr/orbitfm.conf` печатают вывод установки и подробность строки цели на странице
+«Интеграции» — подключает её человек, если хочет держать правила после перезапуска. Этот синтаксис
+(`windowrulev2`: `float`, `center`, `stayfocused` и размеры) работает в Hyprland 0.52 и в совместимом режиме
+0.53+, где помечен как устаревший, — при обновлении проверяйте документацию Hyprland. Правила niri
+дополнительно ставят окно под панель Noctalia (якорь к правому верхнему углу) вместо центра экрана; отступ `x`
+при другой раскладке бара подбирается вручную.
 
 ## Интеграции оболочек и баров
 
-Каждая интеграция ставится **отдельной командой** — массовой установки нет, потому что у оболочек разные
-шаги подключения и разные проверки:
+Каждая из **17 целей** ставится **отдельной командой** — массовой установки нет, потому что у оболочек разные
+шаги подключения и разные проверки. Цели лежат на странице «Настройки → Интеграции» четырьмя группами: бары,
+окружения, правила окон, браузеры:
 
 ```bash
 orbitfm integration status                  # что уже установлено во всех целях
@@ -209,6 +233,9 @@ orbitfm integration status waybar           # подробнее об одной
 orbitfm integration install plasma6         # плагин Plasma 6
 orbitfm integration install gnome           # расширение GNOME Shell 45–51
 orbitfm integration install omarchy         # виджет Omarchy/Quickshell
+orbitfm integration install noctalia        # виджет Noctalia: git-источник и enable командами оболочки
+orbitfm integration install niri            # ~/.config/niri/cfg/orbitfm.kdl + строка include в config.kdl
+orbitfm integration install hyprland        # ~/.config/hypr/orbitfm.conf + правила текущего сеанса через hyprctl
 orbitfm integration install waybar          # модуль Waybar
 orbitfm integration install polybar         # модуль Polybar
 orbitfm integration install i3blocks        # секция i3blocks
@@ -222,18 +249,35 @@ orbitfm integration install chrome          # Chrome/Chromium/Brave/Edge/Vivaldi
 orbitfm integration install firefox         # Firefox
 ```
 
+Цель `hyprland` принимает и алиасы `hypr`, `hyprctl`. Обнаружение не опирается на собственный след установщика:
+`noctalia` — бинарник в `PATH` или каталог `~/.local/state/noctalia`, `niri` — `niri` в `PATH` или файл
+`~/.config/niri/config.kdl`, `hyprland` — `hyprland`/`hyprctl` в `PATH` или каталог `~/.config/hypr`. У niri
+главный конфиг должен существовать: без `config.kdl` установка отказывает, чтобы не создавать конфиг за
+пользователя.
+
 Если файл цели изменён вручную, установщик откажется его перезаписывать; повторная установка с `--force`
 перезапишет файл. Удаление — `orbitfm integration uninstall <цель>`: оно стирает только файлы из квитанции
-`$XDG_DATA_HOME/orbitfm/integrations/<цель>.json` и не трогает ваши конфиги. Каталог файлов цели —
+`$XDG_DATA_HOME/orbitfm/integrations/<цель>.json`, убирает свою строку `include` из `config.kdl` у niri и снимает
+регистрацию источника у `noctalia`; ваших правок в конфигах она не трогает. Каталог файлов цели —
 `$XDG_DATA_HOME/orbitfm/integrations/<цель>/` (обычно `~/.local/share/orbitfm/integrations/<цель>/`); шаги
 подключения и готовый сниппет печатаются после установки и лежат рядом со скриптом. Всем скриптам нужен запущенный
 OrbitFM; второй экземпляр они не запускают.
+
+Квитанция по-прежнему схемы `1`, а новые поля аддитивны и читаются со значением по умолчанию: `dirs[]` — каталоги,
+которые создал установщик (при снятии удаляется только опустевший, непустой остаётся — пустой каталог больше не
+держит цель в состоянии «обнаружено»), `lines[]` — пары «файл + точная строка», добавленные в чужой конфиг
+(снятие убирает ровно их), и признаки `noctalia`: `source_added` — источник добавила эта установка, `was_enabled` —
+виджет был включён до неё. Переустановка цели эти признаки не теряет, поэтому снятие не удалит чужой источник и не
+выключит виджет, который пользователь включал сам.
 
 | Цель | Что ставится | Как включить |
 |------|--------------|--------------|
 | `plasma6` | виджет Plasma 6: компакт-пилюля и полная карточка | `kbuildsycoca6 --noincremental`, затем «Добавить виджеты» → OrbitFM |
 | `gnome` | расширение GNOME Shell 45–51 со `stylesheet.css` | `gnome-extensions enable orbitfm@modernbyte` |
 | `omarchy` | виджет бара Omarchy/Quickshell | `omarchy-shell shell rescanPlugins`, затем включить в конфиге бара |
+| `noctalia` | git-источник `orbitfm` и включённый виджет `modernbyte/orbitfm`; файлов у цели нет | «Add widget» → OrbitFM в настройках бара; обновления — `noctalia msg plugins update orbitfm` |
+| `niri` | `~/.config/niri/cfg/orbitfm.kdl` и ровно одна строка `include` в `config.kdl` | ничего — niri 26.04+ перечитывает конфиг сам |
+| `hyprland` | `~/.config/hypr/orbitfm.conf` и 14 правил на текущий сеанс (`hyprctl keyword windowrulev2`) | правила после перезапуска: строка `source = ~/.config/hypr/orbitfm.conf` в свой `hyprland.conf` |
 | `waybar` | модуль `custom/orbitfm`, скрипт и `style.css` | добавить модуль в `modules-*` и импортировать стиль |
 | `polybar` | модуль `[module/orbitfm]` и скрипт | подключить `module/orbitfm` в `modules-*` |
 | `i3blocks` | секция `[orbitfm]` и скрипт | добавить секцию в конфиг i3blocks |
@@ -260,7 +304,7 @@ kbuildsycoca6 --noincremental
 Виджет также публикуется в Releases отдельным архивом `OrbitFM-<версия>-plasma.plasmoid`:
 
 ```bash
-kpackagetool6 -t Plasma/Applet -i OrbitFM-0.20.0-rc.1-plasma.plasmoid
+kpackagetool6 -t Plasma/Applet -i OrbitFM-0.20.0-rc.2-plasma.plasmoid
 ```
 
 Или в графическом интерфейсе: режим редактирования панели → «Добавить виджеты» → «Установить из файла» → выбрать
@@ -292,6 +336,35 @@ omarchy-shell shell rescanPlugins
 
 После пересканирования включите виджет OrbitFM в конфигурации бара Omarchy — установщик её не редактирует.
 ЛКМ — пуск/пауза, ПКМ — выпадающая панель, глиф показывает состояние, tooltip — страну, битрейт и громкость.
+
+### Noctalia
+
+```bash
+orbitfm integration install noctalia
+```
+
+Файлов у цели нет: установщик регистрирует git-источник `orbitfm`
+(`https://github.com/ModernByte/orbitfm`) и включает виджет `modernbyte/orbitfm` командами `noctalia msg plugins …`,
+предварительно прочитав `plugins list` и `source list`, чтобы не сломать то, что включал пользователь. Загрузку
+плагина делает сама оболочка — OrbitFM ничего не копирует и не скачивает. Если источник `orbitfm` уже
+зарегистрирован, `source add` не выполняется, а снятие убирает только наш источник и возвращает прежнюю
+включённость виджета, если он всё ещё доступен из чужого источника. Без `noctalia` в `PATH` или при молчащей
+оболочке установка ничего не пишет и возвращает причину. Ручные команды и добавление виджета в интерфейсе — в
+разделе «Виджет для панели Noctalia v5».
+
+### niri и Hyprland
+
+```bash
+orbitfm integration install niri      # ~/.config/niri/cfg/orbitfm.kdl + строка include в config.kdl
+orbitfm integration install hyprland  # ~/.config/hypr/orbitfm.conf + правила текущего сеанса
+```
+
+Поведение подробно описано в разделе «Правила окон для niri и Hyprland»: у niri установщик добавляет в
+`~/.config/niri/config.kdl` ровно одну строку `include "./cfg/orbitfm.kdl"` (с копией `config.kdl.orbitfm.bak`
+перед первой правкой, без дублей при переустановке), а Hyprland дополнительно получает 14 фиксированных правил на
+текущий сеанс командами `hyprctl keyword windowrulev2 …`; чужой `hyprland.conf` установщик не правит — строку
+`source = ~/.config/hypr/orbitfm.conf` показывают в выводе, и подключает её человек. Снятие цели niri убирает ровно
+свою строку и свой файл.
 
 ### Waybar
 
@@ -507,12 +580,18 @@ orbitfm alias <uuid> <url>  # подставить станции её адре�
 orbitfm alias <uuid> remove # снять ручной адрес, играть по каталогу
 orbitfm alias list          # все ручные адреса станций
 orbitfm settings            # открыть настройки (запускает приложение, если нужно)
-orbitfm integration status [цель]            # какие интеграции установлены
-orbitfm integration install <цель>           # плагин, бар-модуль или расширение браузера
-orbitfm integration uninstall <цель>         # удалить только свои файлы
+orbitfm integration status [цель]            # какие интеграции установлены (целей 17)
+orbitfm integration install <цель>           # плагин, бар-модуль, виджет Noctalia, правила окон, расширение браузера
+orbitfm integration uninstall <цель>         # удалить свои файлы, свою строку include и регистрацию источника
 orbitfm quit                # завершить процесс
 orbitfm --help              # -h: список команд; -V / --version — версия сборки
 ```
+
+Цели — `plasma6, gnome, omarchy, noctalia, niri, hyprland, waybar, polybar, i3blocks, swaybar, i3status-rust,
+xfce, cinnamon, mate, lxqt, chrome, firefox`; алиасы `hypr` и `hyprctl` ведут в `hyprland`. После установки
+`integration install` печатает шаги подключения, а у `noctalia`, `niri` и `hyprland` те же ручные шаги хранит и
+подробность строки цели на странице «Интеграции»: файл правил и готовую строку
+`source = ~/.config/hypr/orbitfm.conf` — для Hyprland, добавленную строку `include` и её файл — для niri.
 
 ## Язык интерфейса
 
@@ -561,7 +640,9 @@ Sans Arabic. Это зависимость от окружения, а не де
 - **Нужен лог для задачи на GitHub.** Логи пишет в stderr тот процесс, который поднял GUI: завершите плеер
   (`orbitfm quit`), затем запустите с подробным фильтром — `RUST_LOG=debug orbitfm show 2> ~/orbitfm.log`.
 - **Overlay и Listening растянулись на весь экран** или **вместо флагов квадратики** — не добавлены правила окон
-  тайлового WM (см. раздел про niri и Hyprland) либо не найден системный Noto Color Emoji.
+  тайлового WM: их ставит `orbitfm integration install niri` или `hyprland` (см. раздел про niri и Hyprland;
+  у Hyprland правила живут до перезапуска сеанса, дальше — строка `source` в вашем `hyprland.conf`) либо не найден
+  системный Noto Color Emoji.
 - **Иконки трея нет.** На Linux трей работает по StatusNotifierItem и требует хоста SNI: Noctalia, KDE, Hyprland,
   Sway/waybar; в GNOME нужно расширение вроде AppIndicator/StatusNotifier. Без хоста иконка не появится — это
   штатная деградация, управляйте через `orbitfm …`. На macOS значок живёт в строке меню; на Windows трея пока
@@ -628,7 +709,8 @@ Sans Arabic. Это зависимость от окружения, а не де
 Плагины оболочек 0.16 пока не в первой категории: ассеты проверены статически
 (`qmllint`, `qmlformat`, `node --check`), установщик и бар-скрипт — живым прогоном,
 но сами Plasma 6, GNOME, Omarchy и бары на машине приёмки не запускались;
-подробности — в `docs/modules/16-integrations.md`.
+подробности — в `docs/modules/16-integrations.md`. Из целей ADR-0051 ритуал выкатки
+ставил `noctalia` и `niri` — `hyprland` на машине приёмки остаётся «не обнаружено».
 
 Браузерная панель проверена живым прогоном в Chrome for Testing и Firefox на
 Linux: реальный popup через native host, snapshot и изменения через
@@ -662,7 +744,7 @@ Vivaldi и постоянно подписанный Firefox не запуска
 | [Варианты использования](docs/wiki/08-Варианты-использования.md) | Семь готовых сценариев: фон, язык, второй экран, тишина |
 | [Неполадки](docs/wiki/09-Неполадки.md) | Нет звука, квадратики вместо флагов, растянутая капсула, логи |
 | [Глоссарий](docs/wiki/10-Глоссарий.md) | Термины проекта человеческим языком |
-| [Интеграции оболочек](docs/wiki/11-Интеграции-оболочек.md) | Пошаговая установка Plasma 6 (включая `.plasmoid`), GNOME, Omarchy, баров, XFCE/Cinnamon/MATE/LXQt и браузеров |
+| [Интеграции оболочек](docs/wiki/11-Интеграции-оболочек.md) | Пошаговая установка Plasma 6 (включая `.plasmoid`), GNOME, Omarchy, Noctalia, правил окон niri/Hyprland, баров, XFCE/Cinnamon/MATE/LXQt и браузеров |
 | [Браузерное расширение](docs/wiki/12-Браузерное-расширение.md) | Панель OrbitFM в Chrome/Chromium и Firefox, native host |
 
 ## Благодарности
