@@ -273,6 +273,26 @@
 | UPnP/DLNA | Выход на колонки | Высокая стоимость, узкая ниша |
 | Integration SDK | Публичный пакет для виджет-авторов | После freeze IPC schema |
 | Browser extension | Уже есть companion path — доводить UX, не дублировать player | Сопровождение |
+| TUI на ratatui | Отдельный `orbitfm-tui` — IPC-клиент к ядру: состояние, поиск, библиотека, визуализаторы, btop-подобные модули | Параллельный трек 10–20%, после T0 |
+
+### 4.1. TUI на ratatui — спроектирован, код не начат
+
+- Решение: ADR-0047; контракт — `docs/interfaces/16-tui.md`; модуль —
+  `docs/modules/19-tui.md`; продуктовый аудит —
+  `docs/audit/OrbitFM-tui-ratatui.md`.
+- TUI — **клиент** к single-instance core, а не второй плеер: без libmpv,
+  MPRIS, Radio Browser и чтения `library.json`.
+- v1: Now Playing, Search, Favorites, History, Help; визуализаторы
+  `bars`/`ring`/`scope`/`pulse`; пресеты `desk`/`focus`/`library`/`minimal`;
+  менеджер модулей и `tui.toml`; `stars`/`heat` — T6.
+- Reactive-визуализаторы ждут аддитивного `events --spectrum` (после
+  0.18.0-rc.1); до этого — procedural с явной маркировкой.
+- Чистый SSH требует отдельного headless-ядра; TUI v1 работает при уже
+  запущенном desktop-ядре.
+- Поставка — `cargo install --path crates/orbitfm-tui`; пятый релизный
+  артефакт без решения владельца не добавляется.
+- Приоритет: не впереди Android v1; хороший parallel track или работа между
+  волнами.
 
 ---
 
@@ -335,6 +355,8 @@
 2. Local listening stats (desktop → optional Android).  
 3. Split monster files на desktop.  
 4. Web Explorer как отдельный репозиторий (если нужен рост аудитории).
+5. TUI ratatui T1–T5 параллельным треком (визуализаторы, модули,
+   `tui.toml`); не блокирует Android v1.
 
 ### Волна 4 — optional ecosystem
 
@@ -350,6 +372,7 @@ Discord RPC, D-Bus, desktop Actions, Telegram bot — по одному, по с
 | Sleep / queue | Использование хотя бы 1 раз за сессию у активных пользователей (если появится opt-in analytics — иначе качественные опросы) |
 | Library export | Успешный перенос desktop → Android у бета-тестеров |
 | Техдолг | Ни одного нового файла >1000 LOC без review-исключения |
+| TUI | Установка одной командой; управление эфиром и библиотекой; визуализаторы и компоновки не мешают Android-треку |
 | Фокус продукта | README по-прежнему описывает «3D desktop radio» + «Android companion», не «всё для всех» |
 
 ---
@@ -361,6 +384,9 @@ Discord RPC, D-Bus, desktop Actions, Telegram bot — по одному, по с
 3. **Карта в v1 или строго v1.5?**  
 4. **Google Play в первой публикации** или сначала GitHub APK / F-Droid?  
 5. **Связка library:** только file export или сразу design под Syncthing path?
+6. **TUI:** остаётся source-only (`cargo install`) или получает отдельный
+   артефакт? Когда начинается headless-ядро для чистого SSH?
+7. **Spectrum:** принимать ли `events --spectrum` в core и на какой версии?
 
 ---
 
@@ -370,6 +396,7 @@ Discord RPC, D-Bus, desktop Actions, Telegram bot — по одному, по с
 |------|-----------|
 | 2026-11-03 | Первая версия: идеи после 0.17.0-rc.2; Android Companion как приоритет A |
 | 2026-11-03 | Волна 1: Android Companion зафиксирован ADR-0045; sleep timer, `queue_wrap` и экспорт/импорт библиотеки реализованы в 0.18.0-rc.1 (ADR-0046, интерфейс 15); отмечены статусы §2 и артефакты §6 |
+| 2026-11-03 | Добавлен TUI-трек: ADR-0047, интерфейс 16, модуль 19; визуализаторы, btop-подобные модули, `spectrum`-расширение; поставка source-only |
 
 ---
 

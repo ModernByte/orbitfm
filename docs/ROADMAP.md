@@ -907,6 +907,39 @@ MINOR-пакет поверх 0.17.0-rc.3. Закрывает приоритет
 - [x] Тег `v0.18.0-rc.1`, GitHub Release и локальная переустановка приложения,
       плагина Noctalia и браузерных интеграций
 
+## Трек TUI на ratatui — спроектирован, код не начат (2026-11-03)
+
+Терминальный клиент к работающему ядру: ADR-0047, интерфейс 16, модуль 19.
+Не второй плеер и не второй libmpv; не отменяет Android-приоритет.
+Документы готовы, реализация начинается с T1.
+
+- [x] T0: ADR-0047, `docs/interfaces/16-tui.md`, `docs/modules/19-tui.md`,
+      актуализация `docs/audit/OrbitFM-tui-ratatui.md`, обзорные документы,
+      ROADMAP, CHANGELOG и VERSIONMAP
+- [ ] T1: Cargo workspace и `crates/orbitfm-tui`, ratatui loop, экраны на
+      mock-данных, terminal guard, минимальный размер 60×18
+- [ ] T2: `CliCoreClient`, поток `orbitfm events`, worker команд, Now Playing,
+      play/pause/stop/volume/next/previous/roulette, `q`/`Q`
+- [ ] T3: `library`, избранное и история, `play-library`, `favorite`, refresh
+- [ ] T4: `search`, корреляция `id`, `play-result` с fallback на `play`,
+      таймаут 15 с
+- [ ] T5: визуализаторы `bars`/`ring`/`scope`/`pulse`, пресеты `desk`/
+      `focus`/`library`/`minimal`, менеджер модулей (btop-подобный),
+      `tui.toml`, `events --spectrum` с fallback, Help, быстрый таймер сна,
+      строка статуса, тесты, установка и live-приёмка
+- [ ] T6: визуализаторы `stars`/`heat`, прямой сокет, мышь, image protocol
+- [ ] Headless-ядро (`--headless` или `ORBITFM_HEADLESS=1`) — отдельный трек
+      для чистого SSH; TUI v1 требует уже запущенного ядра
+- [ ] Решение владельца: остаётся ли TUI source-only (`cargo install`) или
+      получает отдельный артефакт; пятый релизный артефакт без решения не
+      добавляется
+
+Критерии готовности TUI v1: живое ядро видно в Now Playing; играют избранное,
+история и поиск; `q` не останавливает эфир, `Q` + подтверждение останавливает;
+есть понятная ошибка без ядра; нет паники при resize и пустых списках;
+визуализаторы и пресеты компоновки переключаются и сохраняются; скрытый
+визуализатор не тикает; `motion=off`/`NO_COLOR` дают статичный читаемый экран.
+
 ## Без версии в этом репозитории
 
 Решения владельца от 2026-10-29, записанные, чтобы не плодить «почему этого нет»:
@@ -923,6 +956,8 @@ MINOR-пакет поверх 0.17.0-rc.3. Закрывает приоритет
   разделение оставшихся крупных файлов (`render/motion.rs`, `ui/globe_view.rs`,
   `app.rs`, `render/camera.rs`) и `src/lib.rs` под публичную поверхность
   native host.
+- **Headless-ядро**: `--headless`/`ORBITFM_HEADLESS=1` без egui-окна (IPC +
+  audio) — предпосылка для TUI на чистом SSH; отдельный ADR, версии нет.
 
 ## Открытые решения — ждут ответа владельца
 

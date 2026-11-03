@@ -5,6 +5,40 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),  
 проект следует [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [Unreleased]
+
+Документация TUI и уточнение импорта библиотеки. Кода TUI нет; поведение
+0.18.0-rc.1 не меняется.
+
+### Добавлено
+- ADR-0047: `orbitfm-tui` — отдельный терминальный клиент к работающему ядру,
+  не второй libmpv/MPRIS; CLI-адаптер `CoreClient`, `q`/`Q`, лимит библиотеки
+  20+20, headless отдельным треком
+- Интерфейс `docs/interfaces/16-tui.md`: команды, кадры `events`, поиск,
+  библиотека, ошибки/таймауты, выход, безопасность; планируемый кадр
+  `spectrum`
+- Модуль `docs/modules/19-tui.md`: состав crate, состояние, event loop,
+  визуализаторы, компоновки, `tui.toml`, тесты, этапы T1–T6
+- Проект визуализаторов TUI: `bars`, `ring`, `scope`, `pulse` (v1),
+  `stars`, `heat` (T6); btop-подобные пресеты `desk`/`focus`/`library`/
+  `minimal`/`dashboard` и включаемые модули
+- Планируемое аддитивное расширение `events --spectrum` и кадр `spectrum`
+  (`ev: 1`, ≤ 30 Hz, только `playing`); в 0.18.0-rc.1 флаг отсутствует
+- AUDIT `docs/audit/OrbitFM-tui-ratatui.md`: принятая архитектура, дизайн
+  визуализаторов и компоновок, риски, критерии MVP
+- ROADMAP: трек TUI T0–T6; обзор архитектуры: внешние клиенты и поставка
+
+### Исправлено
+- Документация импорта библиотеки: локальные `stream`-станции из `play-url`
+  экспортируются, но при импорте пропускаются по публичной URL-политике и
+  учитываются в `skipped`; повторный импорт публичного набора даёт нули
+  (интерфейсы 08/15, модуль 09, wiki)
+
+### Тесты
+- `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
+  `cargo test --locked` — 604 passed, 5 ignored
+- Добавлен `export_import_skips_local_streams_by_public_url_policy`
+
 ## [0.18.0-rc.1] - 2026-11-03
 
 MINOR-пакет «ритуалы слушания»: таймер сна, кольцевая очередь и перенос
