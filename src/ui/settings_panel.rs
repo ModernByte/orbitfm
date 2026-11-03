@@ -868,11 +868,15 @@ fn integration_row(
     let dim = faded_palette(palette, alpha);
     let busy_here = busy == Some(status.target);
     let interactive = busy.is_none();
-    let state_color = match status.state {
-        InstallState::Installed => dim.live,
-        InstallState::UpdateAvailable => dim.accent,
-        InstallState::Problem => dim.error,
-        InstallState::NotInstalled => dim.muted,
+    // Первичная подпись строится по автообнаружению цели, а не только по квитанции:
+    // квитанция — артефакт прошлого ритуала установки и не доказывает, что оболочка
+    // есть на машине (ADR-0042 §1, ред. 2).
+    let (caption, tone) = state_caption(text, status);
+    let state_color = match tone {
+        StateTone::Live => dim.live,
+        StateTone::Accent => dim.accent,
+        StateTone::Error => dim.error,
+        StateTone::Muted => dim.muted,
     };
 
     ui.horizontal(|ui| {
@@ -886,11 +890,7 @@ fn integration_row(
             label.on_hover_text(detail);
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(
-                egui::RichText::new(state_label(text, status.state))
-                    .size(10.5)
-                    .color(state_color),
-            );
+            ui.label(egui::RichText::new(caption).size(10.5).color(state_color));
         });
     });
 
@@ -949,8 +949,6 @@ fn status_notes(text: &i18n::IntegrationsText, status: &TargetStatus) -> Vec<Str
     let mut notes = Vec::new();
     if !status.browsers.is_empty() {
         notes.push(status.browsers.join(", "));
-    } else if status.availability == Availability::NotDetected {
-        notes.push(text.not_detected.to_owned());
     }
     if let Some(waybar) = &status.waybar {
         if waybar.path.is_none() || waybar.error.is_some() {
@@ -976,6 +974,43 @@ fn group_label(text: &i18n::IntegrationsText, group: TargetGroup) -> &'static st
         TargetGroup::Environments => text.group_environments,
         TargetGroup::Browsers => text.group_browsers,
     }
+}
+
+/// Тон первичной подписи состояния. Отдельные строки, а не палитра — чтобы
+/// выбор подписи и цвета оставался чистым и тестируемым без кадра (ADR-0042 §1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StateTone {
+    /// Установка актуальна и цель обнаружена.
+    Live,
+    /// Есть обновление квитанции.
+    Accent,
+    /// Квитанция сломана или чтение не удалось.
+    Error,
+    /// Нечего подчёркивать: цель не обнаружена либо не установлена.
+    Muted,
+}
+
+/// Первичная подпись строки цели: что показать справа и каким тоном.
+///
+/// Не обнаруженная цель всегда получает `not_detected` приглушённо, независимо от
+/// `InstallState`: наличие квитанции на диске — следствие массового ритуала
+/// установки, а не факт наличия оболочки, и «не обнаружено» рядом с зелёным
+/// «установлено» противоречит контракту страницы (ADR-0042 §1, ред. 2). Для
+/// обнаруженных целей поведение прежнее — подпись и тон берутся из квитанции.
+fn state_caption(
+    text: &i18n::IntegrationsText,
+    status: &TargetStatus,
+) -> (&'static str, StateTone) {
+    if status.availability == Availability::NotDetected {
+        return (text.not_detected, StateTone::Muted);
+    }
+    let tone = match status.state {
+        InstallState::Installed => StateTone::Live,
+        InstallState::UpdateAvailable => StateTone::Accent,
+        InstallState::Problem => StateTone::Error,
+        InstallState::NotInstalled => StateTone::Muted,
+    };
+    (state_label(text, status.state), tone)
 }
 
 fn state_label(text: &i18n::IntegrationsText, state: InstallState) -> &'static str {
@@ -1220,5 +1255,125 @@ mod tests {
             assert!(!category_label(&text.settings, category).is_empty());
             assert!(!category_hint(&text.settings, category).is_empty());
         }
+    }
+
+    /// Снимок цели без файлов на диске: страница читает только эти поля.
+    fn integration_status(
+        target: Target,
+        availability: Availability,
+        state: InstallState,
+    ) -> TargetStatus {
+        TargetStatus {
+            target,
+            availability,
+            state,
+            detail: None,
+            waybar: None,
+            browsers: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn undetected_target_never_shows_the_installed_caption() {
+        let text = i18n::catalog(Language::Russian);
+        for target in Target::ALL {
+            for state in [
+                InstallState::NotInstalled,
+                InstallState::Installed,
+                InstallState::UpdateAvailable,
+                InstallState::Problem,
+            ] {
+                // Квитанция на диске — артефакт прошлого ритуала установки
+                // (раскладка всех целей с `--force`), а не факт наличия оболочки:
+                // подпись обязана оставаться «не обнаружено».
+                let status = integration_status(target, Availability::NotDetected, state);
+                let (caption, tone) = state_caption(&text.integrations, &status);
+                assert_eq!(
+                    caption,
+                    "не обнаружено",
+                    "цель {} со состоянием {state:?} показала {caption}",
+                    target.label()
+                );
+                assert_eq!(
+                    tone,
+                    StateTone::Muted,
+                    "цель {} со состоянием {state:?}",
+                    target.label()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn detected_targets_keep_the_receipt_caption_and_tone() {
+        let text = i18n::catalog(Language::Russian);
+        let expected = [
+            (
+                InstallState::NotInstalled,
+                text.integrations.not_installed,
+                StateTone::Muted,
+            ),
+            (
+                InstallState::Installed,
+                text.integrations.installed,
+                StateTone::Live,
+            ),
+            (
+                InstallState::UpdateAvailable,
+                text.integrations.update_available,
+                StateTone::Accent,
+            ),
+            (
+                InstallState::Problem,
+                text.integrations.problem,
+                StateTone::Error,
+            ),
+        ];
+        for (state, caption, tone) in expected {
+            let status = integration_status(Target::Waybar, Availability::Detected, state);
+            assert_eq!(
+                state_caption(&text.integrations, &status),
+                (caption, tone),
+                "обнаруженная цель со состоянием {state:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn not_detected_is_no_longer_duplicated_into_the_notes() {
+        let text = i18n::catalog(Language::Russian);
+        let mut status = integration_status(
+            Target::Waybar,
+            Availability::NotDetected,
+            InstallState::Installed,
+        );
+        assert!(
+            status_notes(&text.integrations, &status).is_empty(),
+            "«не обнаружено» уже в первичной подписи"
+        );
+
+        // Остальные заметки на месте: конфиг Waybar, найденные браузеры и перезапуск браузера.
+        status.waybar = Some(crate::integration::waybar::WaybarStatus {
+            path: None,
+            enabled: false,
+            error: None,
+        });
+        assert_eq!(
+            status_notes(&text.integrations, &status),
+            [text.integrations.config_missing]
+        );
+
+        let browser = TargetStatus {
+            target: Target::Chrome,
+            availability: Availability::NotDetected,
+            state: InstallState::Installed,
+            detail: None,
+            waybar: None,
+            browsers: vec!["chrome"],
+        };
+        assert_eq!(
+            status_notes(&text.integrations, &browser),
+            ["chrome", text.integrations.restart_browser]
+        );
     }
 }
