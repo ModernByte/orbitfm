@@ -39,6 +39,7 @@ ADR-0028.
 | `allow_flips` | перевороты камеры на onset | `false` |
 | `reduce_motion` | отключает геометрию и качку, эфир продолжается | `false` |
 | `queue_wrap` | `next` после последней станции возвращается к первой (`false` — шаг за край запрещён, ADR-0046) | `true` |
+| `network_profile` | `unlimited`, `metered`, `offline-first`; фон и потолок discovery (ADR-0048) | `unlimited` |
 
 Акценты — пресеты с фиксированными RGB-компонентами (`AccentColor::rgb`).
 Произвольный цвет отложен: перетаскивание color picker приводило бы к записи
@@ -62,7 +63,8 @@ $XDG_CONFIG_HOME/orbitfm/settings.json
 $HOME/.config/orbitfm/settings.json   (если XDG_CONFIG_HOME не задан/относителен)
 ```
 
-- Формат — JSON `{ "theme": "...", "accent": "..." }`, читаемый вручную.
+- Формат — JSON `{ "theme": "...", "accent": "...", "network_profile": "..." }`,
+  читаемый вручную.
 - Запись атомарная и durable (`src/storage.rs`): `settings.json.tmp` → `sync_all`
   → `rename` → fsync каталога; каталог создаётся при необходимости. Файл
   переживает не только падение процесса, но и отключение питания.
@@ -112,11 +114,15 @@ $HOME/.config/orbitfm/settings.json   (если XDG_CONFIG_HOME не задан/
   пишется по отпусканию слайдера, а клик, клавиша и щелчок колеса над ним —
   дискретный ввод, который пишет сразу (ADR-0031 § 8).
 - Категория «Аудио» содержит таймер сна (`sleep_minutes`, варианты
-  15/30/45/60/90 и «выключен») и тумблер `queue_wrap`. Таймер хранится не в
-  настройках, а в `Session` (`SleepTimer`): выбор в списке вызывает
-  `UiAction::SetSleepTimer`, а при срабатывании эфир останавливается и
-  появляется уведомление (ADR-0046). `queue_wrap` сохраняется сразу и меняет
-  доступность кнопок/MPRIS `can`. Обе строки получают подписи из `i18n`.
+  15/30/45/60/90 и «выключен»), тумблер `queue_wrap` и профиль сети
+  `network_profile`. Таймер хранится не в настройках, а в `Session`
+  (`SleepTimer`): выбор в списке вызывает `UiAction::SetSleepTimer`, а при
+  срабатывании эфир останавливается и появляется уведомление (ADR-0046).
+  `queue_wrap` сохраняется сразу и меняет доступность кнопок/MPRIS `can`.
+  Профиль сети — выпадающий список `unlimited`/`metered`/`offline-first` с
+  подсказкой под строкой; выбор даёт `UiAction::SetNetworkProfile`, сохраняется
+  сразу и применяется к фону, discovery и favicon без перезапуска (ADR-0048).
+  Все три строки получают подписи из `i18n`.
 - Тумблер «Разрешить HTTP-обложки» (`artwork_allow_http`, категория «Внешний
   вид») сохраняет настройку и сразу переключает политику фетчера через
   `ArtworkFetcher::set_allow_http` (общий `AtomicBool`, ADR-0025 ред. 4).
@@ -143,9 +149,9 @@ $HOME/.config/orbitfm/settings.json   (если XDG_CONFIG_HOME не задан/
 
 Unit-тесты в `src/settings/mod.rs` покрывают XDG-пути и fallback на `HOME`,
 значения по умолчанию, roundtrip темы, акцента, языка, громкости, видимости
-визуализатора, `artwork_allow_http`, `help_visible` и `queue_wrap`, настроек
-движения (включая `motion_style` и `allow_flips`), недостающие поля,
-повреждённый файл и эфемерное хранилище.
+визуализатора, `artwork_allow_http`, `help_visible`, `queue_wrap`,
+`network_profile`, настроек движения (включая `motion_style` и `allow_flips`),
+недостающие поля, повреждённый файл и эфемерное хранилище.
 Отдельно проверяются
 устойчивость к неизвестному коду языка (`language: "klingon"` → `System`,
 остальные поля сохраняются) и кламп громкости при загрузке и записи. В
@@ -163,5 +169,6 @@ Unit-тесты в `src/settings/mod.rs` покрывают XDG-пути и fall
 - ADR-0014: Темы и кастомизация интерфейса
 - ADR-0013 ред. 2: Избранное и история станций (общий подход к JSON и durable-записи)
 - ADR-0046: Ритуалы слушания — `queue_wrap` и таймер сна
+- ADR-0048: Профиль сети — `network_profile`
 - `docs/interfaces/09-settings.md`
 - `docs/modules/07-app-core.md`

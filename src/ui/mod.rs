@@ -33,7 +33,9 @@ use crate::i18n;
 use crate::integration::Target;
 use crate::services::Station;
 use crate::session::WindowMode;
-use crate::settings::{AccentColor, Language, MotionReactivity, MotionStyle, ThemeMode};
+use crate::settings::{
+    AccentColor, Language, MotionReactivity, MotionStyle, NetworkProfile, ThemeMode,
+};
 
 /// Режим поиска выбирает ядро, UI только показывает переключатель.
 pub(crate) use crate::session::search::SearchMode;
@@ -75,6 +77,8 @@ pub(crate) enum UiAction {
     SetSleepTimer(Option<u16>),
     /// Кольцевой переход очереди после последней станции (ADR-0046).
     SetQueueWrap(bool),
+    /// Профиль сети: фоновая загрузка, битрейт и favicon (ADR-0048).
+    SetNetworkProfile(NetworkProfile),
     /// Реактивность аудио-движения глобуса (ADR-0028).
     SetMotion(MotionReactivity),
     /// Характер движения: Auto или один из шести стилей.

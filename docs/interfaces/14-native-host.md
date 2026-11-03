@@ -290,6 +290,9 @@ connectNative("org.modernbyte.orbitfm")
   `sleep clear`; `library-export`/`library-import` запрещены — расширение не
   пишет файлы библиотеки (ADR-0046). Поле `status.sleep` проходит в кадрах
   `events` без изменений.
+- 2026-11-03 (0.19.0-rc.1): команда `network` запрещена — профиль сети
+  меняется только desktop-клиентом (ADR-0048); поле `status.network` проходит
+  в кадрах `events` без изменений.
 
 ## 13. Ссылки
 
@@ -297,5 +300,6 @@ connectNative("org.modernbyte.orbitfm")
 - ADR-0037 — единая поверхность интеграции
 - ADR-0039 — поток событий состояния
 - ADR-0040 — импорт внешних потоков и «Play this page»
+- ADR-0048 — профиль сети (команда `network` вне allowlist)
 - `docs/interfaces/05-ipc.md`, `docs/interfaces/13-events.md`
 - `docs/modules/17-browser-companion.md`

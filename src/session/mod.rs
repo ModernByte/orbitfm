@@ -36,7 +36,9 @@ use crate::library::StationLibrary;
 use crate::media::MediaControls;
 use crate::render::GlobeCamera;
 use crate::services::{RadioBrowserClient, Station};
-use crate::settings::{AccentColor, Language, MotionReactivity, SettingsStore, ThemeMode};
+use crate::settings::{
+    AccentColor, Language, MotionReactivity, NetworkProfile, SettingsStore, ThemeMode,
+};
 use crate::station_filter::CountryFilterState;
 use crate::text::single_line;
 use crate::tray::{TrayHandle, TraySnapshot};
@@ -324,6 +326,11 @@ impl Session {
         self.language
     }
 
+    /// Текущий профиль сети (ADR-0048): его читают мир, поиск и presentation.
+    pub(crate) fn network_profile(&self) -> NetworkProfile {
+        self.settings.settings().network_profile
+    }
+
     /// Открывает окно настроек; в Listening его нет (ADR-0031).
     pub(crate) fn open_settings(&mut self) {
         if self.window.mode == WindowMode::Listening {
@@ -567,6 +574,7 @@ impl Session {
             station,
             self.settings.settings().theme,
             self.settings.settings().accent,
+            self.network_profile(),
             self.language,
             can_previous,
             can_next,
@@ -630,6 +638,8 @@ struct StatusPayload {
     window: StatusWindow,
     theme: &'static str,
     accent: &'static str,
+    /// Профиль сети (ADR-0048): аддитивное поле схемы 1.
+    network: &'static str,
     language: &'static str,
     can: StatusCan,
     /// Активный таймер сна: `null`, когда таймер выключен (ADR-0046).
@@ -802,6 +812,7 @@ fn build_status_payload(
     station: Option<&Station>,
     theme: ThemeMode,
     accent: AccentColor,
+    network: NetworkProfile,
     language: Language,
     can_previous: bool,
     can_next: bool,
@@ -821,6 +832,7 @@ fn build_status_payload(
         },
         theme: theme.as_str(),
         accent: accent.as_str(),
+        network: network.as_str(),
         language: language.code(),
         can: StatusCan {
             previous: can_previous,
@@ -978,6 +990,7 @@ mod tests {
             None,
             ThemeMode::Dark,
             AccentColor::Violet,
+            NetworkProfile::Unlimited,
             Language::Russian,
             false,
             false,
@@ -996,6 +1009,7 @@ mod tests {
         assert_eq!(value["window"]["visible"], false);
         assert_eq!(value["window"]["mode"], "panel");
         assert_eq!(value["theme"], "dark");
+        assert_eq!(value["network"], "unlimited");
         assert_eq!(value["language"], "ru");
         assert_eq!(value["can"]["previous"], false);
         assert_eq!(value["can"]["next"], false);
@@ -1012,6 +1026,7 @@ mod tests {
             None,
             ThemeMode::Dark,
             AccentColor::Violet,
+            NetworkProfile::Unlimited,
             Language::Russian,
             true,
             false,
@@ -1037,6 +1052,7 @@ mod tests {
             Some(&station),
             ThemeMode::System,
             AccentColor::Green,
+            NetworkProfile::Unlimited,
             Language::English,
             true,
             true,
@@ -1085,6 +1101,7 @@ mod tests {
             Some(&station),
             ThemeMode::System,
             AccentColor::Green,
+            NetworkProfile::Unlimited,
             Language::English,
             true,
             true,
@@ -1108,6 +1125,7 @@ mod tests {
                 None,
                 ThemeMode::Light,
                 AccentColor::Blue,
+                NetworkProfile::Unlimited,
                 language,
                 false,
                 false,
@@ -1162,6 +1180,7 @@ mod tests {
             None,
             ThemeMode::Dark,
             AccentColor::Amber,
+            NetworkProfile::Unlimited,
             Language::English,
             false,
             false,

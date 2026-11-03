@@ -192,6 +192,61 @@ impl MotionStyle {
     }
 }
 
+/// Профиль сети: сколько трафика OrbitFM тратит на каталог (ADR-0048).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NetworkProfile {
+    #[default]
+    Unlimited,
+    Metered,
+    OfflineFirst,
+}
+
+impl NetworkProfile {
+    pub const ALL: [Self; 3] = [Self::Unlimited, Self::Metered, Self::OfflineFirst];
+
+    /// Имя профиля в IPC, JSON-статусе и `settings.json`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Unlimited => "unlimited",
+            Self::Metered => "metered",
+            Self::OfflineFirst => "offline-first",
+        }
+    }
+
+    /// Фоновые запросы каталога (мировой снимок, favicon) разрешены.
+    pub fn allows_background_network(self) -> bool {
+        self != Self::OfflineFirst
+    }
+
+    /// Потолок битрейта для пользовательского поиска; `None` — без потолка.
+    pub fn bitrate_cap(self) -> Option<u32> {
+        matches!(self, Self::Metered).then_some(METERED_BITRATE_CAP)
+    }
+
+    /// Станций в мировом снимке; `0` — фоновая загрузка не начинается.
+    pub fn world_sample_limit(self) -> u32 {
+        match self {
+            Self::Unlimited => 1000,
+            Self::Metered => 250,
+            Self::OfflineFirst => 0,
+        }
+    }
+
+    /// Одновременно летящих запросов favicon (ADR-0016).
+    pub fn favicon_in_flight(self) -> usize {
+        match self {
+            Self::Unlimited => 8,
+            Self::Metered => 2,
+            Self::OfflineFirst => 0,
+        }
+    }
+}
+
+/// Потолок битрейта метрированного профиля: разговорное радио и лёгкие
+/// потоковые станции остаются доступны, видео-битрейты отсекаются.
+pub const METERED_BITRATE_CAP: u32 = 128;
+
 /// Настройки оформления и поведения.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -227,6 +282,8 @@ pub struct Settings {
     /// `next` после последней станции возвращается к первой. Выключение
     /// делает края очереди остановками (ADR-0046).
     pub queue_wrap: bool,
+    /// Профиль сети: фоновая загрузка, битрейт и favicon (ADR-0048).
+    pub network_profile: NetworkProfile,
 }
 
 /// Доступные варианты числа столбцов визуализатора.
@@ -256,6 +313,7 @@ impl Default for Settings {
             artwork_allow_http: false,
             onboarding_done: false,
             queue_wrap: true,
+            network_profile: NetworkProfile::Unlimited,
         }
     }
 }
@@ -444,6 +502,15 @@ impl SettingsStore {
         self.save()
     }
 
+    /// Профиль сети (ADR-0048): сохраняется сразу, как остальные переключатели.
+    pub fn set_network_profile(&mut self, profile: NetworkProfile) -> Result<(), SettingsError> {
+        if self.settings.network_profile == profile {
+            return Ok(());
+        }
+        self.settings.network_profile = profile;
+        self.save()
+    }
+
     /// Мастер первого запуска пройден или пропущен (ADR-0041).
     pub fn set_onboarding_done(&mut self) -> Result<(), SettingsError> {
         if self.settings.onboarding_done {
@@ -596,6 +663,11 @@ mod tests {
             !store.settings().artwork_allow_http,
             "HTTP-обложки по умолчанию выключены"
         );
+        assert_eq!(
+            store.settings().network_profile,
+            NetworkProfile::Unlimited,
+            "старый файл получает безлимитный профиль"
+        );
     }
 
     #[test]
@@ -687,6 +759,40 @@ mod tests {
 
         let store = SettingsStore::load(path).unwrap();
         assert!(store.settings().artwork_allow_http);
+    }
+
+    #[test]
+    fn roundtrip_persists_network_profile() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        {
+            let mut store = SettingsStore::load(path.clone()).unwrap();
+            store.set_network_profile(NetworkProfile::Metered).unwrap();
+        }
+
+        let store = SettingsStore::load(path).unwrap();
+        assert_eq!(store.settings().network_profile, NetworkProfile::Metered);
+    }
+
+    #[test]
+    fn network_profile_maps_tokens_and_limits() {
+        assert_eq!(NetworkProfile::Unlimited.as_str(), "unlimited");
+        assert_eq!(NetworkProfile::Metered.as_str(), "metered");
+        assert_eq!(NetworkProfile::OfflineFirst.as_str(), "offline-first");
+        assert_eq!(NetworkProfile::Unlimited.bitrate_cap(), None);
+        assert_eq!(
+            NetworkProfile::Metered.bitrate_cap(),
+            Some(METERED_BITRATE_CAP)
+        );
+        assert_eq!(NetworkProfile::OfflineFirst.bitrate_cap(), None);
+        assert_eq!(NetworkProfile::Unlimited.world_sample_limit(), 1000);
+        assert_eq!(NetworkProfile::Metered.world_sample_limit(), 250);
+        assert_eq!(NetworkProfile::OfflineFirst.world_sample_limit(), 0);
+        assert!(!NetworkProfile::OfflineFirst.allows_background_network());
+        assert!(NetworkProfile::Metered.allows_background_network());
+        assert_eq!(NetworkProfile::Unlimited.favicon_in_flight(), 8);
+        assert_eq!(NetworkProfile::Metered.favicon_in_flight(), 2);
+        assert_eq!(NetworkProfile::OfflineFirst.favicon_in_flight(), 0);
     }
 
     #[test]

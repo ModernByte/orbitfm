@@ -80,6 +80,31 @@ impl MotionStyle {
     pub fn requires_bands(self) -> bool;
 }
 
+/// Профиль сетевого поведения (ADR-0048).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NetworkProfile {
+    #[default]
+    Unlimited,
+    Metered,
+    OfflineFirst,
+}
+
+impl NetworkProfile {
+    pub const ALL: [Self; 3];
+    /// Токен для IPC и `status --json`.
+    pub fn as_str(self) -> &'static str;
+    /// Разрешены ли фоновые сетевые загрузки (мир, favicon).
+    pub fn allows_background_network(self) -> bool;
+    /// Потолок битрейта discovery; `None` — без ограничения.
+    pub fn bitrate_cap(self) -> Option<u32>;
+    /// Размер мировой выборки; `0` — фоновая загрузка не нужна.
+    pub fn world_sample_limit(self) -> u32;
+}
+
+/// Потолок битрейта discovery в профиле `Metered`.
+pub const METERED_BITRATE_CAP: u32 = 128;
+
 /// Язык интерфейса (ADR-0030); контракт — `docs/interfaces/12-i18n.md`.
 /// Здесь используются `ALL`, `code()`, `native_name()` и `resolve()`.
 pub use language::Language;
@@ -117,6 +142,8 @@ pub struct Settings {
     pub reduce_motion: bool,
     /// `next` после последней станции возвращается к первой (ADR-0046).
     pub queue_wrap: bool,
+    /// Профиль сети: фон, discovery и favicon (ADR-0048).
+    pub network_profile: NetworkProfile,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -155,6 +182,8 @@ impl SettingsStore {
     pub fn set_allow_flips(&mut self, allow: bool) -> Result<(), SettingsError>;
     pub fn set_reduce_motion(&mut self, reduce: bool) -> Result<(), SettingsError>;
     pub fn set_queue_wrap(&mut self, wrap: bool) -> Result<(), SettingsError>;
+    pub fn set_network_profile(&mut self, profile: NetworkProfile)
+        -> Result<(), SettingsError>;
 }
 
 /// Стандартный путь по XDG Base Directory Specification.
@@ -189,6 +218,7 @@ pub fn default_path() -> Result<PathBuf, SettingsError>;
 | `set_motion_style` | Меняет характер движения (`Auto` или один из шести стилей); сохраняет только при изменении |
 | `set_allow_flips` | Разрешает перевороты камеры; по умолчанию `false`, сохраняет только при изменении |
 | `set_queue_wrap` | Включает кольцевой переход очереди; по умолчанию `true`, сохраняет только при изменении (ADR-0046) |
+| `set_network_profile` | Меняет профиль сети (`unlimited`/`metered`/`offline-first`); по умолчанию `unlimited`, сохраняет только при изменении (ADR-0048) |
 
 ## 3. Расположение и формат
 
@@ -213,7 +243,8 @@ pub fn default_path() -> Result<PathBuf, SettingsError>;
   "motion_style": "auto",
   "allow_flips": false,
   "reduce_motion": false,
-  "queue_wrap": true
+  "queue_wrap": true,
+  "network_profile": "unlimited"
 }
 ```
 
@@ -221,11 +252,11 @@ pub fn default_path() -> Result<PathBuf, SettingsError>;
 `accent` — `blue`/`green`/`amber`/`violet`/`rose`/`cyan`, `motion` —
 `off`/`low`/`normal`/`high`, `motion_style` — `auto`/`soft-pulse`/`groove-sway`/
 `bass-drop`/`ambient-drift`/`sparkle-twitch`/`beat-march`, `language` —
-`system`/`en`/`ru`/`uk`/`pl`/`fr`/`de`/`es`/`it`/`pt`/`tr`/`ar`/`hi`/`id`/`zh`/`ko`/`ja`.
-`viz_bars` при
+`system`/`en`/`ru`/`uk`/`pl`/`fr`/`de`/`es`/`it`/`pt`/`tr`/`ar`/`hi`/`id`/`zh`/`ko`/`ja`,
+`network_profile` — `unlimited`/`metered`/`offline-first`. `viz_bars` при
 загрузке притягивается к ближайшему из 16/24/32, `volume` клампится в
 `0.0..=1.0`. Отсутствующие поля заменяются значениями по умолчанию (включая
-`queue_wrap: true` в старых файлах). Неизвестное
+`queue_wrap: true` и `network_profile: "unlimited"` в старых файлах). Неизвестное
 значение enum — ошибка разбора, кроме `language`: неизвестный код языка даёт
 `System` и не стоит остальных настроек (`language::deserialize_language`).
 
@@ -260,8 +291,9 @@ Application Core затемняет акцент для текста (ссылк
 Подписей у самих enum'ов нет: `MotionReactivity::label`, `MotionStyle::label` и
 `WindowMode::label` удалены как мёртвый код. Единственное место, где переводятся
 значения настроек, — `src/i18n/labels.rs`: `theme_label`, `accent_label`,
-`motion_label`, `style_label`, `language_label` (ADR-0030). Модуль `settings`
-не знает про каталог.
+`motion_label`, `style_label`, `language_label`, `network_profile_label` и
+`network_profile_hint` (ADR-0030, ADR-0048). Модуль `settings` не знает про
+каталог.
 
 ## 6. Тесты
 
@@ -282,6 +314,7 @@ Application Core затемняет акцент для текста (ссылк
 - `motion_reactivity_caps_and_limits`
 - `motion_styles_have_ids_and_band_requirements`
 - `roundtrip_persists_visualizer_and_help`
+- `roundtrip_persists_network_profile`, `network_profile_maps_tokens_and_limits`
 - `out_of_range_bar_count_snaps_to_nearest_choice`
 - `corrupt_file_returns_parse_error`
 - `ephemeral_store_keeps_changes_without_file`
@@ -298,4 +331,5 @@ Application Core затемняет акцент для текста (ссылк
   `visualizer_enabled`, commit-on-release)
 - ADR-0041: Встроенные шрифты и мастер первого запуска (`onboarding_done`,
   `existed_at_load`)
+- ADR-0048: Профиль сети (`network_profile`)
 - `docs/modules/10-settings.md`, `docs/modules/14-ui-settings.md`

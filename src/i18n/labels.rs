@@ -1,6 +1,8 @@
 //! Подписи enum'ов настроек: единственное место, где i18n знает о `settings`.
 
-use crate::settings::{AccentColor, Language, MotionReactivity, MotionStyle, ThemeMode};
+use crate::settings::{
+    AccentColor, Language, MotionReactivity, MotionStyle, NetworkProfile, ThemeMode,
+};
 
 use super::catalog;
 
@@ -56,6 +58,24 @@ pub(crate) fn language_label(ui: Language, value: Language) -> &'static str {
     }
 }
 
+pub(crate) fn network_profile_label(ui: Language, profile: NetworkProfile) -> &'static str {
+    let labels = &catalog(ui).labels;
+    match profile {
+        NetworkProfile::Unlimited => labels.network_unlimited,
+        NetworkProfile::Metered => labels.network_metered,
+        NetworkProfile::OfflineFirst => labels.network_offline_first,
+    }
+}
+
+pub(crate) fn network_profile_hint(ui: Language, profile: NetworkProfile) -> &'static str {
+    let strings = &catalog(ui).settings;
+    match profile {
+        NetworkProfile::Unlimited => strings.network_unlimited_hint,
+        NetworkProfile::Metered => strings.network_metered_hint,
+        NetworkProfile::OfflineFirst => strings.network_offline_first_hint,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -70,6 +90,20 @@ mod tests {
         assert_eq!(style_label(ui, MotionStyle::BeatMarch), "Beat March");
         assert_eq!(language_label(ui, Language::System), "System");
         assert_eq!(language_label(ui, Language::Japanese), "日本語");
+        assert_eq!(
+            network_profile_label(ui, NetworkProfile::OfflineFirst),
+            "Offline-first"
+        );
+    }
+
+    #[test]
+    fn every_network_profile_has_a_label_and_hint() {
+        for language in [Language::English, Language::Russian, Language::Japanese] {
+            for profile in NetworkProfile::ALL {
+                assert!(!network_profile_label(language, profile).is_empty());
+                assert!(!network_profile_hint(language, profile).is_empty());
+            }
+        }
     }
 
     #[test]

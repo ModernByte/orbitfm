@@ -37,8 +37,13 @@ impl RadioBrowserClient {
     /// Случайная станция с координатами для Roulette (до трёх попыток).
     /// `exclude` — UUID, которые нельзя выдавать (текущий эфир и недавняя
     /// история): сервер кэширует ответ по URL, поэтому случайность
-    /// обеспечивает клиент.
-    pub async fn random_station(&self, exclude: &[String]) -> Result<Station, RadioError>;
+    /// обеспечивает клиент. `bitrate_max` — серверный потолок discovery
+    /// (профиль `Metered`, ADR-0048).
+    pub async fn random_station(
+        &self,
+        exclude: &[String],
+        bitrate_max: Option<u32>,
+    ) -> Result<Station, RadioError>;
 
     pub async fn get_station(&self, station_uuid: &str) -> Result<Station, RadioError>;
 
@@ -58,6 +63,7 @@ pub struct SearchParams {
     pub offset: u32,
     pub hide_broken: bool,
     pub has_geo_info: bool,                // только станции с координатами
+    pub bitrate_max: Option<u32>,          // потолок битрейта (`bitrateMax`)
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -123,6 +129,10 @@ pub struct Station {
 больше не выставляет его для поиска: список страны полный и пагинируется, а
 маркеры — подмножество строк с координатами (ADR-0036, ред. 2026-10-28).
 Валидацию координат и группировку маркеров выполняет Application Core (ADR-0012).
+`bitrate_max` добавляет `bitrateMax=<n>`; `None` параметр не передаёт. Потолок
+применяется только к discovery: профиль `Metered` выставляет 128, профиль
+`offline-first` — без потолка. Станции с неизвестным битрейтом (`0`) не
+отбрасываются на клиенте — решение остаётся за каталогом (ADR-0048).
 
 `random_station` берёт пачку из 24 станций со случайным `offset` в `0..499`:
 кэш Radio Browser отвечает по URL, и при `limit=1` каждый цикл возвращалась
@@ -132,6 +142,14 @@ pub struct Station {
 подходящих нет, запрос повторяется с новым `offset` (до трёх раз), затем
 возвращается `NotFound`. Случайность и исключения — клиентские: серверный
 `order=random` остаётся только способом получить разнообразную пачку.
+При `bitrate_max` в запрос добавляется `bitrateMax`, поэтому пачка сразу
+соответствует профилю сети.
+
+`country_counts` запрашивает `/json/countrycodes` без ограничения битрейта —
+ответ компактный. `top_stations(limit, bitrate_max)` собирает мировой снимок
+через `/json/stations/search` с `order=clickcount&reverse=true&hidebroken=true`;
+в `Metered` лимит уменьшает сессия, а `bitrate_max` добавляет `bitrateMax`
+(ADR-0048).
 
 ## 7. Кэш и валидация
 

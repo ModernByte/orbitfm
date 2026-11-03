@@ -79,6 +79,39 @@ impl ThemeArg {
     }
 }
 
+/// Аргумент глагола `network` — профиль сети (ADR-0048).
+///
+/// Wire-тип живёт в инфраструктуре; в доменное `NetworkProfile` его превращает
+/// Application Core (`src/session/commands.rs`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetworkArg {
+    Unlimited,
+    Metered,
+    OfflineFirst,
+}
+
+impl NetworkArg {
+    /// Имя профиля в протоколе.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Unlimited => "unlimited",
+            Self::Metered => "metered",
+            Self::OfflineFirst => "offline-first",
+        }
+    }
+
+    fn parse(raw: &str) -> Result<Self, IpcError> {
+        match raw {
+            "unlimited" => Ok(Self::Unlimited),
+            "metered" => Ok(Self::Metered),
+            "offline-first" => Ok(Self::OfflineFirst),
+            other => Err(IpcError::InvalidArgument(format!(
+                "network: ожидаются unlimited, metered или offline-first, получено {other}"
+            ))),
+        }
+    }
+}
+
 /// Команды IPC-протокола (docs/interfaces/05-ipc.md).
 #[derive(Debug, Clone, PartialEq)]
 pub enum IpcCommand {
@@ -121,6 +154,10 @@ pub enum IpcCommand {
     /// `theme <system|dark|light>`: сменить тему оформления.
     Theme {
         mode: ThemeArg,
+    },
+    /// `network <unlimited|metered|offline-first>`: профиль сети (ADR-0048).
+    Network {
+        profile: NetworkArg,
     },
     /// `settings`: открыть окно настроек; при необходимости показывает окно.
     Settings,
@@ -238,6 +275,16 @@ impl IpcCommand {
                 let mode = ThemeArg::parse(raw)?;
                 reject_extra_args(parts.next())?;
                 Ok(Self::Theme { mode })
+            }
+            "network" => {
+                let raw = parts.next().ok_or_else(|| {
+                    IpcError::InvalidArgument(
+                        "network: ожидается unlimited, metered или offline-first".into(),
+                    )
+                })?;
+                let profile = NetworkArg::parse(raw)?;
+                reject_extra_args(parts.next())?;
+                Ok(Self::Network { profile })
             }
             "settings" => {
                 reject_extra_args(parts.next())?;
@@ -403,6 +450,7 @@ impl IpcCommand {
             Self::Previous => "previous".to_owned(),
             Self::Roulette => "roulette".to_owned(),
             Self::Theme { mode } => format!("theme {}", mode.as_str()),
+            Self::Network { profile } => format!("network {}", profile.as_str()),
             Self::Settings => "settings".to_owned(),
             Self::VolumeUp => "volume-up".to_owned(),
             Self::VolumeDown => "volume-down".to_owned(),
@@ -578,6 +626,23 @@ mod tests {
         assert!(IpcCommand::parse("theme Dark").is_err());
         assert!(IpcCommand::parse("theme dark extra").is_err());
         assert!(IpcCommand::parse("playpause now").is_err());
+    }
+
+    #[test]
+    fn parses_network_profiles() {
+        for (wire, profile) in [
+            ("network unlimited", NetworkArg::Unlimited),
+            ("network metered", NetworkArg::Metered),
+            ("network offline-first", NetworkArg::OfflineFirst),
+        ] {
+            let command = IpcCommand::Network { profile };
+            assert_eq!(IpcCommand::parse(wire).unwrap(), command, "{wire}");
+            assert_eq!(command.to_wire(), wire);
+        }
+        assert!(IpcCommand::parse("network").is_err());
+        assert!(IpcCommand::parse("network offline").is_err());
+        assert!(IpcCommand::parse("network Metered").is_err());
+        assert!(IpcCommand::parse("network metered extra").is_err());
     }
 
     #[test]
@@ -793,6 +858,9 @@ mod tests {
             IpcCommand::Roulette,
             IpcCommand::Theme {
                 mode: ThemeArg::Dark,
+            },
+            IpcCommand::Network {
+                profile: NetworkArg::OfflineFirst,
             },
             IpcCommand::Settings,
             IpcCommand::VolumeUp,

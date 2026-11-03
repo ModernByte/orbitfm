@@ -249,7 +249,12 @@ impl super::Session {
         self.library_tab = LibraryTab::Results;
     }
 
-    fn begin_search(&mut self, params: SearchParams) {
+    fn begin_search(&mut self, mut params: SearchParams) {
+        // Метрированный профиль режет битрейт на сервере; explicit cap
+        // вызывающего важнее (ADR-0048).
+        if params.bitrate_max.is_none() {
+            params.bitrate_max = self.network_profile().bitrate_cap();
+        }
         self.search.generation = self.search.generation.wrapping_add(1);
         let generation = self.search.generation;
         let (sender, receiver) = mpsc::unbounded_channel();
@@ -444,12 +449,13 @@ impl super::Session {
         let radio = self.radio.clone();
         let sample = self.world.sample_shared();
         let exclude = self.roulette_exclusions();
+        let bitrate_max = self.network_profile().bitrate_cap();
         let waker = self.wake.waker();
         self.runtime.spawn(async move {
-            let result = match radio.random_station(&exclude).await {
+            let result = match radio.random_station(&exclude, bitrate_max).await {
                 Ok(station) => Ok(station),
                 Err(err) if !sample.is_empty() => {
-                    let station = random_from_snapshot(&sample, &exclude);
+                    let station = random_from_snapshot(&sample, &exclude, bitrate_max);
                     match station {
                         Some(station) => {
                             warn!(error = %err, "рулетка без сети: станция из офлайн-снимка");
@@ -583,6 +589,9 @@ fn offline_results(sample: &[Station], params: &SearchParams) -> Vec<Station> {
             if params.hide_broken && station.url_resolved.trim().is_empty() {
                 return false;
             }
+            if !bitrate_within_cap(station, params.bitrate_max) {
+                return false;
+            }
             if params.has_geo_info && super::markers::station_geo(station).is_none() {
                 return false;
             }
@@ -616,18 +625,33 @@ fn offline_results(sample: &[Station], params: &SearchParams) -> Vec<Station> {
 
 /// Случайная станция офлайн-снимка для рулетки (ADR-0043). Поток и координаты
 /// уже проверены при записи; текущая и недавние станции не повторяются.
-fn random_from_snapshot(sample: &[Station], exclude: &[String]) -> Option<Station> {
+fn random_from_snapshot(
+    sample: &[Station],
+    exclude: &[String],
+    bitrate_max: Option<u32>,
+) -> Option<Station> {
     let candidates: Vec<&Station> = sample
         .iter()
         .filter(|station| !station.url_resolved.trim().is_empty())
         .filter(|station| super::markers::station_geo(station).is_some())
         .filter(|station| !exclude.contains(&station.stationuuid))
+        .filter(|station| bitrate_within_cap(station, bitrate_max))
         .collect();
     if candidates.is_empty() {
         return None;
     }
     let index = random_below(candidates.len() as u32) as usize;
     Some(candidates[index].clone())
+}
+
+/// Станция проходит потолок битрейта. Нулевой битрейт — «неизвестен»: такие
+/// станции не отбрасываются, иначе метрированный профиль терял бы разговорное
+/// радио без метаданных.
+fn bitrate_within_cap(station: &Station, cap: Option<u32>) -> bool {
+    match cap {
+        Some(cap) => station.bitrate == 0 || station.bitrate <= cap,
+        None => true,
+    }
 }
 
 fn needle(value: &Option<String>) -> Option<String> {
@@ -898,12 +922,59 @@ mod tests {
         second.geo_long = Some(2.35);
 
         assert!(
-            random_from_snapshot(std::slice::from_ref(&first), &[first.stationuuid.clone()])
-                .is_none(),
+            random_from_snapshot(
+                std::slice::from_ref(&first),
+                &[first.stationuuid.clone()],
+                None
+            )
+            .is_none(),
             "исключённая станция не повторяется"
         );
-        let picked = random_from_snapshot(&[first, second], &[]).expect("есть кандидат");
+        let picked = random_from_snapshot(&[first, second], &[], None).expect("есть кандидат");
         assert!(picked.stationuuid == "a" || picked.stationuuid == "b");
+    }
+
+    #[test]
+    fn metered_cap_filters_offline_results_but_keeps_unknown_bitrate() {
+        let mut fast = offline_station("fast", "Jazz FM", "DE", "jazz");
+        fast.bitrate = 320;
+        let mut slow = offline_station("slow", "Jazz Radio", "DE", "jazz");
+        slow.bitrate = 128;
+        let mut unknown = offline_station("unknown", "Jazz Cafe", "DE", "jazz");
+        unknown.bitrate = 0;
+        let sample = vec![fast, slow, unknown];
+        let params = SearchParams {
+            tag: Some("jazz".to_owned()),
+            bitrate_max: Some(128),
+            ..SearchParams::default()
+        };
+
+        let results = offline_results(&sample, &params);
+
+        let uuids: Vec<&str> = results
+            .iter()
+            .map(|station| station.stationuuid.as_str())
+            .collect();
+        assert_eq!(uuids, ["slow", "unknown"]);
+        let mut unknown = offline_station("x", "X", "DE", "");
+        unknown.bitrate = 0;
+        assert!(
+            bitrate_within_cap(&unknown, Some(128)),
+            "неизвестный битрейт не отбрасывается"
+        );
+    }
+
+    #[test]
+    fn roulette_snapshot_fallback_respects_the_metered_cap() {
+        let mut fast = offline_station("fast", "Jazz FM", "DE", "jazz");
+        fast.geo_lat = Some(52.52);
+        fast.geo_long = Some(13.405);
+        fast.bitrate = 320;
+
+        assert!(
+            random_from_snapshot(&[fast], &[], Some(128)).is_none(),
+            "быстрый поток не проходит потолок"
+        );
     }
 
     #[test]

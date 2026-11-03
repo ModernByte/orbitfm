@@ -15,6 +15,8 @@ pub struct SearchParams {
     pub hide_broken: bool,
     /// Только станции с известными координатами (`has_geo_info=true`).
     pub has_geo_info: bool,
+    /// Потолок битрейта (`bitrateMax`); `None` — без ограничения.
+    pub bitrate_max: Option<u32>,
 }
 
 /// Число станций страны (`/json/countrycodes`): поле `name` формата
@@ -85,13 +87,21 @@ impl RadioBrowserClient {
     /// Случайная станция с координатами для Roulette (до трёх попыток).
     /// `exclude` — UUID, которые нельзя выдавать (текущий эфир и недавняя
     /// история).
-    pub async fn random_station(&self, exclude: &[String]) -> Result<Station, RadioError>;
+    pub async fn random_station(
+        &self,
+        exclude: &[String],
+        bitrate_max: Option<u32>,
+    ) -> Result<Station, RadioError>;
 
     /// Число станций каждой страны — карта плотности (ADR-0035).
     pub async fn country_counts(&self) -> Result<Vec<CountryCount>, RadioError>;
 
     /// Топ станций по числу прослушиваний — мировой снимок для карты стран.
-    pub async fn top_stations(&self, limit: u32) -> Result<Vec<Station>, RadioError>;
+    pub async fn top_stations(
+        &self,
+        limit: u32,
+        bitrate_max: Option<u32>,
+    ) -> Result<Vec<Station>, RadioError>;
 
     /// Получить станцию по UUID (сначала из кэша).
     pub async fn get_station(&self, station_uuid: &str) -> Result<Station, RadioError>;
@@ -118,9 +128,12 @@ impl RadioBrowserClient {
   значения обрезаются по краям. Станции без `url_resolved` в результат не попадают.
 - При `has_geo_info = true` добавляется фильтр `has_geo_info=true`; клиент не проверяет
   координаты — это делает вызывающая сторона (`geo_lat`/`geo_long` могут быть `null`).
+- `bitrate_max` добавляет `bitrateMax=<n>`; `None` параметр не передаёт. Фильтр
+  серверный, поэтому вызывающая сторона не отбрасывает станции с неизвестным
+  битрейтом (`0`) — каталог сам решает, что вернуть (ADR-0048).
 - `random_station` запрашивает `/json/stations/search` с
   `order=random&limit=24&offset=<случайный 0..499>&has_geo_info=true&hidebroken=true`
-  и не передаёт `reverse`. Пачка фильтруется по непустому `url_resolved`,
+  и не передаёт `reverse`. При `bitrate_max` добавляется `bitrateMax`. Пачка фильтруется по непустому `url_resolved`,
   валидным координатам (конечные, в диапазонах, не `(0, 0)`) и отсутствию в
   `exclude`; одна станция выбирается случайно на клиенте. Если подходящих нет,
   выполняется до трёх попыток с новым `offset`, после чего возвращается
@@ -129,6 +142,8 @@ impl RadioBrowserClient {
 - `get_station` проверяет формат UUID (`InvalidUuid`) и сначала ищет станцию в кэше;
   при промахе запрашивает `/json/stations/byuuid/<uuid>` и возвращает `NotFound` для
   пустого ответа.
+- `top_stations` передаёт `order=votes&reverse=true&hidebroken=true&limit=<n>`;
+  `bitrate_max` добавляет `bitrateMax` (профиль `Metered`, ADR-0048).
 - `send_click` проверяет UUID и выполняет GET `/json/url/<uuid>`.
 - `refresh_servers` игнорирует существующий пул и заново выполняет discovery.
 - Каждый HTTP-запрос содержит `User-Agent: OrbitFM/1.0 (ModernByte; Linux; Rust)`.

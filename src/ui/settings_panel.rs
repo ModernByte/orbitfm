@@ -16,8 +16,8 @@ use crate::integration::status::{Availability, InstallState, IntegrationsView, T
 use crate::integration::{Target, TargetGroup};
 use crate::session::WindowMode;
 use crate::settings::{
-    AccentColor, Language, MotionReactivity, MotionStyle, SLEEP_CHOICES, Settings, ThemeMode,
-    VIZ_BAR_CHOICES,
+    AccentColor, Language, MotionReactivity, MotionStyle, NetworkProfile, SLEEP_CHOICES, Settings,
+    ThemeMode, VIZ_BAR_CHOICES,
 };
 
 use super::UiAction;
@@ -191,7 +191,11 @@ pub(crate) fn show(
         body.right_bottom(),
     );
     let title_palette = faded_palette(palette, shown(BLOCK_TITLE));
-    let cards = [shown(BLOCK_CARD), shown(BLOCK_CARD + 1)];
+    let cards = [
+        shown(BLOCK_CARD),
+        shown(BLOCK_CARD + 1),
+        shown(BLOCK_CARD + 2),
+    ];
     ui.scope_builder(
         egui::UiBuilder::new()
             .max_rect(content)
@@ -352,7 +356,7 @@ fn draw_category(
     palette: &Palette,
     text: &i18n::Catalog,
     state: &mut SettingsState<'_>,
-    cards: [f32; 2],
+    cards: [f32; 3],
     actions: &mut Vec<UiAction>,
 ) {
     match *state.category {
@@ -393,7 +397,7 @@ fn appearance(
     palette: &Palette,
     strings: &i18n::SettingsText,
     state: &mut SettingsState<'_>,
-    cards: [f32; 2],
+    cards: [f32; 3],
     actions: &mut Vec<UiAction>,
 ) {
     let alpha = cards[0];
@@ -533,7 +537,7 @@ fn audio(
     palette: &Palette,
     strings: &i18n::SettingsText,
     state: &mut SettingsState<'_>,
-    cards: [f32; 2],
+    cards: [f32; 3],
     actions: &mut Vec<UiAction>,
 ) {
     let alpha = cards[0];
@@ -617,6 +621,36 @@ fn audio(
             actions.push(UiAction::SetQueueWrap(!wrap));
         }
     });
+
+    let alpha = cards[2];
+    ui.add_space(10.0);
+    card(ui, palette, alpha, |ui| {
+        let dim = faded_palette(palette, alpha);
+        let profile = state.settings.network_profile;
+        if let Some(index) = row(
+            ui,
+            &dim,
+            strings.network_profile,
+            Some(i18n::network_profile_hint(state.language, profile)),
+            DROPDOWN_SLOT,
+            |ui| {
+                dropdown(
+                    ui,
+                    &dim,
+                    "orbitfm_set_network",
+                    ui.available_width(),
+                    &NetworkProfile::ALL,
+                    profile,
+                    |index| {
+                        i18n::network_profile_label(state.language, NetworkProfile::ALL[index])
+                            .to_owned()
+                    },
+                )
+            },
+        ) {
+            actions.push(UiAction::SetNetworkProfile(NetworkProfile::ALL[index]));
+        }
+    });
 }
 
 fn motion(
@@ -624,7 +658,7 @@ fn motion(
     palette: &Palette,
     strings: &i18n::SettingsText,
     state: &mut SettingsState<'_>,
-    cards: [f32; 2],
+    cards: [f32; 3],
     actions: &mut Vec<UiAction>,
 ) {
     let alpha = cards[0];
@@ -714,7 +748,7 @@ fn window(
     strings: &i18n::SettingsText,
     labels: &i18n::LabelText,
     state: &mut SettingsState<'_>,
-    cards: [f32; 2],
+    cards: [f32; 3],
     actions: &mut Vec<UiAction>,
 ) {
     let alpha = cards[0];
@@ -759,7 +793,7 @@ fn integrations_page(
     palette: &Palette,
     text: &i18n::IntegrationsText,
     state: &mut SettingsState<'_>,
-    cards: [f32; 2],
+    cards: [f32; 3],
     actions: &mut Vec<UiAction>,
 ) {
     let view = state.integrations;

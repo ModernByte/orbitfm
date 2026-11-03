@@ -84,6 +84,7 @@ impl super::Session {
             name: Some(query.to_owned()),
             limit: COMPANION_RESULT_LIMIT as u32,
             hide_broken: true,
+            bitrate_max: self.network_profile().bitrate_cap(),
             ..SearchParams::default()
         };
         self.runtime.spawn(async move {

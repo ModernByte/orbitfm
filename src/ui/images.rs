@@ -13,6 +13,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
 use crate::services::Station;
+use crate::settings::NetworkProfile;
 
 use super::procedural;
 
@@ -61,6 +62,10 @@ pub(crate) struct FaviconCache {
     scan: Vec<(String, u32, u64)>,
     in_flight: usize,
     queued: usize,
+    /// Профиль сети разрешает новые загрузки (ADR-0048).
+    network_enabled: bool,
+    /// Потолок одновременных загрузок: 8 или 2 (ADR-0048).
+    in_flight_limit: usize,
     generation: u32,
     frame: u64,
     stats: CacheStats,
@@ -84,11 +89,28 @@ impl FaviconCache {
             scan: Vec::new(),
             in_flight: 0,
             queued: 0,
+            network_enabled: true,
+            in_flight_limit: MAX_IN_FLIGHT,
             generation: 0,
             frame: 0,
             stats: CacheStats::default(),
             sender,
             receiver,
+        }
+    }
+
+    /// Переключает сетевую политику кэша под профиль сети (ADR-0048).
+    ///
+    /// Offline-first: новые запросы не ставятся, а ещё не начатые снимаются с
+    /// очереди, чтобы окно не перерисовывалось вечно. Уже летящие запросы
+    /// завершаются, готовые текстуры остаются.
+    pub(crate) fn set_network_profile(&mut self, profile: NetworkProfile) {
+        self.network_enabled = profile.allows_background_network();
+        self.in_flight_limit = profile.favicon_in_flight();
+        if !self.network_enabled {
+            self.entries
+                .retain(|_, entry| !matches!(entry.state, FaviconState::Queued));
+            self.queued = 0;
         }
     }
 
@@ -108,6 +130,7 @@ impl FaviconCache {
 
     /// Текстура favicon; при неизвестном URL ставит его в очередь загрузки.
     /// При исчерпанном потолке отказывает во вставке, а не превышает его.
+    /// Offline-first не ставит новых запросов (ADR-0048).
     pub(crate) fn texture(&mut self, url: &str) -> Option<egui::TextureHandle> {
         if let Some(entry) = self.entries.get_mut(url) {
             entry.last_used = self.frame;
@@ -115,6 +138,9 @@ impl FaviconCache {
                 FaviconState::Ready(texture) => Some(texture.clone()),
                 _ => None,
             };
+        }
+        if !self.network_enabled {
+            return None;
         }
         if self.entries.len() >= MAX_CACHED && !self.evict() {
             return None;
@@ -214,7 +240,7 @@ impl FaviconCache {
     /// Забирает пары `(url, поколение)` для спавна задач, пока есть слоты.
     /// Порядок — LRU-first: сначала ближайшее к обзору.
     pub(crate) fn take_fetches(&mut self) -> Vec<(String, u32)> {
-        let limit = MAX_IN_FLIGHT.saturating_sub(self.in_flight);
+        let limit = self.in_flight_limit.saturating_sub(self.in_flight);
         if limit == 0 || self.queued == 0 {
             return Vec::new();
         }
@@ -484,6 +510,53 @@ mod tests {
         assert_eq!(cache.take_fetches().len(), MAX_IN_FLIGHT);
         assert_eq!(cache.queued, 4);
         assert_eq!(cache.stats().entries, MAX_IN_FLIGHT + 4);
+    }
+
+    #[test]
+    fn metered_profile_limits_fetches_to_two() {
+        let mut cache = FaviconCache::new();
+        for index in 0..6 {
+            cache.texture(&format!("https://a/{index}"));
+        }
+        cache.set_network_profile(NetworkProfile::Metered);
+        assert_eq!(cache.take_fetches().len(), 2);
+        assert_eq!(cache.in_flight, 2);
+    }
+
+    #[test]
+    fn offline_first_drops_pending_and_keeps_ready_textures() {
+        let ctx = ctx();
+        let mut cache = FaviconCache::new();
+        let ready_url = "https://a/ready.png";
+        let taken = {
+            cache.texture(ready_url);
+            cache.take_fetches()
+        };
+        let (url, generation) = taken[0].clone();
+        cache
+            .sender
+            .try_send((url, generation, Some(image())))
+            .expect("слот свободен");
+        cache.poll(&ctx);
+        cache.texture("https://a/pending.png");
+
+        cache.set_network_profile(NetworkProfile::OfflineFirst);
+
+        assert_eq!(cache.queued, 0, "очередь снята");
+        assert!(!cache.is_busy(), "окно не перерисовывается вечно");
+        assert!(cache.take_fetches().is_empty());
+        assert!(
+            cache.texture(ready_url).is_some(),
+            "готовая текстура остаётся на месте"
+        );
+        assert!(
+            cache.texture("https://a/new.png").is_none(),
+            "новый URL не ставится в очередь"
+        );
+        assert!(
+            !cache.entries.contains_key("https://a/new.png"),
+            "запись не создаётся"
+        );
     }
 
     #[test]

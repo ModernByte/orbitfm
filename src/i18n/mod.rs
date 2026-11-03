@@ -24,7 +24,10 @@ mod uk;
 mod zh;
 
 pub(crate) use catalog::{Catalog, IntegrationsText, LabelText, SettingsText, WelcomeText};
-pub(crate) use labels::{accent_label, language_label, motion_label, style_label, theme_label};
+pub(crate) use labels::{
+    accent_label, language_label, motion_label, network_profile_hint, network_profile_label,
+    style_label, theme_label,
+};
 
 use crate::settings::Language;
 
@@ -281,6 +284,10 @@ mod tests {
                 allow_flips,
                 allow_flips_hint,
                 flips_unavailable,
+                network_profile,
+                network_unlimited_hint,
+                network_metered_hint,
+                network_offline_first_hint,
                 window_mode,
                 window_hint,
                 show_help,
@@ -417,6 +424,9 @@ mod tests {
                 style_ambient_drift,
                 style_sparkle_twitch,
                 style_beat_march,
+                network_unlimited,
+                network_metered,
+                network_offline_first,
                 mode_focus,
                 mode_overlay,
                 mode_listening,

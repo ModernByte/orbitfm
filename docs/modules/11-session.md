@@ -58,7 +58,7 @@ Core не принимают `&egui::Context` — детали в `docs/interfac
 | `media` | `Option<MediaControls>` | `None`, когда MPRIS недоступен (нет D-Bus); тогда очередь команд нет |
 | `tray` | `Option<TrayHandle>` | `None`, когда SNI-хоста нет или сборка без фичи `tray`; сам `Option` меняется и в рантайме: мёртвый трей `sync_tray` выключает ветку |
 | `library` | `StationLibrary` | Избранное и история (до 20 записей, `HISTORY_LIMIT`) |
-| `settings` | `SettingsStore` | Тема, акцент, язык, `viz_bars`, `volume`, `visualizer_enabled`, `artwork_allow_http`, признаки движения, `help_visible`, `onboarding_done`, `queue_wrap`; `Session::new` восстанавливает из него громкость и решает, показывать ли мастер первого запуска |
+| `settings` | `SettingsStore` | Тема, акцент, язык, `viz_bars`, `volume`, `visualizer_enabled`, `artwork_allow_http`, признаки движения, `help_visible`, `onboarding_done`, `queue_wrap`, `network_profile`; `Session::new` восстанавливает из него громкость, профиль сети и решает, показывать ли мастер первого запуска |
 | `runtime` | `tokio::runtime::Handle` | `block_on` для коротких аудио-операций и `spawn` для сетевых задач |
 | `wake` | `WakeHandle` | Разделяемый слот пробуждения: `Arc<Mutex<Option<Notifier>>>` |
 
@@ -83,7 +83,7 @@ Core не принимают `&egui::Context` — детали в `docs/interfac
 | `economy` | `EconomyState` | Адаптация к плохой сети (ADR-0043 § 3–4): буфер `true/false`, таймер буферизации, право на один подбор лёгкой альтернативы на станцию, признак ECO и незавершённый фоновый поиск |
 | `sleep` | `SleepTimer` (`sleep.rs`) | Таймер сна (ADR-0046): дедлайн и выбранные минуты; переживает закрытие окна, не переживает выход процесса; `poll_sleep` вызывает `stop_playback` и `NoticeKey::SleepExpired` |
 | `markers` | `Vec<GlobeMarker>` | Маркеры глобуса: подмножество строк текущего списка с координатами (ADR-0036, ревизия 2026-10-28 (второе)) |
-| `world` | `WorldBaseline` | Счётчики стран, мировой топ, `revision`, `offline` (на карте локальный снимок), `saved_at` и `snapshot_disabled` (ADR-0035, ADR-0043) |
+| `world` | `WorldBaseline` | Счётчики стран, мировой топ, `revision`, `offline` (на карте локальный снимок), `saved_at`, `snapshot_disabled` (ADR-0035, ADR-0043) и признак фоновой загрузки; профиль сети решает, стартует ли она и каким размером (ADR-0048) |
 | `library_tab` | `LibraryTab` | Активная вкладка панели = источник очереди `prev`/`next` |
 | `country_filter` | `CountryFilterState` | Локальные фильтры панели (`text`, `genres: Vec<GenreTag>` — OR, `filters_visible`, `sort`, `compact_rows`) |
 | `panel_open` | `bool` | Панель станций; `true` по умолчанию |
@@ -147,7 +147,7 @@ MPRIS и `TraySnapshot` (ADR-0026), а `window_visible()` читают `status`,
 | `search.rs` | Поиск по имени/стране/жанру с поколениями ответов, локальный офлайн-fallback и рулетка | `SearchMode`, `SearchContext`, `SearchState`, `SearchResponse`, `STATION_LOOKUP_TIMEOUT`, `Session::{start_search, start_country_search, start_genre_search, switch_mode, poll_search, load_more, retry_search, country_total, start_roulette, poll_roulette, apply_roulette}` |
 | `markers.rs` | Агрегация станций с координатами в маркеры глобуса | `GlobeMarker`, `build_markers` (+ `#[cfg(test)] sample_station`, `geo_station`) |
 | `heat.rs` | Метрики тепловой карты стран (ADR-0035): нормировка в `0,15..=1` по выборке станций и по глобальным счётчикам | `CountryMetric` (+ `ALL`/`is_on`), `intensities`, `densities` |
-| `world.rs` | Глобальный снимок Radio Browser для карты (ADR-0035) и локальный офлайн-снимок станций (ADR-0043): подстановка до сети, запись после живого ответа, очистка | `WorldBaseline` (+ `counts`/`sample`/`sample_shared`/`revision`/`offline`), `Session::{load_snapshot, start_world, poll_world, clear_offline_snapshot}` (приватные `adopt_snapshot`, `save_world_snapshot`) |
+| `world.rs` | Глобальный снимок Radio Browser для карты (ADR-0035) и локальный офлайн-снимок станций (ADR-0043): подстановка до сети, запись после живого ответа, очистка | `WorldBaseline` (+ `counts`/`sample`/`sample_shared`/`revision`/`offline`), `Session::{load_snapshot, start_world, poll_world, clear_offline_snapshot, cancel_world_fetch}` (приватные `adopt_snapshot`, `save_world_snapshot`) |
 | `tray.rs` | Трей: публикация снимка и исполнение `TrayCommand` тем же dispatch; `nudge_volume` общий для трея, IPC `volume-up/down` и media-команд | `Session::{sync_tray, process_tray_commands, execute_tray_command, nudge_volume}` (приватный `tray_snapshot`) |
 | `park.rs` | Простой без окна: `select!` по IPC, MPRIS, трею, аудио, рулетке, импорту потока, поиску попапа и дедлайну таймера сна | `ParkOutcome`, `Session::park` (приватные `Parked`, `wait_on`, `media_recv`, `tray_recv`, `roulette_recv`, `stream_recv`, `companion_recv`, `sleep_until`) |
 
@@ -418,11 +418,20 @@ poll_sleep → process_audio_events → poll_economy → process_commands
 
 Снимок мира (`world.rs`, ADR-0035) запрашивается один раз за сессию:
 `Session::new` подставляет офлайн-снимок (`load_snapshot`), затем вызывает
-`start_world`; каждый `tick()` забирает ответ и повторяет попытку, если данных
-нет (не больше трёх). Запрос не блокирует окно и не участвует в поиске: без него
-карта остаётся без заливки, остальной интерфейс работает. `poll_economy` стоит
-сразу после аудио-событий: таймер буферизации и ответ подбора альтернативы
-должны отработать в том же кадре, что и событие (ADR-0043).
+`start_world`, если профиль сети разрешает фоновую загрузку; каждый `tick()`
+забирает ответ и повторяет попытку, если данных нет (не больше трёх). Запрос не
+блокирует окно и не участвует в поиске: без него карта остаётся без заливки,
+остальной интерфейс работает. `poll_economy` стоит сразу после аудио-событий:
+таймер буферизации и ответ подбора альтернативы должны отработать в том же кадре,
+что и событие (ADR-0043).
+
+Профиль сети (ADR-0048) задаёт размер мировой выборки: `Unlimited` — 1000,
+`Metered` — 250 станций и `bitrateMax=128` в discovery, `OfflineFirst` —
+фоновый запрос не стартует вовсе. Переключение в `OfflineFirst` отменяет
+летящую загрузку: `Session::cancel_world_fetch` отбрасывает приёмник, но
+сохраняет уже загруженный снимок; опоздавший ответ отправить некому, поэтому
+он не может воскресить данные. Переключение обратно позволяет `start_world`
+следующего `tick()`.
 
 `tick()` ничего не рисует и не трогает `egui`: ответы IPC отправляются внутри
 `process_commands`, а намерения окна забирает `take_intent()` в `OrbitApp::logic`.
@@ -456,7 +465,7 @@ async-контекста: `execute` зовёт `Handle::block_on` для опе�
 `volume`, `volume-up`, `volume-down`, `playpause`, `next`, `previous`,
 `roulette`, `theme`, `status`, `status --json`, `mode` (обе формы), `search`,
 `library`, `favorite`, `play-result`, `play-library`, `play-url`, `sleep`,
-`sleep clear`, `library-export`, `library-import`, все `MediaCommand` (`Play`,
+`sleep clear`, `network`, `library-export`, `library-import`, все `MediaCommand` (`Play`,
 `Pause`, `PlayPause`, `Stop`, `SetVolume`, `Next`, `Previous`) и все
 `TrayCommand` (`Toggle`, `Show`, `PlayPause`, `Stop`, `Previous`, `Next`,
 `Roulette`, `VolumeUp`, `VolumeDown`, `SetTheme`, `Settings`, `Quit`). `hide` ничего не делает (окно уже закрыто), `show`,
@@ -487,7 +496,8 @@ for WindowMode` и `impl From<ThemeArg> for ThemeMode`: `src/ipc/` не знае
 `status_json()` собирает `StatusPayload` (схема 1, `STATUS_SCHEMA`) через
 `serde_json`: `app`, `version` из `CARGO_PKG_VERSION`, `state`, `station`
 (полные метаданные или `null`), `volume` с округлением до тысячных, `window`,
-`theme`, `language`, `can` и локализованный `ui` из `i18n::catalog` (ADR-0037).
+`theme`, `language`, `network`, `can` и локализованный `ui` из `i18n::catalog`
+(ADR-0037, ADR-0048).
 `publish_status()` отправляет этот же кадр в `StatusFeed`; `send_if_modified`
 гасит повторы, поэтому вызов безопасен на каждом тике. Публикация идёт из
 `Session::new`, `tick`, `begin_window`, `end_window`, `mark_hidden`,
@@ -496,7 +506,7 @@ for WindowMode` и `impl From<ThemeArg> for ThemeMode`: `src/ipc/` не знае
 `mark_hidden`, а не только закрытие вьюпорта. Настройки оформления, языка и движения идут через
 `SettingsStore` и возвращают `Result<(), String>`: `set_theme`, `set_accent`,
 `set_viz_bars`, `set_motion`, `set_motion_style`, `set_allow_flips`,
-`set_reduce_motion`;
+`set_reduce_motion`, `set_network_profile`;
 `set_visualizer_enabled`
 сохраняет настройку (сбой — `warn!` и `NoticeKey::VisualizerNotSaved`), затем
 вызывает `sync_analysis()` и меняет пользовательский переключатель, а не
@@ -719,6 +729,31 @@ pause: сеть и аудио-устройство освобождаются. P
 `ImportSummary`; ошибки уходят как `error <сообщение>`, успех — `ok exported N`
 и `ok imported N favorites, M history, K skipped`. В GUI-настройках кнопок нет:
 команды предназначены для CLI и будущего Android Companion.
+
+### 4.19. Профиль сети (ADR-0048)
+
+`NetworkProfile` живёт в `SettingsStore` и читается через
+`Session::network_profile()`. `set_network_profile(profile)` сохраняет выбор,
+а при переходе в `OfflineFirst` дополнительно отбрасывает фоновую загрузку
+мира; presentation отдельно переводит `FaviconCache` в офлайн-режим. При
+переходе в `Unlimited` или `Metered` следующий `tick()` вызывает `start_world`,
+если снимка ещё нет.
+
+- `Unlimited` — прежнее поведение: выборка мира 1000 станций, до восьми
+  favicon-запросов, discovery без потолка.
+- `Metered` — `bitrate_max = Some(128)` для поиска, жанров, стран,
+  «показать ещё» и Roulette; мировая выборка 250; favicon — не больше двух
+  запросов в полёте. Уже выбранная станция и внешний поток играют без
+  ограничения — cap относится к каталогу, а не к плееру.
+- `OfflineFirst` — фоновый мир и сетевые favicon не запускаются; карта и
+  локальный поиск идут из снимка ADR-0043, обложки — процедурные ADR-0044.
+  Явные поиск, «показать ещё», Roulette и запуск станции по-прежнему ходят в
+  сеть без потолка.
+
+Профиль не ослабляет SSRF/publishable-проверки ADR-0025 и не меняет
+экономический fallback ADR-0043. `status --json` отдаёт токен в поле `network`;
+текстовый `status` не меняется. IPC-команда `network <профиль>` доступна и в
+окне, и в `park()`, но не входит в белый список браузерного native host.
 
 ## 5. Текущие ограничения
 

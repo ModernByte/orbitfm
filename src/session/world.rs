@@ -15,8 +15,6 @@ use crate::services::{CountryCount, RadioError, Station};
 
 use super::notice::NoticeKey;
 
-/// Станций в мировом снимке: 1000 записей ≈ 1,1 МБ JSON и десятки стран.
-const WORLD_SAMPLE_LIMIT: u32 = 1000;
 /// Попыток загрузки снимка: сеть могла быть недоступна в момент старта.
 const WORLD_ATTEMPTS: usize = 3;
 
@@ -117,9 +115,15 @@ impl super::Session {
     }
 
     /// Запрашивает снимок мира; повторные вызовы бесплатны, пока есть
-    /// незавершённая задача, живые данные или исчерпаны попытки.
+    /// незавершённая задача, живые данные или исчерпаны попытки. Offline-first
+    /// фон не грузит: карта живёт снимком до явного действия пользователя
+    /// (ADR-0048).
     pub(crate) fn start_world(&mut self) {
-        if self.world.receiver.is_some() || self.world.live || self.world.attempts >= WORLD_ATTEMPTS
+        let profile = self.network_profile();
+        if !profile.allows_background_network()
+            || self.world.receiver.is_some()
+            || self.world.live
+            || self.world.attempts >= WORLD_ATTEMPTS
         {
             return;
         }
@@ -130,9 +134,11 @@ impl super::Session {
 
         let radio = self.radio.clone();
         let waker = self.wake.waker();
+        let limit = profile.world_sample_limit();
+        let bitrate_max = profile.bitrate_cap();
         self.runtime.spawn(async move {
             let counts = radio.country_counts();
-            let sample = radio.top_stations(WORLD_SAMPLE_LIMIT);
+            let sample = radio.top_stations(limit, bitrate_max);
             let (counts, sample) = tokio::join!(counts, sample);
             let counts = counts.unwrap_or_else(|err| {
                 tracing::warn!(error = %err, "счётчики стран не пришли");
@@ -145,6 +151,14 @@ impl super::Session {
             let _ = sender.send(Ok(World { counts, sample }));
             waker();
         });
+    }
+
+    /// Отменяет фоновую загрузку мира при переходе в offline-first (ADR-0048):
+    /// приёмник отбрасывается, и поздний ответ уже не применится.
+    pub(crate) fn cancel_world_fetch(&mut self) {
+        if self.world.receiver.take().is_some() {
+            tracing::debug!("фоновая загрузка мира отменена профилем сети");
+        }
     }
 
     /// Забирает готовый снимок; пустой ответ оставляет попытку на следующий кадр.

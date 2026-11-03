@@ -4,8 +4,10 @@
 //! есть ли `egui::Context`, а всё, что касается окна, выражается через
 //! [`UiIntent`](super::UiIntent).
 
-use crate::ipc::{IpcCommand, ThemeArg, WindowModeArg};
-use crate::settings::{AccentColor, Language, MotionReactivity, MotionStyle, ThemeMode};
+use crate::ipc::{IpcCommand, NetworkArg, ThemeArg, WindowModeArg};
+use crate::settings::{
+    AccentColor, Language, MotionReactivity, MotionStyle, NetworkProfile, ThemeMode,
+};
 use crate::tray::VOLUME_STEP;
 
 use super::WindowMode;
@@ -28,6 +30,16 @@ impl From<ThemeArg> for ThemeMode {
             ThemeArg::System => Self::System,
             ThemeArg::Dark => Self::Dark,
             ThemeArg::Light => Self::Light,
+        }
+    }
+}
+
+impl From<NetworkArg> for NetworkProfile {
+    fn from(arg: NetworkArg) -> Self {
+        match arg {
+            NetworkArg::Unlimited => Self::Unlimited,
+            NetworkArg::Metered => Self::Metered,
+            NetworkArg::OfflineFirst => Self::OfflineFirst,
         }
     }
 }
@@ -100,6 +112,12 @@ impl super::Session {
                 Ok(()) => "ok".to_owned(),
                 Err(err) => format!("error {err}"),
             },
+            IpcCommand::Network { profile } => {
+                match self.set_network_profile(NetworkProfile::from(*profile)) {
+                    Ok(()) => format!("ok network {}", profile.as_str()),
+                    Err(err) => format!("error {err}"),
+                }
+            }
             IpcCommand::Settings => {
                 self.open_settings();
                 "ok".to_owned()
@@ -267,6 +285,18 @@ impl super::Session {
             .map_err(|err| err.to_string())
     }
 
+    /// Профиль сети (ADR-0048): сохранение и отмена фонового мира при
+    /// переходе в offline-first. Favicon-кэш переключает presentation-слой.
+    pub(crate) fn set_network_profile(&mut self, profile: NetworkProfile) -> Result<(), String> {
+        self.settings
+            .set_network_profile(profile)
+            .map_err(|err| err.to_string())?;
+        if !profile.allows_background_network() {
+            self.cancel_world_fetch();
+        }
+        Ok(())
+    }
+
     /// Переключает анализ под текущую видимость окна. Зовётся на границах
     /// прогона UI: в простое без окна эфирные фильтры не тратят CPU.
     pub(crate) fn settle_analysis(&mut self) {
@@ -341,6 +371,9 @@ mod tests {
             IpcCommand::Theme {
                 mode: ThemeArg::Light,
             },
+            IpcCommand::Network {
+                profile: NetworkArg::Metered,
+            },
             IpcCommand::SetMode {
                 mode: WindowModeArg::Overlay,
             },
@@ -366,5 +399,21 @@ mod tests {
         assert_eq!(ThemeMode::from(ThemeArg::System), ThemeMode::System);
         assert_eq!(ThemeMode::from(ThemeArg::Dark), ThemeMode::Dark);
         assert_eq!(ThemeMode::from(ThemeArg::Light), ThemeMode::Light);
+    }
+
+    #[test]
+    fn network_argument_maps_to_domain_profile() {
+        assert_eq!(
+            NetworkProfile::from(NetworkArg::Unlimited),
+            NetworkProfile::Unlimited
+        );
+        assert_eq!(
+            NetworkProfile::from(NetworkArg::Metered),
+            NetworkProfile::Metered
+        );
+        assert_eq!(
+            NetworkProfile::from(NetworkArg::OfflineFirst),
+            NetworkProfile::OfflineFirst
+        );
     }
 }

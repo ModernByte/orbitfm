@@ -168,6 +168,8 @@ impl<'a> OrbitApp<'a> {
         let visualizer = VisualizerModel::new(usize::from(session.settings.settings().viz_bars));
         let artwork =
             ArtworkFetcher::with_allow_http(session.settings.settings().artwork_allow_http);
+        let mut favicons = FaviconCache::new();
+        favicons.set_network_profile(session.network_profile());
         Self {
             session,
             globe_ready,
@@ -177,7 +179,7 @@ impl<'a> OrbitApp<'a> {
             callout: CalloutState::default(),
             station_callout: CalloutState::default(),
             visualizer,
-            favicons: FaviconCache::new(),
+            favicons,
             artwork,
             favicon_was_busy: false,
             toast: Toast::default(),
@@ -1025,6 +1027,12 @@ impl<'a> OrbitApp<'a> {
                 if let Err(err) = self.session.set_queue_wrap(wrap) {
                     self.error_toast(ctx, &NoticeKey::SettingNotSaved, Some(err.as_str()));
                 }
+            }
+            UiAction::SetNetworkProfile(profile) => {
+                if let Err(err) = self.session.set_network_profile(profile) {
+                    self.error_toast(ctx, &NoticeKey::SettingNotSaved, Some(err.as_str()));
+                }
+                self.favicons.set_network_profile(profile);
             }
             UiAction::SetArtworkAllowHttp(allow) => {
                 if let Err(err) = self.session.set_artwork_allow_http(allow) {

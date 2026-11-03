@@ -6,17 +6,18 @@ description: Ритуалы слушания OrbitFM — sleep timer, конте
 # OrbitFM Listening UX
 
 Ты добавляешь функции **повседневного слушания**, а не новый 3D-эффект и не
-новый шелл. База sleep/очереди и переноса библиотеки уже реализована в
-0.18.0-rc.1; быстрый доступ к таймеру — в Unreleased. Остальные фичи трека
-ещё проектируются.
+новый шелл. База sleep/очереди и переноса библиотеки реализована в
+0.18.0-rc.1; быстрый доступ к таймеру и профиль сети — в 0.19.0-rc.1.
+Локальная статистика и URL-алиасы ещё проектируются.
 
 ## Источники
 
 1. `docs/audit/OrbitFM-future-features.md` — §2 (приоритет B)
 2. `docs/adr/0046-ритуалы-слушания.md` — решения по sleep, очереди и схеме
-3. `docs/interfaces/01-audio.md`, `05-ipc.md`, `09-settings.md`, `10-session.md`
-4. ADR-0003 (аудио), ADR-0043 (офлайн/адаптивное аудио), ADR-0025 (URL)
-5. `docs/modules/11-session.md`, `docs/interfaces/13-events.md`
+3. `docs/adr/0048-профиль-сети.md` — профили `unlimited`/`metered`/`offline-first`
+4. `docs/interfaces/01-audio.md`, `05-ipc.md`, `09-settings.md`, `10-session.md`
+5. ADR-0003 (аудио), ADR-0043 (офлайн/адаптивное аудио), ADR-0025 (URL)
+6. `docs/modules/11-session.md`, `docs/interfaces/13-events.md`
 
 ## Маршрутизация
 
@@ -36,10 +37,11 @@ description: Ритуалы слушания OrbitFM — sleep timer, конте
 | Возможность | Статус |
 |-------------|--------|
 | Sleep timer, IPC, `status.sleep` | реализовано в 0.18.0-rc.1 |
-| Быстрый sleep: шапки, панель, трей, browser popup, GNOME | реализовано в Unreleased |
+| Быстрый sleep: шапки, панель, трей, browser popup, GNOME | реализовано в 0.19.0-rc.1 |
 | `queue_wrap`, края очереди, `can`/MPRIS | реализовано в 0.18.0-rc.1 |
 | Экспорт/импорт библиотеки | реализовано, см. `orbitfm-library-portability` |
-| Network profile | не начато |
+| Network profile (desktop) | реализовано в 0.19.0-rc.1 (ADR-0048) |
+| Network profile (Android metered flag) | не начато, вместе с A1–A2 |
 | Локальная статистика | не начато |
 | URL-алиасы | не начато |
 
@@ -79,11 +81,16 @@ description: Ритуалы слушания OrbitFM — sleep timer, конте
 
 | Профиль | Поведение |
 |---------|-----------|
-| Unlimited | текущее |
-| Metered | потолок битрейта, меньше favicon prefetch, реже world refresh |
-| Offline-first | snapshot first (ADR-0043), сеть по действию пользователя |
+| Unlimited | полный каталог, снимок 1000 станций, 8 favicon-запросов |
+| Metered | `bitrateMax=128` в discovery, снимок 250 станций, 2 favicon-запроса; эфир и библиотека без cap |
+| Offline-first | snapshot first (ADR-0043), фоновый мир и новые favicon не стартуют, сеть по действию пользователя |
 
-- Desktop: настройка + эвристика; Android: OS metered flag + ручной override.
+- Desktop реализован (ADR-0048): `settings.network_profile`, IPC `network`,
+  `status --json.network`, карточка «Сеть» в категории «Аудио»; смена профиля
+  сразу влияет на мир, discovery и `FaviconCache`.
+- Отмена летящего мира при `offline-first` — `Session::cancel_world_fetch`
+  (отбрасывание приёмника), без поколений.
+- Android читает OS metered flag и ручной override вместе с ADR-0045.
 - Не отключать SSRF/publishable checks и не ломать адаптивный битрейт ADR-0043
   «облегчённым» режимом.
 
@@ -104,7 +111,8 @@ description: Ритуалы слушания OrbitFM — sleep timer, конте
 1. Sleep timer — сделано.
 2. Семантика next/previous и `queue_wrap` — сделано.
 3. Экспорт/импорт библиотеки — сделано.
-4. Network profile.
+4. Network profile — desktop сделано в 0.19.0-rc.1; Android metered — вместе
+   с A1–A2.
 5. Локальная статистика.
 6. URL-алиасы.
 

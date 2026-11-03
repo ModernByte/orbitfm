@@ -37,6 +37,8 @@ pub struct SearchParams {
     pub hide_broken: bool,
     /// Только станции с известными координатами.
     pub has_geo_info: bool,
+    /// Потолок битрейта, kbps: метрированный профиль режет сервер (ADR-0048).
+    pub bitrate_max: Option<u32>,
 }
 
 /// Источник станции: каталог Radio Browser или внешний поток, добавленный
@@ -178,13 +180,18 @@ impl RadioBrowserClient {
 
     /// Топ станций по числу прослушиваний — снимок мировой сцены для карты
     /// стран, когда в панели нет своей выборки.
-    pub async fn top_stations(&self, limit: u32) -> Result<Vec<Station>, RadioError> {
-        let query = vec![
+    pub async fn top_stations(
+        &self,
+        limit: u32,
+        bitrate_max: Option<u32>,
+    ) -> Result<Vec<Station>, RadioError> {
+        let mut query = vec![
             ("hidebroken", "true".to_owned()),
             ("order", "clickcount".to_owned()),
             ("reverse", "true".to_owned()),
             ("limit", limit.to_string()),
         ];
+        push_bitrate_max(&mut query, bitrate_max);
         let stations: Vec<Station> = self.get_json("/json/stations/search", &query).await?;
         let stations: Vec<Station> = stations
             .into_iter()
@@ -201,9 +208,13 @@ impl RadioBrowserClient {
     /// цикл возвращалась одна и та же станция. Поэтому берётся пачка с разным
     /// `offset` (кэш промахивается), а выбор из неё и исключение текущей и
     /// недавних станций делает клиент.
-    pub async fn random_station(&self, exclude: &[String]) -> Result<Station, RadioError> {
+    pub async fn random_station(
+        &self,
+        exclude: &[String],
+        bitrate_max: Option<u32>,
+    ) -> Result<Station, RadioError> {
         for attempt in 0..RANDOM_ATTEMPTS {
-            let query = random_query(random_below(ROULETTE_OFFSET_SPAN));
+            let query = random_query(random_below(ROULETTE_OFFSET_SPAN), bitrate_max);
             let stations: Vec<Station> = self.get_json("/json/stations/search", &query).await?;
             let candidates: Vec<Station> = stations
                 .into_iter()
@@ -441,18 +452,27 @@ fn search_query(params: &SearchParams) -> Vec<(&'static str, String)> {
     if params.has_geo_info {
         query.push(("has_geo_info", "true".to_owned()));
     }
+    push_bitrate_max(&mut query, params.bitrate_max);
 
     query
 }
 
-fn random_query(offset: u32) -> Vec<(&'static str, String)> {
-    vec![
+fn random_query(offset: u32, bitrate_max: Option<u32>) -> Vec<(&'static str, String)> {
+    let mut query = vec![
         ("hidebroken", "true".to_owned()),
         ("order", "random".to_owned()),
         ("limit", ROULETTE_BATCH.to_string()),
         ("offset", offset.to_string()),
         ("has_geo_info", "true".to_owned()),
-    ]
+    ];
+    push_bitrate_max(&mut query, bitrate_max);
+    query
+}
+
+fn push_bitrate_max(query: &mut Vec<(&'static str, String)>, bitrate_max: Option<u32>) {
+    if let Some(cap) = bitrate_max {
+        query.push(("bitrateMax", cap.to_string()));
+    }
 }
 
 /// Число из `[0, bound)` без внешних crate'ов: splitmix64 поверх наносекунд и
@@ -654,6 +674,7 @@ mod tests {
             offset: 10,
             hide_broken: true,
             has_geo_info: true,
+            bitrate_max: None,
         };
 
         let query = search_query(&params);
@@ -667,11 +688,32 @@ mod tests {
         assert!(query.contains(&("has_geo_info", "true".to_owned())));
         assert!(!query.iter().any(|(key, _)| *key == "tag"));
         assert!(!query.iter().any(|(key, _)| *key == "language"));
+        assert!(!query.iter().any(|(key, _)| *key == "bitrateMax"));
+    }
+
+    #[test]
+    fn metered_cap_is_sent_as_bitrate_max() {
+        let params = SearchParams {
+            tag: Some("jazz".to_owned()),
+            limit: 50,
+            bitrate_max: Some(128),
+            ..SearchParams::default()
+        };
+        let query = search_query(&params);
+        assert!(query.contains(&("bitrateMax", "128".to_owned())));
+
+        let query = random_query(7, Some(128));
+        assert!(query.contains(&("bitrateMax", "128".to_owned())));
+        assert!(
+            !random_query(7, None)
+                .iter()
+                .any(|(key, _)| *key == "bitrateMax")
+        );
     }
 
     #[test]
     fn random_query_takes_a_batch_with_an_offset() {
-        let query = random_query(137);
+        let query = random_query(137, None);
 
         assert!(query.contains(&("order", "random".to_owned())));
         assert!(query.contains(&("limit", ROULETTE_BATCH.to_string())));
@@ -772,7 +814,7 @@ mod tests {
         assert_eq!(station.stationuuid, stations[0].stationuuid);
 
         let random = client
-            .random_station(&[])
+            .random_station(&[], None)
             .await
             .expect("Roulette не вернула станцию");
         assert!(!random.url_resolved.trim().is_empty());

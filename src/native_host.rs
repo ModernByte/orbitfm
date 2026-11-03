@@ -242,6 +242,8 @@ fn forbidden(command: &IpcCommand) -> Option<(&'static str, &'static str)> {
         IpcCommand::LibraryExport { .. } | IpcCommand::LibraryImport { .. } => {
             Some(("forbidden", "команда библиотеки запрещена"))
         }
+        // Сетевой профиль — решение пользователя в настройках, не страницы.
+        IpcCommand::Network { .. } => Some(("forbidden", "команда network запрещена")),
         IpcCommand::Raw(_) => Some(("forbidden", "неизвестная команда")),
         _ => None,
     }
@@ -344,6 +346,7 @@ mod tests {
         assert!(forbidden(&command("mode panel")).is_some());
         assert!(forbidden(&command("library-export /tmp/a.json")).is_some());
         assert!(forbidden(&command("library-import /tmp/a.json")).is_some());
+        assert!(forbidden(&command("network metered")).is_some());
         assert!(forbidden(&IpcCommand::Raw("future".into())).is_some());
     }
 
