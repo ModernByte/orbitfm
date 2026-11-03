@@ -141,11 +141,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install libmpv
-        run: brew install mpv
+      - name: Fetch libmpv (Homebrew bottles, macOS 13, pinned)
+        run: python3 packaging/macos/fetch-libmpv.py
 
-      - name: Export libmpv search path
-        run: echo "LIBRARY_PATH=$(brew --prefix)/lib" >> "$GITHUB_ENV"
+      - name: Export libmpv search path and dylibbundler
+        run: |
+          echo "LIBRARY_PATH=/tmp/orbitfm/opt/mpv/lib" >> "$GITHUB_ENV"
+          echo "/tmp/orbitfm/opt/dylibbundler/bin" >> "$GITHUB_PATH"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
@@ -304,17 +306,33 @@ jobs:
           if-no-files-found: error
 
   dmg:
-    name: macOS (DMG)
-    runs-on: macos-latest
+    name: macOS (DMG, ${{ matrix.arch }})
+    # Повторяет релизную матрицу: обе архитектуры проверяются до тега,
+    # иначе Intel-сборка впервые всплыла бы уже в релизе.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-latest
+          - arch: x86_64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install libmpv and packaging tools
-        run: brew install mpv dylibbundler librsvg
+      # См. release.yml: `brew install mpv` на Intel уходит в сборку из исходников,
+      # а на arm64 кладёт libmpv под macOS 26 — DMG перестаёт запускаться на 13–15.
+      # Скрипт скачивает закреплённые бутылки Homebrew под macOS 13 и разворачивает
+      # их в собственный префикс — Homebrew в сборочном конвейере не нужен.
+      - name: Install libmpv and dylibbundler (macOS 13 bottles)
+        run: python3 packaging/macos/fetch-libmpv.py
 
-      - name: Export libmpv search path
-        run: echo "LIBRARY_PATH=$(brew --prefix)/lib" >> "$GITHUB_ENV"
+      - name: Export libmpv search path and dylibbundler
+        run: |
+          echo "LIBRARY_PATH=/tmp/orbitfm/opt/mpv/lib" >> "$GITHUB_ENV"
+          echo "/tmp/orbitfm/opt/dylibbundler/bin" >> "$GITHUB_PATH"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
@@ -331,6 +349,8 @@ jobs:
         run: bash packaging/macos/build-dmg.sh
 
       - name: Smoke-test DMG
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
           dmg=$(ls dist/*.dmg | head -n 1)
@@ -339,6 +359,15 @@ jobs:
           trap 'hdiutil detach "$mount" -quiet || true' EXIT
           app="$mount/OrbitFM.app"
           test -x "$app/Contents/MacOS/orbitfm"
+          actual=$(file "$app/Contents/MacOS/orbitfm")
+          echo "$actual"
+          case "$EXPECTED_ARCH" in
+            arm64) echo "$actual" | grep -q 'arm64' ;;
+            x86_64) echo "$actual" | grep -q 'x86_64' ;;
+            *) echo "неизвестная архитектура $EXPECTED_ARCH" >&2; exit 1 ;;
+          esac
+          python3 packaging/macos/check-min-os.py "$app" \
+            --arch "$EXPECTED_ARCH" --max 13.0
           codesign --verify --deep --strict "$app"
           if otool -L "$app/Contents/MacOS/orbitfm" | grep -E '/(opt/homebrew|usr/local)/'; then
             echo "бинарник ссылается на Homebrew" >&2
@@ -353,7 +382,7 @@ jobs:
       - name: Upload DMG
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: OrbitFM-macos-dmg
+          name: OrbitFM-macos-dmg-${{ matrix.arch }}
           path: dist/*.dmg
           if-no-files-found: error
 

@@ -2,6 +2,7 @@ name: Release
 
 on:
   push:
+    branches: [main]
     tags: ["v*"]
 
 # Права записи нужны только job `release` (создание релиза и загрузка
@@ -27,37 +28,68 @@ jobs:
       version: ${{ steps.check.outputs.version }}
       prerelease: ${{ steps.check.outputs.prerelease }}
       make_latest: ${{ steps.check.outputs.make_latest }}
+      tag: ${{ steps.check.outputs.tag }}
+      publish: ${{ steps.check.outputs.publish }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Verify tag against Cargo.toml
+      # Одна и та же проверка для двух источников «версия»:
+      #  * push тега `vX.Y.Z` — тег должен совпадать с Cargo.toml;
+      #  * merge в main — из версии Cargo.toml собирается тег релиза.
+      - name: Resolve release version
         id: check
         env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
           # github.ref_name передаётся только через окружение: прямая
           # интерполяция "${{ github.ref_name }}" внутрь run: дала бы исполняемый
           # код из имени тега (регексп ниже — вторая линия защиты).
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+          version="$(cargo metadata --no-deps --format-version 1 \
+            | jq -er '.packages[] | select(.name == "orbitfm") | .version')"
+
+          if [[ "$REF_TYPE" == "tag" ]]; then
+            TAG="$REF_NAME"
+          else
+            TAG="v$version"
+          fi
+
           if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
             echo "Тег '$TAG' не соответствует формату vMAJOR.MINOR.PATCH[-rc.N]" >&2
             exit 1
           fi
 
-          version="$(cargo metadata --no-deps --format-version 1 \
-            | jq -er '.packages[] | select(.name == "orbitfm") | .version')"
-
           # Защита от кривого тега: имена файлов собираются из версии Cargo.toml
           # (build-appimage.sh, build-dmg.sh, build-msi.ps1), поэтому расхождение
           # тега и Cargo.toml выложило бы артефакты 0.10.0 под тегом v0.9.0.
-          if [[ "v$version" != "$TAG" ]]; then
+          if [[ "$REF_TYPE" == "tag" && "v$version" != "$TAG" ]]; then
             echo "Тег '$TAG' не совпадает с версией в Cargo.toml ('$version')" >&2
             exit 1
           fi
 
+          if [[ "$REF_TYPE" == "tag" ]]; then
+            publish=true
+            echo "Тег $TAG подтверждён версией Cargo.toml $version"
+          else
+            # Релиз из main публикуем только если тег ещё не создан: повторные
+            # мёржи без bump версии собирают артефакты, но не плодят релиз.
+            if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+              publish=false
+              echo "::notice::Релиз $TAG уже существует — артефакты из main собираем, публикацию пропускаем."
+            else
+              publish=true
+              echo "Из main публикуем новый релиз $TAG."
+            fi
+          fi
+
           {
             echo "version=$version"
+            echo "tag=$TAG"
+            echo "publish=$publish"
             # softprops/action-gh-release не поддерживает prerelease: auto:
             # и в v2, и в v3 значение input сравнивается со строкой 'true', то есть
             # auto молча дал бы обычный релиз для v0.10.0-rc.1. Считаем сами.
@@ -72,10 +104,8 @@ jobs:
             fi
           } >> "$GITHUB_OUTPUT"
 
-          echo "Тег $TAG подтверждён версией Cargo.toml $version"
-
       # Пуш тега не триггерит CI, поэтому контур поставки проверяется прямо здесь:
-      # от этого job зависят все три сборочных job, и красный граф не сможет
+      # от этого job зависят все сборочные job, и красный граф не сможет
       # выложить артефакты.
       - name: Supply chain (cargo deny)
         run: bash packaging/cargo-deny-check.sh
@@ -257,19 +287,36 @@ jobs:
           if-no-files-found: error
 
   macos:
-    name: macOS (DMG)
+    name: macOS (DMG, ${{ matrix.arch }})
     needs: version
-    runs-on: macos-latest
+    # Две нативные сборки: libmpv бандлится той же архитектуры, что и раннер,
+    # поэтому universal2 потребовал бы universal-сборку mpv/ffmpeg. Intel-раннер
+    # macos-15-intel доступен до августа 2027 и собирает x86_64 без Rosetta.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-latest
+          - arch: x86_64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install libmpv and packaging tools
+      # Не `brew install mpv`: под Intel у Homebrew с сентября 2026 нет бутылок
+      # (сборка из исходников на часы), а на arm64 он кладёт libmpv под macOS 26,
+      # и DMG перестаёт запускаться на 13–15. Скрипт скачивает закреплённые бутылки
+      # Homebrew под macOS 13 и разворачивает их в собственный префикс.
+      - name: Install libmpv and dylibbundler (macOS 13 bottles)
         timeout-minutes: 30
-        run: brew install mpv dylibbundler librsvg
+        run: python3 packaging/macos/fetch-libmpv.py
 
-      - name: Export libmpv search path
-        run: echo "LIBRARY_PATH=$(brew --prefix)/lib" >> "$GITHUB_ENV"
+      - name: Export libmpv search path and dylibbundler
+        run: |
+          echo "LIBRARY_PATH=/tmp/orbitfm/opt/mpv/lib" >> "$GITHUB_ENV"
+          echo "/tmp/orbitfm/opt/dylibbundler/bin" >> "$GITHUB_PATH"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
@@ -292,6 +339,8 @@ jobs:
 
       - name: Smoke-test DMG
         timeout-minutes: 15
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
           dmg=$(ls dist/*.dmg | head -n 1)
@@ -300,6 +349,15 @@ jobs:
           trap 'hdiutil detach "$mount" -quiet || true' EXIT
           app="$mount/OrbitFM.app"
           test -x "$app/Contents/MacOS/orbitfm"
+          actual=$(file "$app/Contents/MacOS/orbitfm")
+          echo "$actual"
+          case "$EXPECTED_ARCH" in
+            arm64) echo "$actual" | grep -q 'arm64' ;;
+            x86_64) echo "$actual" | grep -q 'x86_64' ;;
+            *) echo "неизвестная архитектура $EXPECTED_ARCH" >&2; exit 1 ;;
+          esac
+          python3 packaging/macos/check-min-os.py "$app" \
+            --arch "$EXPECTED_ARCH" --max 13.0
           codesign --verify --deep --strict "$app"
           if otool -L "$app/Contents/MacOS/orbitfm" | grep -E '/(opt/homebrew|usr/local)/'; then
             echo "бинарник ссылается на Homebrew" >&2
@@ -314,13 +372,14 @@ jobs:
       - name: Upload DMG
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: OrbitFM-macos-dmg
+          name: OrbitFM-macos-dmg-${{ matrix.arch }}
           path: dist/*.dmg
           if-no-files-found: error
 
   release:
     name: Опубликовать релиз
     needs: [version, linux, windows, macos]
+    if: needs.version.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -340,11 +399,12 @@ jobs:
           name: OrbitFM-windows-msi
           path: release
 
-      - name: Download DMG
+      - name: Download DMGs
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: OrbitFM-macos-dmg
+          pattern: OrbitFM-macos-dmg-*
           path: release
+          merge-multiple: true
 
       # Виджет Plasma 6 распространяется ещё и как .plasmoid для установки
       # через «Добавить виджеты → Установить из файла». Архив собирается из
@@ -372,8 +432,8 @@ jobs:
           set -euo pipefail
           cd release
           mapfile -t files < <(find . -maxdepth 1 -type f -printf '%f\n' | sort)
-          if [[ ${#files[@]} -ne 5 ]]; then
-            echo "ожидалось 5 артефактов (AppImage, MSI, DMG, .plasmoid, install-appimage.sh), найдено ${#files[@]}: ${files[*]}" >&2
+          if [[ ${#files[@]} -ne 6 ]]; then
+            echo "ожидалось 6 артефактов (AppImage, MSI, DMG arm64, DMG x86_64, .plasmoid, install-appimage.sh), найдено ${#files[@]}: ${files[*]}" >&2
             exit 1
           fi
           for f in "${files[@]}"; do
@@ -411,7 +471,8 @@ jobs:
         timeout-minutes: 20
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
-          tag_name: ${{ github.ref_name }}
+          # Для пуша main — тег собирается из версии Cargo.toml; для тега — сам тег.
+          tag_name: ${{ needs.version.outputs.tag }}
           name: OrbitFM v${{ needs.version.outputs.version }}
           files: |
             release/OrbitFM-*
@@ -422,3 +483,4 @@ jobs:
           body_path: release-notes.md
           generate_release_notes: false
           fail_on_unmatched_files: true
+          target_commitish: ${{ github.sha }}

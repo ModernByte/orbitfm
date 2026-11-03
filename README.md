@@ -1,7 +1,7 @@
 # OrbitFM
 
 **Плеер интернет-радио с 3D-глобусом**  
-Под эгидой [ModernByte](https://github.com/ModernByte) · версия `0.20.0-rc.3`
+Под эгидой [ModernByte](https://github.com/ModernByte) · версия `0.20.0-rc.4`
 
 [![Релиз](https://img.shields.io/github/v/release/ModernByte/orbitfm?include_prereleases)](https://github.com/ModernByte/orbitfm/releases)
 [![Статус CI](https://img.shields.io/github/actions/workflow/status/ModernByte/orbitfm/ci.yml?branch=main)](https://github.com/ModernByte/orbitfm/actions/workflows/ci.yml)
@@ -14,7 +14,7 @@ OrbitFM — плеер интернет-радио, где каталог пок
 и её станции лежат рядом в списке; так же можно искать по жанру или по названию станции. Закрытие окна музыку не
 останавливает: приложение работает одним процессом, живёт в системном трее и принимает команды из терминала и от
 медиа-клавиш. Для экрана есть три режима — от большого рабочего стола с глобусом до компактной капсулы в углу.
-Приоритетная платформа — Linux (Wayland и X11), сборки есть для Windows и macOS; версия `0.20.0-rc.3` —
+Приоритетная платформа — Linux (Wayland и X11), сборки есть для Windows и macOS; версия `0.20.0-rc.4` —
 пре-релиз, отдельные детали ещё могут меняться.
 
 ## Что умеет
@@ -91,7 +91,7 @@ OrbitFM — плеер интернет-радио, где каталог пок
 |-----------|-----------|
 | Linux | Wayland или X11; видеосистема, с которой работает wgpu-рендерер; `libmpv` (в AppImage и Flatpak уже внутри) |
 | Windows | x64 (установщик собирается с `-arch x64`); отдельная `libmpv` не нужна — `libmpv-2.dll` кладётся в MSI |
-| macOS | 13.0 и новее — это `LSMinimumSystemVersion` собранного `.app`; DMG собирается под архитектуру машины-сборщика, в CI это Apple Silicon (arm64); `libmpv` бандлится в `.app` |
+| macOS | 13.0 и новее (`LSMinimumSystemVersion`). Два DMG: `arm64` для Apple Silicon и `x86_64` для Intel; `libmpv` бандлится в `.app` |
 
 Конкретные версии Windows и Linux-дистрибутивов репозиторий не фиксирует: проверены сборки CI на `windows-latest`
 и `macos-latest`. Для красивой картинки дополнительно нужны **Noto Color Emoji** (цветные флаги стран) и системные
@@ -102,24 +102,24 @@ OrbitFM — плеер интернет-радио, где каталог пок
 ## Установка
 
 Готовые сборки — на странице релизов: <https://github.com/ModernByte/orbitfm/releases>. В набор входят AppImage,
-MSI, DMG, `.plasmoid` для Plasma 6 и `install-appimage.sh`; рядом лежит файл `SHA256SUMS`, так что перед первым
-запуском можно сверить контрольную сумму: `sha256sum -c SHA256SUMS`.
+MSI, два DMG (Apple Silicon и Intel), `.plasmoid` для Plasma 6 и `install-appimage.sh`; рядом лежит файл
+`SHA256SUMS`, так что перед первым запуском можно сверить контрольную сумму: `sha256sum -c SHA256SUMS`.
 
 ### AppImage (Linux x86_64)
 
-Файл называется `OrbitFM-<версия>-x86_64.AppImage`, например `OrbitFM-0.20.0-rc.3-x86_64.AppImage`. Права root и
+Файл называется `OrbitFM-<версия>-x86_64.AppImage`, например `OrbitFM-0.20.0-rc.4-x86_64.AppImage`. Права root и
 установка не нужны — приложение rootless по определению, и `libmpv` с FFmpeg уже внутри:
 
 ```bash
-chmod +x OrbitFM-0.20.0-rc.3-x86_64.AppImage
-./OrbitFM-0.20.0-rc.3-x86_64.AppImage
+chmod +x OrbitFM-0.20.0-rc.4-x86_64.AppImage
+./OrbitFM-0.20.0-rc.4-x86_64.AppImage
 ```
 
 Чтобы добавить приложение в меню и `PATH` без root и без ручного `chmod +x`, положите рядом `install-appimage.sh`
 из релиза и запустите:
 
 ```bash
-bash install-appimage.sh OrbitFM-0.20.0-rc.3-x86_64.AppImage
+bash install-appimage.sh OrbitFM-0.20.0-rc.4-x86_64.AppImage
 ```
 
 Скрипт копирует образ в `~/.local/bin/orbitfm`, ставит desktop entry с абсолютным `Exec`, иконки и metainfo в
@@ -128,7 +128,7 @@ bash install-appimage.sh OrbitFM-0.20.0-rc.3-x86_64.AppImage
 Для обновления запустите скрипт с новым образом.
 
 Если FUSE недоступен (контейнеры, минимальные образы) или не нужна интеграция через монтирование, запускайте в
-режиме распаковки: `APPIMAGE_EXTRACT_AND_RUN=1 ./OrbitFM-0.20.0-rc.3-x86_64.AppImage`. Виджету Noctalia и командам
+режиме распаковки: `APPIMAGE_EXTRACT_AND_RUN=1 ./OrbitFM-0.20.0-rc.4-x86_64.AppImage`. Виджету Noctalia и командам
 `orbitfm …` нужен запускаемый `orbitfm` в `PATH` — скрипт выше ставит его, либо сделайте символьную ссылку на
 AppImage.
 
@@ -139,10 +139,12 @@ AppImage.
 - **Windows:** `OrbitFM-<версия>-windows-x64.msi` — установка для текущего пользователя, файлы в
   `%LOCALAPPDATA%\Programs\OrbitFM`, ярлык в меню «Пуск». Authenticode-подписи нет, поэтому SmartScreen может
   попросить подтверждение.
-- **macOS:** `OrbitFM-<версия>-macos-<arch>.dmg` (в CI — `arm64`). Откройте образ и перетащите `OrbitFM.app` в
-  `/Applications`. Подпись только ad-hoc (`codesign --sign -`), нотаризации нет, поэтому при первом запуске
-  Gatekeeper блокирует приложение: штатный обход — правый клик по приложению → «Открыть», а если не помогает,
-  `xattr -d com.apple.quarantine /Applications/OrbitFM.app`
+- **macOS:** `OrbitFM-<версия>-macos-arm64.dmg` для Apple Silicon и `OrbitFM-<версия>-macos-x86_64.dmg` для Intel.
+  Откройте образ и перетащите `OrbitFM.app` в `/Applications`. Подпись только ad-hoc (`codesign --sign -`),
+  нотаризации нет, поэтому при первом запуске Gatekeeper блокирует приложение: штатный обход — правый клик по
+  приложению → «Открыть», а если не помогает, `xattr -d com.apple.quarantine /Applications/OrbitFM.app`.
+  Пошагово для каждой архитектуры — в вики: [Apple Silicon](docs/wiki/Установка-macOS-Apple-Silicon.md) и
+  [Intel](docs/wiki/Установка-macOS-Intel.md).
 
 ### Сборка из исходников
 
@@ -260,7 +262,7 @@ kbuildsycoca6 --noincremental
 Виджет также публикуется в Releases отдельным архивом `OrbitFM-<версия>-plasma.plasmoid`:
 
 ```bash
-kpackagetool6 -t Plasma/Applet -i OrbitFM-0.20.0-rc.3-plasma.plasmoid
+kpackagetool6 -t Plasma/Applet -i OrbitFM-0.20.0-rc.4-plasma.plasmoid
 ```
 
 Или в графическом интерфейсе: режим редактирования панели → «Добавить виджеты» → «Установить из файла» → выбрать
@@ -716,7 +718,9 @@ Vivaldi и постоянно подписанный Firefox не запуска
 
 | Страница | О чём |
 |---|---|
-| [Установка](docs/wiki/01-Установка.md) | AppImage / MSI / DMG, сборка из исходников, Flatpak, контрольные суммы |
+| [Установка](docs/wiki/01-Установка.md) | AppImage / MSI / два DMG, сборка из исходников, Flatpak, контрольные суммы |
+| [macOS: Apple Silicon](docs/wiki/Установка-macOS-Apple-Silicon.md) | DMG `arm64`, Gatekeeper, `PATH`, проверка версии и архитектуры |
+| [macOS: Intel](docs/wiki/Установка-macOS-Intel.md) | DMG `x86_64`, Gatekeeper, `PATH`, проверка версии и архитектуры |
 | [Первый запуск](docs/wiki/02-Первый-запуск.md) | Две минуты от иконки до звучащей станции |
 | [Режимы окна](docs/wiki/03-Режимы-окна.md) | Focus / Overlay / Listening и правила окон для niri и Hyprland |
 | [Настройки и язык](docs/wiki/04-Настройки-и-язык.md) | Модальное окно настроек, `settings.json`, 17 языков интерфейса |

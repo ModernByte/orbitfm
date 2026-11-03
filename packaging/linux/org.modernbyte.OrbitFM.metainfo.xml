@@ -56,6 +56,18 @@
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.20.0-rc.4" date="2026-11-03">
+      <description>
+        <p>OrbitFM 0.20.0-rc.4 добавляет нативную сборку под Intel Mac.
+        Рядом с arm64-DMG для Apple Silicon публикуется x86_64-DMG; код
+        приложения не менялся. Обе архитектуры собираются и проверяются в CI
+        на своих раннерах, а SHA256SUMS включает оба образа.</p>
+        <p>Заодно исправлена совместимость с macOS 13: libmpv и его
+        зависимости теперь берутся из бутылок Homebrew, собранных под macOS 13,
+        а не под систему раннера. Прежний arm64-DMG нёс библиотеки с
+        минимальной macOS 26.0.</p>
+      </description>
+    </release>
     <release version="0.20.0-rc.3" date="2026-11-03">
       <description>
         <p>OrbitFM 0.20.0-rc.3 — патч вывода после живой приёмки: установщик

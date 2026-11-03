@@ -119,7 +119,7 @@
 {
   "schema": 1,
   "app": "orbitfm",
-  "version": "0.20.0-rc.3",
+  "version": "0.20.0-rc.4",
   "enabled": true,
   "total_seconds": 246000,
   "week_seconds": 3600,

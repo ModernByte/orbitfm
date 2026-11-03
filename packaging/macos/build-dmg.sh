@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Собирает OrbitFM.app из release-бинарника и упаковывает его в DMG.
-# Требует macOS, dylibbundler, librsvg (rsvg-convert) и уже собранный
-# target/release/orbitfm.
+# Требует macOS, dylibbundler и уже собранный target/release/orbitfm.
+# Иконка берётся готовым PNG (packaging/macos/OrbitFM-1024.png), чтобы не
+# тащить librsvg: под Intel у Homebrew нет готовых бутылок, и rsvg пришлось бы
+# собирать из исходников.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -16,7 +18,8 @@ stage="$out_dir/dmg"
 
 [[ -f $binary ]] || { echo "нет бинарника $binary: сначала cargo build --release" >&2; exit 1; }
 command -v dylibbundler >/dev/null || { echo "нужен dylibbundler" >&2; exit 1; }
-command -v rsvg-convert >/dev/null || { echo "нужен rsvg-convert (librsvg)" >&2; exit 1; }
+icon=packaging/macos/OrbitFM-1024.png
+[[ -f $icon ]] || { echo "нет иконки $icon" >&2; exit 1; }
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -30,8 +33,7 @@ sed "s/__VERSION__/$version/g" packaging/macos/Info.plist.in > "$app/Contents/In
 
 iconset="$tmp/OrbitFM.iconset"
 mkdir -p "$iconset"
-rsvg-convert -w 1024 -h 1024 \
-    packaging/linux/org.modernbyte.OrbitFM.svg -o "$tmp/icon-1024.png"
+cp "$icon" "$tmp/icon-1024.png"
 for size in 16 32 128 256 512; do
     sips -z "$size" "$size" "$tmp/icon-1024.png" \
         --out "$iconset/icon_${size}x${size}.png" >/dev/null

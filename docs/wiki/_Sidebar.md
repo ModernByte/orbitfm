@@ -2,6 +2,8 @@
 
 * [Домой](Home)
 * [Установка](01-Установка)
+  * [macOS: Apple Silicon](Установка-macOS-Apple-Silicon)
+  * [macOS: Intel](Установка-macOS-Intel)
 * [Первый запуск](02-Первый-запуск)
 * [Режимы окна](03-Режимы-окна)
 * [Настройки и язык](04-Настройки-и-язык)
@@ -15,5 +17,5 @@
 * [Неполадки](09-Неполадки)
 * [Глоссарий](10-Глоссарий)
 
-Версия: `0.20.0-rc.3` · [Релизы](https://github.com/ModernByte/orbitfm/releases) ·
+Версия: `0.20.0-rc.4` · [Релизы](https://github.com/ModernByte/orbitfm/releases) ·
 [README](https://github.com/ModernByte/orbitfm/blob/main/README.md)
