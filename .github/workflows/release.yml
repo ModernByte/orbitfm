@@ -369,6 +369,10 @@ jobs:
             exit 1
           fi
 
+          # Аудит dylib-контура перед публикацией: без /tmp/, /Users/, Python.framework,
+          # VapourSynth и незразрешаемых @rpath не должен попадать в релиз.
+          bash packaging/macos/audit-app-dylibs.sh "$app"
+
       - name: Upload DMG
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

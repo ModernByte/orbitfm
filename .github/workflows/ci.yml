@@ -379,6 +379,25 @@ jobs:
             exit 1
           fi
 
+          # Аудит dylib-контура: FAIL при /tmp/, /Users/, /opt/homebrew, /usr/local,
+          # ссылках на Python.framework, незразрешаемых @rpath и наличии libvapoursynth*.
+          bash packaging/macos/audit-app-dylibs.sh "$app"
+
+          # Регресс-гард: аудит обязан падать на «сломанном» fixture — бинарник с сырой
+          # /tmp-ссылкой на Python.framework (цепочка libmpv → libvapoursynth-script → Python).
+          # На чистом артефакте выше аудит уже прошёл.
+          fixture="$RUNNER_TEMP/OrbitFM-audit-fixture.app"
+          mkdir -p "$fixture/Contents/MacOS" "$fixture/Contents/Frameworks"
+          cp "$app/Contents/MacOS/orbitfm" "$fixture/Contents/MacOS/orbitfm"
+          cp "$app/Contents/Frameworks/libmpv.2.dylib" "$fixture/Contents/Frameworks/"
+          chmod +x "$fixture/Contents/MacOS/orbitfm"
+          install_name_tool -change "@executable_path/../Frameworks/libmpv.2.dylib" "/tmp/Python.framework/Versions/3.13/Python" \
+            "$fixture/Contents/MacOS/orbitfm"
+          if bash packaging/macos/audit-app-dylibs.sh "$fixture"; then
+            echo "audit не должен падать на fixture с /tmp-ссылкой на Python.framework" >&2
+            exit 1
+          fi
+
       - name: Upload DMG
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -454,3 +473,8 @@ jobs:
 
       - name: Check Flatpak build script syntax
         run: bash -n packaging/linux/build-flatpak.sh
+
+      - name: Check macOS packaging scripts syntax
+        run: |
+          bash -n packaging/macos/build-dmg.sh
+          bash -n packaging/macos/audit-app-dylibs.sh

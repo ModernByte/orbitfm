@@ -49,6 +49,34 @@ dylibbundler -b \
     -p "@executable_path/../Frameworks" \
     -of -od
 
+# VapourSynth: libmpv из бутылок Homebrew собирается с VapourSynth (meson feature
+# `vapoursynth`), и он жёстко тянет libvapoursynth-script → Python.framework. OrbitFM
+# (только аудио-радио; mpv `load-scripts=no`) VapourSynth не использует, поэтому ссылку
+# libmpv → VapourSynth выгружаем в локальную no-op-заглушку и убираем реальный
+# libvapoursynth* из бандла. Иначе dyld abort'ил до main() на машине без Python 3.13
+# («Library not loaded: /tmp/*/Python.framework/Versions/3.13/Python»).
+command -v clang >/dev/null || { echo "нужен clang (Apple CLT)" >&2; exit 1; }
+stub="$app/Contents/Frameworks/liborbitfm-vsscript-stub.0.dylib"
+stub_ref="@executable_path/../Frameworks/liborbitfm-vsscript-stub.0.dylib"
+cat > "$tmp/vsscript-stub.c" <<'EOF'
+void orbitfm_vsscript_stub_init(void) {}
+EOF
+clang -shared -fPIC -o "$stub" "$tmp/vsscript-stub.c"
+install_name_tool -id "$stub_ref" "$stub"
+libmpv="$app/Contents/Frameworks/libmpv.2.dylib"
+refs=$(otool -L "$libmpv" | grep -i 'vapoursynth' | awk 'NR > 1 { print $1 }' || true)
+if [ -n "$refs" ]; then
+    printf '%s\n' "$refs" | while IFS= read -r ref; do
+        install_name_tool -change "$ref" "$stub_ref" "$libmpv"
+    done
+fi
+rm -f "$app/Contents/Frameworks"/libvapoursynth*.dylib
+if otool -L "$libmpv" | grep -i 'vapoursynth'; then
+    echo "VapourSynth осталась в $libmpv после выгрузки" >&2
+    exit 1
+fi
+bash packaging/macos/audit-app-dylibs.sh "$app"
+
 find "$app/Contents/Frameworks" -type f -name '*.dylib' \
     -exec codesign --force --sign - --timestamp=none {} \;
 codesign --force --sign - --timestamp=none "$app"
