@@ -373,6 +373,10 @@ jobs:
           # VapourSynth и незразрешаемых @rpath не должен попадать в релиз.
           bash packaging/macos/audit-app-dylibs.sh "$app"
 
+          # Публикуемый DMG обязан ещё и запускаться: аудит не видит случай «библиотека
+          # на месте, а символа нет» (0.20.0-rc.5 abort'ился на _getVSScriptAPI).
+          bash packaging/macos/smoke-launch.sh "$app"
+
       - name: Upload DMG
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

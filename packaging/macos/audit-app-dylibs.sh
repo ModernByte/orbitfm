@@ -11,6 +11,10 @@
 #
 # Используется в CI/release smoke-тесте DMG и внутри build-dmg.sh перед codesign.
 # FAIL (exit 1) при любом совпадении; на чистом артефакте — PASS.
+#
+# Аудит сверяет только load-команды и НЕ проверяет наличие связанных символов:
+# 0.20.0-rc.5 прошёл этот аудит и abort'ился на «Symbol not found: _getVSScriptAPI».
+# Существо графа зависимостей проверяет smoke-launch.sh фактическим запуском.
 set -euo pipefail
 
 if [[ $# -ne 1 ]]; then

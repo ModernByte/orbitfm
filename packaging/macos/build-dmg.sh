@@ -55,23 +55,104 @@ dylibbundler -b \
 # libmpv → VapourSynth выгружаем в локальную no-op-заглушку и убираем реальный
 # libvapoursynth* из бандла. Иначе dyld abort'ил до main() на машине без Python 3.13
 # («Library not loaded: /tmp/*/Python.framework/Versions/3.13/Python»).
+#
+# Заглушка обязана экспортировать ровно те имена, которые libmpv импортирует у
+# VapourSynth: Mach-O связывает импорт с конкретной библиотекой (two-level namespace),
+# поэтому «рядом лежит какой-то dylib» недостаточно. В 0.20.0-rc.5 заглушка экспортировала
+# выдуманную orbitfm_vsscript_stub_init, libmpv продолжал просить _getVSScriptAPI, и dyld
+# оборвал запуск заново — уже с «Namespace DYLD, Code 4 Symbol missing». Имена берутся из
+# самих бинарников (nm), а не из догадок; сборка падает, если заглушка их не покрывает.
 command -v clang >/dev/null || { echo "нужен clang (Apple CLT)" >&2; exit 1; }
 stub="$app/Contents/Frameworks/liborbitfm-vsscript-stub.0.dylib"
 stub_ref="@executable_path/../Frameworks/liborbitfm-vsscript-stub.0.dylib"
-cat > "$tmp/vsscript-stub.c" <<'EOF'
-void orbitfm_vsscript_stub_init(void) {}
-EOF
-clang -shared -fPIC -mmacosx-version-min=13.0 -o "$stub" "$tmp/vsscript-stub.c"
-install_name_tool -id "$stub_ref" "$stub"
 libmpv="$app/Contents/Frameworks/libmpv.2.dylib"
-vsscript_ref="@executable_path/../Frameworks/libvapoursynth-script.0.dylib"
-if otool -L "$libmpv" | grep -q 'vapoursynth'; then
-    install_name_tool -change "$vsscript_ref" "$stub_ref" "$libmpv"
-fi
-rm -f "$app/Contents/Frameworks"/libvapoursynth*.dylib
+vsscript_libs=()
 if otool -L "$libmpv" | grep -qi 'vapoursynth'; then
-    echo "VapourSynth осталась в $libmpv после выгрузки" >&2
-    exit 1
+    while IFS= read -r vs; do
+        vsscript_libs+=("$vs")
+    done < <(find "$app/Contents/Frameworks" -type f -name 'libvapoursynth*' | sort)
+    if [[ ${#vsscript_libs[@]} -eq 0 ]]; then
+        echo "libmpv ссылается на VapourSynth, но libvapoursynth* в бандле нет: выводить имена не из чего" >&2
+        exit 1
+    fi
+fi
+
+# Экспорт Mach-O как пары «имя тип». Тип читаем из колонки nm, а не по ключу -U:
+# реализации nm трактуют -U по-разному, а нам важны и имя, и KIND символа. Библиотека
+# без симтаба (strip) просто не добавляет имён — launch-гейт ниже всё равно не даст
+# выложить бандл, в котором dyld что-то не связал.
+exports_of() {
+    nm -g "$1" 2>/dev/null | awk 'NF >= 3 && $2 !~ /^[Uu]/ { print $NF, $2 }' || true
+}
+
+if [[ ${#vsscript_libs[@]} -gt 0 ]]; then
+    # Импорты всех Mach-O бандла, которые до выгрузки экспортировали удаляемые
+    # libvapoursynth*. Двухуровневое пространство имён привязывает импорт к конкретной
+    # библиотеке, поэтому заглушка обязана закрыть весь набор целиком — даже если то же
+    # имя определено где-то ещё, dyld будет искать его именно в ней.
+    imports=$(
+        for bin in "$app/Contents/MacOS/orbitfm" "$app"/Contents/Frameworks/*.dylib; do
+            nm -u "$bin" 2>/dev/null || true
+        done | awk 'NF >= 1 { print $NF }' | sed '/^$/d' | sort -u
+    )
+    vsscript_symbols=$(
+        for vs in "${vsscript_libs[@]}"; do exports_of "$vs"; done | sort -u | sed '/^$/d'
+    )
+    needed=$(
+        comm -12 <(awk '{ print $1 }' <<<"$vsscript_symbols" | sort -u) \
+                 <(printf '%s\n' "$imports") |
+            sed '/^$/d'
+    )
+
+    stub_c="$tmp/vsscript-stub.c"
+    : > "$stub_c"
+    if [[ -z $needed ]]; then
+        # Ни одного импорта: выгружать нечего, но dylib с пустым __SYMTAB clang не
+        # соберёт — оставляем явный placeholder.
+        echo "VapourSynth: бандл не импортирует ни одного символа — заглушка на placeholder"
+        printf 'void orbitfm_vsscript_stub_placeholder(void) {}\n' > "$stub_c"
+    fi
+    while IFS= read -r symbol; do
+        [[ -n $symbol ]] || continue
+        name=${symbol#_}
+        if [[ $symbol != _* || ! $name =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+            echo "VapourSynth: символ '$symbol' нельзя определить из C — это не идентификатор" >&2
+            exit 1
+        fi
+        kind=$(awk -v s="$symbol" '$1 == s { print $2 }' <<<"$vsscript_symbols" | head -n 1)
+        if [[ $kind != T ]]; then
+            echo "VapourSynth: '$symbol' выгружается как '$kind', а заглушка умеет только функции (T) — расширять осознанно" >&2
+            exit 1
+        fi
+        printf 'void *%s(void) { return 0; }\n' "$name" >> "$stub_c"
+    done <<< "$needed"
+
+    clang -shared -fPIC -mmacosx-version-min=13.0 -o "$stub" "$stub_c"
+    install_name_tool -id "$stub_ref" "$stub"
+
+    uncovered=$(comm -23 <(printf '%s\n' "$needed") \
+        <(exports_of "$stub" | awk '{ print $1 }' | sort -u))
+    if [[ -n $uncovered ]]; then
+        echo "заглушка $stub не экспортирует: $(tr '\n' ' ' <<<"$uncovered")" >&2
+        exit 1
+    fi
+    if [[ -n $needed ]]; then
+        echo "VapourSynth: заглушка закрывает $(tr '\n' ' ' <<<"$needed")"
+    fi
+
+    refs=$(awk 'NR > 1 { print $1 }' <<<"$(otool -L "$libmpv")" | grep -i vapoursynth || true)
+    if [[ $(grep -c . <<<"$refs") -gt 1 ]]; then
+        echo "libmpv ссылается на несколько VapourSynth-библиотек: $(tr '\n' ' ' <<<"$refs")" >&2
+        exit 1
+    fi
+    if [[ -n $refs ]]; then
+        install_name_tool -change "$refs" "$stub_ref" "$libmpv"
+    fi
+    rm -f "$app/Contents/Frameworks"/libvapoursynth*.dylib
+    if otool -L "$libmpv" | grep -qi 'vapoursynth'; then
+        echo "VapourSynth осталась в $libmpv после выгрузки" >&2
+        exit 1
+    fi
 fi
 bash packaging/macos/audit-app-dylibs.sh "$app"
 
@@ -79,6 +160,11 @@ find "$app/Contents/Frameworks" -type f -name '*.dylib' \
     -exec codesign --force --sign - --timestamp=none {} \;
 codesign --force --sign - --timestamp=none "$app"
 codesign --verify --deep --strict "$app"
+
+# Проверка разрешения зависимостей запуском: аудит путей не видит случай «библиотека
+# на месте, а символа нет». Неразрешимый импорт dyld показывает до main(), поэтому
+# хватает уже `--version`, чтобы отличить рабочий бандл от аборта.
+bash packaging/macos/smoke-launch.sh "$app"
 
 mkdir -p "$stage"
 ditto "$app" "$stage/OrbitFM.app"

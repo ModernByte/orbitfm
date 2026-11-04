@@ -383,6 +383,11 @@ jobs:
           # ссылках на Python.framework, незразрешаемых @rpath и наличии libvapoursynth*.
           bash packaging/macos/audit-app-dylibs.sh "$app"
 
+          # Аудит сверяет только load-команды, а Mach-O с two-level namespace требует ещё
+          # и наличия связанных символов: 0.20.0-rc.5 прошёл аудит и abort'ился на
+          # «Symbol not found: _getVSScriptAPI». Поэтому артефакт проверяется запуском.
+          bash packaging/macos/smoke-launch.sh "$app"
+
           # Регресс-гард: аудит обязан падать на «сломанном» fixture — бинарник с сырой
           # /tmp-ссылкой на Python.framework (цепочка libmpv → libvapoursynth-script → Python).
           # На чистом артефакте выше аудит уже прошёл.
@@ -395,6 +400,26 @@ jobs:
             "$fixture/Contents/MacOS/orbitfm"
           if bash packaging/macos/audit-app-dylibs.sh "$fixture"; then
             echo "audit не должен падать на fixture с /tmp-ссылкой на Python.framework" >&2
+            exit 1
+          fi
+
+          # Регресс-гард launch-гейта: заглушка без VapourSynth-экспортов — ровно состояние
+          # 0.20.0-rc.5. Обязана ломать запуск; если гейт это пропускает, он ничего не
+          # проверяет и следующий «Symbol not found» уедет к пользователю.
+          launch_fixture="$RUNNER_TEMP/OrbitFM-launch-fixture.app"
+          rm -rf "$launch_fixture"
+          cp -R "$app" "$launch_fixture"
+          stub="$launch_fixture/Contents/Frameworks/liborbitfm-vsscript-stub.0.dylib"
+          printf 'void orbitfm_vsscript_stub_empty(void) {}\n' > "$RUNNER_TEMP/empty-stub.c"
+          clang -shared -mmacosx-version-min=13.0 -o "$stub" "$RUNNER_TEMP/empty-stub.c"
+          install_name_tool -id "@executable_path/../Frameworks/liborbitfm-vsscript-stub.0.dylib" "$stub"
+          codesign --force --sign - --timestamp=none "$stub"
+          if launch_out=$(bash packaging/macos/smoke-launch.sh "$launch_fixture" 2>&1); then
+            echo "smoke-launch не должен проходить на заглушке без VapourSynth-экспортов" >&2
+            exit 1
+          elif ! grep -q 'Symbol not found' <<<"$launch_out"; then
+            echo "fixture обязан падать по недостающему символу, а падение такое:" >&2
+            printf '%s\n' "$launch_out" >&2
             exit 1
           fi
 
@@ -478,3 +503,4 @@ jobs:
         run: |
           bash -n packaging/macos/build-dmg.sh
           bash -n packaging/macos/audit-app-dylibs.sh
+          bash -n packaging/macos/smoke-launch.sh
