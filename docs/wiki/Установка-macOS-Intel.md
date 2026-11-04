@@ -3,7 +3,7 @@
 ← [Установка](01-Установка) · [Домой](Home)
 
 Эта страница — для Mac на процессоре Intel. Нужен файл
-`OrbitFM-0.20.0-rc.4-macos-x86_64.dmg`.
+`OrbitFM-0.20.0-rc.5-macos-x86_64.dmg`.
 
 Apple Silicon (M1–M4) эту сборку тоже запустит через Rosetta, но нативная arm64
 быстрее и не требует Rosetta — для таких Mac есть
@@ -27,7 +27,7 @@ i5/i7/i9, Xeon и т. п.). Версия системы — macOS 13.0 или н
 
 Со страницы релизов <https://github.com/ModernByte/orbitfm/releases> скачайте:
 
-- `OrbitFM-0.20.0-rc.4-macos-x86_64.dmg`;
+- `OrbitFM-0.20.0-rc.5-macos-x86_64.dmg`;
 - `SHA256SUMS` — если хотите сверить контрольную сумму.
 
 В macOS нет `sha256sum` из GNU coreutils, зато есть `shasum`. Проверка только
@@ -40,7 +40,7 @@ shasum -a 256 -c orbitfm-x86_64.sha256
 rm orbitfm-x86_64.sha256
 ```
 
-Ожидаемый вывод — `OrbitFM-0.20.0-rc.4-macos-x86_64.dmg: OK`. Сумма подтверждает,
+Ожидаемый вывод — `OrbitFM-0.20.0-rc.5-macos-x86_64.dmg: OK`. Сумма подтверждает,
 что файл скачался целиком и совпадает с опубликованным; подписью она не является.
 
 ## 3. Установите приложение
@@ -109,7 +109,7 @@ orbitfm --version
 file /Applications/OrbitFM.app/Contents/MacOS/orbitfm
 ```
 
-Ожидается версия `0.20.0-rc.4` и `Mach-O 64-bit executable x86_64`.
+Ожидается версия `0.20.0-rc.5` и `Mach-O 64-bit executable x86_64`.
 
 ## 6. Обновление и удаление
 
@@ -157,7 +157,7 @@ DMG из этого же дерева:
 bash packaging/macos/build-dmg.sh
 ```
 
-Готовый файл появится в `dist/OrbitFM-0.20.0-rc.4-macos-x86_64.dmg`. Скрипт берёт
+Готовый файл появится в `dist/OrbitFM-0.20.0-rc.5-macos-x86_64.dmg`. Скрипт берёт
 архитектуру из `uname -m`, поэтому на Intel получается x86_64, а `libmpv` из
 бутылок Homebrew бандлится внутрь `.app` (путь к `dylibbundler` задаётся через
 `PATH`, он создаётся скриптом в префиксе).

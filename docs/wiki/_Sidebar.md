@@ -17,5 +17,5 @@
 * [Неполадки](09-Неполадки)
 * [Глоссарий](10-Глоссарий)
 
-Версия: `0.20.0-rc.4` · [Релизы](https://github.com/ModernByte/orbitfm/releases) ·
+Версия: `0.20.0-rc.5` · [Релизы](https://github.com/ModernByte/orbitfm/releases) ·
 [README](https://github.com/ModernByte/orbitfm/blob/main/README.md)
