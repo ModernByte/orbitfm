@@ -422,6 +422,7 @@ jobs:
             printf '%s\n' "$launch_out" >&2
             exit 1
           fi
+          echo "launch fixture отработал: гейт упал именно на недостающем символе"
 
       - name: Upload DMG
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
