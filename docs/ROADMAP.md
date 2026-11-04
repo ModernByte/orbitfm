@@ -1160,6 +1160,30 @@ PATCH-пакет поверх 0.20.0-rc.4: код приложения не ме
       `sha256sum -c`; AppImage, MSI, оба DMG, `.plasmoid`, `install-appimage.sh` и
       SHA256SUMS — все ЦЕЛ; `orbitfm --version` — 0.20.0-rc.5
 
+## Релиз 0.20.0-rc.6 — macOS-бандл снова запускается (dyld: _getVSScriptAPI) (2026-11-04)
+
+PATCH-пакет поверх 0.20.0-rc.5: код приложения не менялся, чинится упаковка macOS и
+CI-гейты. Причина выката — отчёт пользователя (MacBookAir8,2, macOS 14.8.9):
+`EXC_CRASH (SIGABRT)`, `Namespace DYLD, Code 4 Symbol missing`,
+`Symbol not found: _getVSScriptAPI` из `libmpv.2.dylib`, ожидавшийся в
+`liborbitfm-vsscript-stub.0.dylib`. rc.5 выгрузил VapourSynth-ссылку в заглушку, которая
+экспортировала не то имя: two-level namespace связывает импорт с конкретной библиотекой
+из load-команды, и dyld искал именно `_getVSScriptAPI`.
+
+- [x] `build-dmg.sh`: экспорты заглушки выводятся из артефакта (пересечение `nm -u` всех
+      Mach-O бандла с экспортами удаляемых `libvapoursynth*`), заглушка собирается ровно под
+      них; сборка падает при непокрытии набора, при типе символа ≠ `T` и при неоднозначной
+      VapourSynth load-команде в libmpv
+- [x] `packaging/macos/smoke-launch.sh`: гейт фактического запуска — `orbitfm --version`
+      обязан завершиться кодом 0 и напечатать версию из `Info.plist`; вызывается из
+      `build-dmg.sh` после codesign
+- [x] CI и release: smoke-test DMG проверяет артефакт и аудитом путей, и запуском;
+      negative fixture пересобирает заглушку без VapourSynth-экспортов (ровно состояние rc.5) —
+      гейт обязан на ней упасть на `Symbol not found`
+- [ ] Тег `v0.20.0-rc.6`, GitHub Release и локальная переустановка: ассеты сверены
+      `sha256sum -c`; AppImage, MSI, оба DMG, `.plasmoid`, `install-appimage.sh` и
+      SHA256SUMS — все целы; `orbitfm --version` — 0.20.0-rc.6
+
 ## Трек TUI на ratatui — спроектирован, код не начат (2026-11-03)
 
 Терминальный клиент к работающему ядру: ADR-0047, интерфейс 16, модуль 19.

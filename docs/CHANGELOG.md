@@ -5,6 +5,52 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),  
 проект следует [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [0.20.0-rc.6] - 2026-11-04
+
+PATCH-пакет: `OrbitFM.app` для macOS всё ещё не запускался — 0.20.0-rc.5 заменил один
+dyld-аборт другим. Код приложения не менялся, чинится упаковка и CI-гейты.
+
+### Исправлено
+- macOS: краш запуска `EXC_CRASH (SIGABRT)`, `Namespace DYLD, Code 4 Symbol missing`,
+  `Symbol not found: _getVSScriptAPI`, `Referenced from: .../Contents/Frameworks/libmpv.2.dylib`,
+  `Expected in: .../liborbitfm-vsscript-stub.0.dylib` (MacBookAir8,2, macOS 14.8.9; `nm` по
+  опубликованным DMG показывает ту же картину на arm64). Заглушка
+  0.20.0-rc.5 экспортировала выдуманное `orbitfm_vsscript_stub_init`, тогда как Mach-O с
+  two-level namespace связывает импорт с конкретной библиотекой из load-команды, и dyld ищет
+  именно `_getVSScriptAPI`.
+- `build-dmg.sh` больше не зашивает имя символа: набор выгрузок выводится из самого артефакта —
+  пересечение неразрешённых импортов всех Mach-O бандла (`nm -u`) с экспортами удаляемых
+  `libvapoursynth*` (`nm -g`) — и заглушка собирается ровно с этим набором (на текущих бутылках
+  Homebrew это одна `getVSScriptAPI`). Сборка падает, если заглушка не покрывает хотя бы одно
+  вычисленное имя, если символ выгружен не как функция (`T`) или если имя нельзя определить из C.
+  `getVSScriptAPI` возвращает `NULL`: в mpv 0.40.0 `drv_vss_init` трактует `NULL` как
+  «VapourSynth недоступен» (`MP_FATAL` + отказ инициализации фильтра), а вызов происходит только
+  при создании фильтра `vapoursynth` (`vf_vapoursynth_create`). OrbitFM — только аудио-радио, mpv
+  с `load-scripts=no` — этот фильтр не создаёт.
+- `build-dmg.sh` не предполагает единственную VapourSynth-ссылку в libmpv: `install_name_tool
+  -change` ретаргетит фактическую load-команду, а при нескольких `libvapoursynth*` в бандле
+  сборка падает, вместо того чтобы выбрать первую наугад.
+
+### Добавлено
+- `packaging/macos/smoke-launch.sh` — проверка запуска `.app`: `orbitfm --version` обязан
+  завершиться с кодом 0 и напечатать версию из `Info.plist`. `--version` завершает процесс до GUI
+  и IPC, а dyld разрешает граф зависимостей до `main()` — этого достаточно, чтобы отличить
+  рабочий бандл от аборта. Вызывается из `build-dmg.sh` после codesign, из smoke-теста
+  DMG в CI и из release smoke-теста перед публикацией DMG.
+
+### Тесты
+- CI (`macos (DMG, …)`) и release: артефакт проверяется не только аудитом путей, но и запуском.
+- Регресс-гард launch-гейта: negative fixture, повторяющий ровно состояние 0.20.0-rc.5 —
+  заглушка пересобирается без VapourSynth-экспортов, и `smoke-launch.sh` обязан на ней упасть с
+  `Symbol not found`. Если гейт это пропускает, он ничего не проверяет.
+- Шаг «Check macOS packaging scripts syntax» покрывает `bash -n` новый скрипт.
+
+### Документация
+- В шапке `audit-app-dylibs.sh` зафиксировано ограничение: аудит сверяет только load-команды и
+  не проверяет наличие связанных символов — 0.20.0-rc.5 этот аудит прошёл и abort'ился.
+- Версия поднята до `0.20.0-rc.6` (схема `vMAJOR.MINOR.PATCH[-rc.N]`); release notes собираются из
+  секции `[0.20.0-rc.6]` в `docs/CHANGELOG.md`.
+
 ## [0.20.0-rc.5] - 2026-11-04
 
 PATCH-пакет: краш macOS при запуске `OrbitFM.app` (dyld / VapourSynth / Python.framework).
