@@ -7,8 +7,8 @@ description: GUI и 3D-глобус OrbitFM на eframe, egui и egui-wgpu. Ис
 
 Ты работаешь с UI-слоем OrbitFM (eframe + egui + egui-wgpu).
 
-Опирайся на ADR-0002, ADR-0010, ADR-0012 и `docs/modules/04-render-globe.md`,
-`docs/interfaces/04-render.md`.
+Опирайся на ADR-0002, ADR-0010, ADR-0012, ADR-0052 (матрица поддержки macOS и требование
+к GPU) и `docs/modules/04-render-globe.md`, `docs/interfaces/04-render.md`.
 
 ## Стек
 
@@ -23,11 +23,17 @@ description: GUI и 3D-глобус OrbitFM на eframe, egui и egui-wgpu. Ис
 - Рамка и тень остаются только у Focus: `WindowMode::is_borderless()` — это `self != Focus`,
   поэтому Overlay, Listening и Panel открываются с `with_decorations(false)` и без тени.
 - Для borderless-режимов: `ViewportBuilder::with_transparent(true)`, `with_decorations(false)`, `App::clear_color` с альфой 0.
-- Прозрачность с wgpu имеет известные ограничения (особенно Windows). На Linux тестировать в первую очередь. При проблемах допустим fallback на glow для overlay.
+- Прозрачность с wgpu имеет известные ограничения (особенно Windows). На Linux тестировать в первую очередь.
+  Fallback на glow для overlay **не** допускается: он не реализован и в план не входит (ADR-0002, уточнение
+  2026-11-06) — дефект прозрачности решается как дефект, а не сменой бэкенда.
 
 ## 3D-глобус
 
 - Рендер только через официальный `egui_wgpu::Callback` / `PaintCallback`.
+- На вопрос «каким GPU мы реально рисуем» отвечает строка `orbitfm render:` в stderr первым
+  кадром (`AdapterReport` в `src/render`), а не догадка: она печатается до создания
+  `GlobeRenderer` и содержит все доступные адаптеры. Формат строки — не контракт,
+  `status --json` её не отдаёт.
 - Не использовать отдельное окно или конфликтующие 3D-движки.
 - Камера: ПКМ + drag (с инерцией), колесо — zoom с min/max.
 - Клик ЛКМ → `screen_to_sphere` → точка (x, y, z) → передаётся в GeoService.

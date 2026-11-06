@@ -114,6 +114,14 @@ orbitfm/
 6. Перед merge — [docs/templates/MERGE_CHECKLIST.md](templates/MERGE_CHECKLIST.md).
 7. Статусы и labels — [docs/templates/PROJECT_STATUS.md](templates/PROJECT_STATUS.md).
 
+CI исполняет `fmt`, `clippy -D warnings`, `cargo test --all-targets` и release-сборку на
+трёх ОС-линейках: Linux, `windows-latest` и **обе арки macOS** — `macos-latest` (arm64) и
+`macos-15-intel` (x86_64). Это значит, что правка, ломающая Intel, не долетает до DMG: с
+0.21.0-rc.1 Intel — не только машина упаковки, но и машина тестов. Минимальная macOS при
+этом задаётся проектом, а не дефолтом тулчейна: `MACOSX_DEPLOYMENT_TARGET=13.0` в шагах
+сборки и `LSMinimumSystemVersion` в `packaging/macos/Info.plist.in` — единственное место,
+где число записано (подробности — ADR-0052).
+
 ## 5. Документация
 
 - Любое новое публичное API — документация в коде (`///`)

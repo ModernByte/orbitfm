@@ -153,10 +153,12 @@ TUI не читает `library.json` и не обращается к Radio Brows
   vendored cargo-исходники (ADR-0011)
 - Исходная сборка: нативный бинарник для Linux (x86_64)
 - CI: Linux (`fmt`/`clippy`/тесты), MSRV 1.95, `cargo deny` и еженедельная
-  перепроверка адвизори, macOS (сборка, тесты и release с libmpv из Homebrew),
-  Windows (`fmt`/`clippy`, тесты в MSI-job); отдельные джобы собирают MSI (MSYS2
-  + WiX 5), DMG (`dylibbundler` + ad-hoc подпись) и `.plasmoid` для Plasma 6,
-  затем публикуют артефакты
+  перепроверка адвизори, macOS — тесты и сборка на обеих арках (`macos-latest` под
+  arm64 и `macos-15-intel` под x86_64) с `libmpv` из закреплённых бутылок Homebrew
+  под macOS 13 (ADR-0052), Windows (`fmt`/`clippy`, тесты в MSI-job); отдельные джобы
+  собирают MSI (MSYS2 + WiX 5), DMG по арке (`build-dmg.sh --arch`, `dylibbundler` +
+  ad-hoc подпись, гейты арки/минимальной ОС/фактического запуска) и `.plasmoid` для
+  Plasma 6, затем публикуют артефакты
 - Не реализовано: aarch64 Linux, рантайм-проверка SMTC на Windows и Now Playing
   на macOS; установщики не подписаны сертификатами и не нотаризованы
 - TUI (`orbitfm-tui`) спроектирован документами ADR-0047 / интерфейс 16 /

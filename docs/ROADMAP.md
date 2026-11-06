@@ -1184,6 +1184,41 @@ CI-гейты. Причина выката — отчёт пользовател
       `sha256sum -c`; AppImage, MSI, оба DMG, `.plasmoid`, `install-appimage.sh` и
       SHA256SUMS — все целы; `orbitfm --version` — 0.20.0-rc.6
 
+## Релиз 0.21.0-rc.1 — полноценная поддержка macOS: Intel и Apple Silicon (2026-11-06)
+
+MINOR-пакет: меняется не только упаковка, но и код приложения (диагностика рендера), и
+сам характер заявлений о macOS — с «обещаем» на «обеспечиваем и показываем, что ещё не
+доказано». Приёмочная машина задана явно: `MacBookAir8,2` (MacBook Air Retina 13″ 2019,
+Intel Core i5-8210Y, Intel UHD Graphics 617, 8 ГБ, macOS 14.8.9).
+
+- [x] ADR-0052 «Матрица поддержки macOS»: пол 13.0 для обеих арок, два per-arch DMG с
+      отказом от universal2, ad-hoc без нотаризации, Intel-бутылки как заморозка с датой
+      пересмотра, таблица «чем обеспечено / чем подтверждено / не проверено»; уточнения в
+      ADR-0002, ADR-0011 и ADR-0026
+- [x] Диагностика рендера: `AdapterReport` в `src/render` и строка `orbitfm render:` на
+      `info` первым кадром (`src/app.rs`), `warn!` с причиной в ветке `None`; три
+      unit-теста на формат; публичные контракты не затронуты
+- [x] Упаковка: `build-dmg.sh --arch x86_64|arm64` вместо `uname -m`, новый гейт
+      `check-app-arch.sh` на каждый Mach-O бандла, `check-min-os.py` берёт предел из
+      `Info.plist` (`--max` — явное переопределение) и обходит `Frameworks` рекурсивно,
+      `-mmacosx-version-min` заглушки подставляется из того же plist
+- [x] CI: job `macos-intel` на `macos-15-intel` — первые в истории проекта тесты на
+      Intel; `MACOSX_DEPLOYMENT_TARGET=13.0` в сборке обеих арок; вызов
+      `check-min-os.py` без жёсткого `--max` и строка о самой новой минимальной macOS в
+      job summary; два новых негативных fixture (арка, пол) с обязательным маркером в логе
+- [x] Документация: бейдж и секция «Матрица поддержки macOS» в README, честный уровень
+      «Подтверждено на живом железе macOS» вместо ложвого «приёмки не было», вики без
+      потолка «M1–M4», протокол съёма `orbitfm-render.log`, `<release>` в metainfo
+- [ ] Тег `v0.21.0-rc.1`, GitHub Release и локальная переустановка: ассеты сверены
+      `sha256sum -c`; AppImage, MSI, оба DMG, `.plasmoid`, `install-appimage.sh` и
+      SHA256SUMS — все ЦЕЛ; `orbitfm --version` — 0.21.0-rc.1; у обоих DMG срез арки и
+      `LC_BUILD_VERSION` = 13.0 проверены `llvm-objdump --macho --private-headers`,
+      `libvapoursynth*` в бандле нет, экспорт заглушки покрывает `_getVSScriptAPI`
+- [ ] Живая приёмка на `MacBookAir8,2`: `orbitfm quit; orbitfm 2>&1 | tee
+      orbitfm-render.log` → блок `orbitfm render:` вклеить в ADR-0052 и перевести строку
+      «Рендер глобуса на Intel UHD 617» из «не проверено» в «подтверждено». Пока блока
+      нет, ни один текст не должен утверждать работоспособность рендера на этой GPU
+
 ## Трек TUI на ratatui — спроектирован, код не начат (2026-11-03)
 
 Терминальный клиент к работающему ядру: ADR-0047, интерфейс 16, модуль 19.
