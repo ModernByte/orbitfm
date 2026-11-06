@@ -54,6 +54,10 @@ pub(crate) enum InhibitBackend {
 /// Почему лок не удалось взять. Detail уходит в статус и в предупреждение.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum PowerError {
+    /// Ингибитор недоступен на этой платформе. На Windows и macOS бэкенд
+    /// всегда доступен, поэтому вариант мёртвый на них — оставим дляLinux и
+    /// кросс-платформенной сигнатуры.
+    #[allow(dead_code)]
     #[error("ингибитор сна недоступен: {0}")]
     Unavailable(String),
     #[error("не удалось запустить ингибитор: {0}")]
