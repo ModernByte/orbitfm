@@ -96,6 +96,8 @@ fn notice_text(
         NoticeKey::VisualizerNotSaved => notices.visualizer_not_saved,
         NoticeKey::FftUnavailable => notices.fft_unavailable,
         NoticeKey::SleepExpired => notices.sleep_expired,
+        NoticeKey::InhibitionLost => notices.inhibition_lost,
+        NoticeKey::SleepActionFailed => notices.sleep_action_failed,
         NoticeKey::StatsDamaged => notices.stats_damaged,
     };
     match detail {

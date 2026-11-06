@@ -52,6 +52,8 @@ const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(16);
 /// libmpv; URL и качество потока при этом не меняются.
 const ECONOMY_DEMUXER_MAX_BYTES: i64 = 256 * 1024 * 1024;
 const ECONOMY_CACHE_SECS: f64 = 60.0;
+/// Глубина затухания ADR-0056: 45 дБ от стартовой громкости.
+const FADE_DEPTH_DB: f64 = 45.0;
 
 /// Раскладка, для которой определён граф полос (ADR-0027).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,6 +98,27 @@ impl CacheDefaults {
     }
 }
 
+/// Активный фейд громкости (ADR-0056): старт, окно и громкость до фейда.
+#[derive(Debug, Clone, Copy)]
+struct Fade {
+    started_at: Instant,
+    duration: Duration,
+    start_pct: f64,
+}
+
+/// Громкость фейда в долях единицы: линейно по дБ, глубина [`FADE_DEPTH_DB`]:
+/// `pct(t) = pct0 · 10^(−(D/20)·(t/T))` (ADR-0056).
+pub(crate) fn fade_gain(start_pct: f64, elapsed: Duration, duration: Duration) -> f64 {
+    if duration.is_zero() {
+        return 0.0;
+    }
+    let progress = elapsed.as_secs_f64() / duration.as_secs_f64();
+    if progress >= 1.0 {
+        return 0.0;
+    }
+    (start_pct * 10f64.powf(-(FADE_DEPTH_DB / 20.0) * progress)).clamp(0.0, 1.0)
+}
+
 pub(super) struct AudioWorker {
     mpv: Mpv,
     shared: Arc<Shared>,
@@ -112,6 +135,8 @@ pub(super) struct AudioWorker {
     cache_defaults: CacheDefaults,
     /// Включён ли экономный профиль буфера (ADR-0043 §3).
     economy_cache: bool,
+    /// Активный фейд громкости; `None` — громкостью владеет пользователь.
+    fade: Option<Fade>,
 }
 
 impl AudioWorker {
@@ -133,6 +158,7 @@ impl AudioWorker {
             bands_active: false,
             applied_af: None,
             economy_cache: false,
+            fade: None,
         }
     }
 
@@ -165,6 +191,10 @@ impl AudioWorker {
             if let Some(event) = self.next_event() {
                 self.handle_event(event);
             }
+
+            // Шаг фейда живёт в том же цикле ~20 Hz, что и `wait_event`
+            // (ADR-0056 §1): отдельного потока и таймера нет.
+            self.step_fade();
 
             if self.shared.spectrum_enabled() && self.spectrum_poll_due() {
                 self.poll_spectrum();
@@ -203,9 +233,14 @@ impl AudioWorker {
                 respond(reply, result);
             }
             AudioCommand::SetVolume { volume, reply } => {
+                // Явная громкость пользователя отменяет фейд без восстановления:
+                // воля пользователя выше автоматики (ADR-0056 §4).
+                self.fade = None;
                 let result = self.apply_volume(volume);
                 respond(reply, result);
             }
+            AudioCommand::StartFade { duration_ms } => self.start_fade(duration_ms),
+            AudioCommand::CancelFade { restore_volume } => self.cancel_fade(restore_volume),
             AudioCommand::SetSpectrum { enabled, reply } => {
                 let result = self.apply_spectrum(enabled);
                 respond(reply, result);
@@ -216,6 +251,8 @@ impl AudioWorker {
     }
 
     fn play_url(&mut self, url: &str) -> Result<(), AudioError> {
+        // Новый эфир начинает с громкости пользователя (ADR-0056 §4).
+        self.fade = None;
         self.active_url = Some(url.to_owned());
         self.tracker.reset();
         self.layout_retry = None;
@@ -245,6 +282,8 @@ impl AudioWorker {
     }
 
     fn stop_playback(&mut self) -> Result<(), AudioError> {
+        // Стоп прекращает фейд без восстановления: эфира больше нет (ADR-0056 §4).
+        self.fade = None;
         self.mpv
             .command("stop", &[])
             .map_err(|err| AudioError::Playback(err.to_string()))?;
@@ -292,6 +331,53 @@ impl AudioWorker {
             .map_err(|err| AudioError::Playback(err.to_string()))?;
         self.shared.set_volume(volume);
         Ok(())
+    }
+
+    /// Старт фейда от текущей громкости; `duration == 0` — сразу тишина.
+    fn start_fade(&mut self, duration_ms: u64) {
+        let start_pct = self.shared.volume();
+        let duration = Duration::from_millis(duration_ms);
+        if duration.is_zero() {
+            self.fade = None;
+            self.apply_fade_volume(0.0);
+            return;
+        }
+        self.fade = Some(Fade {
+            started_at: Instant::now(),
+            duration,
+            start_pct,
+        });
+    }
+
+    /// Отмена фейда (ADR-0056 §4): `restore_volume` возвращает громкость до
+    /// фейда, иначе остаётся текущая. В обоих случаях фейд снимается.
+    fn cancel_fade(&mut self, restore_volume: bool) {
+        let Some(fade) = self.fade.take() else {
+            return;
+        };
+        if restore_volume {
+            self.apply_fade_volume(fade.start_pct);
+        }
+    }
+
+    /// Шаг фейда в общем цикле ~20 Hz; на `t >= T` — один шаг в 0 (ADR-0056).
+    fn step_fade(&mut self) {
+        let Some(fade) = self.fade else {
+            return;
+        };
+        let elapsed = fade.started_at.elapsed();
+        if elapsed >= fade.duration {
+            self.fade = None;
+        }
+        self.apply_fade_volume(fade_gain(fade.start_pct, elapsed, fade.duration));
+    }
+
+    /// Применяет громкость фейда; сбой свойства гасит фейд, но не эфир.
+    fn apply_fade_volume(&mut self, volume: f64) {
+        if let Err(err) = self.apply_volume(volume) {
+            tracing::warn!(error = %err, "не удалось применить громкость фейда");
+            self.fade = None;
+        }
     }
 
     /// Переключает буфер между экономным профилем и умолчаниями libmpv.
@@ -1024,5 +1110,59 @@ mod tests {
                 delay: Duration::from_millis(100),
             }
         );
+    }
+
+    const FADE_TEST_DURATION: Duration = Duration::from_secs(300);
+
+    #[test]
+    fn fade_gain_starts_at_start_volume_and_reaches_zero() {
+        assert_eq!(fade_gain(0.7, Duration::ZERO, FADE_TEST_DURATION), 0.7);
+        assert_eq!(fade_gain(0.7, FADE_TEST_DURATION, FADE_TEST_DURATION), 0.0);
+    }
+
+    #[test]
+    fn fade_gain_decreases_monotonically_over_twenty_steps() {
+        let step = FADE_TEST_DURATION / 20;
+        let mut previous = fade_gain(0.8, Duration::ZERO, FADE_TEST_DURATION);
+        for index in 1..=20 {
+            let current = fade_gain(0.8, step * index, FADE_TEST_DURATION);
+            assert!(
+                current <= previous,
+                "шаг {index}: {current} больше предыдущего {previous}"
+            );
+            previous = current;
+        }
+        assert_eq!(previous, 0.0);
+    }
+
+    #[test]
+    fn fade_gain_holds_nine_decibels_per_minute() {
+        let gain = fade_gain(1.0, Duration::from_secs(60), FADE_TEST_DURATION);
+        let expected = 10f64.powf(-9.0 / 20.0);
+        assert!(
+            (gain - expected).abs() < 1e-6,
+            "gain: {gain}, ожидалось: {expected}"
+        );
+    }
+
+    #[test]
+    fn fade_gain_is_not_linear_in_percent() {
+        let half = fade_gain(1.0, FADE_TEST_DURATION / 2, FADE_TEST_DURATION);
+        // D = 45 дБ: к половине окна 10^(−2.25·0.5) ≈ 0.0750, а линейный по
+        // проценту фейд дал бы 0.5 — звук «провалился» бы слишком рано.
+        assert!(half < 0.25, "половина окна: {half}");
+        assert!((half - 0.074_989_4).abs() < 1e-6, "половина окна: {half}");
+    }
+
+    #[test]
+    fn fade_gain_with_zero_duration_is_silent() {
+        assert_eq!(fade_gain(0.7, Duration::ZERO, Duration::ZERO), 0.0);
+        assert_eq!(fade_gain(0.7, Duration::from_secs(1), Duration::ZERO), 0.0);
+    }
+
+    #[test]
+    fn fade_gain_clamps_to_full_scale() {
+        assert_eq!(fade_gain(2.0, Duration::ZERO, FADE_TEST_DURATION), 1.0);
+        assert_eq!(fade_gain(-1.0, Duration::ZERO, FADE_TEST_DURATION), 0.0);
     }
 }

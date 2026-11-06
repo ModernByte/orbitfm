@@ -38,7 +38,7 @@ use crate::media::MediaControls;
 use crate::render::GlobeCamera;
 use crate::services::{RadioBrowserClient, Station};
 use crate::settings::{
-    AccentColor, Language, MotionReactivity, NetworkProfile, SettingsStore, ThemeMode,
+    AccentColor, Language, MotionReactivity, NetworkProfile, SettingsStore, SleepAction, ThemeMode,
 };
 use crate::station_filter::CountryFilterState;
 use crate::stats::StatsStore;
@@ -185,6 +185,18 @@ pub(crate) struct Session {
     pub(crate) pending_volume: Option<f64>,
     /// Таймер сна: дедлайн и выбранная длительность (ADR-0046).
     pub(crate) sleep: sleep::SleepTimer,
+    /// Идёт плавное затухание звука перед стопом (ADR-0056).
+    pub(crate) sleep_fading: bool,
+    /// Лок сна на время таймера; `Drop` снимает его (ADR-0054).
+    pub(crate) sleep_inhibition: Option<crate::power::InhibitionGuard>,
+    /// Почему лок не взят: показывается в настройках вместо `Unavailable`
+    /// (ADR-0054 §3).
+    pub(crate) sleep_inhibition_detail: Option<String>,
+    /// Открыто окно предупреждения таймера сна (ADR-0058).
+    pub(crate) sleep_warning_open: bool,
+    /// Единичное действие после предупреждения: Cancel выставляет `Nothing` и
+    /// действует до следующего включения таймера (ADR-0058).
+    pub(crate) sleep_action_once: Option<SleepAction>,
     pub(crate) show_help: bool,
     pub(crate) window: WindowState,
     pub(crate) notices: VecDeque<Notice>,
@@ -268,6 +280,11 @@ impl Session {
             onboarding_desktop,
             pending_volume: None,
             sleep: sleep::SleepTimer::default(),
+            sleep_fading: false,
+            sleep_warning_open: false,
+            sleep_action_once: None,
+            sleep_inhibition: None,
+            sleep_inhibition_detail: None,
             show_help,
             window: WindowState::shown(),
             notices: VecDeque::new(),
@@ -295,7 +312,8 @@ impl Session {
 
     /// Один кадр фонового обслуживания: вызывается UI-циклом при открытом окне.
     pub(crate) fn tick(&mut self) {
-        self.poll_sleep();
+        self.poll_sleep_events();
+        self.sync_inhibition();
         self.poll_stats();
         self.process_audio_events();
         self.poll_economy();

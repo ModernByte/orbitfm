@@ -14,6 +14,7 @@ mod ipc;
 mod library;
 mod media;
 mod native_host;
+mod power;
 mod render;
 mod services;
 mod session;

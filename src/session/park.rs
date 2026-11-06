@@ -58,7 +58,7 @@ impl super::Session {
     /// рулетки, пока не попросят показать окно или выйти.
     pub(crate) fn park(&mut self) -> ParkOutcome {
         loop {
-            let sleep_deadline = self.sleep_deadline();
+            let sleep_deadline = self.sleep_next_event();
             let stats_deadline = self.stats_deadline();
             let event = self.runtime.block_on(wait_on(
                 &mut self.commands,
@@ -91,7 +91,7 @@ impl super::Session {
                     self.apply_companion_response(response);
                 }
                 Parked::QueueClosed => self.quit(),
-                Parked::Sleep => self.poll_sleep(),
+                Parked::Sleep => self.poll_sleep_events(),
                 Parked::Stats => {}
             }
             // Секунды эфира считаются и без кадра окна, иначе спрятанное окно
@@ -101,6 +101,7 @@ impl super::Session {
             self.sync_tray();
             // Подписки `events` получают изменения и без окна (ADR-0039).
             self.publish_status();
+            self.sync_inhibition();
             if self.is_quitting() {
                 return ParkOutcome::Quit;
             }

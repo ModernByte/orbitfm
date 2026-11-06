@@ -182,11 +182,65 @@ pub(crate) struct SettingsText {
     pub volume_hint: &'static str,
     pub audio_hint: &'static str,
     /// Таймер сна: остановка эфира через выбранное время (ADR-0046).
+    #[allow(dead_code)]
     pub sleep_timer: &'static str,
+    #[allow(dead_code)]
     pub sleep_timer_hint: &'static str,
+    #[allow(dead_code)]
     pub sleep_off: &'static str,
     /// Вариант длительности: `{minutes}` подставляется числом минут.
+    #[allow(dead_code)]
     pub sleep_minutes: &'static str,
+    // Ритуал сна: действие по истечении, фейд, ингибитор, отсчёт и
+    // предупреждение (ADR-0054, ADR-0055, ADR-0056, ADR-0057, ADR-0058).
+    /// Действие по истечении таймера: «ничего», сон или выключение (ADR-0055).
+    #[allow(dead_code)]
+    pub sleep_action: &'static str,
+    #[allow(dead_code)]
+    pub sleep_action_hint: &'static str,
+    #[allow(dead_code)]
+    pub sleep_action_nothing: &'static str,
+    #[allow(dead_code)]
+    pub sleep_action_suspend: &'static str,
+    #[allow(dead_code)]
+    pub sleep_action_power_off: &'static str,
+    /// Плавное затухание звука перед остановкой эфира (ADR-0056).
+    #[allow(dead_code)]
+    pub sleep_fade: &'static str,
+    #[allow(dead_code)]
+    pub sleep_fade_hint: &'static str,
+    /// Вариант «без фейда»: остановка сразу, как до ADR-0056.
+    #[allow(dead_code)]
+    pub sleep_fade_off: &'static str,
+    /// Длительность фейда: `{seconds}` подставляется числом секунд.
+    #[allow(dead_code)]
+    pub sleep_seconds: &'static str,
+    /// Ингибитор сна: не давать системе уснуть, пока эфир идёт (ADR-0054).
+    #[allow(dead_code)]
+    pub sleep_prevent_sleep: &'static str,
+    #[allow(dead_code)]
+    pub sleep_prevent_sleep_hint: &'static str,
+    /// Окно предупреждения за минуту до действия (ADR-0058).
+    #[allow(dead_code)]
+    pub sleep_warning: &'static str,
+    #[allow(dead_code)]
+    pub sleep_warning_hint: &'static str,
+    /// Оставшееся время: `{time}` — строка `M:SS` или `H:MM:SS` (ADR-0057).
+    #[allow(dead_code)]
+    pub sleep_remaining: &'static str,
+    /// Заголовок и строки окна предупреждения (ADR-0058).
+    #[allow(dead_code)]
+    pub sleep_warning_title: &'static str,
+    #[allow(dead_code)]
+    pub sleep_warning_cancel: &'static str,
+    #[allow(dead_code)]
+    pub sleep_warning_stop: &'static str,
+    #[allow(dead_code)]
+    pub sleep_warning_suspend: &'static str,
+    #[allow(dead_code)]
+    pub sleep_warning_power_off: &'static str,
+    #[allow(dead_code)]
+    pub sleep_warning_cancel_hint: &'static str,
     /// Кольцевой переход очереди после последней станции (ADR-0046).
     pub queue_wrap: &'static str,
     pub queue_wrap_hint: &'static str,
@@ -417,6 +471,10 @@ pub(crate) struct NoticeText {
     pub fft_unavailable: &'static str,
     /// Таймер сна остановил эфир (ADR-0046).
     pub sleep_expired: &'static str,
+    /// Ингибитор сна снят извне: система может уснуть раньше таймера (ADR-0054).
+    pub inhibition_lost: &'static str,
+    /// Действие таймера сна (сон или выключение) не выполнено (ADR-0055 §4).
+    pub sleep_action_failed: &'static str,
     /// Файл статистики не читается — счётчики начались с нуля (ADR-0049).
     pub stats_damaged: &'static str,
 }

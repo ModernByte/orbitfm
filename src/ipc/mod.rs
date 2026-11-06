@@ -18,6 +18,8 @@ use pipe as transport;
 use socket as transport;
 
 pub(crate) use events::{SearchFeed, StatusFeed};
-pub use protocol::{IpcCommand, IpcError, MAX_SLEEP_MINUTES, NetworkArg, ThemeArg, WindowModeArg};
+pub use protocol::{
+    IpcCommand, IpcError, MAX_SLEEP_MINUTES, NetworkArg, SleepActionArg, ThemeArg, WindowModeArg,
+};
 pub(crate) use server::EventSubscription;
 pub use server::{IpcRequest, IpcServer, WakeFn};
