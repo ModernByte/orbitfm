@@ -8,7 +8,7 @@
 use std::time::{Duration, Instant};
 
 use eframe::egui;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::audio::PlaybackState;
 use crate::i18n;
@@ -16,7 +16,8 @@ use crate::integration::status::{
     IntegrationPanel, IntegrationsView, PanelAction, PanelEvent, PanelOutcome,
 };
 use crate::render::{
-    BandTargets, GlobeRenderer, MotionMixer, SpectrumOverlay, SpectrumTarget, VisualizerModel,
+    AdapterReport, BandTargets, GlobeRenderer, MotionMixer, SpectrumOverlay, SpectrumTarget,
+    VisualizerModel,
 };
 use crate::services::{ArtworkFetcher, Station};
 use crate::session::heat::CountryMetric;
@@ -162,6 +163,9 @@ impl<'a> OrbitApp<'a> {
         // поэтому иконка создаётся здесь, а не в spawn до старта окна (ADR-0026).
         session.attach_tray();
         let globe_ready = if let Some(render_state) = &cc.wgpu_render_state {
+            // Отчёт пишется до создания глобуса: если GlobeRenderer::new упадёт на
+            // неподдерживаемом лимите, именно эти строки останутся в логе (ADR-0052 § 3).
+            info!("{}", AdapterReport::from_render_state(render_state));
             let renderer = GlobeRenderer::new(
                 &render_state.device,
                 &render_state.queue,
@@ -174,7 +178,11 @@ impl<'a> OrbitApp<'a> {
                 .insert(renderer);
             true
         } else {
-            warn!("wgpu render state недоступен: 3D-глобус отключён");
+            warn!(
+                "wgpu render state не инициализирован к первому кадру \
+                 (eframe отдал None в cc.wgpu_render_state при Renderer::Wgpu): \
+                 3D-глобус отключён"
+            );
             false
         };
         let visualizer = VisualizerModel::new(usize::from(session.settings.settings().viz_bars));

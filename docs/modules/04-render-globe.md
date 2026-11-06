@@ -125,11 +125,68 @@ impl SpectrumOverlay {
     pub fn pulse(&self) -> f32;
     pub fn paint(&self, painter: &egui::Painter, rect: egui::Rect, time: f64);
 }
+
+/// Диагностика выбранного GPU: только строки и скаляры, без wgpu-типов.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdapterReport {
+    pub backend: String,
+    pub device: String,
+    pub device_type: String,
+    pub driver: String,
+    pub driver_info: String,
+    pub target_format: String,
+    pub max_texture_dimension_2d: u32,
+    pub max_buffer_size: u64,
+    pub anisotropic_filtering: bool,
+    pub devices: Vec<String>,
+}
+
+impl AdapterReport {
+    pub fn from_render_state(state: &egui_wgpu::RenderState) -> Self;
+}
 ```
 
 `CameraUniform` (`view_proj`, `light_direction`, `camera_position`, `motion`,
 `motion2`, `heat`) и `GlobeCallback` — внутренние типы модуля. Полный контракт —
 `docs/interfaces/04-render.md`.
+
+### 2.1. Наблюдаемость: какой GPU реально выбран
+
+`AdapterReport` — снимок адаптера, который выбрал eframe/egui-wgpu, и он отвечает на
+вопрос, который иначе задают вслепую: «чем рисуется глобус на этой машине». Тип
+намеренно содержит только `String`/числа/флаги: wgpu-типы в него не текут, поэтому
+снимок живёт в unit-тестах на Linux, хотя само железо там другое.
+
+Пишется один раз — в `OrbitApp::new`, сразу как `cc.wgpu_render_state` оказался
+`Some`, до создания `GlobeRenderer` (`src/app.rs`). Порядок важен: если
+`GlobeRenderer::new` упадёт на неподдерживаемом лимите, именно эти строки останутся
+последним объяснением в логе. В ветке `None` вместо отчёта в лог идёт `warn!` с
+причиной — `render_state()` возвращает `None` только когда eframe не инициализировал
+wgpu-путь.
+
+Вывод — одна строка через `Display` (приведённые ниже значения — из unit-снимка
+`render_report_formats_single_device`, а не с реальной машины приёмки):
+
+```text
+orbitfm render: backend=Metal device="Apple M1" device_type=IntegratedGpu driver="Metal" driver_info="gpu-assembly-187.9" target_format=Bgra8UnormSrgb max_texture_dimension_2d=8192 max_buffer_size=268435456 anisotropic_filtering=yes devices=["Apple M1"]
+```
+
+Правило форматирования: идентификатороподобные значения (`backend`, `device_type`,
+`target_format`, числа, `yes`/`no`) печатаются без кавычек, свободный текст
+(`device`, `driver`, `driver_info`) — через `Debug`, чтобы пробелы не ломали разбор.
+`devices` — имена всех доступных адаптеров: на машине с дискретной и интегрированной
+GPU именно это поле показывает, какой из них выбран, а не какой вообще есть.
+
+Это **не публичный контракт** и не часть `status --json`: формат строки может меняться
+между релизами, поэтому приёмочный лог прикладывают целиком, а не по полям
+(ADR-0052 § 3). Единственный стабильный смысл — «в логе есть/нет строка `orbitfm render:`
+до первого кадра».
+
+`anisotropic_filtering` — не `wgpu::Features`, а `DownlevelFlags::ANISOTROPIC_FILTERING`:
+в wgpu 30 анизотропная фильтрация живёт в downlevel-флагах. Глобус просит
+`ANISOTROPY: u16 = 8` (`src/render/globe.rs`), поэтому этот флаг — единственная
+downlevel-зависимость модуля: вычислительных конвейеров и comparison-сэмплеров у нас
+нет, и остальные флаги не спрашиваются.
 
 ## 3. Интеграция с egui
 
@@ -470,7 +527,11 @@ impl SpectrumOverlay {
   на свежем инпуте; длительность и кулдаун соблюдаются;
 - drag отменяет переворот, остаточный roll затухает до нуля;
 - roll поворачивает проекцию и hit-test согласованно: луч по повёрнутой точке
-  возвращает ту же точку сферы.
+  возвращает ту же точку сферы;
+- `AdapterReport::Display`: полный снимок строки при одном устройстве, список из
+  двух адаптеров печатается целиком, при отсутствующем
+  `DownlevelFlags::ANISOTROPIC_FILTERING` ставится `anisotropic_filtering=no` — эти
+  три теста защищают формат диагностической строки, а не выбор адаптера.
 
 ## 11. Связанные ADR
 
@@ -481,3 +542,5 @@ impl SpectrumOverlay {
 - ADR-0015: UX-редизайн «Orbital Desk» (контуры стран, `fly_to`)
 - ADR-0028: Аудио-реактивная деформация глобуса
 - ADR-0029: Орбитальное аудиокольцо
+- ADR-0052: Матрица поддержки macOS — чем снимаемое с машины требование к GPU
+  обосновано и как именно используется `orbitfm render:` в приёмке
