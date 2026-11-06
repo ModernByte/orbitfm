@@ -66,6 +66,8 @@ pub(crate) struct HudState<'a> {
     pub help_open: bool,
     /// Активный таймер сна: `None` — выключен (ADR-0046).
     pub sleep_minutes: Option<u16>,
+    /// Оставшееся время `M:SS`/`H:MM:SS` для моноширинного отсчёта (ADR-0057).
+    pub sleep_remaining: Option<&'a str>,
     /// Разрешённый язык интерфейса (ADR-0030).
     pub language: Language,
 }
@@ -228,6 +230,8 @@ pub(crate) struct PanelHeaderState<'a> {
     pub volume: f64,
     /// Активный таймер сна: `None` — выключен (ADR-0046).
     pub sleep_minutes: Option<u16>,
+    /// Оставшееся время `M:SS`/`H:MM:SS` для моноширинного отсчёта (ADR-0057).
+    pub sleep_remaining: Option<&'a str>,
     /// Модель стола: шапка панели прореживает её до 16 полос (ADR-0022).
     pub visualizer: &'a VisualizerModel,
     pub visualizer_enabled: bool,
@@ -311,6 +315,7 @@ pub(crate) fn panel_header(
                                         ui,
                                         palette,
                                         state.sleep_minutes,
+                                        state.sleep_remaining,
                                         state.language,
                                     ));
                                     if roulette_button(
@@ -525,6 +530,7 @@ fn right_side(
         ui,
         palette,
         state.sleep_minutes,
+        state.sleep_remaining,
         state.language,
     ));
 
@@ -687,6 +693,7 @@ mod tests {
                         panel_open: false,
                         help_open: false,
                         sleep_minutes: None,
+                        sleep_remaining: None,
                         language: Language::Russian,
                     };
                     right_side(ui, &palette, &mut state, true, tight);
@@ -752,6 +759,7 @@ mod tests {
                         panel_open: false,
                         help_open: false,
                         sleep_minutes: None,
+                        sleep_remaining: None,
                         language: Language::Russian,
                     };
                     right_side(ui, &palette, &mut state, false, tight);

@@ -14,11 +14,13 @@ use super::palette::Palette;
 const MENU_WIDTH: f32 = 168.0;
 
 /// Кнопка часов с меню длительностей. `active` — выбранные минуты, `None` —
-/// таймер выключен. Действие возвращается только при выборе пункта.
+/// таймер выключен. `remaining` — форматированный отсчёт `M:SS` или `H:MM:SS`
+/// для моноширинного отображения на кнопке (ADR-0057).
 pub(crate) fn show(
     ui: &mut egui::Ui,
     palette: &Palette,
     active: Option<u16>,
+    remaining: Option<&str>,
     language: Language,
 ) -> Vec<UiAction> {
     let mut actions = Vec::new();
@@ -33,7 +35,7 @@ pub(crate) fn show(
             )
         },
     );
-    let response = sleep_button(ui, palette, &hint, active.is_some());
+    let response = sleep_button(ui, palette, &hint, remaining, active.is_some());
     let popup_id = egui::Popup::default_response_id(&response);
     let frame = egui::Frame::popup(ui.style())
         .fill(palette.card_fill)

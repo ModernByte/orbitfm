@@ -92,6 +92,7 @@ pub(crate) struct OverlayTop<'a> {
     pub visualizer_enabled: bool,
     /// Активный таймер сна: `None` — выключен (ADR-0046).
     pub sleep_minutes: Option<u16>,
+    pub sleep_remaining: Option<&'a str>,
     /// Разрешённый язык интерфейса (ADR-0030).
     pub language: Language,
 }
@@ -115,6 +116,7 @@ pub(crate) struct Listening<'a> {
     pub eco: bool,
     /// Активный таймер сна: `None` — выключен (ADR-0046).
     pub sleep_minutes: Option<u16>,
+    pub sleep_remaining: Option<&'a str>,
     /// Разрешённый язык интерфейса (ADR-0030).
     pub language: Language,
 }
@@ -234,6 +236,7 @@ pub(crate) fn overlay_top(
         visualizer,
         visualizer_enabled,
         sleep_minutes,
+        sleep_remaining,
         language,
     } = state;
     let is_playing = playing(playback);
@@ -300,7 +303,13 @@ pub(crate) fn overlay_top(
                     if gear_button(ui, palette, text.common.settings).clicked() {
                         actions.push(UiAction::ToggleSettings);
                     }
-                    actions.extend(sleep_picker::show(ui, palette, sleep_minutes, language));
+                    actions.extend(sleep_picker::show(
+                        ui,
+                        palette,
+                        sleep_minutes,
+                        sleep_remaining,
+                        language,
+                    ));
                 });
                 let slider =
                     volume_slider_width(ui, &shell, &mut volume, OVERLAY_VOLUME_WIDTH, language);
@@ -481,6 +490,7 @@ pub(crate) fn listening(
         favicons,
         eco,
         sleep_minutes,
+        sleep_remaining,
         language,
     } = state;
     let is_playing = playing(playback);
@@ -562,7 +572,13 @@ pub(crate) fn listening(
                             actions.push(UiAction::ToggleFavorite(station.clone()));
                         }
                     }
-                    actions.extend(sleep_picker::show(ui, palette, sleep_minutes, language));
+                    actions.extend(sleep_picker::show(
+                        ui,
+                        palette,
+                        sleep_minutes,
+                        sleep_remaining,
+                        language,
+                    ));
                 });
                 let hint = if is_playing {
                     text.common.pause

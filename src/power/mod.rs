@@ -28,8 +28,11 @@ use tracing::{info, warn};
 
 #[cfg(test)]
 pub(crate) mod fake;
+#[cfg(target_os = "linux")]
 pub(crate) mod linux;
+#[cfg(target_os = "macos")]
 pub(crate) mod macos;
+#[cfg(windows)]
 pub(crate) mod windows;
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]

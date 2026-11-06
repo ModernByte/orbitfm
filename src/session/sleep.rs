@@ -11,6 +11,7 @@
 use std::time::{Duration, Instant};
 
 use crate::audio::PlaybackState;
+use crate::i18n;
 use crate::ipc::MAX_SLEEP_MINUTES;
 use crate::power::{self, PowerInhibit};
 use crate::settings::SleepAction;
@@ -301,6 +302,12 @@ impl super::Session {
     #[allow(dead_code)]
     pub(crate) fn sleep_display_seconds(&self) -> Option<u64> {
         self.sleep.display_seconds(Instant::now())
+    }
+
+    /// Оставшееся время, отформатированное под язык интерфейса (ADR-0057).
+    pub(crate) fn sleep_remaining_label(&self) -> Option<String> {
+        let secs = self.sleep_remaining()?.as_secs();
+        Some(i18n::sleep_remaining_label(self.language, secs))
     }
 
     /// Проверяет события таймера. Вызывается из `tick` и из ветки простоя `park`.
