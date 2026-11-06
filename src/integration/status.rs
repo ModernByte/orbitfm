@@ -218,31 +218,49 @@ fn status_for(layout: &Layout, target: Target) -> TargetStatus {
     let browsers = layout.detected_browsers(target);
 
     let (state, detail) = match inspect(layout, target) {
-        Ok(inspection) => match inspection.state {
-            InstalledState::NotInstalled => (InstallState::NotInstalled, None),
-            InstalledState::Installed => {
-                if inspection.version == env!("CARGO_PKG_VERSION") {
-                    (InstallState::Installed, None)
-                } else {
-                    (
-                        InstallState::UpdateAvailable,
-                        Some(format!(
-                            "{} → {}",
-                            inspection.version,
-                            env!("CARGO_PKG_VERSION")
-                        )),
-                    )
+        Ok(inspection) => {
+            let version_current = inspection.version == env!("CARGO_PKG_VERSION");
+            match inspection.state {
+                InstalledState::NotInstalled => (InstallState::NotInstalled, None),
+                InstalledState::Installed => {
+                    if version_current {
+                        (InstallState::Installed, None)
+                    } else {
+                        (
+                            InstallState::UpdateAvailable,
+                            Some(format!(
+                                "{} → {}",
+                                inspection.version,
+                                env!("CARGO_PKG_VERSION")
+                            )),
+                        )
+                    }
                 }
+                InstalledState::Changed => {
+                    if version_current {
+                        (
+                            InstallState::Problem,
+                            Some("файлы изменены пользователем".to_owned()),
+                        )
+                    } else {
+                        // Дрейф сниппета: квитация от старой версии, новые правила
+                        // не совпадают со старыми файлами — нужно обновление, а не ошибка.
+                        (
+                            InstallState::UpdateAvailable,
+                            Some(format!(
+                                "{} → {}",
+                                inspection.version,
+                                env!("CARGO_PKG_VERSION")
+                            )),
+                        )
+                    }
+                }
+                InstalledState::Missing => (
+                    InstallState::Problem,
+                    Some("часть файлов установки отсутствует".to_owned()),
+                ),
             }
-            InstalledState::Changed => (
-                InstallState::Problem,
-                Some("файлы изменены пользователем".to_owned()),
-            ),
-            InstalledState::Missing => (
-                InstallState::Problem,
-                Some("часть файлов установки отсутствует".to_owned()),
-            ),
-        },
+        }
         Err(err) => (InstallState::Problem, Some(format!("{err:#}"))),
     };
     // Для целей правил окон и Noctalia подробность обязана быть видна: путь

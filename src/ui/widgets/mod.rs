@@ -17,7 +17,7 @@ mod shared;
 pub(crate) use buttons::{
     CapsuleDisc, action_pill, capsule_button, circle_button, circle_button_sized, quiet_button,
 };
-pub(crate) use chrome::{chip, glass_panel, pill, segmented_tabs};
+pub(crate) use chrome::{alert_surface, chip, glass_panel, pill, segmented_tabs};
 pub(crate) use content::{
     EmptyMark, EmptyState, avatar, contrast_color, empty_state, error_card, flag_emoji, logo_mark,
     skeleton_rows,

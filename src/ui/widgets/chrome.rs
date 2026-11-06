@@ -7,6 +7,21 @@ use super::shared::*;
 /// Толщина верхнего блика стекла.
 const GLASS_RIM: f32 = 1.5;
 
+/// Мягкая тень под плавающим окном предупреждения: несколько расширяющихся
+/// заливок вместо одной резкой (цикл теней alert-окна, ADR-0058).
+pub(crate) fn alert_surface(painter: &egui::Painter, rect: egui::Rect, radius: f32, alpha: f32) {
+    if !rect.is_finite() || rect.width() < 2.0 || rect.height() < 2.0 {
+        return;
+    }
+    for (spread, base_alpha) in [(20.0, 0.10), (12.0, 0.12), (5.0, 0.16)] {
+        painter.rect_filled(
+            rect.expand(spread),
+            radius + spread,
+            egui::Color32::from_black_alpha((base_alpha * alpha * 255.0) as u8),
+        );
+    }
+}
+
 /// Стеклянная панель: вертикальный градиент `glass_top → glass_bottom`,
 /// верхний блик 1–2 px и мягкая рамка. `egui::Frame` умеет только сплошную
 /// заливку, а `Shape::gradient_rect` не скругляет углы, поэтому фон — один

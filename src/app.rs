@@ -38,6 +38,7 @@ use crate::ui::onboarding::{self, RuleState};
 use crate::ui::orbit_ring::OrbitRing;
 use crate::ui::palette::{self, Palette};
 use crate::ui::settings_panel::{self, SettingsState};
+use crate::ui::sleep_warning;
 use crate::ui::toast::Toast;
 use crate::ui::transport::{self, TransportState};
 use crate::ui::{capsule, hud, overlays, station_panel, widgets};
@@ -61,6 +62,11 @@ const SETTINGS_RADIUS: f32 = 20.0;
 /// Идентификатор immediate-вьюпорта настроек (ADR-0053 §6a).
 fn settings_viewport_id() -> egui::ViewportId {
     egui::ViewportId::from_hash_of("orbitfm_settings")
+}
+
+/// Идентификатор immediate-вьюпорта предупреждения таймера сна (ADR-0058).
+fn warning_viewport_id() -> egui::ViewportId {
+    egui::ViewportId::from_hash_of("orbitfm_sleep_warning")
 }
 
 /// Строка тоста для ключа сообщения ядра: `detail` остаётся технической
@@ -1019,6 +1025,59 @@ impl<'a> OrbitApp<'a> {
             }
         }
 
+        // Окно предупреждения таймера сна — immediate-потомок стола или
+        // окна настроек (ADR-0058).
+        // Вызываем каждый кадр, пока предупреждение открыто.
+        if session.sleep_warning_open {
+            let builder = eframe::egui::ViewportBuilder::default()
+                .with_inner_size(sleep_warning::WARNING_SIZE)
+                .with_min_inner_size(sleep_warning::WARNING_MIN_SIZE)
+                .with_title("OrbitFM · Sleep Warning")
+                .with_decorations(false)
+                .with_transparent(true);
+            let warning_actions =
+                ui.ctx()
+                    .show_viewport_immediate(warning_viewport_id(), builder, |ui, class| {
+                        let remaining = session.sleep_remaining().map_or(0, |d| d.as_secs());
+                        let action = session.effective_sleep_action();
+                        let language = session.effective_language();
+                        sleep_warning::show(
+                            ui,
+                            class,
+                            sleep_warning::WarningInputs {
+                                language,
+                                palette: &frame.palette,
+                                remaining_secs: remaining,
+                                action,
+                                close_requested: false,
+                            },
+                        )
+                    });
+            for warning_action in warning_actions {
+                match warning_action {
+                    sleep_warning::WarningAction::Cancel => {
+                        actions.push(UiAction::SleepWarningCancel);
+                    }
+                }
+            }
+
+            // Пользователь закрыл окно предупреждения кнопкой WM / Esc:
+            // считаем Cancel (безопасная трактовка, ADR-0058).
+            if ui.ctx().input(|input| {
+                input
+                    .raw
+                    .viewports
+                    .get(&warning_viewport_id())
+                    .is_some_and(|info| {
+                        info.events
+                            .iter()
+                            .any(|event| matches!(event, egui::ViewportEvent::Close))
+                    })
+            }) {
+                actions.push(UiAction::SleepWarningCancel);
+            }
+        }
+
         if session.onboarding_open() {
             actions.extend(onboarding::show(
                 ui,
@@ -1216,6 +1275,9 @@ impl<'a> OrbitApp<'a> {
                 }
             }
             UiAction::CloseSettings => self.session.close_settings(),
+            UiAction::SleepWarningCancel => {
+                self.session.cancel_sleep_warning();
+            }
             UiAction::SetWindowMode(mode) => {
                 self.session.set_window_mode(mode);
                 // В Listening окно настроек не помещается: выбор режима закрывает его.

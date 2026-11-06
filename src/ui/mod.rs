@@ -21,6 +21,7 @@ pub(crate) mod palette;
 pub(crate) mod procedural;
 pub(crate) mod settings_panel;
 pub(crate) mod sleep_picker;
+pub(crate) mod sleep_warning;
 pub(crate) mod station_panel;
 pub(crate) mod station_row;
 pub(crate) mod stats_view;
@@ -110,6 +111,9 @@ pub(crate) enum UiAction {
     ToggleSettings,
     /// Закрыть окно настроек: крестик, Escape, scrim.
     CloseSettings,
+    /// «Отменить» в окне предупреждения таймера сна: отменить действие,
+    /// досчитать отсчёт, вернуть громкость (ADR-0058).
+    SleepWarningCancel,
     /// Смена режима окна Focus/Overlay/Listening (ADR-0021).
     SetWindowMode(WindowMode),
     /// Мастер первого запуска пройден или пропущен (ADR-0041).

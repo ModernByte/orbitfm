@@ -212,7 +212,7 @@ pub(crate) enum RuntimeRules {
 
 /// Правила из `wm-configs/orbitfm-hyprland.conf`; аргументы фиксированы в коде,
 /// поэтому правило из файла не может превратиться в произвольную команду.
-const HYPRLAND_RULES: [&str; 14] = [
+const HYPRLAND_RULES: [&str; 18] = [
     r"float,class:^(org\.modernbyte\.OrbitFM)$",
     r"center,class:^(org\.modernbyte\.OrbitFM)$",
     r"stayfocused,class:^(org\.modernbyte\.OrbitFM)$",
@@ -227,6 +227,12 @@ const HYPRLAND_RULES: [&str; 14] = [
     "noborder,title:^OrbitFM · Panel$",
     "noshadow,title:^OrbitFM · Panel$",
     "noblur,title:^OrbitFM · Panel$",
+    // Окна настроек и предупреждения сна — только размер, без float/center/stayfocused:
+    // они классовые и применяются ко всем окнам OrbitFM.
+    "size 420 560,title:^OrbitFM · Settings · Compact$",
+    "size 760 544,title:^OrbitFM · Settings · Medium$",
+    "size 1040 720,title:^OrbitFM · Settings · Wide$",
+    "size 420 320,title:^OrbitFM · Sleep Warning$",
 ];
 
 /// Применяет правила Hyprland на время сеанса. Каждый вызов — отдельный
@@ -315,7 +321,7 @@ mod tests {
 
     #[test]
     fn hyprland_rules_are_single_line_fixed_arguments() {
-        assert_eq!(HYPRLAND_RULES.len(), 14);
+        assert_eq!(HYPRLAND_RULES.len(), 18);
         for rule in HYPRLAND_RULES {
             assert!(
                 !rule.contains('\n'),
@@ -325,6 +331,33 @@ mod tests {
         }
         assert!(HYPRLAND_SNIPPET.contains("windowrulev2"));
         assert!(NIRI_SNIPPET.contains("window-rule"));
+    }
+
+    /// Массив `HYPRLAND_RULES` в коде зеркалит строки `windowrulev2 = …`
+    /// в `wm-configs/orbitfm-hyprland.conf`: при добавлении правила нужно
+    /// править оба места, и тест ловит расхождение.
+    #[test]
+    fn hyprland_array_mirrors_the_conf_snippet() {
+        let conf_rules: Vec<String> = HYPRLAND_SNIPPET
+            .lines()
+            .filter_map(|line| line.trim_end().strip_prefix("windowrulev2 = "))
+            .map(|rule| rule.replace(' ', ""))
+            .collect();
+        let code_rules: Vec<String> = HYPRLAND_RULES
+            .iter()
+            .map(|rule| rule.replace(' ', ""))
+            .collect();
+        assert_eq!(
+            conf_rules.len(),
+            code_rules.len(),
+            "число правил в конфиге и в массиве не совпадает"
+        );
+        for (conf, code) in conf_rules.iter().zip(code_rules.iter()) {
+            assert_eq!(
+                conf, code,
+                "правило не совпадает (конфиг vs код): {conf} vs {code}"
+            );
+        }
     }
 
     /// Строка include обязана ссылаться на тот файл, что пишет установщик.
@@ -341,6 +374,19 @@ mod tests {
             HYPRLAND_SOURCE.ends_with(HYPRLAND_RULE_FILE),
             "подсказка Hyprland ссылается на другой файл"
         );
+        // Все заголовки новых окон (настройки трёх размеров + предупреждение сна)
+        // обязаны присутствовать в сниппете niri.
+        for title in [
+            "^OrbitFM · Settings · Compact$",
+            "^OrbitFM · Settings · Medium$",
+            "^OrbitFM · Settings · Wide$",
+            "^OrbitFM · Sleep Warning$",
+        ] {
+            assert!(
+                NIRI_SNIPPET.contains(title),
+                "сниппет niri не содержит заголовок {title}"
+            );
+        }
     }
 
     #[test]

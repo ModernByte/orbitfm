@@ -56,3 +56,46 @@ window-rule {
     border { off; }
     shadow { off; }
 }
+
+// Окна настроек: центрируются композитором, фиксированный размер по заголовку,
+// без default-floating-position (позиция задаётся оболочкой).
+window-rule {
+    match app-id="org.modernbyte.OrbitFM" title=r"^OrbitFM · Settings · Compact$"
+    open-floating true
+    default-column-width { fixed 420; }
+    default-window-height { fixed 560; }
+    draw-border-with-background false
+    border { off; }
+    shadow { off; }
+}
+
+window-rule {
+    match app-id="org.modernbyte.OrbitFM" title=r"^OrbitFM · Settings · Medium$"
+    open-floating true
+    default-column-width { fixed 760; }
+    default-window-height { fixed 544; }
+    draw-border-with-background false
+    border { off; }
+    shadow { off; }
+}
+
+window-rule {
+    match app-id="org.modernbyte.OrbitFM" title=r"^OrbitFM · Settings · Wide$"
+    open-floating true
+    default-column-width { fixed 1040; }
+    default-window-height { fixed 720; }
+    draw-border-with-background false
+    border { off; }
+    shadow { off; }
+}
+
+// Окно предупреждения сна: 420×320, центрируется композитором.
+window-rule {
+    match app-id="org.modernbyte.OrbitFM" title=r"^OrbitFM · Sleep Warning$"
+    open-floating true
+    default-column-width { fixed 420; }
+    default-window-height { fixed 320; }
+    draw-border-with-background false
+    border { off; }
+    shadow { off; }
+}
