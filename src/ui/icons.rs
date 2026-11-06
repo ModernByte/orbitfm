@@ -304,11 +304,13 @@ pub(crate) fn moon_button(ui: &mut egui::Ui, palette: &Palette, hint: &str) -> R
     )
 }
 
-/// Кнопка быстрого таймера сна: часы, активный таймер подсвечен акцентом.
+/// Кнопка быстрого таймера сна: часы, или моноширинный отсчёт при активном таймере.
+/// Ширина фиксирована под максимум `12:00:00`, чтобы цифры не дёргали соседние кнопки.
 pub(crate) fn sleep_button(
     ui: &mut egui::Ui,
     palette: &Palette,
     hint: &str,
+    remaining: Option<&str>,
     active: bool,
 ) -> Response {
     icon_button(
@@ -319,12 +321,35 @@ pub(crate) fn sleep_button(
         active,
         hint,
         move |ui, rect, base, hover| {
-            let tint = if active {
-                palette.accent
+            if let Some(text) = remaining {
+                // Моноширинный текст фиксированной ширины под 12:00:00.
+                let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+                let color = if active {
+                    palette.accent
+                } else {
+                    icon_tint(base, palette.accent, hover)
+                };
+                let galley = ui.ctx().fonts_mut(|f| {
+                    f.layout(text.to_owned(), font_id.clone(), color, f32::INFINITY)
+                });
+                let size = galley.size();
+                let x = rect.center().x - size.x / 2.0;
+                let y = rect.center().y - size.y / 2.0;
+                ui.painter().text(
+                    egui::pos2(x, y),
+                    egui::Align2::CENTER_CENTER,
+                    text,
+                    font_id,
+                    color,
+                );
             } else {
-                icon_tint(base, palette.accent, hover)
-            };
-            paint_icon(ui, Icon::Clock, rect.center(), GLYPH, tint);
+                let tint = if active {
+                    palette.accent
+                } else {
+                    icon_tint(base, palette.accent, hover)
+                };
+                paint_icon(ui, Icon::Clock, rect.center(), GLYPH, tint);
+            }
         },
     )
 }

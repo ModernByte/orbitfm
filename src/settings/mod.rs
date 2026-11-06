@@ -247,6 +247,44 @@ impl NetworkProfile {
 /// потоковые станции остаются доступны, видео-битрейты отсекаются.
 pub const METERED_BITRATE_CAP: u32 = 128;
 
+/// Действие по истечении таймера сна (ADR-0055).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SleepAction {
+    /// Только остановить эфир — поведение по умолчанию.
+    #[default]
+    Nothing,
+    /// Остановить эфир и перевести машину в suspend.
+    Suspend,
+    /// Остановить эфир и выключить машину.
+    PowerOff,
+}
+
+impl SleepAction {
+    #[allow(dead_code)]
+    pub const ALL: [Self; 3] = [Self::Nothing, Self::Suspend, Self::PowerOff];
+
+    /// Имя действия в IPC, `settings.json` и `status --json`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Nothing => "nothing",
+            Self::Suspend => "suspend",
+            Self::PowerOff => "power-off",
+        }
+    }
+
+    /// Разбор значения из IPC и файла настроек.
+    #[allow(dead_code)]
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "nothing" => Some(Self::Nothing),
+            "suspend" => Some(Self::Suspend),
+            "power-off" => Some(Self::PowerOff),
+            _ => None,
+        }
+    }
+}
+
 /// Настройки оформления и поведения.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -289,6 +327,15 @@ pub struct Settings {
     /// умолчанию; старые `settings.json` без поля читаются как `true`.
     #[serde(default = "default_stats_enabled")]
     pub stats_enabled: bool,
+    /// Действие по истечении таймера сна (ADR-0055).
+    pub sleep_action: SleepAction,
+    /// Длительность плавного затухания перед стопом, секунды (ADR-0056).
+    /// `0` — без фейда, сегодняшнее поведение.
+    pub sleep_fade_seconds: u16,
+    /// Не давать ОС уйти в сон, пока идёт эфир по таймеру (ADR-0054).
+    pub sleep_prevent_sleep: bool,
+    /// Показывать окно предупреждения за минуту до действия (ADR-0058).
+    pub sleep_warning: bool,
 }
 
 fn default_stats_enabled() -> bool {
@@ -300,6 +347,10 @@ pub const VIZ_BAR_CHOICES: [u8; 3] = [16, 24, 32];
 /// Быстрые длительности таймера сна; `0` — выключен (ADR-0046). Тот же ряд
 /// показывают настройки, кнопка в шапках, трей и расширения.
 pub const SLEEP_CHOICES: [u16; 6] = [0, 15, 30, 45, 60, 90];
+/// Допустимые длительности затухания перед сном (ADR-0056).
+pub const SLEEP_FADE_CHOICES: [u16; 5] = [0, 60, 120, 180, 300];
+/// Затухание по умолчанию: пять минут — незаметно и не съедает таймер.
+pub const DEFAULT_SLEEP_FADE: u16 = 300;
 /// Значение по умолчанию (ТЗ: 24 столбца).
 pub const DEFAULT_VIZ_BARS: u8 = 24;
 /// Стартовая громкость: mpv по умолчанию звучит громче, чем нужно ночью.
@@ -324,6 +375,10 @@ impl Default for Settings {
             queue_wrap: true,
             network_profile: NetworkProfile::Unlimited,
             stats_enabled: default_stats_enabled(),
+            sleep_action: SleepAction::Nothing,
+            sleep_fade_seconds: DEFAULT_SLEEP_FADE,
+            sleep_prevent_sleep: true,
+            sleep_warning: true,
         }
     }
 }
@@ -368,6 +423,7 @@ impl SettingsStore {
         };
         settings.viz_bars = nearest_viz_bars(settings.viz_bars);
         settings.volume = sanitized_volume(settings.volume);
+        settings.sleep_fade_seconds = nearest_sleep_fade(settings.sleep_fade_seconds);
         Ok(Self {
             path: Some(path),
             settings,
@@ -541,6 +597,43 @@ impl SettingsStore {
         self.save()
     }
 
+    /// Действие по истечении таймера сна (ADR-0055).
+    pub fn set_sleep_action(&mut self, action: SleepAction) -> Result<(), SettingsError> {
+        if self.settings.sleep_action == action {
+            return Ok(());
+        }
+        self.settings.sleep_action = action;
+        self.save()
+    }
+
+    /// Длительность затухания перед сном (ADR-0056).
+    pub fn set_sleep_fade_seconds(&mut self, seconds: u16) -> Result<(), SettingsError> {
+        let seconds = nearest_sleep_fade(seconds);
+        if self.settings.sleep_fade_seconds == seconds {
+            return Ok(());
+        }
+        self.settings.sleep_fade_seconds = seconds;
+        self.save()
+    }
+
+    /// Ингибитор сна на время таймера (ADR-0054).
+    pub fn set_sleep_prevent_sleep(&mut self, enabled: bool) -> Result<(), SettingsError> {
+        if self.settings.sleep_prevent_sleep == enabled {
+            return Ok(());
+        }
+        self.settings.sleep_prevent_sleep = enabled;
+        self.save()
+    }
+
+    /// Окно предупреждения за минуту до действия (ADR-0058).
+    pub fn set_sleep_warning(&mut self, enabled: bool) -> Result<(), SettingsError> {
+        if self.settings.sleep_warning == enabled {
+            return Ok(());
+        }
+        self.settings.sleep_warning = enabled;
+        self.save()
+    }
+
     fn save(&self) -> Result<(), SettingsError> {
         let Some(path) = &self.path else {
             return Ok(());
@@ -567,6 +660,16 @@ fn nearest_viz_bars(bars: u8) -> u8 {
         .copied()
         .min_by_key(|choice| (i16::from(*choice) - i16::from(bars)).abs())
         .unwrap_or(DEFAULT_VIZ_BARS)
+}
+
+/// Ближайшая допустимая длительность затухания: ручное значение в файле не
+/// должно давать фейд на сутки (ADR-0056).
+fn nearest_sleep_fade(seconds: u16) -> u16 {
+    SLEEP_FADE_CHOICES
+        .iter()
+        .copied()
+        .min_by_key(|choice| i32::from(*choice).abs_diff(i32::from(seconds)))
+        .unwrap_or(DEFAULT_SLEEP_FADE)
 }
 
 /// Стандартный путь настроек по XDG Base Directory Specification.
@@ -940,5 +1043,84 @@ mod tests {
         assert_eq!(store.settings().theme, ThemeMode::Dark);
         assert_eq!(store.settings().accent, AccentColor::Rose);
         assert!(store.path().is_none());
+    }
+
+    #[test]
+    fn old_file_gets_sleep_defaults() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        fs::write(&path, b"{\"theme\":\"dark\"}").unwrap();
+
+        let settings = SettingsStore::load(path).unwrap().settings();
+        assert_eq!(settings.sleep_action, SleepAction::Nothing);
+        assert_eq!(settings.sleep_fade_seconds, DEFAULT_SLEEP_FADE);
+        assert!(settings.sleep_prevent_sleep);
+        assert!(settings.sleep_warning);
+    }
+
+    #[test]
+    fn unknown_sleep_action_is_a_parse_error() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        fs::write(&path, br#"{"sleep_action":"reboot"}"#).unwrap();
+        assert!(matches!(
+            SettingsStore::load(path),
+            Err(SettingsError::Parse(_))
+        ));
+    }
+
+    #[test]
+    fn sleep_action_roundtrip_and_tokens() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        {
+            let mut store = SettingsStore::load(path.clone()).unwrap();
+            store.set_sleep_action(SleepAction::Suspend).unwrap();
+        }
+        assert_eq!(
+            SettingsStore::load(path).unwrap().settings().sleep_action,
+            SleepAction::Suspend
+        );
+        assert_eq!(SleepAction::Nothing.as_str(), "nothing");
+        assert_eq!(SleepAction::Suspend.as_str(), "suspend");
+        assert_eq!(SleepAction::PowerOff.as_str(), "power-off");
+        assert_eq!(SleepAction::parse("suspend"), Some(SleepAction::Suspend));
+        assert_eq!(SleepAction::parse("reboot"), None);
+    }
+
+    #[test]
+    fn out_of_range_fade_snaps_to_nearest_choice() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        fs::write(&path, b"{\"sleep_fade_seconds\":9999}").unwrap();
+        assert_eq!(
+            SettingsStore::load(path)
+                .unwrap()
+                .settings()
+                .sleep_fade_seconds,
+            DEFAULT_SLEEP_FADE
+        );
+
+        let mut store = SettingsStore::ephemeral();
+        store.set_sleep_fade_seconds(75).unwrap();
+        assert_eq!(store.settings().sleep_fade_seconds, 60);
+        store.set_sleep_fade_seconds(0).unwrap();
+        assert_eq!(store.settings().sleep_fade_seconds, 0);
+    }
+
+    #[test]
+    fn sleep_switches_are_persisted() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        {
+            let mut store = SettingsStore::load(path.clone()).unwrap();
+            store.set_sleep_prevent_sleep(false).unwrap();
+            store.set_sleep_warning(false).unwrap();
+            store.set_sleep_fade_seconds(120).unwrap();
+        }
+        let settings = SettingsStore::load(path).unwrap().settings();
+        assert!(!settings.sleep_prevent_sleep);
+        assert!(!settings.sleep_warning);
+        assert_eq!(settings.sleep_fade_seconds, 120);
     }
 }

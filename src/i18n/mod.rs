@@ -76,6 +76,35 @@ pub(crate) fn sleep_option_label(language: Language, minutes: u16) -> String {
     }
 }
 
+/// Оставшееся время таймера: `M:SS` или `H:MM:SS` (ADR-0057).
+///
+/// Секунды и минуты всегда двузначные, часы — без ведущего нуля. Потолок
+/// таймера (`MAX_SLEEP_MINUTES = 720`) даёт ровно `12:00:00`. Язык пока не
+/// влияет: строка состоит только из цифр и двоеточий.
+#[allow(dead_code)]
+pub(crate) fn sleep_remaining_label(_language: Language, seconds: u64) -> String {
+    let hours = seconds / 3_600;
+    let minutes = (seconds % 3_600) / 60;
+    let secs = seconds % 60;
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{secs:02}")
+    } else {
+        format!("{minutes}:{secs:02}")
+    }
+}
+
+/// Подпись варианта затухания: `0` — выключено, иначе секунды из шаблона.
+/// Общая для настроек, быстрых меню и трея (ADR-0056).
+#[allow(dead_code)]
+pub(crate) fn sleep_fade_label(language: Language, seconds: u16) -> String {
+    let text = &catalog(language).settings;
+    if seconds == 0 {
+        text.sleep_fade_off.to_owned()
+    } else {
+        fill(text.sleep_seconds, &[("seconds", &seconds.to_string())])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -275,6 +304,26 @@ mod tests {
                 sleep_timer_hint,
                 sleep_off,
                 sleep_minutes,
+                sleep_action,
+                sleep_action_hint,
+                sleep_action_nothing,
+                sleep_action_suspend,
+                sleep_action_power_off,
+                sleep_fade,
+                sleep_fade_hint,
+                sleep_fade_off,
+                sleep_seconds,
+                sleep_prevent_sleep,
+                sleep_prevent_sleep_hint,
+                sleep_warning,
+                sleep_warning_hint,
+                sleep_remaining,
+                sleep_warning_title,
+                sleep_warning_cancel,
+                sleep_warning_stop,
+                sleep_warning_suspend,
+                sleep_warning_power_off,
+                sleep_warning_cancel_hint,
                 queue_wrap,
                 queue_wrap_hint,
                 motion_reactivity,
@@ -419,6 +468,8 @@ mod tests {
                 visualizer_not_saved,
                 fft_unavailable,
                 sleep_expired,
+                inhibition_lost,
+                sleep_action_failed,
                 stats_damaged,
             }
         );
@@ -504,6 +555,28 @@ mod tests {
         let english = catalog(Language::English);
         assert_eq!(system.settings.title, english.settings.title);
         assert_eq!(system.common.nothing_playing, "Nothing playing");
+    }
+
+    #[test]
+    fn sleep_remaining_label_formats_minutes_and_hours() {
+        assert_eq!(sleep_remaining_label(Language::English, 0), "0:00");
+        assert_eq!(sleep_remaining_label(Language::English, 59), "0:59");
+        assert_eq!(sleep_remaining_label(Language::English, 3_599), "59:59");
+        assert_eq!(sleep_remaining_label(Language::English, 3_600), "1:00:00");
+        assert_eq!(sleep_remaining_label(Language::English, 43_200), "12:00:00");
+    }
+
+    #[test]
+    fn sleep_fade_label_uses_off_and_seconds_template() {
+        for language in [Language::English, Language::Russian] {
+            assert_eq!(
+                sleep_fade_label(language, 0),
+                catalog(language).settings.sleep_fade_off
+            );
+            assert!(!sleep_fade_label(language, 300).contains("{seconds}"));
+        }
+        assert_eq!(sleep_fade_label(Language::English, 300), "300 s");
+        assert_eq!(sleep_fade_label(Language::Russian, 300), "300 с");
     }
 
     #[test]

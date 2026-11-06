@@ -4,9 +4,9 @@
 //! есть ли `egui::Context`, а всё, что касается окна, выражается через
 //! [`UiIntent`](super::UiIntent).
 
-use crate::ipc::{IpcCommand, NetworkArg, ThemeArg, WindowModeArg};
+use crate::ipc::{IpcCommand, NetworkArg, SleepActionArg, ThemeArg, WindowModeArg};
 use crate::settings::{
-    AccentColor, Language, MotionReactivity, MotionStyle, NetworkProfile, ThemeMode,
+    AccentColor, Language, MotionReactivity, MotionStyle, NetworkProfile, SleepAction, ThemeMode,
 };
 use crate::tray::VOLUME_STEP;
 
@@ -40,6 +40,16 @@ impl From<NetworkArg> for NetworkProfile {
             NetworkArg::Unlimited => Self::Unlimited,
             NetworkArg::Metered => Self::Metered,
             NetworkArg::OfflineFirst => Self::OfflineFirst,
+        }
+    }
+}
+
+impl From<SleepActionArg> for SleepAction {
+    fn from(arg: SleepActionArg) -> Self {
+        match arg {
+            SleepActionArg::Nothing => Self::Nothing,
+            SleepActionArg::Suspend => Self::Suspend,
+            SleepActionArg::PowerOff => Self::PowerOff,
         }
     }
 }
@@ -182,6 +192,40 @@ impl super::Session {
             IpcCommand::ClearSleep => {
                 self.clear_sleep();
                 "ok".to_owned()
+            }
+            // Ритуал сна (ADR-0054…0058): подкоманды пишут настройку и сразу
+            // применяются к активному таймеру.
+            IpcCommand::SetSleepAction { action } => {
+                let action = SleepAction::from(*action);
+                match self.settings.set_sleep_action(action) {
+                    Ok(()) => format!("ok sleep action {}", action.as_str()),
+                    Err(err) => format!("error {err}"),
+                }
+            }
+            IpcCommand::SetSleepFade { seconds } => {
+                match self.settings.set_sleep_fade_seconds(*seconds) {
+                    Ok(()) => {
+                        let applied = self.settings.settings().sleep_fade_seconds;
+                        self.apply_sleep_fade_setting(applied);
+                        format!("ok sleep fade {applied}")
+                    }
+                    Err(err) => format!("error {err}"),
+                }
+            }
+            IpcCommand::SetSleepInhibit { enabled } => {
+                match self.settings.set_sleep_prevent_sleep(*enabled) {
+                    Ok(()) => {
+                        self.sync_inhibition();
+                        format!("ok sleep inhibit {}", if *enabled { "on" } else { "off" })
+                    }
+                    Err(err) => format!("error {err}"),
+                }
+            }
+            IpcCommand::SetSleepWarning { enabled } => {
+                match self.settings.set_sleep_warning(*enabled) {
+                    Ok(()) => format!("ok sleep warning {}", if *enabled { "on" } else { "off" }),
+                    Err(err) => format!("error {err}"),
+                }
             }
             IpcCommand::LibraryExport { path } => {
                 match self.library.export_to(std::path::Path::new(path)) {

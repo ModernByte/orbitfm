@@ -123,11 +123,24 @@ pub(crate) fn volume_label(snapshot: &TraySnapshot) -> String {
 
 /// Заголовок группы таймера сна: `Sleep timer · 45 min` или `… · Off`.
 pub(crate) fn sleep_label(snapshot: &TraySnapshot) -> String {
-    format!(
-        "{} · {}",
-        i18n::catalog(snapshot.language).settings.sleep_timer,
-        i18n::sleep_option_label(snapshot.language, snapshot.sleep_minutes.unwrap_or(0))
-    )
+    let text = &i18n::catalog(snapshot.language).settings;
+    match snapshot.sleep_remaining_secs {
+        Some(secs) => {
+            let hours = secs / 3_600;
+            let minutes = (secs % 3_600) / 60;
+            let secs = secs % 60;
+            let remaining = if hours > 0 {
+                format!("{hours}:{minutes:02}:{secs:02}")
+            } else {
+                format!("{minutes}:{secs:02}")
+            };
+            format!("{} · {}", text.sleep_timer, remaining)
+        }
+        None => match snapshot.sleep_minutes {
+            Some(minutes) => format!("{} · {} min", text.sleep_timer, minutes),
+            None => format!("{} · {}", text.sleep_timer, text.sleep_off),
+        },
+    }
 }
 
 /// Пункт избранного: добавить или убрать.
@@ -279,8 +292,16 @@ mod tests {
     fn sleep_label_shows_the_active_duration() {
         let mut snapshot = english(Some(wfmu()));
         assert_eq!(sleep_label(&snapshot), "Sleep timer · Off");
+        // Установлен таймер, но отсчёт ещё не пошёл — показываем выбранную длительность.
         snapshot.sleep_minutes = Some(45);
         assert_eq!(sleep_label(&snapshot), "Sleep timer · 45 min");
+        // Пошёл отсчёт — показываем оставшееся время.
+        snapshot.sleep_remaining_secs = Some(2703);
+        assert_eq!(sleep_label(&snapshot), "Sleep timer · 45:03");
+        snapshot.sleep_remaining_secs = Some(3661);
+        assert_eq!(sleep_label(&snapshot), "Sleep timer · 1:01:01");
+        snapshot.sleep_remaining_secs = Some(59);
+        assert_eq!(sleep_label(&snapshot), "Sleep timer · 0:59");
     }
 
     #[test]

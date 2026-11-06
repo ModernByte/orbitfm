@@ -12,6 +12,8 @@ use crate::audio::worker::AudioWorker;
 
 pub(super) const DEFAULT_VOLUME: f64 = 0.7;
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(3);
+/// Верхняя граница длительности фейда (ADR-0056): больше часа не нужно.
+const MAX_FADE_MS: u64 = 3_600_000;
 const EVENT_CHANNEL_CAPACITY: usize = 64;
 const PROPERTY_PAUSED_FOR_CACHE: u64 = 1;
 
@@ -32,6 +34,15 @@ pub(super) enum AudioCommand {
     SetVolume {
         volume: f64,
         reply: oneshot::Sender<CommandResult>,
+    },
+    /// Плавное затухание от текущей громкости (ADR-0056): шаг выполняет
+    /// аудио-поток, ответ вызывающему не нужен.
+    StartFade {
+        duration_ms: u64,
+    },
+    /// Отмена фейда (ADR-0056); `restore_volume` возвращает громкость до фейда.
+    CancelFade {
+        restore_volume: bool,
     },
     SetSpectrum {
         enabled: bool,
@@ -181,6 +192,28 @@ impl AudioEngine {
             .send(AudioCommand::SetVolume { volume, reply })
             .map_err(|_| AudioError::Internal("аудио-поток остановлен".to_owned()))?;
         wait_for_reply(response).await
+    }
+
+    /// Начать плавное затухание от текущей громкости (ADR-0056).
+    ///
+    /// Длительность клампится в `0..=3_600_000` мс; `0` — сразу тишина, без
+    /// фейда. Шаг считает аудио-поток, ответа нет.
+    pub fn start_fade(&self, duration_ms: u64) -> Result<(), AudioError> {
+        self.commands
+            .send(AudioCommand::StartFade {
+                duration_ms: duration_ms.min(MAX_FADE_MS),
+            })
+            .map_err(|_| AudioError::Internal("аудио-поток остановлен".to_owned()))
+    }
+
+    /// Остановить фейд (ADR-0056).
+    ///
+    /// `restore_volume = true` возвращает громкость до фейда, `false` оставляет
+    /// текущую: явная воля пользователя выше автоматики.
+    pub fn cancel_fade(&self, restore_volume: bool) -> Result<(), AudioError> {
+        self.commands
+            .send(AudioCommand::CancelFade { restore_volume })
+            .map_err(|_| AudioError::Internal("аудио-поток остановлен".to_owned()))
     }
 
     /// Включить или выключить экспериментальный FFT-визуализатор.

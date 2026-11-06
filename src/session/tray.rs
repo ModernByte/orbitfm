@@ -160,6 +160,7 @@ impl super::Session {
             favorite,
             volume_percent: volume_percent(self.audio.volume()),
             sleep_minutes: self.sleep_minutes(),
+            sleep_remaining_secs: self.sleep_display_seconds(),
             theme: self.settings.settings().theme,
             language: self.language,
         }

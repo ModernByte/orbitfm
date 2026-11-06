@@ -101,6 +101,8 @@ pub(crate) struct TraySnapshot {
     pub(crate) volume_percent: u8,
     /// Активный таймер сна: выбранный пункт меню (ADR-0046).
     pub(crate) sleep_minutes: Option<u16>,
+    /// Оставшееся время в секундах для отсчёта на кнопке часов (ADR-0057).
+    pub(crate) sleep_remaining_secs: Option<u64>,
     /// Текущая тема: активный пункт группы System/Dark/Light.
     pub(crate) theme: ThemeMode,
     /// Разрешённый язык интерфейса: смена языка перестраивает меню (ADR-0030).
@@ -229,6 +231,7 @@ mod tests {
             favorite: true,
             volume_percent: 70,
             sleep_minutes: Some(45),
+            sleep_remaining_secs: None,
             theme: ThemeMode::Dark,
             language: Language::French,
         };

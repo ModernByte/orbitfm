@@ -38,7 +38,7 @@ use crate::media::MediaControls;
 use crate::render::GlobeCamera;
 use crate::services::{RadioBrowserClient, Station};
 use crate::settings::{
-    AccentColor, Language, MotionReactivity, NetworkProfile, SettingsStore, ThemeMode,
+    AccentColor, Language, MotionReactivity, NetworkProfile, SettingsStore, SleepAction, ThemeMode,
 };
 use crate::station_filter::CountryFilterState;
 use crate::stats::StatsStore;
@@ -185,6 +185,18 @@ pub(crate) struct Session {
     pub(crate) pending_volume: Option<f64>,
     /// Таймер сна: дедлайн и выбранная длительность (ADR-0046).
     pub(crate) sleep: sleep::SleepTimer,
+    /// Идёт плавное затухание звука перед стопом (ADR-0056).
+    pub(crate) sleep_fading: bool,
+    /// Лок сна на время таймера; `Drop` снимает его (ADR-0054).
+    pub(crate) sleep_inhibition: Option<crate::power::InhibitionGuard>,
+    /// Почему лок не взят: показывается в настройках вместо `Unavailable`
+    /// (ADR-0054 §3).
+    pub(crate) sleep_inhibition_detail: Option<String>,
+    /// Открыто окно предупреждения таймера сна (ADR-0058).
+    pub(crate) sleep_warning_open: bool,
+    /// Единичное действие после предупреждения: Cancel выставляет `Nothing` и
+    /// действует до следующего включения таймера (ADR-0058).
+    pub(crate) sleep_action_once: Option<SleepAction>,
     pub(crate) show_help: bool,
     pub(crate) window: WindowState,
     pub(crate) notices: VecDeque<Notice>,
@@ -268,6 +280,11 @@ impl Session {
             onboarding_desktop,
             pending_volume: None,
             sleep: sleep::SleepTimer::default(),
+            sleep_fading: false,
+            sleep_warning_open: false,
+            sleep_action_once: None,
+            sleep_inhibition: None,
+            sleep_inhibition_detail: None,
             show_help,
             window: WindowState::shown(),
             notices: VecDeque::new(),
@@ -295,7 +312,8 @@ impl Session {
 
     /// Один кадр фонового обслуживания: вызывается UI-циклом при открытом окне.
     pub(crate) fn tick(&mut self) {
-        self.poll_sleep();
+        self.poll_sleep_events();
+        self.sync_inhibition();
         self.poll_stats();
         self.process_audio_events();
         self.poll_economy();
@@ -581,9 +599,17 @@ impl Session {
         let sleep = self
             .sleep_minutes()
             .zip(self.sleep_remaining())
-            .map(|(minutes, remaining)| StatusSleep {
-                minutes,
-                remaining_secs: remaining.as_secs(),
+            .map(|(minutes, remaining)| {
+                let settings = self.settings.settings();
+                let inhibited = self.sleep_inhibition.is_some();
+                StatusSleep {
+                    minutes,
+                    remaining_secs: remaining.as_secs(),
+                    inhibited,
+                    action: settings.sleep_action.as_str(),
+                    warning: settings.sleep_warning,
+                    fade_seconds: settings.sleep_fade_seconds,
+                }
             });
         let payload = build_status_payload(
             &self.audio.state(),
@@ -599,6 +625,7 @@ impl Session {
             can_next,
             favorite,
             sleep,
+            self.settings_open,
         );
         serde_json::to_string(&payload).unwrap_or_else(|err| format!("error {err}"))
     }
@@ -663,6 +690,8 @@ struct StatusPayload {
     can: StatusCan,
     /// Активный таймер сна: `null`, когда таймер выключен (ADR-0046).
     sleep: Option<StatusSleep>,
+    /// Окно настроек открыто (ADR-0053).
+    settings_open: bool,
     ui: StatusUi,
 }
 
@@ -670,6 +699,14 @@ struct StatusPayload {
 struct StatusSleep {
     minutes: u16,
     remaining_secs: u64,
+    /// ОС удерживается от сна (ADR-0054).
+    inhibited: bool,
+    /// Действие после остановки эфира (ADR-0055).
+    action: &'static str,
+    /// Окно предупреждения включено (ADR-0058).
+    warning: bool,
+    /// Длительность затухания, секунды (ADR-0056).
+    fade_seconds: u16,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -837,6 +874,7 @@ fn build_status_payload(
     can_next: bool,
     favorite: bool,
     sleep: Option<StatusSleep>,
+    settings_open: bool,
 ) -> StatusPayload {
     StatusPayload {
         schema: STATUS_SCHEMA,
@@ -858,6 +896,7 @@ fn build_status_payload(
             next: can_next,
         },
         sleep,
+        settings_open,
         ui: StatusUi::new(language),
     }
 }
@@ -1015,6 +1054,7 @@ mod tests {
             false,
             false,
             None,
+            false,
         );
         let json = serde_json::to_string(&payload).expect("снимок сериализуется");
         assert!(!json.contains('\n'), "IPC отвечает одной строкой");
@@ -1053,11 +1093,21 @@ mod tests {
             Some(StatusSleep {
                 minutes: 45,
                 remaining_secs: 2700,
+                inhibited: false,
+                action: "nothing",
+                warning: false,
+                fade_seconds: 0,
             }),
+            false,
         );
         let value = status_value(&payload);
         assert_eq!(value["sleep"]["minutes"], 45);
         assert_eq!(value["sleep"]["remaining_secs"], 2700);
+        assert_eq!(value["sleep"]["inhibited"], false);
+        assert_eq!(value["sleep"]["action"], "nothing");
+        assert_eq!(value["sleep"]["warning"], false);
+        assert_eq!(value["sleep"]["fade_seconds"], 0);
+        assert_eq!(value["settings_open"], false);
     }
 
     #[test]
@@ -1077,6 +1127,7 @@ mod tests {
             true,
             true,
             None,
+            false,
         );
         let value = status_value(&payload);
         assert_eq!(value["state"], "playing");
@@ -1126,6 +1177,7 @@ mod tests {
             true,
             true,
             None,
+            false,
         );
         let value = status_value(&payload);
         assert_eq!(value["station"]["name"], "Evil [2JFM");
@@ -1150,6 +1202,7 @@ mod tests {
                 false,
                 false,
                 None,
+                false,
             );
             let value = status_value(&payload);
             let catalog = crate::i18n::catalog(language);
@@ -1205,6 +1258,7 @@ mod tests {
             false,
             false,
             None,
+            false,
         );
         let value = status_value(&payload);
         assert_eq!(value["volume"], 0.3);

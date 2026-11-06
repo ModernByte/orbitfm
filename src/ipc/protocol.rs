@@ -112,6 +112,43 @@ impl NetworkArg {
     }
 }
 
+/// Аргумент действия по истечении таймера сна (ADR-0055).
+///
+/// Wire-тип живёт в инфраструктуре; в доменный `SleepAction` его превращает
+/// Application Core (`src/session/commands.rs`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SleepActionArg {
+    Nothing,
+    Suspend,
+    PowerOff,
+}
+
+impl SleepActionArg {
+    /// Имя действия в протоколе.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Nothing => "nothing",
+            Self::Suspend => "suspend",
+            Self::PowerOff => "power-off",
+        }
+    }
+
+    fn parse(raw: &str) -> Result<Self, IpcError> {
+        match raw {
+            "nothing" => Ok(Self::Nothing),
+            "suspend" => Ok(Self::Suspend),
+            "power-off" => Ok(Self::PowerOff),
+            other => Err(IpcError::InvalidArgument(format!(
+                "sleep action: ожидаются nothing, suspend или power-off, получено {other}"
+            ))),
+        }
+    }
+}
+
+/// Зеркало `settings::SLEEP_FADE_CHOICES`: протокол не зависит от домена,
+/// совпадение рядов проверяет тест `fade_choices_match_settings`.
+const SLEEP_FADE_CHOICES: [u16; 5] = [0, 60, 120, 180, 300];
+
 /// Команды IPC-протокола (docs/interfaces/05-ipc.md).
 #[derive(Debug, Clone, PartialEq)]
 pub enum IpcCommand {
@@ -195,6 +232,26 @@ pub enum IpcCommand {
     },
     /// `sleep clear`: отменить таймер сна.
     ClearSleep,
+    /// `sleep action <nothing|suspend|power-off>`: что делать после остановки
+    /// эфира по таймеру (ADR-0055).
+    SetSleepAction {
+        action: SleepActionArg,
+    },
+    /// `sleep fade <0|60|120|180|300>`: плавное затухание перед стопом, секунды
+    /// (ADR-0056).
+    SetSleepFade {
+        seconds: u16,
+    },
+    /// `sleep inhibit <on|off>`: запрещать ОС уходить в сон, пока считает
+    /// таймер (ADR-0054).
+    SetSleepInhibit {
+        enabled: bool,
+    },
+    /// `sleep warning <on|off>`: показывать окно предупреждения за минуту до
+    /// действия (ADR-0058).
+    SetSleepWarning {
+        enabled: bool,
+    },
     /// `library-export <путь>`: выгрузить избранное и историю в JSON схемы 1.
     LibraryExport {
         path: String,
@@ -363,6 +420,45 @@ impl IpcCommand {
                     reject_extra_args(parts.next())?;
                     Ok(Self::ClearSleep)
                 }
+                Some("action") => {
+                    let raw = parts.next().ok_or_else(|| {
+                        IpcError::InvalidArgument(
+                            "sleep action: ожидается nothing, suspend или power-off".into(),
+                        )
+                    })?;
+                    let action = SleepActionArg::parse(raw)?;
+                    reject_extra_args(parts.next())?;
+                    Ok(Self::SetSleepAction { action })
+                }
+                Some("fade") => {
+                    let raw = parts.next().ok_or_else(|| {
+                        IpcError::InvalidArgument(
+                            "sleep fade: ожидается 0, 60, 120, 180 или 300".into(),
+                        )
+                    })?;
+                    let seconds = raw.parse::<u16>().map_err(|_| {
+                        IpcError::InvalidArgument(format!(
+                            "sleep fade: некорректное число секунд: {raw}"
+                        ))
+                    })?;
+                    if !SLEEP_FADE_CHOICES.contains(&seconds) {
+                        return Err(IpcError::InvalidArgument(format!(
+                            "sleep fade: ожидается 0, 60, 120, 180 или 300, получено {seconds}"
+                        )));
+                    }
+                    reject_extra_args(parts.next())?;
+                    Ok(Self::SetSleepFade { seconds })
+                }
+                Some("inhibit") => {
+                    let enabled = parse_toggle(parts.next(), "sleep inhibit")?;
+                    reject_extra_args(parts.next())?;
+                    Ok(Self::SetSleepInhibit { enabled })
+                }
+                Some("warning") => {
+                    let enabled = parse_toggle(parts.next(), "sleep warning")?;
+                    reject_extra_args(parts.next())?;
+                    Ok(Self::SetSleepWarning { enabled })
+                }
                 Some(raw) => {
                     let minutes = raw.parse::<u16>().map_err(|_| {
                         IpcError::InvalidArgument(format!("sleep: некорректное число: {raw}"))
@@ -376,7 +472,7 @@ impl IpcCommand {
                     Ok(Self::SetSleep { minutes })
                 }
                 None => Err(IpcError::InvalidArgument(
-                    "sleep: ожидается число минут или clear".into(),
+                    "sleep: ожидается число минут, clear, action, fade, inhibit или warning".into(),
                 )),
             },
             "library-export" => {
@@ -528,6 +624,14 @@ impl IpcCommand {
             Self::PlayUrl { url } => format!("play-url {url}"),
             Self::SetSleep { minutes } => format!("sleep {minutes}"),
             Self::ClearSleep => "sleep clear".to_owned(),
+            Self::SetSleepAction { action } => format!("sleep action {}", action.as_str()),
+            Self::SetSleepFade { seconds } => format!("sleep fade {seconds}"),
+            Self::SetSleepInhibit { enabled } => {
+                format!("sleep inhibit {}", if *enabled { "on" } else { "off" })
+            }
+            Self::SetSleepWarning { enabled } => {
+                format!("sleep warning {}", if *enabled { "on" } else { "off" })
+            }
             Self::LibraryExport { path } => format!("library-export {path}"),
             Self::LibraryImport { path } => format!("library-import {path}"),
             Self::Stats => "stats".to_owned(),
@@ -548,6 +652,20 @@ fn reject_extra_args(extra: Option<&str>) -> Result<(), IpcError> {
             "лишний аргумент: {value}"
         ))),
         None => Ok(()),
+    }
+}
+
+/// `on`/`off` для булевых подкоманд таймера сна.
+fn parse_toggle(value: Option<&str>, verb: &str) -> Result<bool, IpcError> {
+    match value {
+        Some("on") => Ok(true),
+        Some("off") => Ok(false),
+        Some(other) => Err(IpcError::InvalidArgument(format!(
+            "{verb}: ожидается on или off, получено {other}"
+        ))),
+        None => Err(IpcError::InvalidArgument(format!(
+            "{verb}: ожидается on или off"
+        ))),
     }
 }
 
@@ -898,6 +1016,70 @@ mod tests {
         );
         assert!(IpcCommand::parse("library-export").is_err());
         assert!(IpcCommand::parse("library-import   ").is_err());
+    }
+
+    #[test]
+    fn parses_sleep_ritual_subcommands() {
+        for (wire, command) in [
+            (
+                "sleep action nothing",
+                IpcCommand::SetSleepAction {
+                    action: SleepActionArg::Nothing,
+                },
+            ),
+            (
+                "sleep action suspend",
+                IpcCommand::SetSleepAction {
+                    action: SleepActionArg::Suspend,
+                },
+            ),
+            (
+                "sleep action power-off",
+                IpcCommand::SetSleepAction {
+                    action: SleepActionArg::PowerOff,
+                },
+            ),
+            ("sleep fade 0", IpcCommand::SetSleepFade { seconds: 0 }),
+            ("sleep fade 300", IpcCommand::SetSleepFade { seconds: 300 }),
+            (
+                "sleep inhibit on",
+                IpcCommand::SetSleepInhibit { enabled: true },
+            ),
+            (
+                "sleep inhibit off",
+                IpcCommand::SetSleepInhibit { enabled: false },
+            ),
+            (
+                "sleep warning on",
+                IpcCommand::SetSleepWarning { enabled: true },
+            ),
+            (
+                "sleep warning off",
+                IpcCommand::SetSleepWarning { enabled: false },
+            ),
+        ] {
+            assert_eq!(IpcCommand::parse(wire).unwrap(), command, "{wire}");
+            assert_eq!(command.to_wire(), wire);
+        }
+
+        assert!(IpcCommand::parse("sleep action").is_err());
+        assert!(IpcCommand::parse("sleep action sleep").is_err());
+        assert!(IpcCommand::parse("sleep action Suspend").is_err());
+        assert!(IpcCommand::parse("sleep action suspend now").is_err());
+        assert!(IpcCommand::parse("sleep fade").is_err());
+        assert!(IpcCommand::parse("sleep fade 90").is_err());
+        assert!(IpcCommand::parse("sleep fade -60").is_err());
+        assert!(IpcCommand::parse("sleep fade 60 extra").is_err());
+        assert!(IpcCommand::parse("sleep inhibit").is_err());
+        assert!(IpcCommand::parse("sleep inhibit yes").is_err());
+        assert!(IpcCommand::parse("sleep inhibit on extra").is_err());
+        assert!(IpcCommand::parse("sleep warning").is_err());
+        assert!(IpcCommand::parse("sleep warning 1").is_err());
+    }
+
+    #[test]
+    fn fade_choices_match_settings() {
+        assert_eq!(SLEEP_FADE_CHOICES, crate::settings::SLEEP_FADE_CHOICES);
     }
 
     #[test]

@@ -96,6 +96,8 @@ fn notice_text(
         NoticeKey::VisualizerNotSaved => notices.visualizer_not_saved,
         NoticeKey::FftUnavailable => notices.fft_unavailable,
         NoticeKey::SleepExpired => notices.sleep_expired,
+        NoticeKey::InhibitionLost => notices.inhibition_lost,
+        NoticeKey::SleepActionFailed => notices.sleep_action_failed,
         NoticeKey::StatsDamaged => notices.stats_damaged,
     };
     match detail {
@@ -551,6 +553,7 @@ impl<'a> OrbitApp<'a> {
                     // Снимок таймера берём до мутабельных займов поиска в снимке
                     // HUD: `sleep_minutes` читает сессию целиком.
                     let sleep_minutes = session.sleep_minutes();
+                    let sleep_remaining = session.sleep_remaining_label();
                     widgets::glass_panel(
                         ui.painter(),
                         hud_rect,
@@ -576,6 +579,7 @@ impl<'a> OrbitApp<'a> {
                                     panel_open: session.panel_open,
                                     help_open: session.show_help,
                                     sleep_minutes,
+                                    sleep_remaining: sleep_remaining.as_deref(),
                                     language: frame.language,
                                 },
                             )
@@ -733,6 +737,7 @@ impl<'a> OrbitApp<'a> {
                                     visualizer,
                                     visualizer_enabled: session.visualizer_enabled,
                                     sleep_minutes: session.sleep_minutes(),
+                                    sleep_remaining: session.sleep_remaining_label().as_deref(),
                                     language: frame.language,
                                 },
                             )
@@ -795,6 +800,7 @@ impl<'a> OrbitApp<'a> {
                                     favicons,
                                     eco: session.economy_stream(),
                                     sleep_minutes: session.sleep_minutes(),
+                                    sleep_remaining: session.sleep_remaining_label().as_deref(),
                                     language: frame.language,
                                 },
                             )
@@ -829,6 +835,7 @@ impl<'a> OrbitApp<'a> {
 
                 if let Some(header_rect) = layout.hud {
                     let sleep_minutes = session.sleep_minutes();
+                    let sleep_remaining = session.sleep_remaining_label();
                     actions.extend(
                         ui.scope_builder(vertical(header_rect), |ui| {
                             hud::panel_header(
@@ -849,6 +856,7 @@ impl<'a> OrbitApp<'a> {
                                     playback: &frame.playback,
                                     volume: frame.volume,
                                     sleep_minutes,
+                                    sleep_remaining: sleep_remaining.as_deref(),
                                     visualizer,
                                     visualizer_enabled: session.visualizer_enabled,
                                     language: frame.language,
