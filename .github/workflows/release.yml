@@ -301,6 +301,10 @@ jobs:
           - arch: x86_64
             runner: macos-15-intel
     runs-on: ${{ matrix.runner }}
+    env:
+      # Пол обеспечивается сборкой: без переменной rustc взял бы minos из SDK
+      # машины, и check-min-os.py сравнивал бы plist с другим числом (ADR-0052 § 1).
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -335,7 +339,9 @@ jobs:
       # префиксом вместо 0.10.0-rc.1 из Cargo.toml.
       - name: Build DMG
         timeout-minutes: 30
-        run: bash packaging/macos/build-dmg.sh
+        # Арка объявляется явно — имя артефакта и ожидание `lipo -archs` выводятся
+        # из матрицы, а не из `uname -m` раннера (ADR-0052 § 4).
+        run: bash packaging/macos/build-dmg.sh --arch ${{ matrix.arch }}
 
       - name: Smoke-test DMG
         timeout-minutes: 15
@@ -356,8 +362,16 @@ jobs:
             x86_64) echo "$actual" | grep -q 'x86_64' ;;
             *) echo "неизвестная архитектура $EXPECTED_ARCH" >&2; exit 1 ;;
           esac
-          python3 packaging/macos/check-min-os.py "$app" \
-            --arch "$EXPECTED_ARCH" --max 13.0
+          # Тот же арочный гейт, что и внутри build-dmg.sh, но уже над смонтированным
+          # DMG: `lipo -archs` сверяется по всем Mach-O бандла, а не только по главному
+          # бинарнику, как это делает `file` выше (ADR-0052 § 4).
+          bash packaging/macos/check-app-arch.sh "$app" --arch "$EXPECTED_ARCH"
+          # Предел — из LSMinimumSystemVersion собранного plist; число попадает в
+          # summary релиза, чтобы пол публикуемого артефакта был виден в логе, а не
+          # только прошёл гейт (ADR-0052 § 1).
+          minos=$(python3 packaging/macos/check-min-os.py "$app" --arch "$EXPECTED_ARCH")
+          echo "$minos"
+          echo "- DMG \`$EXPECTED_ARCH\`: $minos" >> "$GITHUB_STEP_SUMMARY"
           codesign --verify --deep --strict "$app"
           if otool -L "$app/Contents/MacOS/orbitfm" | grep -E '/(opt/homebrew|usr/local)/'; then
             echo "бинарник ссылается на Homebrew" >&2

@@ -137,6 +137,55 @@ jobs:
   macos:
     name: macOS (build/test)
     runs-on: macos-latest
+    # Пол платформы обеспечивается сборкой, а не только Info.plist: без этой
+    # переменной rustc берёт minos из SDK машины, и бандл требует macOS новее
+    # обещанной. Число сверяется с LSMinimumSystemVersion в гейте check-min-os.py
+    # (ADR-0052 § 1).
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Fetch libmpv (Homebrew bottles, macOS 13, pinned)
+        run: python3 packaging/macos/fetch-libmpv.py
+
+      - name: Export libmpv search path and dylibbundler
+        run: |
+          echo "LIBRARY_PATH=/tmp/orbitfm/opt/mpv/lib" >> "$GITHUB_ENV"
+          echo "/tmp/orbitfm/opt/dylibbundler/bin" >> "$GITHUB_PATH"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: 1.98.1
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --all-targets
+
+      - name: Release build
+        run: cargo build --release
+
+  macos-intel:
+    name: macOS (build/test, x86_64)
+    # Intel обязан исполнять тесты, а не только собирать DMG: до этого x86_64
+    # проверялся только компиляцией в job `dmg`, и заявления про Intel UHD 617
+    # было нечем подтвердить (ADR-0052 § 1, § 8).
+    # macos-15-intel доступен до августа 2027 — после этой даты job переезжает на
+    # arm64-хост с cross-сборкой, и тесты остаются только на arm64 (ADR-0052 § 6).
+    runs-on: macos-15-intel
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -318,6 +367,11 @@ jobs:
           - arch: x86_64
             runner: macos-15-intel
     runs-on: ${{ matrix.runner }}
+    env:
+      # Тот же пол, что и в job `macos`: бинарник обязан иметь LC_BUILD_VERSION
+      # minos 13.0, иначе гейт check-min-os.py сравнивал бы plist с другим числом
+      # (ADR-0052 § 1).
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -346,7 +400,9 @@ jobs:
         run: cargo build --release --locked
 
       - name: Build DMG
-        run: bash packaging/macos/build-dmg.sh
+        # Арка передаётся явно: имя артефакта и ожидание `lipo -archs` выводятся
+        # из неё, а не из `uname -m` машины сборки (ADR-0052 § 4).
+        run: bash packaging/macos/build-dmg.sh --arch ${{ matrix.arch }}
 
       - name: Smoke-test DMG
         env:
@@ -366,8 +422,16 @@ jobs:
             x86_64) echo "$actual" | grep -q 'x86_64' ;;
             *) echo "неизвестная архитектура $EXPECTED_ARCH" >&2; exit 1 ;;
           esac
-          python3 packaging/macos/check-min-os.py "$app" \
-            --arch "$EXPECTED_ARCH" --max 13.0
+          # Тот же арочный гейт, что и внутри build-dmg.sh, но над смонтированным DMG:
+          # `lipo -archs` сверяется по всем Mach-O бандла, а не только по главному
+          # бинарнику, как `file` выше (ADR-0052 § 4).
+          bash packaging/macos/check-app-arch.sh "$app" --arch "$EXPECTED_ARCH"
+          # Предел берётся из LSMinimumSystemVersion собранного plist, а не из
+          # продублированного здесь числа: сверка остаётся односторонней, и обещание
+          # ниже фактического требования рвёт сборку. Строка попадает в summary релиза.
+          minos=$(python3 packaging/macos/check-min-os.py "$app" --arch "$EXPECTED_ARCH")
+          echo "$minos"
+          echo "- DMG \`$EXPECTED_ARCH\`: $minos" >> "$GITHUB_STEP_SUMMARY"
           codesign --verify --deep --strict "$app"
           if otool -L "$app/Contents/MacOS/orbitfm" | grep -E '/(opt/homebrew|usr/local)/'; then
             echo "бинарник ссылается на Homebrew" >&2
@@ -423,6 +487,41 @@ jobs:
             exit 1
           fi
           echo "launch fixture отработал: гейт упал именно на недостающем символе"
+
+          # Регресс-гард арочного гейта: объявленная арка, которой нет в бандле, —
+          # это ровно Rosetta-подмена (x86_64-артефакт под arm64-именем). Гейт обязан
+          # падать: если он пропускает чужую арку, он ничего не проверяет.
+          case "$EXPECTED_ARCH" in
+            arm64) other=x86_64 ;;
+            x86_64) other=arm64 ;;
+          esac
+          if arch_out=$(bash packaging/macos/check-app-arch.sh "$app" --arch "$other" 2>&1); then
+            echo "check-app-arch не должен проходить на арке $other, которой в бандле нет" >&2
+            exit 1
+          elif ! grep -q 'arch FAIL' <<<"$arch_out"; then
+            echo "fixture обязан падать на несовпадении арки, а падение такое:" >&2
+            printf '%s\n' "$arch_out" >&2
+            exit 1
+          fi
+          echo "arch fixture отработал: гейт упал на арке $other, которой в бандле нет"
+
+          # Регресс-гард гейта мин-ОС: plist обещает 12.0, а бинарники собраны под 13.0.
+          # «Обещанный пол ниже фактического» обязан рвать сборку — иначе релиз уедет к
+          # пользователю с обещанием, которое dyld не выполнит (ADR-0052 § 1).
+          minos_fixture="$RUNNER_TEMP/OrbitFM-minos-fixture.app"
+          rm -rf "$minos_fixture"
+          cp -R "$app" "$minos_fixture"
+          plutil -replace LSMinimumSystemVersion -string 12.0 "$minos_fixture/Contents/Info.plist"
+          if minos_out=$(python3 packaging/macos/check-min-os.py "$minos_fixture" \
+              --arch "$EXPECTED_ARCH" 2>&1); then
+            echo "check-min-os не должен проходить, когда обещанный пол ниже фактического" >&2
+            exit 1
+          elif ! grep -q 'требует macOS' <<<"$minos_out"; then
+            echo "fixture обязан падать на требовании macOS, а падение такое:" >&2
+            printf '%s\n' "$minos_out" >&2
+            exit 1
+          fi
+          echo "minos fixture отработал: гейт упал на поле 12.0 ниже фактического требования"
 
       - name: Upload DMG
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -503,5 +602,6 @@ jobs:
       - name: Check macOS packaging scripts syntax
         run: |
           bash -n packaging/macos/build-dmg.sh
+          bash -n packaging/macos/check-app-arch.sh
           bash -n packaging/macos/audit-app-dylibs.sh
           bash -n packaging/macos/smoke-launch.sh
