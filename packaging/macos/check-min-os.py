@@ -6,11 +6,15 @@
 библиотеки в бандле. Если Homebrew положил dylib, собранный под macOS 26,
 приложение на macOS 13–15 не стартует, хотя Info.plist разрешает запуск.
 Скрипт ловит это до публикации релиза.
+
+Предел по умолчанию читается из того же Info.plist, поэтому сверка сравнивает
+обещанный пол с фактическим, а не с числом, продублированным в CI.
 """
 
 from __future__ import annotations
 
 import argparse
+import plistlib
 import struct
 import sys
 from pathlib import Path
@@ -33,6 +37,33 @@ def decode_version(value: int) -> tuple[int, int, int]:
 
 def version_string(version: tuple[int, int, int]) -> str:
     return ".".join(str(part) for part in version)
+
+
+def parse_version(text: str) -> tuple[int, int, int]:
+    parts = tuple(int(part) for part in text.split("."))
+    if not 1 <= len(parts) <= 3 or any(part < 0 for part in parts):
+        raise SystemExit(f"ошибка: версия macOS '{text}': ожидается major[.minor[.patch]]")
+    return (*parts, *([0] * (3 - len(parts))))
+
+
+def promised_floor(app: Path) -> tuple[int, int, int]:
+    """Пол, который бандл сам себе обещает, — из LSMinimumSystemVersion Info.plist.
+
+    Число 13.0 жило в трёх местах (plist, `--max` в CI, дефолт этого скрипта) и
+    разъезжалось молча; теперь оно объявлено один раз, а сверка односторонняя:
+    если plist обещает 13.0, а dylib требует 14 — сборка падает (ADR-0052 § 1).
+    """
+    plist = app / "Contents" / "Info.plist"
+    try:
+        with plist.open("rb") as handle:
+            value = plistlib.load(handle).get("LSMinimumSystemVersion")
+    except FileNotFoundError:
+        raise SystemExit(f"ошибка: нет {plist} — сверять пол не с чем") from None
+    except plistlib.InvalidFileException:
+        raise SystemExit(f"ошибка: {plist} не разбирается как plist") from None
+    if not value:
+        raise SystemExit(f"ошибка: в {plist} нет LSMinimumSystemVersion")
+    return parse_version(str(value))
 
 
 def thin_info(data: bytes) -> tuple[int, tuple[int, int, int]] | None:
@@ -89,19 +120,21 @@ def main() -> None:
     parser.add_argument("--arch", required=True, choices=sorted(ARCH_CPU))
     parser.add_argument(
         "--max",
-        default="13.0",
-        help="максимально допустимая минимальная macOS (по умолчанию 13.0)",
+        help="явно задать максимально допустимую минимальную macOS; без флага предел "
+        "берётся из LSMinimumSystemVersion собранного Info.plist",
     )
     args = parser.parse_args()
 
-    limit = tuple(int(part) for part in args.max.split("."))
-    limit = (*limit, *([0] * (3 - len(limit))))[:3]
+    contents = args.app / "Contents"
+    if args.max:
+        limit, floor_source = parse_version(args.max), "--max"
+    else:
+        limit, floor_source = promised_floor(args.app), "Info.plist"
     expected_cpu = ARCH_CPU[args.arch]
 
-    contents = args.app / "Contents"
     binaries = [
         path
-        for path in [contents / "MacOS" / "orbitfm", *(contents / "Frameworks").glob("*.dylib")]
+        for path in [contents / "MacOS" / "orbitfm", *(contents / "Frameworks").rglob("*.dylib")]
         if path.is_file()
     ]
     if not binaries:
@@ -136,6 +169,7 @@ def main() -> None:
     relative_highest = highest_path.removeprefix(str(contents.parent) + "/")
     print(
         f"проверено бинарников: {len(binaries)} ({checked} срезов); "
+        f"предел {version_string(limit)} ({floor_source}); "
         f"самая новая минимальная macOS: {version_string(highest)} "
         f"({relative_highest or '—'})"
     )

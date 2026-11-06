@@ -4,13 +4,66 @@
 # Иконка берётся готовым PNG (packaging/macos/OrbitFM-1024.png), чтобы не
 # тащить librsvg: под Intel у Homebrew нет готовых бутылок, и rsvg пришлось бы
 # собирать из исходников.
+#
+# Арка — объявленный параметр (--arch), а не производная от хоста: `uname -m`
+# описывал машину сборки, поэтому arm64-хост мог подписать x86_64-релиз наоборот,
+# и ничего бы не заметило подмену (ADR-0052 § 4).
 set -euo pipefail
+
+usage() {
+    cat <<'EOF'
+использование: build-dmg.sh --arch x86_64|arm64
+
+Арка обязательна: она задаёт имя DMG и ожидание проверки `lipo -archs`.
+Бинарник по-прежнему берётся из target/release/orbitfm — CI собирает его
+нативно на раннере соответствующей архитектуры.
+EOF
+}
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$root"
 
 version=${VERSION:-$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')}
-arch=$(uname -m)
+arch=
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --arch)
+            [[ $# -ge 2 ]] || { echo "нужно значение у --arch" >&2; usage >&2; exit 2; }
+            arch=$2
+            shift 2
+            ;;
+        --help | -h)
+            usage
+            exit 0
+            ;;
+        --*)
+            echo "неизвестный флаг: $1" >&2
+            usage >&2
+            exit 2
+            ;;
+        *)
+            echo "лишний аргумент: $1" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+done
+case $arch in
+    x86_64 | arm64) ;;
+    '')
+        echo "нужен --arch x86_64|arm64: арка объявления, а не uname хоста" >&2
+        usage >&2
+        exit 2
+        ;;
+    *)
+        echo "неизвестная архитектура '$arch' (ожидается x86_64 или arm64)" >&2
+        exit 2
+        ;;
+esac
+# Пол платформы — из Info.plist.in, того же места, который сверяет check-min-os.py.
+# Иначе `-mmacosx-version-min` у заглушки и `LSMinimumSystemVersion` в бандле
+# разъезжаются, и бандл начинает требовать macOS новее обещанной (ADR-0052 § 1).
+floor=$(python3 -c 'import plistlib,sys; print(plistlib.load(open(sys.argv[1], "rb"))["LSMinimumSystemVersion"])' packaging/macos/Info.plist.in)
 binary=target/release/orbitfm
 out_dir=dist
 app="$out_dir/OrbitFM.app"
@@ -127,7 +180,7 @@ if [[ ${#vsscript_libs[@]} -gt 0 ]]; then
         printf 'void *%s(void) { return 0; }\n' "$name" >> "$stub_c"
     done <<< "$needed"
 
-    clang -shared -fPIC -mmacosx-version-min=13.0 -o "$stub" "$stub_c"
+    clang -shared -fPIC -mmacosx-version-min="$floor" -o "$stub" "$stub_c"
     install_name_tool -id "$stub_ref" "$stub"
 
     uncovered=$(comm -23 <(printf '%s\n' "$needed") \
@@ -154,6 +207,10 @@ if [[ ${#vsscript_libs[@]} -gt 0 ]]; then
         exit 1
     fi
 fi
+
+# Арка каждого Mach-O бандла обязана совпасть с объявленной: гейт ловит и
+# Rosetta-подмену, и чужеродный dylib из сборочной машины, и случайный universal.
+bash packaging/macos/check-app-arch.sh "$app" --arch "$arch"
 bash packaging/macos/audit-app-dylibs.sh "$app"
 
 find "$app/Contents/Frameworks" -type f -name '*.dylib' \
