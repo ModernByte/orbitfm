@@ -33,7 +33,10 @@ use ipc::{IpcCommand, IpcError, IpcServer, SearchFeed, StatusFeed};
 use library::StationLibrary;
 use media::MediaControls;
 use services::RadioBrowserClient;
-use session::{AppServices, ParkOutcome, Session, WINDOW_TITLE, WakeHandle, WindowMode};
+use session::{
+    AppServices, ParkOutcome, RootSurface, Session, SettingsOrigin, WINDOW_TITLE, WakeHandle,
+    WindowMode,
+};
 use settings::SettingsStore;
 use stats::StatsStore;
 
@@ -414,14 +417,16 @@ fn run_session(
     let mut session = Session::new(commands, wake, services);
     session.set_window_mode(mode);
     if open_settings {
-        session.open_settings();
+        // Нет UI-пасса ещё: откроем отдельное окно настроек через парковку.
+        session.open_settings(SettingsOrigin::Parked);
     }
 
     loop {
+        let surface = session.root_surface();
         let size = session.restore_size();
-        session.begin_window(size);
+        session.begin_window(surface, size);
         session.settle_analysis();
-        run_window(&mut session, size)?;
+        run_window(&mut session, size, surface)?;
         session.end_window();
 
         if session.is_quitting() {
@@ -433,28 +438,43 @@ fn run_session(
             // парковки — следующий прогон уже с геометрией нового режима (ADR-0021 п. 3).
             continue;
         }
-        // Окно настроек живёт только внутри одного показа окна: hide, WM-close и парковка
-        // его закрывают, а mode-switch (строка выше) сохраняет (ADR-0031 п. 4).
         session.close_settings();
         session.settle_analysis();
-        if matches!(session.park(), ParkOutcome::Quit) {
-            session.flush_stats_on_exit();
-            return Ok(());
+        match session.park() {
+            ParkOutcome::Quit => {
+                session.flush_stats_on_exit();
+                return Ok(());
+            }
+            ParkOutcome::Settings => {
+                // Следующая итерация откроет окно настроек (surface уже Settings).
+                continue;
+            }
+            ParkOutcome::Show => {
+                // Стол показывается следующей итерацией (surface — Desk).
+                continue;
+            }
         }
     }
 }
 
-fn run_window(session: &mut Session, size: [f32; 2]) -> Result<()> {
-    let title = session.window_mode().title();
-    // Капсулы и выпадающая панель — поверхности без полей окна: CSD-полоса
-    // заголовка и системная рамка ломали бы стеклянную капсулу (ADR-0021 п. 4).
+fn run_window(session: &mut Session, size: [f32; 2], surface: RootSurface) -> Result<()> {
+    let title: String = match surface {
+        RootSurface::Desk(mode) => mode.title().to_owned(),
+        RootSurface::Settings(settings_size) => {
+            format!("OrbitFM · Settings · {}", settings_size.title_suffix())
+        }
+    };
+    let (borderless, transparent) = match surface {
+        RootSurface::Desk(mode) => (mode.is_borderless(), true),
+        RootSurface::Settings(_) => (false, false),
+    };
     let mut viewport = eframe::egui::ViewportBuilder::default()
-        .with_title(title)
+        .with_title(&title)
         .with_app_id(APP_ID)
         .with_inner_size(size)
         .with_min_inner_size(session.window_min_size())
-        .with_transparent(true);
-    if session.window_mode().is_borderless() {
+        .with_transparent(transparent);
+    if borderless {
         viewport = viewport.with_decorations(false);
     }
     let options = eframe::NativeOptions {
@@ -463,10 +483,11 @@ fn run_window(session: &mut Session, size: [f32; 2]) -> Result<()> {
         ..Default::default()
     };
 
+    let is_settings = matches!(surface, RootSurface::Settings(_));
     eframe::run_native(
-        title,
+        &title,
         options,
-        Box::new(|cc| Ok(Box::new(OrbitApp::new(cc, session)))),
+        Box::new(move |cc| Ok(Box::new(OrbitApp::new(cc, session, is_settings)))),
     )
     .map_err(|err| anyhow!("не удалось запустить GUI: {err}"))
 }

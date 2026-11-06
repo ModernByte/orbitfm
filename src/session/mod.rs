@@ -54,7 +54,9 @@ pub(crate) use playback::StationStartError;
 use publish_gate::PublishGate;
 use search::SearchState;
 use stream_import::PendingStream;
-pub(crate) use window::{UiIntent, WINDOW_TITLE, WindowMode, WindowState};
+pub(crate) use window::{
+    RootSurface, SettingsCategory, SettingsSize, UiIntent, WINDOW_TITLE, WindowMode, WindowState,
+};
 use world::WorldBaseline;
 
 /// Вкладка панели библиотеки: какой список сейчас видимый.
@@ -367,20 +369,46 @@ impl Session {
     pub(crate) fn network_profile(&self) -> NetworkProfile {
         self.settings.settings().network_profile
     }
+}
 
+/// Откуда пришёл запрос на открытие настроек (ADR-0053).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SettingsOrigin {
+    /// Стол виден (UI-пасс есть): настройки станут immediate-потомком текущего окна.
+    Desk,
+    /// Процесс припаркован (стол скрыт): откроется отдельное окно настроек.
+    Parked,
+}
+
+impl Session {
     /// Открывает окно настроек; в Listening его нет (ADR-0031).
-    pub(crate) fn open_settings(&mut self) {
+    /// При `SettingsOrigin::Desk` не вызывает `show()` — immediate viewport
+    /// нарисует настройки в текущем кадре UI-пасса. При `SettingsOrigin::Parked`
+    /// устанавливает намерение `UiIntent::Settings`, чтобы `park()` открыл
+    /// отдельное окно настроек.
+    pub(crate) fn open_settings(&mut self, origin: SettingsOrigin) {
         if self.window.mode == WindowMode::Listening {
             self.set_window_mode(WindowMode::Overlay);
         }
         self.settings_open = true;
-        if !self.window.visible {
-            self.show();
+        match origin {
+            SettingsOrigin::Desk => {
+                // UI-пасс есть: immediate viewport нарисует настройки в этом кадре.
+                // `show()` не вызываем — окно и так открыто.
+            }
+            SettingsOrigin::Parked => {
+                // Нет UI-пасса: парковка откроет окно настроек.
+                // Размер по умолчанию — Medium (категория Appearance).
+                self.window.surface = RootSurface::Settings(SettingsSize::Medium);
+                self.window.request_settings();
+            }
         }
     }
 
     pub(crate) fn close_settings(&mut self) {
         self.settings_open = false;
+        // Поверхность возвращается к столу: следующее окно — Desk.
+        self.window.surface = RootSurface::Desk(self.window.mode);
     }
 
     /// Мастер первого запуска (ADR-0041): показывается только на чистом профиле.
@@ -414,13 +442,14 @@ impl Session {
         if self.settings_open {
             self.close_settings();
         } else {
-            self.open_settings();
+            // `toggle_settings` вызывается из UI (ToggleSettings), так что UI-пасс есть.
+            self.open_settings(SettingsOrigin::Desk);
         }
     }
 
     /// Показ окна: `launch` вызывает перед каждым прогоном UI.
-    pub(crate) fn begin_window(&mut self, size: [f32; 2]) {
-        self.window.begin(size);
+    pub(crate) fn begin_window(&mut self, surface: RootSurface, size: [f32; 2]) {
+        self.window.begin(surface, size);
         self.publish_status();
     }
 
@@ -445,7 +474,15 @@ impl Session {
 
     /// Минимум для `ViewportBuilder` нового окна (ADR-0021 п. 4).
     pub(crate) fn window_min_size(&self) -> [f32; 2] {
-        self.window.mode.min_size()
+        match self.window.surface {
+            RootSurface::Desk(mode) => mode.min_size(),
+            RootSurface::Settings(size) => size.min_size(),
+        }
+    }
+
+    /// Какая поверхность открыта в текущем прогоне: стол или настройки.
+    pub(crate) fn root_surface(&self) -> RootSurface {
+        self.window.surface
     }
 
     pub(crate) fn window_mode(&self) -> WindowMode {

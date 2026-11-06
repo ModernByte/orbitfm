@@ -10,8 +10,8 @@ use crate::settings::{
 };
 use crate::tray::VOLUME_STEP;
 
-use super::WindowMode;
 use super::notice::NoticeKey;
+use super::{SettingsOrigin, WindowMode};
 
 impl From<WindowModeArg> for WindowMode {
     fn from(arg: WindowModeArg) -> Self {
@@ -129,7 +129,14 @@ impl super::Session {
                 }
             }
             IpcCommand::Settings => {
-                self.open_settings();
+                // Если вьюпорт есть — мы в UI-пассе ( Settings станут
+                // immediate-потомком ), иначе — припаркованы (откроется
+                // отдельное окно настроек).
+                if self.window.viewport {
+                    self.open_settings(SettingsOrigin::Desk);
+                } else {
+                    self.open_settings(SettingsOrigin::Parked);
+                }
                 "ok".to_owned()
             }
             IpcCommand::VolumeUp => {

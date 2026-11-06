@@ -14,7 +14,7 @@ use eframe::egui;
 use crate::i18n;
 use crate::integration::status::{Availability, InstallState, IntegrationsView, TargetStatus};
 use crate::integration::{Target, TargetGroup};
-use crate::session::WindowMode;
+use crate::session::{SettingsCategory, WindowMode};
 use crate::settings::{
     AccentColor, Language, MotionReactivity, MotionStyle, NetworkProfile, SLEEP_CHOICES, Settings,
     ThemeMode, VIZ_BAR_CHOICES,
@@ -24,7 +24,7 @@ use crate::stats::StatsSnapshot;
 use super::UiAction;
 use super::animation;
 use super::controls::{accent_swatch, dropdown, row, switch_row};
-use super::icons::{self, Icon, close_button};
+use super::icons::{self, Icon};
 use super::palette::{Palette, accent_color, mix_colors};
 use super::stats_view::{self, StatsView};
 use super::widgets::{
@@ -53,45 +53,17 @@ const BLOCK_NAV: usize = 1;
 const BLOCK_TITLE: usize = 2;
 const BLOCK_CARD: usize = 3;
 
-/// Категории модального окна: порядок навигации и иконки.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum SettingsCategory {
-    #[default]
-    Appearance,
-    Language,
-    Audio,
-    Motion,
-    Window,
-    /// Локальная статистика прослушивания (ADR-0049).
-    Stats,
-    /// Установка панелей, окружений и расширений браузеров (ADR-0042).
-    Integrations,
-    About,
-}
-
-impl SettingsCategory {
-    pub(crate) const ALL: [Self; 8] = [
-        Self::Appearance,
-        Self::Language,
-        Self::Audio,
-        Self::Motion,
-        Self::Window,
-        Self::Stats,
-        Self::Integrations,
-        Self::About,
-    ];
-
-    fn icon(self) -> Icon {
-        match self {
-            Self::Appearance => Icon::Moon,
-            Self::Language => Icon::Globe,
-            Self::Audio => Icon::Volume,
-            Self::Motion => Icon::Sparkles,
-            Self::Window => Icon::AppWindow,
-            Self::Stats => Icon::Clock,
-            Self::Integrations => Icon::Panel,
-            Self::About => Icon::Help,
-        }
+/// Иконка категории настроек: presentation-слой, не сессия.
+fn settings_category_icon(category: SettingsCategory) -> Icon {
+    match category {
+        SettingsCategory::Appearance => Icon::Moon,
+        SettingsCategory::Language => Icon::Globe,
+        SettingsCategory::Audio => Icon::Volume,
+        SettingsCategory::Motion => Icon::Sparkles,
+        SettingsCategory::Window => Icon::AppWindow,
+        SettingsCategory::Stats => Icon::Clock,
+        SettingsCategory::Integrations => Icon::Panel,
+        SettingsCategory::About => Icon::Help,
     }
 }
 
@@ -145,7 +117,7 @@ pub(crate) fn show(
         egui::pos2(rect.left() + HEADER_MARGIN, rect.top()),
         egui::pos2(rect.right() - HEADER_MARGIN, rect.top() + HEADER_HEIGHT),
     );
-    header_bar(ui, header, palette, text, shown(BLOCK_HEADER), &mut actions);
+    header_bar(ui, header, palette, text, shown(BLOCK_HEADER));
     ui.painter().hline(
         header.x_range(),
         header.bottom() - 4.0,
@@ -191,7 +163,16 @@ pub(crate) fn show(
             for category in SettingsCategory::ALL {
                 let label = category_label(strings, category);
                 let selected = category == *state.category;
-                if nav_item(ui, &nav_palette, category.icon(), label, selected, rail).clicked() {
+                if nav_item(
+                    ui,
+                    &nav_palette,
+                    settings_category_icon(category),
+                    label,
+                    selected,
+                    rail,
+                )
+                .clicked()
+                {
                     *state.category = category;
                 }
             }
@@ -238,14 +219,14 @@ pub(crate) fn show(
     actions
 }
 
-/// Шапка: знак настроек, заголовок, подсказка Esc и крестик.
+/// Шапка: знак настроек и заголовок. Крестик и Esc убраны — окно настроек
+/// теперь отдельное вьюпорт-окно, закрывается кнопкой WM (ADR-0053 §6a).
 fn header_bar(
     ui: &mut egui::Ui,
     rect: egui::Rect,
     palette: &Palette,
     text: &i18n::Catalog,
     alpha: f32,
-    actions: &mut Vec<UiAction>,
 ) {
     let strings = &text.settings;
     let dim = faded_palette(palette, alpha);
@@ -271,27 +252,6 @@ fn header_bar(
                     .strong()
                     .color(dim.text),
             );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if close_button(ui, &dim, text.common.close).clicked() {
-                    actions.push(UiAction::CloseSettings);
-                }
-                ui.add_space(4.0);
-                let (esc, _) = ui.allocate_exact_size(egui::vec2(34.0, 20.0), egui::Sense::hover());
-                ui.painter().rect(
-                    esc,
-                    6.0,
-                    faded(palette.chip_fill, alpha),
-                    egui::Stroke::new(1.0, faded(palette.chip_stroke, alpha)),
-                    egui::StrokeKind::Inside,
-                );
-                ui.painter().text(
-                    esc.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "Esc",
-                    egui::FontId::monospace(10.0),
-                    dim.muted,
-                );
-            });
         },
     );
 }

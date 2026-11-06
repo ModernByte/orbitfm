@@ -22,7 +22,10 @@ use crate::render::{
 use crate::services::{ArtworkFetcher, Station};
 use crate::session::heat::CountryMetric;
 use crate::session::search::SearchMode;
-use crate::session::{Notice, NoticeKey, Session, StationStartError, UiIntent, WindowMode};
+use crate::session::{
+    Notice, NoticeKey, Session, SettingsCategory, SettingsOrigin, SettingsSize, StationStartError,
+    UiIntent, WindowMode,
+};
 use crate::settings::{Language, MotionReactivity, MotionStyle, Settings};
 use crate::stats::StatsSnapshot;
 use crate::ui::UiAction;
@@ -34,7 +37,7 @@ use crate::ui::layout::{DeskLayout, LayoutDensity};
 use crate::ui::onboarding::{self, RuleState};
 use crate::ui::orbit_ring::OrbitRing;
 use crate::ui::palette::{self, Palette};
-use crate::ui::settings_panel::{self, SettingsCategory, SettingsState};
+use crate::ui::settings_panel::{self, SettingsState};
 use crate::ui::toast::Toast;
 use crate::ui::transport::{self, TransportState};
 use crate::ui::{capsule, hud, overlays, station_panel, widgets};
@@ -55,6 +58,10 @@ const GLASS_RADIUS_MINOR: f32 = 14.0;
 const SCRIM_ALPHA: u8 = 90;
 /// Скругление модального окна настроек.
 const SETTINGS_RADIUS: f32 = 20.0;
+/// Идентификатор immediate-вьюпорта настроек (ADR-0053 §6a).
+fn settings_viewport_id() -> egui::ViewportId {
+    egui::ViewportId::from_hash_of("orbitfm_settings")
+}
 
 /// Строка тоста для ключа сообщения ядра: `detail` остаётся технической
 /// вставкой и не переводится (ADR-0030).
@@ -127,10 +134,7 @@ pub(crate) struct OrbitApp<'a> {
     toast: Toast,
     /// Переходы UI этого прогона окна (ADR-0032).
     transitions: Transitions,
-    /// Прямоугольник модального окна настроек с последнего открытого кадра:
-    /// нужен, чтобы окно гасло по месту, а не исчезало скачком (ADR-0032).
-    settings_rect: Option<egui::Rect>,
-    /// Открытая категория модального окна: состояние представления, не настройка.
+    /// Открытая категория настроек: состояние представления, не настройка.
     settings_category: SettingsCategory,
     /// Снимок интеграций и очередь фоновых операций (ADR-0042).
     integrations: IntegrationPanel,
@@ -151,7 +155,11 @@ pub(crate) struct OrbitApp<'a> {
 }
 
 impl<'a> OrbitApp<'a> {
-    pub(crate) fn new(cc: &eframe::CreationContext<'_>, session: &'a mut Session) -> Self {
+    pub(crate) fn new(
+        cc: &eframe::CreationContext<'_>,
+        session: &'a mut Session,
+        is_settings: bool,
+    ) -> Self {
         let egui_ctx = cc.egui_ctx.clone();
         palette::configure_style(&egui_ctx, session.settings.settings());
         // SVG-иконки: загрузчик ставится на каждый новый Context окна (ADR-0034).
@@ -164,27 +172,33 @@ impl<'a> OrbitApp<'a> {
         // macOS: tray-icon требует запущенного run loop и главного потока,
         // поэтому иконка создаётся здесь, а не в spawn до старта окна (ADR-0026).
         session.attach_tray();
-        let globe_ready = if let Some(render_state) = &cc.wgpu_render_state {
-            // Отчёт пишется до создания глобуса: если GlobeRenderer::new упадёт на
-            // неподдерживаемом лимите, именно эти строки останутся в логе (ADR-0052 § 3).
-            info!("{}", AdapterReport::from_render_state(render_state));
-            let renderer = GlobeRenderer::new(
-                &render_state.device,
-                &render_state.queue,
-                render_state.target_format,
-            );
-            render_state
-                .renderer
-                .write()
-                .callback_resources
-                .insert(renderer);
-            true
+        // Окно настроек не создаёт GlobeRenderer и не печатает AdapterReport
+        // (ADR-0053 §6b): там нет 3D-глобуса.
+        let globe_ready = if !is_settings {
+            if let Some(render_state) = &cc.wgpu_render_state {
+                // Отчёт пишется до создания глобуса: если GlobeRenderer::new упадёт на
+                // неподдерживаемом лимите, именно эти строки останутся в логе (ADR-0052 § 3).
+                info!("{}", AdapterReport::from_render_state(render_state));
+                let renderer = GlobeRenderer::new(
+                    &render_state.device,
+                    &render_state.queue,
+                    render_state.target_format,
+                );
+                render_state
+                    .renderer
+                    .write()
+                    .callback_resources
+                    .insert(renderer);
+                true
+            } else {
+                warn!(
+                    "wgpu render state не инициализирован к первому кадру \
+                     (eframe отдал None в cc.wgpu_render_state при Renderer::Wgpu): \
+                     3D-глобус отключён"
+                );
+                false
+            }
         } else {
-            warn!(
-                "wgpu render state не инициализирован к первому кадру \
-                 (eframe отдал None в cc.wgpu_render_state при Renderer::Wgpu): \
-                 3D-глобус отключён"
-            );
             false
         };
         let visualizer = VisualizerModel::new(usize::from(session.settings.settings().viz_bars));
@@ -206,7 +220,6 @@ impl<'a> OrbitApp<'a> {
             favicon_was_busy: false,
             toast: Toast::default(),
             transitions: Transitions::new(),
-            settings_rect: None,
             settings_category: SettingsCategory::default(),
             integrations: IntegrationPanel::default(),
             stats: StatsSnapshot::default(),
@@ -428,9 +441,8 @@ impl<'a> OrbitApp<'a> {
 
         // Прогрессы переходов считаются один раз на кадр (ADR-0032): зоны
         // читают готовые значения, а каркас стеклянных зон гаснет здесь.
-        if layout.settings.is_some() {
-            self.settings_rect = layout.settings;
-        }
+        // Окно настроек теперь отдельное вьюпорт-окно — флаг `settings` в ZoneFlags
+        // больше не нужен на столе (ADR-0053).
         let mut ui_motion = self.transitions.frame(
             ui.ctx(),
             ZoneFlags {
@@ -438,7 +450,6 @@ impl<'a> OrbitApp<'a> {
                 panel: layout.panel.is_some(),
                 help: layout.help.is_some(),
                 legend: layout.legend.is_some(),
-                settings: layout.settings.is_some(),
                 capsules: matches!(density, LayoutDensity::Compact | LayoutDensity::Panel),
                 favorites: density == LayoutDensity::Compact && layout.capsule.is_some(),
                 listening: density == LayoutDensity::Minimal,
@@ -959,20 +970,54 @@ impl<'a> OrbitApp<'a> {
             self.stats_refreshed_at = None;
         }
         let stats = &self.stats;
-        actions.extend(draw_settings(
-            ui,
-            frame,
-            &ui_motion,
-            SettingsInputs {
-                last_settings_rect: self.settings_rect,
-                category: &mut self.settings_category,
-                sleep_minutes: session.sleep_minutes(),
-                integrations,
-                stats,
-                stats_clear_armed: self.stats_clear_armed,
-                stats_just_cleared: self.stats_just_cleared,
-            },
-        ));
+        // Окно настроек — immediate-потомок стола (ADR-0053 §6a).
+        // Вызываем каждый кадр, пока настройки открыты.
+        if session.settings_open {
+            let settings_size =
+                SettingsSize::for_open(self.settings_category, session.window_mode());
+            let builder = eframe::egui::ViewportBuilder::default()
+                .with_inner_size(settings_size.size())
+                .with_min_inner_size(settings_size.min_size())
+                .with_title(format!(
+                    "OrbitFM · Settings · {}",
+                    settings_size.title_suffix()
+                ))
+                .with_decorations(true)
+                .with_transparent(false);
+            let settings_actions =
+                ui.ctx()
+                    .show_viewport_immediate(settings_viewport_id(), builder, |ui, class| {
+                        draw_settings(
+                            ui,
+                            frame,
+                            class,
+                            SettingsInputs {
+                                category: &mut self.settings_category,
+                                sleep_minutes: session.sleep_minutes(),
+                                integrations,
+                                stats,
+                                stats_clear_armed: self.stats_clear_armed,
+                                stats_just_cleared: self.stats_just_cleared,
+                            },
+                        )
+                    });
+            actions.extend(settings_actions);
+
+            // Пользователь закрыл окно настроек кнопкой WM: считаем закрытием.
+            if ui.ctx().input(|input| {
+                input
+                    .raw
+                    .viewports
+                    .get(&settings_viewport_id())
+                    .is_some_and(|info| {
+                        info.events
+                            .iter()
+                            .any(|event| matches!(event, egui::ViewportEvent::Close))
+                    })
+            }) {
+                session.close_settings();
+            }
+        }
 
         if session.onboarding_open() {
             actions.extend(onboarding::show(
@@ -1198,7 +1243,7 @@ impl<'a> OrbitApp<'a> {
                     self.error_toast(ctx, &NoticeKey::SettingNotSaved, Some(err.as_str()));
                 }
                 self.onboarding = onboarding::View::default();
-                self.session.open_settings();
+                self.session.open_settings(SettingsOrigin::Desk);
                 self.settings_category = SettingsCategory::Integrations;
                 self.integrations.refresh();
             }
@@ -1335,7 +1380,6 @@ impl Frame {
                 viewport,
                 session.panel_open,
                 session.show_help,
-                session.settings_open,
                 session.window_mode(),
             ),
             playback,
@@ -1345,20 +1389,13 @@ impl Frame {
     }
 }
 
-/// Скрим + модальное окно настроек поверх всех зон (ADR-0031, ADR-0032).
+/// Входные данные окна настроек для одного кадра (ADR-0053 §6a).
 ///
-/// Layer `Foreground`: затемнение перехватывает клики и scroll стола, а модалка
-/// аллоцирована позже — забирает ввод у скрима. Закрытием считаются клик по
-/// скриму и Escape, который обрабатывает [`eframe::App::logic`].
-///
-/// На выходе `layout.settings` уже `None`, поэтому каркас берёт последний
-/// прямоугольник `last_settings_rect`: геометрия кадра не меняется, зоны стола
-/// не дёргаются. Гаснущее окно рисует содержимое, но не принимает ввод.
-/// Всё, что модалка настроек получает из представления на кадр. Один пакет
-/// вместо десяти аргументов: переходы, категория и снимки фоновых состояний
-/// всегда берутся из одного места (`OrbitApp`).
+/// Всё, что окно настроек получает из представления: категория, остаток таймера
+/// сна, снимки интеграций и статистики. Окно настроек теперь отдельное
+/// immediate-вьюпорт-окно — скрин, модальное позиционирование и `last_settings_rect`
+/// убраны (ADR-0053 §6a).
 struct SettingsInputs<'a> {
-    last_settings_rect: Option<egui::Rect>,
     category: &'a mut SettingsCategory,
     sleep_minutes: Option<u16>,
     integrations: IntegrationsView<'a>,
@@ -1367,14 +1404,17 @@ struct SettingsInputs<'a> {
     stats_just_cleared: bool,
 }
 
+/// Окно настроек через immediate-вьюпорт (ADR-0053 §6a).
+/// Внутри колбэка `ViewportClass::EmbeddedWindow` — прежняя модалка в этом
+/// же окне + `warn!` (бэкенд без мультивьюпортности не ломается).
+/// Из потомка наружу — `Vec<UiAction>` через возврат значения.
 fn draw_settings(
     ui: &mut egui::Ui,
     frame: &Frame,
-    motion: &FrameMotion<'_>,
+    class: egui::ViewportClass,
     inputs: SettingsInputs<'_>,
 ) -> Vec<UiAction> {
     let SettingsInputs {
-        last_settings_rect,
         category,
         sleep_minutes,
         integrations,
@@ -1386,14 +1426,102 @@ fn draw_settings(
     let mut volume = frame.volume;
     let mut actions = Vec::new();
 
-    let open = frame.layout.settings.is_some();
-    let Some(rect) = frame.layout.settings.or(last_settings_rect) else {
-        return actions;
-    };
+    if class == egui::ViewportClass::EmbeddedWindow {
+        warn!("бэкенд не поддерживает несколько вьюпортов, настройки рисуются embedded");
+        draw_settings_embedded(
+            ui,
+            frame,
+            palette,
+            &mut volume,
+            category,
+            sleep_minutes,
+            integrations,
+            stats,
+            stats_clear_armed,
+            stats_just_cleared,
+            &mut actions,
+        );
+    } else {
+        // Immediate (или любой другой класс): панель настроек прямо,
+        // без скрима, без модального позиционирования, без Area.
+        // Прогресс настроек всегда 1.0: окно Settings само по себе.
+        let mut keyed_store = animation::PresenceStore::default();
+        let motion =
+            settings_frame_motion(1.0, 0.0, &mut keyed_store, frame.settings.reduce_motion);
+        let rect = ui.available_rect_before_wrap();
+        actions.extend(settings_panel::show(
+            ui,
+            rect,
+            palette,
+            &motion,
+            SettingsState {
+                settings: frame.settings,
+                language: frame.language,
+                window_mode: frame.window_mode,
+                volume: &mut volume,
+                show_help: frame.show_help,
+                sleep_minutes,
+                category,
+                integrations,
+                stats,
+                stats_clear_armed,
+                stats_just_cleared,
+            },
+        ));
+    }
+
+    actions
+}
+
+/// Минимальные прогресы анимации для immediate-вьюпорта настроек.
+/// `settings` — прогресс появления панели (всегда 1.0: окно само по себе),
+/// `scrim` — нет скрима в отдельном окне. `keyed` берётся из локального стора,
+/// так как `settings_panel::show` его не использует.
+fn settings_frame_motion<'a>(
+    settings_progress: f32,
+    scrim_progress: f32,
+    keyed: &'a mut animation::PresenceStore,
+    reduce: bool,
+) -> FrameMotion<'a> {
+    FrameMotion {
+        reduce,
+        scene: 0.0,
+        panel: 0.0,
+        help: 0.0,
+        legend: 0.0,
+        settings: settings_progress,
+        scrim: scrim_progress,
+        capsules: 0.0,
+        favorites: 0.0,
+        listening: 0.0,
+        keyed,
+    }
+}
+
+/// Бывшая модалка настроек со скримом: используется только при `EmbeddedWindow`
+/// (бэкенд без мультивьюпортности).
+#[allow(clippy::too_many_arguments)]
+fn draw_settings_embedded(
+    ui: &mut egui::Ui,
+    frame: &Frame,
+    palette: &Palette,
+    volume: &mut f64,
+    category: &mut SettingsCategory,
+    sleep_minutes: Option<u16>,
+    integrations: IntegrationsView<'_>,
+    stats: &'_ StatsSnapshot,
+    stats_clear_armed: bool,
+    stats_just_cleared: bool,
+    actions: &mut Vec<UiAction>,
+) {
+    let mut keyed_store = animation::PresenceStore::default();
+    let open = true;
+    let rect = ui.available_rect_before_wrap();
+    let motion = settings_frame_motion(1.0, 1.0, &mut keyed_store, frame.settings.reduce_motion);
     let scrim = animation::alpha(motion.scrim);
     let panel = animation::alpha(motion.settings);
     if scrim == 0.0 && panel == 0.0 {
-        return actions;
+        return;
     }
 
     if scrim > 0.0 {
@@ -1402,26 +1530,22 @@ fn draw_settings(
             .default_size(frame.viewport.size())
             .order(egui::Order::Foreground)
             .show(ui.ctx(), |ui| {
-                // Гаснущий scrim не должен ловить клики: окно уже закрывается.
-                let sense = if open {
-                    egui::Sense::click()
-                } else {
-                    egui::Sense::hover()
-                };
-                let (rect, response) = ui.allocate_exact_size(frame.viewport.size(), sense);
+                let sense = egui::Sense::click();
+                let (_rect, response) = ui.allocate_exact_size(frame.viewport.size(), sense);
                 let dim = if matches!(ui.ctx().theme(), egui::Theme::Dark) {
                     egui::Color32::from_black_alpha(SCRIM_ALPHA)
                 } else {
                     egui::Color32::from_white_alpha(SCRIM_ALPHA)
                 };
                 ui.painter()
-                    .rect_filled(rect, 0.0, widgets::faded(dim, scrim));
+                    .rect_filled(_rect, 0.0, widgets::faded(dim, scrim));
                 if response.clicked() {
                     actions.push(UiAction::CloseSettings);
                 }
             });
     }
 
+    let motion = settings_frame_motion(panel, 0.0, &mut keyed_store, frame.settings.reduce_motion);
     egui::Area::new(egui::Id::unique("orbitfm_settings_modal"))
         .fixed_pos(rect.min)
         .default_size(rect.size())
@@ -1443,12 +1567,12 @@ fn draw_settings(
                 ui,
                 rect,
                 palette,
-                motion,
+                &motion,
                 SettingsState {
                     settings: frame.settings,
                     language: frame.language,
                     window_mode: frame.window_mode,
-                    volume: &mut volume,
+                    volume,
                     show_help: frame.show_help,
                     sleep_minutes,
                     category,
@@ -1459,8 +1583,6 @@ fn draw_settings(
                 },
             ));
         });
-
-    actions
 }
 
 /// Макет зоны: содержимое слева направо по центру.
@@ -1524,7 +1646,9 @@ impl eframe::App for OrbitApp<'_> {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             Some(UiIntent::Close) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
-            None => {}
+            // `UiIntent::Settings` consumed `park()` и ведёт к окну настроек
+            // на следующей итерации `run_session` — здесь ничего не делаем.
+            Some(UiIntent::Settings) | None => {}
         }
 
         // Мастер первого запуска держит фокус до явного «Пропустить» или «Готово»:

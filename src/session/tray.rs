@@ -8,7 +8,7 @@ use crate::audio::PlaybackState;
 use crate::text::single_line;
 use crate::tray::{TrayCommand, TraySnapshot, TrayStation, VOLUME_STEP};
 
-use super::notice::NoticeKey;
+use super::{SettingsOrigin, notice::NoticeKey};
 
 impl super::Session {
     /// Снимок состояния для трея (SNI на Linux, строка меню на macOS).
@@ -83,7 +83,7 @@ impl super::Session {
                 }
             }
             TrayCommand::OpenHomepage => self.open_station_homepage(),
-            TrayCommand::Settings => self.open_settings(),
+            TrayCommand::Settings => self.open_settings(SettingsOrigin::Parked),
             TrayCommand::Quit => self.quit(),
         }
     }

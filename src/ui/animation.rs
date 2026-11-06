@@ -5,10 +5,6 @@
 
 use eframe::egui;
 
-/// Модальное окно настроек.
-pub(crate) const SETTINGS: f32 = 0.200;
-/// Затемнение под модальным окном.
-pub(crate) const SCRIM: f32 = 0.160;
 /// Вход HUD, панели, help и transport в Focus.
 pub(crate) const SCENE_ENTER: f32 = 0.220;
 /// Появление стеклянной панели.
@@ -161,9 +157,6 @@ pub(crate) struct Transitions {
     pub panel: Presence,
     pub help: Presence,
     pub legend: Presence,
-    /// Модальное окно настроек и его scrim.
-    pub settings: Presence,
-    pub scrim: Presence,
     /// Капсулы Overlay, избранное в них и строка Listening.
     pub capsules: Presence,
     pub favorites: Presence,
@@ -180,8 +173,6 @@ impl Transitions {
             panel: presence("orbitfm_transition_panel"),
             help: presence("orbitfm_transition_help"),
             legend: presence("orbitfm_transition_legend"),
-            settings: presence("orbitfm_transition_settings"),
-            scrim: presence("orbitfm_transition_scrim"),
             capsules: presence("orbitfm_transition_capsules"),
             favorites: presence("orbitfm_transition_favorites"),
             listening: presence("orbitfm_transition_listening"),
@@ -202,8 +193,6 @@ impl Transitions {
             panel,
             help,
             legend,
-            settings,
-            scrim,
             capsules,
             favorites,
             listening,
@@ -215,8 +204,8 @@ impl Transitions {
             panel: panel.value(ctx, flags.panel, PANEL, reduce),
             help: help.value(ctx, flags.help, HELP, reduce),
             legend: legend.value(ctx, flags.legend, LEGEND, reduce),
-            settings: settings.value(ctx, flags.settings, SETTINGS, reduce),
-            scrim: scrim.value(ctx, flags.settings, SCRIM, reduce),
+            settings: 0.0,
+            scrim: 0.0,
             capsules: capsules.value(ctx, flags.capsules, CAPSULE, reduce),
             favorites: favorites.value(ctx, flags.favorites, CAPSULE, reduce),
             listening: listening.value(ctx, flags.listening, CAPSULE, reduce),
@@ -233,8 +222,6 @@ pub(crate) struct ZoneFlags {
     pub panel: bool,
     pub help: bool,
     pub legend: bool,
-    /// Модальное окно настроек открыто (scrim делит с ним флаг).
-    pub settings: bool,
     pub capsules: bool,
     pub favorites: bool,
     pub listening: bool,
@@ -401,8 +388,8 @@ mod tests {
     fn reduce_motion_jumps_to_the_final_state() {
         let ctx = egui::Context::default();
         let mut presence = Presence::new(egui::Id::unique("reduce-motion"));
-        assert_eq!(presence.value(&ctx, true, SETTINGS, true), 1.0);
-        assert_eq!(presence.value(&ctx, false, SETTINGS, true), 0.0);
+        assert_eq!(presence.value(&ctx, true, 0.200, true), 1.0);
+        assert_eq!(presence.value(&ctx, false, 0.200, true), 0.0);
     }
 
     #[test]

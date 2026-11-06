@@ -275,13 +275,13 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
             .press_origin()
             .is_some_and(|origin| state.layout.blocks_point(origin))
     });
-    let modal = state.layout.settings.is_some();
-
+    // Окно настроек теперь отдельное вьюпорт-окно (ADR-0053): глобус стола
+    // не блокируется настройками.
     let mut input = GlobeInput::default();
-    if sense.dragged_by(egui::PointerButton::Secondary) && !press_blocked && !modal {
+    if sense.dragged_by(egui::PointerButton::Secondary) && !press_blocked {
         input.drag_delta = ui.input(|input| input.pointer.delta());
     }
-    if hover_pos.is_some() && !modal {
+    if hover_pos.is_some() {
         input.scroll_delta = ui.input(|input| input.smooth_scroll_delta.y);
         input.hovered = true;
     }
@@ -289,7 +289,7 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
         .clicked_by(egui::PointerButton::Primary)
         .then(|| sense.interact_pointer_pos())
         .flatten()
-        .filter(|position| !modal && !state.layout.blocks_point(*position))
+        .filter(|position| !state.layout.blocks_point(*position))
     {
         input.primary_clicked = Some(position);
     }

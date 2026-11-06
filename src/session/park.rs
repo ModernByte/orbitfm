@@ -29,6 +29,8 @@ pub(crate) enum ParkOutcome {
     Show,
     /// Приложение попросило выйти.
     Quit,
+    /// Открыть окно настроек вместо стола (ADR-0053 §6b).
+    Settings,
 }
 
 /// Событие, разбудившее простаивающее приложение.
@@ -105,8 +107,10 @@ impl super::Session {
             if self.is_quitting() {
                 return ParkOutcome::Quit;
             }
-            if self.window.intent() == Some(UiIntent::Show) {
-                return ParkOutcome::Show;
+            match self.window.take_intent() {
+                Some(UiIntent::Show) => return ParkOutcome::Show,
+                Some(UiIntent::Settings) => return ParkOutcome::Settings,
+                Some(UiIntent::Hide) | Some(UiIntent::Close) | None => {}
             }
         }
     }

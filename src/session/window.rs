@@ -30,6 +30,110 @@ pub(crate) const OVERLAY_TITLE: &str = "OrbitFM · Overlay";
 pub(crate) const LISTENING_TITLE: &str = "OrbitFM · Listening";
 pub(crate) const PANEL_TITLE: &str = "OrbitFM · Panel";
 
+/// Размер окна настроек: выбирается только автоматически, без настройки
+/// пользователем (ADR-0053). Геометрия не персистится — на Wayland размер
+/// задаёт правило WM, иначе два источника правды.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SettingsSize {
+    /// 420×560, min 360×480 — для Language и About.
+    Compact,
+    /// 760×544, min 560×420 — сегодняшняя модалка, размер по умолчанию.
+    Medium,
+    /// 1040×720, min 760×480 — для Integrations и Stats.
+    Wide,
+}
+
+impl SettingsSize {
+    /// Размер для `ViewportBuilder` нового окна настроек.
+    pub(crate) fn size(self) -> [f32; 2] {
+        match self {
+            Self::Compact => [420.0, 560.0],
+            Self::Medium => [760.0, 544.0],
+            Self::Wide => [1040.0, 720.0],
+        }
+    }
+
+    /// Нижний лимит размера окна настроек.
+    pub(crate) fn min_size(self) -> [f32; 2] {
+        match self {
+            Self::Compact => [360.0, 480.0],
+            Self::Medium => [560.0, 420.0],
+            Self::Wide => [760.0, 480.0],
+        }
+    }
+
+    /// Часть заголовка окна настроек: `OrbitFM · Settings · <вариант>`.
+    /// Правила WM матятся по title (ADR-0021 п. 4).
+    pub(crate) fn title_suffix(self) -> &'static str {
+        match self {
+            Self::Compact => "Compact",
+            Self::Medium => "Medium",
+            Self::Wide => "Wide",
+        }
+    }
+
+    /// Вариант размера по категории открытия и режиме окна: только авто.
+    /// `Integrations | Stats` → Wide; `Language | About` → Compact;
+    /// остальное → Medium.
+    pub(crate) fn for_open(category: SettingsCategory, _mode: WindowMode) -> Self {
+        match category {
+            SettingsCategory::Integrations | SettingsCategory::Stats => Self::Wide,
+            SettingsCategory::Language | SettingsCategory::About => Self::Compact,
+            _ => Self::Medium,
+        }
+    }
+}
+
+/// Какая поверхность открыта в текущем прогоне UI (ADR-0053).
+///
+/// `Desk` — Orbital Desk (глобус, панели, тосты). `Settings` — окно настроек
+/// без глобуса. `mode` остаётся публичным полем статуса (`WindowMode`),
+/// поверхность определяет, какое окно создаёт `run_window`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RootSurface {
+    Desk(WindowMode),
+    Settings(SettingsSize),
+}
+
+impl Default for RootSurface {
+    fn default() -> Self {
+        Self::Desk(WindowMode::default())
+    }
+}
+
+/// Категория окна настроек: порядок навигации и иконки (ADR-0031, ADR-0053).
+///
+/// Определена здесь (а не в `ui`), потому что `SettingsSize::for_open`
+/// сопоставляет категорию с размером окна, а `session` не должен зависеть
+/// от `ui`. Отображение иконки — забота presentation-слоя.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum SettingsCategory {
+    #[default]
+    Appearance,
+    Language,
+    Audio,
+    Motion,
+    Window,
+    /// Локальная статистика прослушивания (ADR-0049).
+    Stats,
+    /// Установка панелей, окружений и расширений браузеров (ADR-0042).
+    Integrations,
+    About,
+}
+
+impl SettingsCategory {
+    pub(crate) const ALL: [Self; 8] = [
+        Self::Appearance,
+        Self::Language,
+        Self::Audio,
+        Self::Motion,
+        Self::Window,
+        Self::Stats,
+        Self::Integrations,
+        Self::About,
+    ];
+}
+
 /// Режим отображения окна (ADR-0021). Focus — полный Orbital Desk.
 ///
 /// `Panel` — выпадающая панель бар-виджета, команда `panel` (ADR-0033): тот же
@@ -106,9 +210,12 @@ pub(crate) enum UiIntent {
     Hide,
     /// Закрыть root-вьюпорт. Скрытие и завершение различает `WindowState::quitting`.
     Close,
+    /// Открыть окно настроек вместо стола (ADR-0053). Используется, когда
+    /// процесс припаркован и нет UI-пасса для immediate-потомка.
+    Settings,
 }
 
-/// Состояние окна (ADR-0018).
+/// Состояние окна (ADR-0018, ADR-0053).
 #[derive(Debug, Default)]
 pub(crate) struct WindowState {
     /// Окно видимо пользователю. На macOS после `Visible(false)` остаётся
@@ -116,11 +223,15 @@ pub(crate) struct WindowState {
     pub(super) visible: bool,
     /// Root-вьюпорт существует. На Linux/Windows совпадает с `visible`,
     /// на macOS скрытое окно продолжает жить в run loop.
-    viewport: bool,
+    pub(super) viewport: bool,
     /// Последний известный размер: применяется до создания нового окна.
     /// Относится только к Focus — капсулы живут пресетами режима (ADR-0021 п. 4).
     pub(super) size: Option<[f32; 2]>,
+    /// Режим окна для статуса и IPC: публичное поле, не меняется от поверхности.
     pub(super) mode: WindowMode,
+    /// Какая поверхность открыта: стол или настройки. Определяет, какое
+    /// окно создаёт `run_window` (ADR-0053).
+    pub(super) surface: RootSurface,
     /// Режим меняется при живом вьюпорте: вьюпорт закрывается и тут же открывается
     /// заново с геометрией нового режима (ADR-0021 п. 3).
     reopen: bool,
@@ -133,10 +244,12 @@ impl WindowState {
     pub(super) fn shown() -> Self {
         Self {
             visible: true,
+            surface: RootSurface::Desk(WindowMode::default()),
             ..Self::default()
         }
     }
 
+    #[allow(dead_code)] // используется в тестах этого модуля
     pub(super) fn intent(&self) -> Option<UiIntent> {
         self.intent
     }
@@ -196,6 +309,7 @@ impl WindowState {
             return;
         }
         self.mode = mode;
+        self.surface = RootSurface::Desk(mode);
         if self.viewport {
             self.reopen = true;
             self.intent = Some(UiIntent::Close);
@@ -226,9 +340,16 @@ impl WindowState {
         self.visible = true;
     }
 
-    /// Начало прогона UI: root-вьюпорт создан, намерений больше нет.
-    /// Признак перезапуска снимается — геометрия нового режима уже применена.
-    pub(super) fn begin(&mut self, size: [f32; 2]) {
+    /// Запрос открыть окно настроек вместо стола (ADR-0053). Устанавливает
+    /// намерение `Settings`, которое `park()` превращает в `ParkOutcome::Settings`.
+    pub(super) fn request_settings(&mut self) {
+        self.intent = Some(UiIntent::Settings);
+    }
+
+    /// Начало прогона UI: root-вьюпорт создан, поверхность и размер применены,
+    /// намерений больше нет.
+    pub(super) fn begin(&mut self, surface: RootSurface, size: [f32; 2]) {
+        self.surface = surface;
         self.visible = true;
         self.viewport = true;
         self.intent = None;
@@ -236,7 +357,8 @@ impl WindowState {
         self.remember_size(size);
     }
 
-    /// Конец прогона: окно закрыто, процесс жив.
+    /// Конец прогона: окно закрыто, процесс lebt. Поверхность не сбрасывается —
+    /// `close_settings()` вернёт её в `Desk` после `end_window()`.
     pub(super) fn end(&mut self) {
         self.visible = false;
         self.viewport = false;
@@ -244,18 +366,19 @@ impl WindowState {
     }
 
     /// Размер для `ViewportBuilder` нового окна: сохранённый только для `Focus`,
-    /// иначе пресет режима.
+    /// иначе пресет поверхности.
     pub(super) fn restore_size(&self) -> [f32; 2] {
-        match self.mode {
-            WindowMode::Focus => self.size.unwrap_or(WINDOW_SIZE),
-            mode => mode.default_size(),
+        match self.surface {
+            RootSurface::Desk(WindowMode::Focus) => self.size.unwrap_or(WINDOW_SIZE),
+            RootSurface::Desk(mode) => mode.default_size(),
+            RootSurface::Settings(size) => size.size(),
         }
     }
 
     /// Пользовательский размер относится только к `Focus`: иначе капсула
     /// запомнила бы свою пресетную ширину и вернула её в `Focus`.
     pub(super) fn remember_size(&mut self, size: [f32; 2]) {
-        if self.mode == WindowMode::Focus {
+        if matches!(self.surface, RootSurface::Desk(WindowMode::Focus)) {
             self.size = Some(size);
         }
     }
@@ -304,7 +427,7 @@ mod tests {
     #[test]
     fn mark_hidden_and_shown_track_visibility_without_a_viewport_restart() {
         let mut window = WindowState::shown();
-        window.begin(WINDOW_SIZE);
+        window.begin(RootSurface::Desk(WindowMode::Focus), WINDOW_SIZE);
         window.mark_hidden();
         assert!(!window.visible, "status и трей видят скрытое окно сразу");
         assert!(!window.take_reopen());
@@ -349,7 +472,7 @@ mod tests {
     #[test]
     fn mode_switch_of_a_hidden_macos_window_reopens_it() {
         let mut window = WindowState::shown();
-        window.begin(WINDOW_SIZE);
+        window.begin(RootSurface::Desk(WindowMode::Focus), WINDOW_SIZE);
         window.mark_hidden();
         assert_eq!(window.take_intent(), None);
 
@@ -469,11 +592,11 @@ mod tests {
             visible: true,
             ..WindowState::default()
         };
-        window.begin([1000.0, 700.0]);
+        window.begin(RootSurface::Desk(WindowMode::Focus), [1000.0, 700.0]);
         assert_eq!(window.restore_size(), [1000.0, 700.0]);
 
         window.set_mode(WindowMode::Overlay);
-        window.begin(OVERLAY_SIZE);
+        window.begin(RootSurface::Desk(WindowMode::Overlay), OVERLAY_SIZE);
         assert_eq!(
             window.restore_size(),
             OVERLAY_SIZE,
