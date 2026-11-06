@@ -5,6 +5,51 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),  
 проект следует [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [0.21.0-rc.2] - 2026-11-06
+
+MINOR: настройки стали настоящим отдельным окном, добавлен полноценный ритуал сна
+(ингибирование ОС, отсчёт, действие, предупреждение, фейд). Меняется IPC, схема
+статуса, структура окон, аудио-воркер и правила WM, поэтому минор.
+
+### Добавлено
+- **ADR-0053…0058** — окно настроек как отдельное окно, запрет сна на время таймера,
+  действие по истечении, затухание звука, отсчёт оставшегося времени, экран предупреждения.
+- **Окно настроек** как immediate viewport поверх стола (`show_viewport_immediate`):
+  три размера авто-подбора (Compact 420×560, Medium 760×544, Wide 1040×720), заголовок
+  несёт вариант для правил WM, геометрия не персистится. Убраны scrim/`Area`/
+  `settings_rect`/`blocks_point` — настройки не блокируют глобус.
+- **Ритуал сна**: `systemd-inhibit` (Linux, дочерний процесс), `caffeinate` (macOS),
+  `SetThreadExecutionState` (Windows), `ORBITFM_POWER_DRY_RUN=1` для диагностики без
+  spawn. Действие по истечении: `nothing`/`suspend`/`power-off` через `busctl`/`loginctl`
+  (Linux), `pmset`/`osascript` (macOS), `SetSuspendState`/`InitiateSystemShutdownExW`
+  (Windows).
+- **Фейд звука** перед стопом: линейно в дБ (D=45, по умолчанию 300 с, шаг ~20 Hz),
+  конфликт с ручной громкостью разрешён в пользу пользователя.
+- **Экран предупреждения** за минуту до действия: кольцо SEGMENTS=96, рампы
+  жёлтый→зелёный / красный→жёлтый, кнопка «Отменить» (отменяет действие, не таймер),
+  Esc = Cancel.
+- **IPC**: подкоманды `sleep action|fade|inhibit|warning`, ответы `ok sleep …`.
+- **status --json**: `sleep.{inhibited,action,warning,fade_seconds}` +
+  `settings_open`, схема 1 сохранена.
+- **Правила WM**: `HYPRLAND_RULES` 14→18 (три `size` под настройки + `Sleep Warning`),
+  зеркало в `wm-configs/orbitfm-hyprland.conf` и `wm-configs/orbitfm-niri.kdl`,
+  тесты на зеркальность и дрейф сниппета.
+
+### Изменено
+- `src/session/window.rs`: `RootSurface { Desk(WindowMode), Settings(SettingsSize) }`,
+  `UiIntent::Settings`, `open_settings(origin)` (Desk → потомок, Parked → intent).
+- `src/ui/layout.rs`: убраны `SETTINGS_MODAL`, `settings` из `DeskLayout` и
+  `blocks_point`, функция `settings_rect()`.
+- `src/ui/settings_panel.rs`: убран крестик и Esc из шапки (окно теперь отдельное).
+- `src/audio/worker.rs`: `AudioCommand::StartFade`/`CancelFade`, рабочий фейд
+  AudioWorker (~20 Hz, `fade_gain`).
+- `src/power/*` (новый модуль): `InhibitBackend`, `InhibitionGuard` (Drop),
+  `PowerInhibit::acquire`/`perform`, бэкенды linux/macos/windows/fake.
+
+### Исправлено
+- `draw_settings` при `EmbeddedWindow` — старая модалка + `warn!` (бэкенд без
+  мультивьюпортности не ломается).
+
 ## [0.21.0-rc.1] - 2026-11-06
 
 MINOR: поддержка macOS пересобрана как заявка, которую можно проверить, — Intel и Apple
