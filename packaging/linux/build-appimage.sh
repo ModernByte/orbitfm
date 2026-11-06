@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Собирает AppImage в target/appimage. Требует Linux x86_64 и системный libmpv.
 # LINUXDEPLOY и APPIMAGETOOL можно задать путями к готовым AppImage-инструментам;
-# иначе continuous-сборки скачиваются в target/appimage-tools.
+# иначе оба инструмента скачиваются в target/appimage-tools.
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
@@ -24,11 +24,13 @@ export APPIMAGE_EXTRACT_AND_RUN=1
 LINUXDEPLOY="${LINUXDEPLOY:-$TOOLS_DIR/linuxdeploy.AppImage}"
 APPIMAGETOOL="${APPIMAGETOOL:-$TOOLS_DIR/appimagetool.AppImage}"
 
-# continuous-ассеты обновляются без смены URL, поэтому скачанный инструмент
-# сверяется с зафиксированным дайджестом. Обновление хеша — осознанная правка
-# вместе с проверкой нового AppImage; свои сборки задаются через env.
+# Скачанный инструмент сверяется с зафиксированным дайджестом: обновлять хеш —
+# осознанная правка вместе с проверкой нового AppImage; свои сборки задаются через env.
+# appimagetool берётся из релизного тега, а не из continuous: continuous-ассет
+# пересобирается под тем же URL (2026-11-06 00:47 UTC он сорвал сборку релиза,
+# 2026-10-31 потребовал PNG в корне AppDir), а тег 1.9.1 неизменяем.
 LINUXDEPLOY_SHA256="${LINUXDEPLOY_SHA256:-df908b19f1ed1cdafa79508d415aa12d6c56ce4d56d4149aa8c09286718706e5}"
-APPIMAGETOOL_SHA256="${APPIMAGETOOL_SHA256:-62aebc77c2149e96b593b94da9bbd1881e0984a56399ff6d7a03b7ddd7c9ce68}"
+APPIMAGETOOL_SHA256="${APPIMAGETOOL_SHA256:-ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0}"
 
 ensure_tool() {
     local path="$1"
@@ -53,7 +55,7 @@ ensure_tool "$LINUXDEPLOY" \
     "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage" \
     "$LINUXDEPLOY_SHA256"
 ensure_tool "$APPIMAGETOOL" \
-    "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage" \
+    "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage" \
     "$APPIMAGETOOL_SHA256"
 
 cargo build --release --locked
@@ -82,8 +84,8 @@ ARCH="$ARCH" "$LINUXDEPLOY" \
 ln -sf org.modernbyte.OrbitFM.metainfo.xml \
     "$APPDIR/usr/share/metainfo/org.modernbyte.OrbitFM.appdata.xml"
 
-# С 31.10.2026 continuous-appimagetool требует PNG в корне AppDir, чтобы
-# создать .DirIcon; SVG в hicolor/scalable он больше не принимает.
+# PNG в корне AppDir: из него appimagetool делает .DirIcon, SVG из
+# hicolor/scalable он для этого не принимает.
 install -Dm644 packaging/linux/org.modernbyte.OrbitFM.png \
     "$APPDIR/org.modernbyte.OrbitFM.png"
 
