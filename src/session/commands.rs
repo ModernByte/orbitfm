@@ -204,36 +204,25 @@ impl super::Session {
             // применяются к активному таймеру.
             IpcCommand::SetSleepAction { action } => {
                 let action = SleepAction::from(*action);
-                match self.settings.set_sleep_action(action) {
+                match self.set_sleep_action(action) {
                     Ok(()) => format!("ok sleep action {}", action.as_str()),
                     Err(err) => format!("error {err}"),
                 }
             }
-            IpcCommand::SetSleepFade { seconds } => {
-                match self.settings.set_sleep_fade_seconds(*seconds) {
-                    Ok(()) => {
-                        let applied = self.settings.settings().sleep_fade_seconds;
-                        self.apply_sleep_fade_setting(applied);
-                        format!("ok sleep fade {applied}")
-                    }
-                    Err(err) => format!("error {err}"),
-                }
-            }
+            IpcCommand::SetSleepFade { seconds } => match self.set_sleep_fade_seconds(*seconds) {
+                Ok(applied) => format!("ok sleep fade {applied}"),
+                Err(err) => format!("error {err}"),
+            },
             IpcCommand::SetSleepInhibit { enabled } => {
-                match self.settings.set_sleep_prevent_sleep(*enabled) {
-                    Ok(()) => {
-                        self.sync_inhibition();
-                        format!("ok sleep inhibit {}", if *enabled { "on" } else { "off" })
-                    }
+                match self.set_sleep_prevent_sleep(*enabled) {
+                    Ok(()) => format!("ok sleep inhibit {}", if *enabled { "on" } else { "off" }),
                     Err(err) => format!("error {err}"),
                 }
             }
-            IpcCommand::SetSleepWarning { enabled } => {
-                match self.settings.set_sleep_warning(*enabled) {
-                    Ok(()) => format!("ok sleep warning {}", if *enabled { "on" } else { "off" }),
-                    Err(err) => format!("error {err}"),
-                }
-            }
+            IpcCommand::SetSleepWarning { enabled } => match self.set_sleep_warning(*enabled) {
+                Ok(()) => format!("ok sleep warning {}", if *enabled { "on" } else { "off" }),
+                Err(err) => format!("error {err}"),
+            },
             IpcCommand::LibraryExport { path } => {
                 match self.library.export_to(std::path::Path::new(path)) {
                     Ok(favorites) => format!("ok exported {favorites}"),

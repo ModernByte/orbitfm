@@ -64,20 +64,26 @@ pub(crate) struct OrbitApp<'a> {
     toast: Toast,
     /// Переходы UI этого прогона окна (ADR-0032).
     transitions: Transitions,
-    /// Прямоугольник окна настроек с последнего открытого кадра: нужен, чтобы
-    /// окно гасло по месту, а не исчезало скачком (ADR-0032).
-    settings_rect: Option<egui::Rect>,
+    /// Какая поверхность создала прогон: стол, настройки или предупреждение
+    /// (ADR-0053, ADR-0058).
+    surface: RootSurface,
     /// Открытая категория окна настроек: состояние представления.
     settings_category: SettingsCategory,
 }
 ```
 
 - `session` — единственный источник доменных данных и подсистем; заимствование живёт
-  ровно один прогон (`Box::new(|cc| Ok(Box::new(OrbitApp::new(cc, session))))` в
+  ровно один прогон (`Box::new(|cc| Ok(Box::new(OrbitApp::new(cc, session, surface))))` в
   `run_window`).
+- `surface` — `RootSurface` прогона: `Desk(WindowMode)`, `Settings(SettingsSize)` или
+  `Warning`. По нему `draw()` выбирает корневой путь: стол, панель настроек без
+  стола или окно предупреждения без стола (ADR-0053, ADR-0058).
 - `globe_ready` — результат создания `GlobeRenderer` из
   `CreationContext::wgpu_render_state`; без него глобус заменяется заглушкой, а ввод
-  игнорируется. Признак per-run, потому что wgpu-ресурсы умирают вместе с прогоном.
+  игнорируется. Создаётся только для `RootSurface::Desk(_)`: окна настроек и
+  предупреждения не печатают `AdapterReport` и не держат wgpu-ресурсы
+  (ADR-0053 §6b, ADR-0058). Признак per-run, потому что wgpu-ресурсы умирают
+  вместе с прогоном.
 - `spectrum_overlay` — сглаженные level/flux эфира для кольца Listening (живёт кадрами).
 - `motion` — `MotionMixer` (ADR-0028): spring-squash, idle-дыхание и огибающие
   полос. Обновляется один раз за кадр в `draw_layers`; результат
@@ -106,17 +112,18 @@ pub(crate) struct OrbitApp<'a> {
 - `transitions` — `Transitions` (ADR-0032): один вызов `frame` на кадр считает
   прогрессы присутствия зон (`ZoneFlags` → `FrameMotion`); значения читают зоны и
   каркасы стеклянных панелей. Не переживает скрытие окна.
-- `settings_rect`, `settings_category` — последний прямоугольник окна настроек и
-  открытая категория: пока окно гаснет, `layout.settings` уже `None`, и геометрию
-  берут отсюда, чтобы стол не дёргался.
+- `settings_category` — открытая категория окна настроек: состояние
+  представления, общее для root-окна и immediate-потомка стола.
 
 Всё остальное живёт в `Session`: подсистемы (`audio`, `geo`, `radio`, `media`, `library`,
 `settings`, `runtime`), `globe_camera`, `visualizer_enabled`, `spectrum_enabled`,
 `language`, `current_url`/`current_station`,
 `search: SearchState` (строки запросов, `context`, `results`, `generation`, `pending`,
 `empty`, `error`, каналы поиска и рулетки), `markers`, `library_tab`, `country_filter`,
-`panel_open`, `settings_open`, `show_help`, `pending_volume`, `window: WindowState`
-(видимость, размер, `intent`, `quitting`), `publish_gate: PublishGate` (вердикт
+`panel_open`, `settings_open`, `show_help`, `pending_volume`, `sleep: SleepTimer`,
+`sleep_fading`, `sleep_inhibition`, `sleep_inhibition_detail`, `sleep_inhibition_failed`,
+`sleep_warning_open`, `sleep_action_once`, `window: WindowState`
+(видимость, размер, `surface`, `intent`, `quitting`), `publish_gate: PublishGate` (вердикт
 яруса 2 для MPRIS/SMTC/Now Playing, ADR-0025 ред. 4),
 `notices`, `wake`, `commands`, `audio_events`. `visualizer_enabled` — пользовательский
 переключатель визуализатора и кольца; это сохранённая настройка
@@ -163,7 +170,7 @@ struct Frame {
 текущей станции, `current_url.is_some()` в `can_resume`,
 `search.context.mode == SearchMode::Country` в `country_mode`,
 `session.effective_language()` в `language` и
-`DeskLayout::compute(viewport, panel_open, show_help, settings_open, session.window_mode())`
+`DeskLayout::compute(viewport, panel_open, show_help, session.window_mode())`
 в `layout`. Там же считается шаг
 анимации визуализатора (`advance` по `stable_dt` и `time`). `GlobeMarker` (в
 `src/session/markers.rs`) хранит представителя группы, координаты, количество станций,
@@ -190,7 +197,7 @@ src/ui/
 │                     # accent_color, mix_colors, heat_color — рампа §3.2
 ├── animation.rs      # длительности и кривые переходов, `Presence`, `Transitions`/`FrameMotion`,
 │                     # `alpha`/`slide_x`/`rise_y`/`stagger` (ADR-0032)
-├── layout.rs         # DeskLayout: геометрия плавающих зон и окна настроек, LayoutDensity из
+├── layout.rs         # DeskLayout: геометрия плавающих зон стола, LayoutDensity из
 │                     # WindowMode, blocks_point для глобуса
 ├── capsule.rs        # капсулы Overlay (top с 16-полосной лентой, мини-глобус, избранное)
 │                     # и Listening; быстрые часы таймера сна в группе контролов
@@ -228,7 +235,9 @@ src/ui/
 │                     # строка), `accent_swatch` (круглый свотч с кольцом выбора) и
 │                     # `row` (подпись слева, контрол в фиксированном слоте справа,
 │                     # подсказка под подписью)
-├── settings_panel.rs # модальное окно настроек: категории слева, карточки справа (ADR-0031)
+├── settings_panel.rs # содержимое окна настроек: категории слева, карточки справа (ADR-0031,
+│                     # ADR-0053); ритуал сна — действие, фейд, лок, предупреждение
+├── sleep_warning.rs  # окно предупреждения таймера сна: кольцо, рампа, «Отменить» (ADR-0058)
 ├── overlays.rs       # help-карточка управления и легенда карты стран с выбором метрики
 ├── globe_view.rs     # ввод камеры, проекция и вид маркеров, тепловая карта, гашение
 │                     # движения под курсором, каналы callout страны и станции, звёздное небо
@@ -272,16 +281,16 @@ src/ui/
 
 Глобус занимает всё окно (`CentralPanel` без отступов, full-bleed со звёздным
 небом), поверх него в том же кадре рисуются плавающие зоны — `ui.scope_builder` с
-`max_rect` из `DeskLayout::compute(viewport, panel_open, help_open, settings_open, mode)`; порядок
+`max_rect` из `DeskLayout::compute(viewport, panel_open, help_open, mode)`; порядок
 отрисовки равен
 порядку слоёв. Геометрия (`src/ui/layout.rs`): отступ 14 px, зазор 12 px,
 HUD — 58 px сверху, панель — 360 px справа, transport — 84 px снизу (контролы + громкость +
 40 px визуализатора, ТЗ §3.3), help-карточка 216×128 слева сверху (только когда открыта,
-низ карточки отделён от последней строки полем 8 px), легенда 216×100 слева снизу. `panel`, `help` и `settings` — `Option<egui::Rect>`: закрытая зона не
-рисуется и не перекрывает глобус. Окно настроек — центрированное модальное окно
-`SETTINGS_MODAL = 760×544` (клампится до `viewport − 2 · отступ`), слева колонка
-категорий 188 px, справа карточки (ADR-0031, ред. 2026-10-28). `DeskLayout::blocks_point` отсекает клики и колесо
-глобуса внутри плавающих зон, включая окно настроек.
+низ карточки отделён от последней строки полем 8 px), легенда 216×100 слева снизу. `panel` и `help` — `Option<egui::Rect>`: закрытая зона не
+рисуется и не перекрывает глобус. Окна настроек и предупреждения — не зоны стола:
+это самостоятельные root-поверхности, у которых нет `settings_rect` и scrim
+(ADR-0053, ADR-0058). `DeskLayout::blocks_point` отсекает клики и колесо
+глобуса только внутри плавающих зон стола.
 
 `WindowMode` (ADR-0021) задаёт `LayoutDensity`: `Full` — раскладка Focus выше,
 `Compact` — HUD-строка с 16-полосной лентой (`widgets::NARROW_VIZ_BARS = 16`, bucket-max из модели
@@ -311,7 +320,8 @@ focus` и всегда даёт стол Focus.
 | Transport | favicon 44 px, имя/город/`Now Playing: теги`; группа контролов (`⏮ play ⏭`, stop, heart, `Radio Roulette`) — по центру строки; справа громкость и мини-спектр, у них остаток ширины; зоны текста, контролов и правой группы не пересекаются и клиппятся |
 | Help-карточка | мыши-пиктограммы: Right-drag — orbit, Left click — country/station, Scroll — zoom |
 | Легенда | выбор карты стран (`ComboBox`: Off, плотность, жанры, качество, тип, рейтинг), градиент Low→High и подпись источника заливки |
-| Окно настроек | центр поверх scrim: шапка (знак, заголовок, `Esc`, ×), категории Appearance / Language / Audio / Motion / Window / About, карточки строк с `dropdown`, тумблерами и свотчами акцента; внизу — «Настройки сохраняются автоматически» |
+| Окно настроек | самостоятельное root-окно (ADR-0053): шапка (знак, заголовок), категории Appearance / Language / Audio / Motion / Window / Stats / Integrations / About, карточки строк с `dropdown`, тумблерами и свотчами акцента; внизу — «Настройки сохраняются автоматически» |
+| Окно предупреждения | самостоятельное root-окно без рамки (ADR-0058): кольцо обратного отсчёта, строка действия, кнопка «Отменить» |
 
 Иконки — SVG Lucide из `assets/icons/` (ADR-0034): `ui/icons.rs` перечисляет набор
 через `egui::include_image!`, перекрашивает белый штрих через `Image::tint` и
@@ -383,11 +393,11 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
 4. Размер окна: `inner_rect` из ввода → `Session::set_window_size([w, h])`.
 5. `Session::take_intent()` → `ViewportCommand::Focus` (`UiIntent::Show`, окно уже
    открыто — остаётся вернуть фокус) или `ViewportCommand::Close` (`UiIntent::Close`).
-6. `Escape` снимает самый верхний модальный слой: при открытом окне настроек —
-   `session.close_settings()`, иначе при открытой карточке —
-   `session.set_help_visible(false)` (ошибка записи — тост
-   `NoticeKey::SettingNotSaved`). `Ctrl+,` (он же `Cmd+,`) вызывает
-   `session.toggle_settings()`.
+6. `Escape` в столе снимает только help-карточку: `session.set_help_visible(false)`
+   (ошибка записи — тост `NoticeKey::SettingNotSaved`). Esc и кнопка WM в окне
+   настроек закрывают само окно (`close_settings()`), Esc и close в окне
+   предупреждения — «Отменить» (`cancel_sleep_warning()`, ADR-0058). `Ctrl+,`
+   (он же `Cmd+,`) вызывает `session.toggle_settings()`.
    `Ctrl+F` и `/` (когда фокус свободен) ставят фокус в поиск текущего экрана:
    страна — `orbitfm_hud_country`, панель — `orbitfm_panel_search`, иначе
    `orbitfm_hud_search`; клавиша забирается через `consume_key`, чтобы символ не
@@ -705,14 +715,19 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
   и окна (нужно для overlay), цвет выделения `selection.bg_fill` из акцента,
   контрастную обводку выделения и цвет гиперссылок. Значение сохраняется ядром
   (`Session::set_theme`, `Session::set_accent`), перекраску делает UI.
-- Окно настроек (шестерёнка в HUD, `Ctrl+,`, пункт `Settings…` в трее; ADR-0031) —
-  модальное окно 760×544 с колонкой категорий: `Appearance` (тема
+- Окно настроек (шестерёнка в HUD, `Ctrl+,`, пункт `Settings…` в трее; ADR-0031,
+  ADR-0053) — отдельное root-окно, а не модалка стола: при живом окне стола
+  открывается immediate-потомком, при припаркованном процессе — новым прогоном
+  `RootSurface::Settings`. Размер выбирает `SettingsSize::for_open` (Compact 420×560,
+  Medium 760×544, Wide 1040×720) и не персистится; заголовок несёт вариант для
+  правил WM. Категории: `Appearance` (тема
   `System`/`Dark`/`Light` — `controls::dropdown`, шесть пресетов акцента (`Orbit`, `Emerald`,
   `Amber`, `Violet`, `Rose`, `Ocean`) — круглые свотчи, тумблер визуализатора, число столбцов — dropdown), `Language`
   (dropdown, `System` и шестнадцать языков), `Audio` (громкость, таймер сна,
-  тумблер `queue_wrap` и профиль сети), `Motion` (`Off`/`Low`/`Normal`/`High`
+  действие по истечении, фейд, `queue_wrap`), `Motion` (`Off`/`Low`/`Normal`/`High`
   и стиль — dropdown, `Reduce motion` и перевороты — тумблеры), `Window` (режим окна — dropdown,
-  `Show help` — тумблер) и `About` (версия, лицензия, app-id, «Выход»). Изменение применяется сразу и
+  `Show help`, запрет сна и окно предупреждения, профиль сети), `Stats`,
+  `Integrations` и `About` (версия, лицензия, app-id, «Выход»). Изменение применяется сразу и
   сохраняется через `SettingsStore`; ошибка записи показывается тостом и не прерывает
   воспроизведение. Строка настройки собирается `controls::row`: подпись слева, контрол в
   фиксированном слоте справа (220×30 для dropdown, 184×26 для свотчей), приглушённая
@@ -788,8 +803,11 @@ root-вьюпорта, а не невидимое окно. `ViewportCommand::Ca
   состоянии дают `UiIntent::Show`, `park` выходит с `ParkOutcome::Show`, и цикл
   повторяется: `restore_size()` → `begin_window(size)` → `run_window` (второй и каждый
   следующий `eframe::run_native` из того же главного потока). `Settings…` из меню трея
-  идёт через `Session::open_settings`: `Listening` переключается на `Overlay`,
-  ставится `settings_open`, а при скрытом окне создаётся `UiIntent::Show` (ADR-0031).
+  идёт через `Session::open_settings(SettingsOrigin::Parked)`: `Listening`
+  переключается на `Overlay`, ставится `settings_open` и `RootSurface::Settings`,
+  а `park` выходит с `ParkOutcome::Settings` (ADR-0053). Предупреждение таймера сна
+  в припаркованном процессе идёт тем же путём через `RootSurface::Warning`
+  и `ParkOutcome::Warn` (ADR-0058).
 - Размеры применяются до создания окна: `NativeOptions.viewport` собирается из
   `Session::restore_size()` (`with_inner_size` + `with_min_inner_size`,
   `WINDOW_SIZE` 1100×800 по умолчанию, `WINDOW_MIN_SIZE` 720×480), а фактический размер

@@ -1,7 +1,7 @@
 # Roadmap OrbitFM
 
 **Организация:** ModernByte  
-**Последнее обновление:** 2026-11-03  
+**Последнее обновление:** 2026-11-10
 
 ## Завершено: Проектирование и документация
 
@@ -1183,6 +1183,55 @@ CI-гейты. Причина выката — отчёт пользовател
 - [ ] Тег `v0.20.0-rc.6`, GitHub Release и локальная переустановка: ассеты сверены
       `sha256sum -c`; AppImage, MSI, оба DMG, `.plasmoid`, `install-appimage.sh` и
       SHA256SUMS — все целы; `orbitfm --version` — 0.20.0-rc.6
+
+## Релиз 0.21.0-rc.3 — предупреждение как окно и устойчивость ритуала (2026-11-10)
+
+PATCH-пакет поверх rc.2: исправления после приёмки, без новых настроек и смены схем.
+
+- [x] Предупреждение таймера сна — самостоятельная root-поверхность `RootSurface::Warning`
+      (ADR-0058): `UiIntent::Warn`, `ParkOutcome::Warn`, `WindowState::request_warning`,
+      `is_open`, заголовок `OrbitFM · Sleep Warning`, размер 420×320 без рамки; Esc и
+      закрытие окна = «Отменить», отменяется действие, а не таймер
+- [x] Esc в корне настроек и закрытие окна закрывают только настройки и не показывают стол;
+      смена режима из настроек сначала закрывает их; вложенные настройки и предупреждение
+      не создаются, когда корень уже `Settings`/`Warning`
+- [x] `sleep.remaining_secs` в `status --json` и трее — те же отображаемые секунды, что
+      кнопка часов (`display_seconds`, ADR-0057), без расхождения на последней минуте
+- [x] Лок сна: TTL `caffeinate` от остатка таймера (вверх до секунды, минимум 1),
+      отказ acquire и смерть носителя кэшируются до смены таймера/настройки/состояния
+      эфира, `quit()` снимает лок (ADR-0054)
+- [x] CI и release: установка MSYS2-пакетов вынесена из `setup-msys2` в шаг с
+      `pacman --noconfirm --needed --disable-download-timeout` и повтором — флейк
+      «Operation too slow» больше не валит релиз
+- [x] Документация: интерфейсы 05/07/09/10/11/12/13/14, модули 07/08/10/11/12/14/15/16,
+      README, VERSIONMAP, ROADMAP, CHANGELOG
+- [ ] Тег `v0.21.0-rc.3` и релиз GitHub: шесть артефактов + `SHA256SUMS`, CI и release
+      зелёные
+
+## Релиз 0.21.0-rc.2 — настройки как окно и полный ритуал сна (2026-11-06)
+
+MINOR-пакет: меняются IPC, схема статуса, структура окон, аудио-воркер и правила WM.
+
+- [x] ADR-0053 «Окно настроек как отдельное окно»: `RootSurface::{Desk, Settings}`,
+      immediate viewport поверх стола, отдельный прогон `RootSurface::Settings` в простое,
+      три автоматических размера с вариантом в заголовке, отказ от scrim/`settings_rect`/
+      `blocks_point`
+- [x] ADR-0054 «Запрет сна на время таймера»: дочерний `systemd-inhibit` на Linux,
+      `caffeinate` на macOS, `SetThreadExecutionState` на Windows, `InhibitionGuard` в
+      `Session`, отказ виден строкой в категории «Окно»
+- [x] ADR-0055 «Действие по истечении»: `nothing`/`suspend`/`power-off` через
+      `loginctl`/`busctl`, `pmset`/`osascript`, `SetSuspendState`; `ORBITFM_POWER_DRY_RUN=1`
+- [x] ADR-0056 «Затухание звука»: `AudioCommand::StartFade`/`CancelFade`, линейно в дБ,
+      по умолчанию 300 с, ручная громкость важнее фейда
+- [x] ADR-0057 «Отсчёт остатка»: `display_seconds`/`next_display_change`/`next_event`,
+      минуты до последней минуты, затем секунды; кнопка часов, трей и статус
+- [x] ADR-0058 «Экран предупреждения»: окно за минуту, кольцо, рампа и «Отменить»
+- [x] IPC `sleep action|fade|inhibit|warning`, `sleep.{inhibited,action,warning,fade_seconds}`
+      и `settings_open` в схеме 1, HELP и native host
+- [x] Правила WM 14→18, зеркала `wm-configs/`, тесты на дрейф; i18n всех строк ритуала
+- [x] `cargo fmt`, clippy (обе конфигурации), `cargo test --all-targets` — 705 passed,
+      5 ignored; `packaging/cargo-deny-check.sh`
+- [x] Тег `v0.21.0-rc.2` и релиз GitHub
 
 ## Релиз 0.21.0-rc.1 — полноценная поддержка macOS: Intel и Apple Silicon (2026-11-06)
 

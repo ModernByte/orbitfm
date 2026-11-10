@@ -164,6 +164,7 @@ Wildcard не используется: браузер запускает хос
 | `play-result <uuid>`, `play-library <uuid>` | |
 | `play-url <url>` | `library-export <путь>`, `library-import <путь>` |
 | `sleep <1…720>`, `sleep clear` | |
+| `sleep action <…>`, `sleep fade <…>`, `sleep inhibit <on\|off>`, `sleep warning <on\|off>` | |
 
 `quit` запрещён, чтобы popup не завершал процесс; `play` — чтобы расширение не
 запускало произвольный поток по UUID; `mode` — чтобы компоновка окна не
@@ -173,6 +174,9 @@ Wildcard не используется: браузер запускает хос
 `library-export`/`library-import` запрещены: расширение не должно читать или
 писать файлы библиотеки (ADR-0046). `sleep`/`sleep clear` разрешены — попап
 может включить или снять таймер сна, как и остальные команды управления.
+Подкоманды ритуала сна `sleep action|fade|inhibit|warning` тоже разрешены
+(ADR-0054…0058): они меняют те же настройки, что видны в desktop-окне, и
+попап показывает их текущие значения из `status.sleep`.
 Все разрешённые команды выполняются только у работающего экземпляра.
 
 ### 6.1. Разрешения расширения
@@ -293,6 +297,10 @@ connectNative("org.modernbyte.orbitfm")
 - 2026-11-03 (0.19.0-rc.1): команда `network` запрещена — профиль сети
   меняется только desktop-клиентом (ADR-0048); поле `status.network` проходит
   в кадрах `events` без изменений.
+- 2026-11-06 (0.21.0-rc.2): в allowlist добавлены `sleep action|fade|inhibit|warning`
+  (ADR-0054…0058); поля `status.sleep` дополнены `inhibited`, `action`,
+  `warning`, `fade_seconds`, в корень `status` добавлено `settings_open`
+  (ADR-0053). Все поля проходят в кадрах `events` без изменений.
 
 ## 13. Ссылки
 
@@ -301,5 +309,7 @@ connectNative("org.modernbyte.orbitfm")
 - ADR-0039 — поток событий состояния
 - ADR-0040 — импорт внешних потоков и «Play this page»
 - ADR-0048 — профиль сети (команда `network` вне allowlist)
+- ADR-0053 — окно настроек как отдельное окно (`settings_open`)
+- ADR-0054…0058 — ритуал сна: лок, действие, фейд, отсчёт, предупреждение
 - `docs/interfaces/05-ipc.md`, `docs/interfaces/13-events.md`
 - `docs/modules/17-browser-companion.md`

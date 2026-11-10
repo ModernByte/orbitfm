@@ -105,6 +105,32 @@ impl NetworkProfile {
 /// Потолок битрейта discovery в профиле `Metered`.
 pub const METERED_BITRATE_CAP: u32 = 128;
 
+/// Действие по истечении таймера сна (ADR-0055).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SleepAction {
+    /// Только остановить эфир — поведение по умолчанию.
+    #[default]
+    Nothing,
+    /// Остановить эфир и перевести машину в suspend.
+    Suspend,
+    /// Остановить эфир и выключить машину.
+    PowerOff,
+}
+
+impl SleepAction {
+    pub const ALL: [Self; 3];
+    /// Имя действия в IPC, `settings.json` и `status --json`.
+    pub fn as_str(self) -> &'static str;
+    /// Разбор значения из IPC и файла настроек.
+    pub fn parse(raw: &str) -> Option<Self>;
+}
+
+/// Допустимые длительности затухания перед стопом (ADR-0056).
+pub const SLEEP_FADE_CHOICES: [u16; 5] = [0, 60, 120, 180, 300];
+/// Затухание по умолчанию: пять минут — незаметно и не съедает таймер.
+pub const DEFAULT_SLEEP_FADE: u16 = 300;
+
 /// Язык интерфейса (ADR-0030); контракт — `docs/interfaces/12-i18n.md`.
 /// Здесь используются `ALL`, `code()`, `native_name()` и `resolve()`.
 pub use language::Language;
@@ -147,6 +173,14 @@ pub struct Settings {
     /// Вести ли локальную статистику прослушивания (ADR-0049). По умолчанию
     /// `true`: счётчики живут только на устройстве и никуда не отправляются.
     pub stats_enabled: bool,
+    /// Что делать по истечении таймера сна (ADR-0055).
+    pub sleep_action: SleepAction,
+    /// Длительность затухания перед стопом, секунды (ADR-0056).
+    pub sleep_fade_seconds: u16,
+    /// Не давать системе уснуть, пока тикает таймер (ADR-0054).
+    pub sleep_prevent_sleep: bool,
+    /// Окно предупреждения за минуту до действия (ADR-0058).
+    pub sleep_warning: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -188,6 +222,10 @@ impl SettingsStore {
     pub fn set_network_profile(&mut self, profile: NetworkProfile)
         -> Result<(), SettingsError>;
     pub fn set_stats_enabled(&mut self, enabled: bool) -> Result<(), SettingsError>;
+    pub fn set_sleep_action(&mut self, action: SleepAction) -> Result<(), SettingsError>;
+    pub fn set_sleep_fade_seconds(&mut self, seconds: u16) -> Result<(), SettingsError>;
+    pub fn set_sleep_prevent_sleep(&mut self, enabled: bool) -> Result<(), SettingsError>;
+    pub fn set_sleep_warning(&mut self, enabled: bool) -> Result<(), SettingsError>;
 }
 
 /// Стандартный путь по XDG Base Directory Specification.
@@ -224,6 +262,10 @@ pub fn default_path() -> Result<PathBuf, SettingsError>;
 | `set_queue_wrap` | Включает кольцевой переход очереди; по умолчанию `true`, сохраняет только при изменении (ADR-0046) |
 | `set_network_profile` | Меняет профиль сети (`unlimited`/`metered`/`offline-first`); по умолчанию `unlimited`, сохраняет только при изменении (ADR-0048) |
 | `set_stats_enabled` | Включает или выключает учёт локальной статистики прослушивания; по умолчанию `true`, сохраняет только при изменении (ADR-0049). При `false` накопление и запись `stats.json` останавливаются, текущий накопитель сбрасывается, а существующий файл остаётся нетронутым — удаление счётчиков делает только `stats clear` (интерфейс 17) |
+| `set_sleep_action` | Меняет действие по истечении таймера (`nothing`/`suspend`/`power-off`); по умолчанию `nothing`, сохраняет только при изменении (ADR-0055) |
+| `set_sleep_fade_seconds` | Притягивает длительность к ближайшей из `SLEEP_FADE_CHOICES` (0/60/120/180/300) и сохраняет; по умолчанию 300 с (ADR-0056) |
+| `set_sleep_prevent_sleep` | Запрещает системе уходить в сон, пока играет эфир и тикает таймер; по умолчанию `true`, сохраняет только при изменении (ADR-0054) |
+| `set_sleep_warning` | Показывает окно предупреждения за минуту до действия; по умолчанию `true`, сохраняет только при изменении (ADR-0058) |
 
 ## 3. Расположение и формат
 
@@ -250,7 +292,11 @@ pub fn default_path() -> Result<PathBuf, SettingsError>;
   "reduce_motion": false,
   "queue_wrap": true,
   "network_profile": "unlimited",
-  "stats_enabled": true
+  "stats_enabled": true,
+  "sleep_action": "nothing",
+  "sleep_fade_seconds": 300,
+  "sleep_prevent_sleep": true,
+  "sleep_warning": true
 }
 ```
 
@@ -259,12 +305,16 @@ pub fn default_path() -> Result<PathBuf, SettingsError>;
 `off`/`low`/`normal`/`high`, `motion_style` — `auto`/`soft-pulse`/`groove-sway`/
 `bass-drop`/`ambient-drift`/`sparkle-twitch`/`beat-march`, `language` —
 `system`/`en`/`ru`/`uk`/`pl`/`fr`/`de`/`es`/`it`/`pt`/`tr`/`ar`/`hi`/`id`/`zh`/`ko`/`ja`,
-`network_profile` — `unlimited`/`metered`/`offline-first`. `viz_bars` при
+`network_profile` — `unlimited`/`metered`/`offline-first`, `sleep_action` —
+`nothing`/`suspend`/`power-off`. `viz_bars` при
 загрузке притягивается к ближайшему из 16/24/32, `volume` клампится в
-`0.0..=1.0`. Отсутствующие поля заменяются значениями по умолчанию (включая
-`queue_wrap: true`, `network_profile: "unlimited"` и `stats_enabled: true` в
-старых файлах): `#[serde(default)]` на структуре уже есть, поэтому
-`settings.json` до ADR-0049 читается без миграции и даёт включённый учёт.
+`0.0..=1.0`, `sleep_fade_seconds` — к ближайшему из 0/60/120/180/300.
+Отсутствующие поля заменяются значениями по умолчанию (включая
+`queue_wrap: true`, `network_profile: "unlimited"`, `stats_enabled: true`,
+`sleep_action: "nothing"`, `sleep_fade_seconds: 300`, `sleep_prevent_sleep: true`
+и `sleep_warning: true` в старых файлах): `#[serde(default)]` на структуре уже
+есть, поэтому `settings.json` до ADR-0054…0058 читается без миграции и даёт
+включённый ритуал сна с безопасным действием `nothing`.
 Неизвестное
 значение enum — ошибка разбора, кроме `language`: неизвестный код языка даёт
 `System` и не стоит остальных настроек (`language::deserialize_language`).
@@ -327,6 +377,12 @@ Application Core затемняет акцент для текста (ссылк
 - `roundtrip_persists_stats_enabled` — `stats_enabled` по умолчанию `true`,
   старый файл без поля читается как `true` и не перезаписывается без изменения
   (ADR-0049)
+- `sleep_ritual_defaults_are_safe` — `sleep_action: Nothing`,
+  `sleep_fade_seconds: DEFAULT_SLEEP_FADE`, `sleep_prevent_sleep: true`,
+  `sleep_warning: true`
+- `unknown_sleep_action_is_a_parse_error`, `sleep_action_roundtrip_and_tokens`
+- `sleep_fade_snaps_to_choices` — 75 → 60, 9999 → `DEFAULT_SLEEP_FADE`
+- `roundtrip_persists_sleep_ritual` — все четыре поля переживают запись и чтение
 - `out_of_range_bar_count_snaps_to_nearest_choice`
 - `corrupt_file_returns_parse_error`
 - `ephemeral_store_keeps_changes_without_file`
@@ -345,5 +401,9 @@ Application Core затемняет акцент для текста (ссылк
   `existed_at_load`)
 - ADR-0048: Профиль сети (`network_profile`)
 - ADR-0049: Локальная статистика прослушивания (`stats_enabled`)
+- ADR-0054: Запрет сна на время таймера (`sleep_prevent_sleep`)
+- ADR-0055: Действие по истечении таймера (`sleep_action`)
+- ADR-0056: Затухание звука (`sleep_fade_seconds`, `SLEEP_FADE_CHOICES`)
+- ADR-0058: Окно предупреждения (`sleep_warning`)
 - `docs/modules/10-settings.md`, `docs/modules/14-ui-settings.md`
 - `docs/interfaces/17-stats.md` — файл `stats.json` схемы 1 и команды `stats`

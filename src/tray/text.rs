@@ -121,23 +121,20 @@ pub(crate) fn volume_label(snapshot: &TraySnapshot) -> String {
     )
 }
 
-/// Заголовок группы таймера сна: `Sleep timer · 45 min` или `… · Off`.
+/// Заголовок группы таймера сна: `Sleep timer · 12:34` или `… · 45 min`.
 pub(crate) fn sleep_label(snapshot: &TraySnapshot) -> String {
     let text = &i18n::catalog(snapshot.language).settings;
     match snapshot.sleep_remaining_secs {
         Some(secs) => {
-            let hours = secs / 3_600;
-            let minutes = (secs % 3_600) / 60;
-            let secs = secs % 60;
-            let remaining = if hours > 0 {
-                format!("{hours}:{minutes:02}:{secs:02}")
-            } else {
-                format!("{minutes}:{secs:02}")
-            };
+            let remaining = i18n::sleep_remaining_label(snapshot.language, secs);
             format!("{} · {}", text.sleep_timer, remaining)
         }
         None => match snapshot.sleep_minutes {
-            Some(minutes) => format!("{} · {} min", text.sleep_timer, minutes),
+            Some(minutes) => format!(
+                "{} · {}",
+                text.sleep_timer,
+                i18n::sleep_option_label(snapshot.language, minutes)
+            ),
             None => format!("{} · {}", text.sleep_timer, text.sleep_off),
         },
     }

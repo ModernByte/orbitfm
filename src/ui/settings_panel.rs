@@ -16,8 +16,8 @@ use crate::integration::status::{Availability, InstallState, IntegrationsView, T
 use crate::integration::{Target, TargetGroup};
 use crate::session::{SettingsCategory, WindowMode};
 use crate::settings::{
-    AccentColor, Language, MotionReactivity, MotionStyle, NetworkProfile, SLEEP_CHOICES, Settings,
-    ThemeMode, VIZ_BAR_CHOICES,
+    AccentColor, Language, MotionReactivity, MotionStyle, NetworkProfile, SLEEP_CHOICES,
+    SLEEP_FADE_CHOICES, Settings, SleepAction, ThemeMode, VIZ_BAR_CHOICES,
 };
 use crate::stats::StatsSnapshot;
 
@@ -77,6 +77,8 @@ pub(crate) struct SettingsState<'a> {
     pub show_help: bool,
     /// Активный таймер сна: `None` — выключен (ADR-0046).
     pub sleep_minutes: Option<u16>,
+    /// Почему ингибитор сна не взят: строка для раздела «Окно» (ADR-0054 §3).
+    pub sleep_inhibition_status: Option<String>,
     /// Открытая категория: состояние окна, а не персистентная настройка.
     pub category: &'a mut SettingsCategory,
     /// Снимок интеграций: страница не ходит по файлам на каждый кадр (ADR-0042).
@@ -594,6 +596,50 @@ fn audio(
             actions.push(UiAction::SetSleepTimer((minutes > 0).then_some(minutes)));
         }
         divider(ui, palette, alpha);
+        let action = state.settings.sleep_action;
+        if let Some(index) = row(
+            ui,
+            &dim,
+            strings.sleep_action,
+            Some(strings.sleep_action_hint),
+            DROPDOWN_SLOT,
+            |ui| {
+                dropdown(
+                    ui,
+                    &dim,
+                    "orbitfm_set_sleep_action",
+                    ui.available_width(),
+                    &SleepAction::ALL,
+                    action,
+                    |index| sleep_action_label(strings, SleepAction::ALL[index]).to_owned(),
+                )
+            },
+        ) {
+            actions.push(UiAction::SetSleepAction(SleepAction::ALL[index]));
+        }
+        divider(ui, palette, alpha);
+        let fade = state.settings.sleep_fade_seconds;
+        if let Some(index) = row(
+            ui,
+            &dim,
+            strings.sleep_fade,
+            Some(strings.sleep_fade_hint),
+            DROPDOWN_SLOT,
+            |ui| {
+                dropdown(
+                    ui,
+                    &dim,
+                    "orbitfm_set_sleep_fade",
+                    ui.available_width(),
+                    &SLEEP_FADE_CHOICES,
+                    fade,
+                    |index| i18n::sleep_fade_label(state.language, SLEEP_FADE_CHOICES[index]),
+                )
+            },
+        ) {
+            actions.push(UiAction::SetSleepFade(SLEEP_FADE_CHOICES[index]));
+        }
+        divider(ui, palette, alpha);
         let wrap = state.settings.queue_wrap;
         if switch_row(
             ui,
@@ -613,6 +659,42 @@ fn audio(
     ui.add_space(10.0);
     card(ui, palette, alpha, |ui| {
         let dim = faded_palette(palette, alpha);
+        let prevent = state.settings.sleep_prevent_sleep;
+        if switch_row(
+            ui,
+            &dim,
+            strings.sleep_prevent_sleep,
+            Some(strings.sleep_prevent_sleep_hint),
+            prevent,
+            true,
+        )
+        .clicked()
+        {
+            actions.push(UiAction::SetSleepPreventSleep(!prevent));
+        }
+        if let Some(status) = &state.sleep_inhibition_status {
+            ui.add_space(3.0);
+            ui.label(
+                egui::RichText::new(status)
+                    .size(10.5)
+                    .color(faded(palette.error, alpha)),
+            );
+        }
+        divider(ui, palette, alpha);
+        let warning = state.settings.sleep_warning;
+        if switch_row(
+            ui,
+            &dim,
+            strings.sleep_warning,
+            Some(strings.sleep_warning_hint),
+            warning,
+            true,
+        )
+        .clicked()
+        {
+            actions.push(UiAction::SetSleepWarning(!warning));
+        }
+        divider(ui, palette, alpha);
         let profile = state.settings.network_profile;
         if let Some(index) = row(
             ui,
@@ -770,6 +852,14 @@ fn window(
         let help = state.show_help;
         if switch_row(ui, &dim, strings.show_help, None, help, true).clicked() {
             actions.push(UiAction::ToggleHelp);
+        }
+        if let Some(status) = &state.sleep_inhibition_status {
+            divider(ui, palette, alpha);
+            ui.label(
+                egui::RichText::new(status)
+                    .size(10.5)
+                    .color(faded(palette.error, alpha)),
+            );
         }
     });
 }
@@ -1121,6 +1211,15 @@ fn category_hint(strings: &i18n::SettingsText, category: SettingsCategory) -> &'
         SettingsCategory::Stats => strings.stats_page_hint,
         SettingsCategory::Integrations => strings.integrations_page_hint,
         SettingsCategory::About => strings.about_page_hint,
+    }
+}
+
+/// Подпись действия по истечении таймера сна (ADR-0055).
+fn sleep_action_label(strings: &i18n::SettingsText, action: SleepAction) -> &'static str {
+    match action {
+        SleepAction::Nothing => strings.sleep_action_nothing,
+        SleepAction::Suspend => strings.sleep_action_suspend,
+        SleepAction::PowerOff => strings.sleep_action_power_off,
     }
 }
 

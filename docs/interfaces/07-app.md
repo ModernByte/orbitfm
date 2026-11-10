@@ -39,8 +39,7 @@ root-вьюпорта: цикл завершается, управление в�
    (`services::artwork`, ADR-0016 ред. 2),
    `SpectrumOverlay`, `motion: MotionMixer`, `orbit_ring: OrbitRing`, `CalloutState`,
    `station_callout: CalloutState`, `VisualizerModel`, `Toast`, `transitions: Transitions`
-   с прогрессами переходов зон (ADR-0032), `settings_rect` — последний прямоугольник окна
-   настроек, по которому гаснет модалка (ADR-0031, ADR-0032), `settings_category`,
+   с прогрессами переходов зон (ADR-0032), `settings_category`,
    `integrations: IntegrationPanel` (снимок и очередь операций, ADR-0042) и
    `onboarding: onboarding::View` (шаг и отклики мастера, ADR-0041).
 5. Устанавливать `WakeHandle` в начале прогона (`OrbitApp::new` → `wake.install`, замыкание
@@ -168,15 +167,16 @@ root-вьюпорта: цикл завершается, управление в�
                                        OVERLAY 500×620 / LISTENING 420×152 / PANEL 400×640
     11.2. Session::begin_window(size) — признак «окно открыто», сброс неисполненного намерения
     11.3. Session::settle_analysis() — включить `@level`/`@spectrum` под открытое окно
-    11.4. run_window(session, size)  — eframe::run_native ПОВТОРНО из главного потока
-        (кэш событийного цикла — thread_local, другой поток недопустим);
-        NativeOptions.viewport собирается из restore_size():
-        with_title(Session::window_mode().title()), with_app_id(APP_ID),
-        with_inner_size(size), with_min_inner_size(Session::window_min_size())
-        (минимум зависит от `WindowMode`: Focus — WINDOW_MIN_SIZE 720×480),
-        with_transparent(true);
+    11.4. run_window(session, size, surface) — eframe::run_native ПОВТОРНО из главного
+        потока (кэш событийного цикла — thread_local, другой поток недопустим);
+        NativeOptions.viewport собирается из `RootSurface`:
+        with_title(surface.title()), with_app_id(APP_ID),
+        with_inner_size(size), with_min_inner_size(surface.min_size())
+        (минимум зависит от поверхности: Focus — WINDOW_MIN_SIZE 720×480,
+        Settings — размер варианта, Warning — 360×280),
+        with_transparent(surface.is_transparent()), with_decorations(!borderless);
         renderer: Renderer::Wgpu
-    11.5. OrbitApp::new(cc, &mut session) — заимствует Session на весь прогон
+    11.5. OrbitApp::new(cc, &mut session, surface) — заимствует Session на весь прогон
     11.6. Session::end_window()      — root-вьюпорт закрыт: wake.clear() +
                                        flush_pending_volume() (дописывает прерванный drag
                                        громкости, ADR-0031) + sync_media() + sync_tray()
@@ -186,7 +186,9 @@ root-вьюпорта: цикл завершается, управление в�
     11.9. Session::close_settings()  — окно настроек закрывается до парковки (ADR-0031)
     11.10. Session::settle_analysis() — снять анализ: окно уходит в `park`
     11.11. Session::park()           — простой без окна; ParkOutcome::Show → шаг 11.1,
-                                      ParkOutcome::Quit → выход
+                                      ParkOutcome::Settings → окно настроек,
+                                      ParkOutcome::Warn → окно предупреждения,
+                                      ParkOutcome::Quit → выход (ADR-0053, ADR-0058)
 12. OrbitApp::new                   — на каждый прогон: применяет тему, акцент и язык к
                                       egui (`palette::configure_style`, включая
                                       `Style::animation_time` под reduce motion), ставит
@@ -304,14 +306,17 @@ transport → help → легенда → капсулы, затем в `Order::
 
 Раскладка «Orbital Desk» (Этап 8, фазы 1–7): глобус занимает всё окно (full-bleed
 со звёздным небом), поверх него рисуются плавающие стеклянные зоны — их геометрию
-считает `DeskLayout::compute(viewport, panel_open, help_open, settings_open, mode)`
+считает `DeskLayout::compute(viewport, panel_open, help_open, mode)`
 (`src/ui/layout.rs`): HUD сверху (58 px), панель станций справа (360 px),
 transport снизу (84 px: контролы + громкость + 40 px визуализатора), help-карточка
-216×128 слева сверху (по требованию, с нижним полем 8 px), легенда плотности слева снизу и
-модальное окно настроек по центру (760×544, клампится до `viewport − 2·MARGIN`) поверх
-scrim на весь viewport; мастер первого запуска — модалка 560×468 поверх того же
-стола (ADR-0041), сцена под ней остаётся на месте. Клик и колесо
-глобуса игнорируются внутри плавающих зон и зоны окна настроек (`DeskLayout::blocks_point`). UI вынесен
+216×128 слева сверху (по требованию, с нижним полем 8 px) и легенда плотности слева
+снизу. Окно настроек больше не модалка стола: это отдельная root-поверхность
+(`RootSurface::Settings`, ADR-0053), у которой нет ни scrim, ни `settings_rect`;
+стол под ней не рисуется. Мастер первого запуска остаётся модалкой 560×468 поверх
+стола (ADR-0041), сцена под ней остаётся на месте. Клик и колесо глобуса
+игнорируются внутри плавающих зон (`DeskLayout::blocks_point`). Окно предупреждения
+таймера сна — тоже отдельная root-поверхность (`RootSurface::Warning`, ADR-0058):
+капсула без рамки, кольцо отсчёта и кнопка «Отменить». UI вынесен
 в `src/ui/`; каждая зона через `ui.scope_builder(...).inner` возвращает собственный
 `Vec<UiAction>`, `OrbitApp` склеивает их и применяет после отрисовки кадра. Все
 надписи интерфейса берутся из `crate::i18n::catalog(language)` (ADR-0030), язык —
@@ -520,11 +525,12 @@ focusable, ↑/↓ переводят фокус на соседа по види
 ## Зависимости
 
 `OrbitApp<'a>` владеет только кадрами и per-run ресурсами: `session: &'a mut Session`,
+`surface: RootSurface` (стол, настройки или предупреждение — ADR-0053, ADR-0058),
 `globe_ready`, `spectrum_overlay: SpectrumOverlay`, `motion: MotionMixer`,
 `orbit_ring: OrbitRing`,
 `callout: CalloutState`, `station_callout: CalloutState`, `visualizer: VisualizerModel`,
 `favicons: FaviconCache`, `artwork: ArtworkFetcher`, `toast: Toast`,
-`transitions: Transitions`, `settings_rect: Option<egui::Rect>`, `settings_category`,
+`transitions: Transitions`, `settings_category`,
 `integrations: IntegrationPanel`, `onboarding: onboarding::View`,
 `country_metric: CountryMetric`, `country_heat: CountryHeatCache`. Подсистемами
 (`AudioEngine`, `GeoService`, `RadioBrowserClient`,

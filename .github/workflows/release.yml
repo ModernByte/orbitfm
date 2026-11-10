@@ -182,17 +182,28 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Setup MSYS2 with libmpv
+      - name: Setup MSYS2
         id: msys2
         timeout-minutes: 30
         uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
         with:
           msystem: UCRT64
           update: false
-          install: >-
-            binutils
-            mingw-w64-ucrt-x86_64-mpv
           path-type: inherit
+
+      # См. ci.yml: `install` внутри action не умеет ни ретраев, ни
+      # `--disable-download-timeout`; медленное зеркало роняло релиз.
+      - name: Install MSYS2 packages
+        shell: msys2 {0}
+        timeout-minutes: 20
+        run: |
+          for attempt in 1 2 3; do
+            pacman --noconfirm --needed --disable-download-timeout -S \
+              binutils mingw-w64-ucrt-x86_64-mpv && exit 0
+            echo "pacman: попытка $attempt не удалась, повтор через $((attempt * 10)) с" >&2
+            sleep $((attempt * 10))
+          done
+          exit 1
 
       - name: Setup MSVC tools
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0

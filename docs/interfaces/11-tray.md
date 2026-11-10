@@ -61,6 +61,9 @@ pub(crate) struct TraySnapshot {
     pub(crate) volume_percent: u8,
     /// Активный таймер сна в минутах; `None` — выключен (ADR-0046).
     pub(crate) sleep_minutes: Option<u16>,
+    /// Отображаемый остаток таймера в секундах; `None` — таймер выключен
+    /// (ADR-0057). Считается теми же `display_seconds`, что кнопка часов.
+    pub(crate) sleep_remaining_secs: Option<u64>,
     pub(crate) theme: ThemeMode,
     pub(crate) language: Language,
 }
@@ -142,6 +145,7 @@ pub(crate) fn spawn(
 | `favorite` | подпись пункта в подменю `about_station`: `common.add_favorite` или `common.remove_favorite` |
 | `volume_percent` | строка группы громкости `Volume · NN%`; громкость публикуется при каждом изменении |
 | `sleep_minutes` | выбранный пункт подменю `sleep_timer` (`Sleep timer · Off`/`45 min`); `None` отмечает «выключен» (ADR-0046) |
+| `sleep_remaining_secs` | остаток активного таймера: заголовок подменю показывает `Sleep timer · 12:34` (или `1:02:03`), а не выбранную длительность; `None` возвращает подпись выбранного варианта (ADR-0057) |
 | `theme` | `selected` в `RadioGroup` System / Dark / Light внутри подменю `appearance` |
 | `language` | язык всех подписей меню и заглушки тултипа: `i18n::catalog(language)`; смена языка меняет снимок, поэтому меню перестраивается без перезапуска (ADR-0030) |
 
@@ -155,7 +159,7 @@ pub(crate) fn spawn(
 Меню (ред. 0.16) сгруппировано: карточка станции (неактивные строки) ·
 разделитель · окно · разделитель · `playback` + транспорт · разделитель ·
 `volume` + громкость · разделитель · подменю `sleep_timer` (Off/15/30/45/60/90,
-ADR-0046) · подменю `appearance` · разделитель · подменю `about_station`
+ADR-0046; при активном таймере заголовок показывает остаток `12:34`, ADR-0057) · подменю `appearance` · разделитель · подменю `about_station`
 (избранное, homepage) · разделитель · настройки · выход. На macOS тот же
 порядок и подписи: `Submenu`, чекбоксы темы, `play_pause`, избранного и
 таймера сна, стабильные строковые `MenuId`

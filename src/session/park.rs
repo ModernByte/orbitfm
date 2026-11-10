@@ -31,6 +31,8 @@ pub(crate) enum ParkOutcome {
     Quit,
     /// Открыть окно настроек вместо стола (ADR-0053 §6b).
     Settings,
+    /// Открыть окно предупреждения таймера сна вместо стола (ADR-0058).
+    Warn,
 }
 
 /// Событие, разбудившее простаивающее приложение.
@@ -110,6 +112,7 @@ impl super::Session {
             match self.window.take_intent() {
                 Some(UiIntent::Show) => return ParkOutcome::Show,
                 Some(UiIntent::Settings) => return ParkOutcome::Settings,
+                Some(UiIntent::Warn) => return ParkOutcome::Warn,
                 Some(UiIntent::Hide) | Some(UiIntent::Close) | None => {}
             }
         }

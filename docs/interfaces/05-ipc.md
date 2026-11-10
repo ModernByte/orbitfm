@@ -65,6 +65,10 @@ Windows. Named pipe занимает первый экземпляр как пр
 | `play-url <url>` | Импортировать внешний поток: `.m3u`, `.pls`, страница или аудио; только `http(s)`, без пробелов, ≤2048 байт (ADR-0040) | URL |
 | `sleep <minutes>` | Включить таймер сна: остановить эфир через N минут, `1..=720` (ADR-0046) | целое число |
 | `sleep clear` | Выключить таймер сна (ADR-0046) | — |
+| `sleep action <действие>` | Что делать после остановки: `nothing`, `suspend` или `power-off` (ADR-0055) | `nothing`, `suspend`, `power-off` |
+| `sleep fade <секунды>` | Плавное затухание перед стопом: `0`, `60`, `120`, `180`, `300` (ADR-0056) | целое число из списка |
+| `sleep inhibit <on\|off>` | Не давать системе уснуть, пока играет эфир и тикает таймер (ADR-0054) | `on`, `off` |
+| `sleep warning <on\|off>` | Окно предупреждения за минуту до действия (ADR-0058) | `on`, `off` |
 | `library-export <path>` | Записать избранное и историю в JSON схемы 1 (ADR-0046) | остаток строки-путь |
 | `library-import <path>` | Слить JSON схемы 1 с локальной библиотекой (ADR-0046) | остаток строки-путь |
 | `stats` | Сводка прослушанного: суммарное время и топ-5 станций, стран и тегов (ADR-0049) | — |
@@ -113,6 +117,18 @@ Windows. Named pipe занимает первый экземпляр как пр
 Таймер переживает скрытие окна и проверяется в простое, но не переживает
 выход процесса; по срабатывании эфир останавливается и показывается
 уведомление (ADR-0046).
+
+`sleep action|fade|inhibit|warning` — подкоманды ритуала сна (ADR-0054…0058):
+`action` выбирает `nothing`/`suspend`/`power-off`, `fade` — длительность
+затухания из `0/60/120/180/300` секунд, `inhibit` и `warning` — тумблеры
+`on`/`off`. Значения пишутся в `settings.json` и применяются к активному
+таймеру сразу: смена `fade` пересчитывает начатый фейд, смена `inhibit`
+берёт или снимает лок, смена `action` влияет на ближайшее срабатывание.
+Ответы — `ok sleep action <действие>`, `ok sleep fade <секунды>`,
+`ok sleep inhibit <on|off>`, `ok sleep warning <on|off>`; неизвестное
+действие, секунды вне списка и `on`/`off` в другом регистре отклоняются
+как `error`. `sleep action suspend` и `power-off` не запускают действие
+немедленно — только выбирают поведение таймера.
 
 `network` меняет профиль сети и сохраняет его в `settings.json`: `metered`
 ограничивает discovery битрейтом 128 кбит/с и уменьшает фоновую выборку мира,
@@ -206,7 +222,9 @@ ok sleep 45
 ok exported 12
 ok imported 3 favorites, 1 history, 2 skipped
 ```
-`sleep clear` отвечает просто `ok`. `network` отвечает `ok network <профиль>`.
+`sleep clear` отвечает просто `ok`. Подкоманды ритуала сна отвечают
+`ok sleep action suspend`, `ok sleep fade 300`, `ok sleep inhibit on` и
+`ok sleep warning off`. `network` отвечает `ok network <профиль>`.
 
 `stats` и `stats clear` отвечают (ADR-0049):
 ```
@@ -263,7 +281,7 @@ error <сообщение>
 {
   "schema": 1,
   "app": "orbitfm",
-  "version": "0.19.0-rc.1",
+  "version": "0.21.0-rc.3",
   "state": "playing",
   "station": {
     "uuid": "960cf833-0601-11e8-ae97-52543be04c81",
@@ -285,7 +303,15 @@ error <сообщение>
   "language": "en",
   "network": "unlimited",
   "can": { "previous": true, "next": true },
-  "sleep": { "minutes": 45, "remaining_secs": 2700 },
+  "sleep": {
+    "minutes": 45,
+    "remaining_secs": 2700,
+    "inhibited": true,
+    "action": "suspend",
+    "warning": true,
+    "fade_seconds": 300
+  },
+  "settings_open": false,
   "ui": {
     "play_pause": "Play/Pause", "stop": "Stop", "previous": "Previous",
     "next": "Next", "radio_roulette": "Radio Roulette",
@@ -330,7 +356,12 @@ error <сообщение>
   `rose`, `cyan`): попап и виджеты панелей красят акцент, не дублируя палитру.
 - `sleep` — активный таймер сна (ADR-0046): `minutes` — выбранная
   длительность, `remaining_secs` — остаток на момент снимка; `null`, когда
-  таймер выключен. Поле аддитивно, схема остаётся 1.
+  таймер выключен. Аддитивные поля ритуала (ADR-0054…0058): `inhibited` —
+  лок сна взят прямо сейчас, `action` — `nothing`/`suspend`/`power-off`,
+  `warning` — включено ли окно предупреждения, `fade_seconds` — длительность
+  затухания. Все поля аддитивны, схема остаётся 1.
+- `settings_open` — открыто ли окно настроек (ADR-0053). Поле аддитивно,
+  схема остаётся 1.
 - `network` — действующий профиль сети: `unlimited`, `metered` или
   `offline-first` (ADR-0048). Поле аддитивно, схема остаётся 1.
 - `can` — доступность шага по видимой очереди с учётом `queue_wrap`:
@@ -445,6 +476,21 @@ impl ThemeArg {
     pub fn as_str(self) -> &'static str;
 }
 
+/// Действие по истечении таймера сна в протоколе (ADR-0055).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SleepActionArg {
+    Nothing,
+    Suspend,
+    PowerOff,
+}
+
+impl SleepActionArg {
+    /// Имя действия в протоколе: `nothing`, `suspend`, `power-off`.
+    pub fn as_str(self) -> &'static str;
+    /// Разбор аргумента; регистр и лишние слова — ошибка.
+    pub fn parse(raw: &str) -> Result<Self, IpcError>;
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum IpcCommand {
     Toggle,
@@ -498,6 +544,14 @@ pub enum IpcCommand {
     SetSleep { minutes: u16 },
     /// `sleep clear` — выключить таймер сна.
     ClearSleep,
+    /// `sleep action <действие>` — что делать после остановки (ADR-0055).
+    SetSleepAction { action: SleepActionArg },
+    /// `sleep fade <секунды>` — затухание перед стопом (ADR-0056).
+    SetSleepFade { seconds: u16 },
+    /// `sleep inhibit <on|off>` — не давать системе уснуть (ADR-0054).
+    SetSleepInhibit { enabled: bool },
+    /// `sleep warning <on|off>` — окно предупреждения (ADR-0058).
+    SetSleepWarning { enabled: bool },
     /// `library-export <path>` — JSON схемы 1 (ADR-0046).
     LibraryExport { path: String },
     /// `library-import <path>` — слияние JSON схемы 1 (ADR-0046).
@@ -681,7 +735,7 @@ ADR-0051 шаги такие (полностью — модуль 16 § 4.7):
 - `hyprland` — путь `~/.config/hypr/orbitfm.conf` и строку
   `source = ~/.config/hypr/orbitfm.conf`, которую пользователь сам добавляет в
   свой `hyprland.conf` (в чужой конфиг установщик её не пишет), плюс сообщение,
-  что 14 правил текущего сеанса применены через
+  что 18 правил текущего сеанса применены через
   `hyprctl keyword windowrulev2`.
 
 Отказ `hyprctl` установкой не отменяется: он уходит в строку

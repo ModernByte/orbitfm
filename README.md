@@ -1,7 +1,7 @@
 # OrbitFM
 
 **Плеер интернет-радио с 3D-глобусом**  
-Под эгидой [ModernByte](https://github.com/ModernByte) · версия `0.21.0-rc.1`
+Под эгидой [ModernByte](https://github.com/ModernByte) · версия `0.21.0-rc.3`
 
 [![Релиз](https://img.shields.io/github/v/release/ModernByte/orbitfm?include_prereleases)](https://github.com/ModernByte/orbitfm/releases)
 [![Статус CI](https://img.shields.io/github/actions/workflow/status/ModernByte/orbitfm/ci.yml?branch=main)](https://github.com/ModernByte/orbitfm/actions/workflows/ci.yml)
@@ -15,7 +15,7 @@ OrbitFM — плеер интернет-радио, где каталог пок
 и её станции лежат рядом в списке; так же можно искать по жанру или по названию станции. Закрытие окна музыку не
 останавливает: приложение работает одним процессом, живёт в системном трее и принимает команды из терминала и от
 медиа-клавиш. Для экрана есть три режима — от большого рабочего стола с глобусом до компактной капсулы в углу.
-Приоритетная платформа — Linux (Wayland и X11), сборки есть для Windows и macOS; версия `0.21.0-rc.1` —
+Приоритетная платформа — Linux (Wayland и X11), сборки есть для Windows и macOS; версия `0.21.0-rc.3` —
 пре-релиз, отдельные детали ещё могут меняться.
 
 ## Что умеет
@@ -42,11 +42,16 @@ OrbitFM — плеер интернет-радио, где каталог пок
 - **Медиа-клавиши и системные виджеты.** MPRIS на Linux, System Media Transport Controls на Windows,
   Now Playing на macOS — в том числе при скрытом окне.
 - **17 языков интерфейса** — «Системный» плюс 16 языков, смена без перезапуска.
-- **Настройки.** Тема (системная / тёмная / светлая), акцент, язык, громкость, визуализатор, реактивность и стиль
-  движения, «Уменьшить движение», компоновка окна, таймер сна, зацикливание очереди, профиль сети и учёт
-  статистики. Сохраняются автоматически.
-- **Таймер сна.** `orbitfm sleep 30` (15 / 30 / 45 / 60 / 90 минут в настройках) останавливает эфир по истечении
-  срока и работает при закрытом окне; оставшееся время видно в `orbitfm status --json`, отмена — `sleep clear`.
+- **Настройки.** Отдельное окно, а не модалка поверх стола: три автоматических размера под категорию,
+  тема (системная / тёмная / светлая), акцент, язык, громкость, визуализатор, реактивность и стиль
+  движения, «Уменьшить движение», компоновка окна, таймер сна, зацикливание очереди, профиль сети,
+  ритуал сна и учёт статистики. Сохраняются автоматически.
+- **Таймер сна.** `orbitfm sleep 30` (15 / 30 / 45 / 60 / 90 минут в настройках) работает при закрытом
+  окне; остаток виден на кнопке часов, в трее и в `orbitfm status --json`, отмена — `sleep clear`.
+  Пока играет эфир и тикает таймер, система не уходит в сон (`systemd-inhibit`/`caffeinate`/
+  `SetThreadExecutionState`). По истечении — плавное затухание до 300 секунд, за минуту до действия —
+  окно предупреждения с обратным отсчётом и кнопкой «Отменить», затем «Ничего» / «Сон» / «Выключить»
+  (`orbitfm sleep action suspend`).
 - **Очередь без тупиков.** `Next`/`Previous` идут по текущему видимому списку, а настройка «Зациклить очередь»
   (по умолчанию включена) решает, переходить ли с последней станции на первую; доступность кнопок отражается
   в `can` у `status --json` и в транспорте.
@@ -126,19 +131,19 @@ MSI, два DMG (Apple Silicon и Intel), `.plasmoid` для Plasma 6 и `instal
 
 ### AppImage (Linux x86_64)
 
-Файл называется `OrbitFM-<версия>-x86_64.AppImage`, например `OrbitFM-0.21.0-rc.1-x86_64.AppImage`. Права root и
+Файл называется `OrbitFM-<версия>-x86_64.AppImage`, например `OrbitFM-0.21.0-rc.3-x86_64.AppImage`. Права root и
 установка не нужны — приложение rootless по определению, и `libmpv` с FFmpeg уже внутри:
 
 ```bash
-chmod +x OrbitFM-0.21.0-rc.1-x86_64.AppImage
-./OrbitFM-0.21.0-rc.1-x86_64.AppImage
+chmod +x OrbitFM-0.21.0-rc.3-x86_64.AppImage
+./OrbitFM-0.21.0-rc.3-x86_64.AppImage
 ```
 
 Чтобы добавить приложение в меню и `PATH` без root и без ручного `chmod +x`, положите рядом `install-appimage.sh`
 из релиза и запустите:
 
 ```bash
-bash install-appimage.sh OrbitFM-0.21.0-rc.1-x86_64.AppImage
+bash install-appimage.sh OrbitFM-0.21.0-rc.3-x86_64.AppImage
 ```
 
 Скрипт копирует образ в `~/.local/bin/orbitfm`, ставит desktop entry с абсолютным `Exec`, иконки и metainfo в
@@ -147,7 +152,7 @@ bash install-appimage.sh OrbitFM-0.21.0-rc.1-x86_64.AppImage
 Для обновления запустите скрипт с новым образом.
 
 Если FUSE недоступен (контейнеры, минимальные образы) или не нужна интеграция через монтирование, запускайте в
-режиме распаковки: `APPIMAGE_EXTRACT_AND_RUN=1 ./OrbitFM-0.21.0-rc.1-x86_64.AppImage`. Виджету Noctalia и командам
+режиме распаковки: `APPIMAGE_EXTRACT_AND_RUN=1 ./OrbitFM-0.21.0-rc.3-x86_64.AppImage`. Виджету Noctalia и командам
 `orbitfm …` нужен запускаемый `orbitfm` в `PATH` — скрипт выше ставит его, либо сделайте символьную ссылку на
 AppImage.
 
@@ -254,7 +259,7 @@ OrbitFM; второй экземпляр они не запускают.
 | `omarchy` | виджет бара Omarchy/Quickshell | `omarchy-shell shell rescanPlugins`, затем включить в конфиге бара |
 | `noctalia` | git-источник `orbitfm` и включённый виджет `modernbyte/orbitfm`; файлов у цели нет | «Add widget» → OrbitFM в настройках бара; обновления — `noctalia msg plugins update orbitfm` |
 | `niri` | `~/.config/niri/cfg/orbitfm.kdl` и ровно одна строка `include` в `config.kdl` | ничего — niri 26.04+ перечитывает конфиг сам |
-| `hyprland` | `~/.config/hypr/orbitfm.conf` и 14 правил на текущий сеанс (`hyprctl keyword windowrulev2`) | правила после перезапуска: строка `source = ~/.config/hypr/orbitfm.conf` в свой `hyprland.conf` |
+| `hyprland` | `~/.config/hypr/orbitfm.conf` и 18 правил на текущий сеанс (`hyprctl keyword windowrulev2`) | правила после перезапуска: строка `source = ~/.config/hypr/orbitfm.conf` в свой `hyprland.conf` |
 | `waybar` | модуль `custom/orbitfm`, скрипт и `style.css` | добавить модуль в `modules-*` и импортировать стиль |
 | `polybar` | модуль `[module/orbitfm]` и скрипт | подключить `module/orbitfm` в `modules-*` |
 | `i3blocks` | секция `[orbitfm]` и скрипт | добавить секцию в конфиг i3blocks |
@@ -281,7 +286,7 @@ kbuildsycoca6 --noincremental
 Виджет также публикуется в Releases отдельным архивом `OrbitFM-<версия>-plasma.plasmoid`:
 
 ```bash
-kpackagetool6 -t Plasma/Applet -i OrbitFM-0.21.0-rc.1-plasma.plasmoid
+kpackagetool6 -t Plasma/Applet -i OrbitFM-0.21.0-rc.3-plasma.plasmoid
 ```
 
 Или в графическом интерфейсе: режим редактирования панели → «Добавить виджеты» → «Установить из файла» → выбрать
@@ -357,13 +362,14 @@ orbitfm integration uninstall niri
 orbitfm integration uninstall hyprland
 ```
 
-Правила подбираются по заголовку окна и фиксируют размеры четырёх поверхностей: Focus — 1100×800, Overlay —
-500×620, Listening — 420×152, Panel — 400×640. У niri установщик добавляет в `~/.config/niri/config.kdl` ровно одну
+Правила подбираются по заголовку окна и фиксируют размеры поверхностей: Focus — 1100×800, Overlay —
+500×620, Listening — 420×152, Panel — 400×640, настройки — 420×560 / 760×544 / 1040×720 по варианту
+Compact/Medium/Wide, предупреждение таймера сна — 420×320. У niri установщик добавляет в `~/.config/niri/config.kdl` ровно одну
 строку `include "./cfg/orbitfm.kdl"` (с копией `config.kdl.orbitfm.bak` перед первой правкой, без дублей при
 переустановке). Снятие убирает только свою строку и свой файл; строку, добавленную вручную до установки, оно не
 трогает, но указывает на неё — висячий `include` без файла правил niri не разберёт.
 
-Hyprland получает `~/.config/hypr/orbitfm.conf`, а 14 правил из него дополнительно ставятся на текущий сеанс
+Hyprland получает `~/.config/hypr/orbitfm.conf`, а 18 правил из него дополнительно ставятся на текущий сеанс
 командами `hyprctl keyword windowrulev2 …`. Чужой `hyprland.conf` установщик не правит: строку
 `source = ~/.config/hypr/orbitfm.conf` добавляете вы сами, иначе правила пропадут с перезапуском сеанса. Правила,
 поставленные на живой сеанс, снимаются вместе с сеансом. Подробности и проверка размеров — в вики:
@@ -571,6 +577,10 @@ orbitfm volume 0.4          # 0.0–1.0
 orbitfm volume-up | orbitfm volume-down
 orbitfm sleep 30            # остановить эфир через 1–720 минут
 orbitfm sleep clear         # отменить таймер сна
+orbitfm sleep action suspend # nothing | suspend | power-off — действие по истечении
+orbitfm sleep fade 300      # 0 | 60 | 120 | 180 | 300 секунд затухания
+orbitfm sleep inhibit on    # не давать системе уснуть, пока играет эфир и тикает таймер
+orbitfm sleep warning on    # окно предупреждения за минуту до действия
 orbitfm network metered     # unlimited | metered | offline-first
 orbitfm theme dark          # system | dark | light
 orbitfm library-export ~/orbitfm-library.json  # избранное и история, схема 1

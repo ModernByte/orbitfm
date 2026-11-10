@@ -87,6 +87,14 @@ OrbitFM — 3D Interactive Global Radio Player
   volume-down          Тише на один шаг
   sleep <1-720>        Остановить эфир через заданное число минут
   sleep clear          Отменить таймер сна
+  sleep action <действие>
+                       После остановки: nothing, suspend или power-off
+  sleep fade <секунды>
+                       Плавное затухание перед стопом: 0, 60, 120, 180, 300
+  sleep inhibit <on|off>
+                       Не давать системе уснуть, пока тикает таймер
+  sleep warning <on|off>
+                       Окно предупреждения за минуту до действия
   network <профиль>    Профиль сети: unlimited, metered или offline-first
   stats                Сводка прослушанного: время и топ станции, страны, жанры
   stats --json         Сводка прослушанного в JSON (схема 1)
@@ -449,6 +457,10 @@ fn run_session(
                 // Следующая итерация откроет окно настроек (surface уже Settings).
                 continue;
             }
+            ParkOutcome::Warn => {
+                // Следующая итерация откроет окно предупреждения (surface уже Warning).
+                continue;
+            }
             ParkOutcome::Show => {
                 // Стол показывается следующей итерацией (surface — Desk).
                 continue;
@@ -458,23 +470,14 @@ fn run_session(
 }
 
 fn run_window(session: &mut Session, size: [f32; 2], surface: RootSurface) -> Result<()> {
-    let title: String = match surface {
-        RootSurface::Desk(mode) => mode.title().to_owned(),
-        RootSurface::Settings(settings_size) => {
-            format!("OrbitFM · Settings · {}", settings_size.title_suffix())
-        }
-    };
-    let (borderless, transparent) = match surface {
-        RootSurface::Desk(mode) => (mode.is_borderless(), true),
-        RootSurface::Settings(_) => (false, false),
-    };
+    let title = surface.title();
     let mut viewport = eframe::egui::ViewportBuilder::default()
         .with_title(&title)
         .with_app_id(APP_ID)
         .with_inner_size(size)
         .with_min_inner_size(session.window_min_size())
-        .with_transparent(transparent);
-    if borderless {
+        .with_transparent(surface.is_transparent());
+    if surface.is_borderless() {
         viewport = viewport.with_decorations(false);
     }
     let options = eframe::NativeOptions {
@@ -483,11 +486,10 @@ fn run_window(session: &mut Session, size: [f32; 2], surface: RootSurface) -> Re
         ..Default::default()
     };
 
-    let is_settings = matches!(surface, RootSurface::Settings(_));
     eframe::run_native(
         &title,
         options,
-        Box::new(move |cc| Ok(Box::new(OrbitApp::new(cc, session, is_settings)))),
+        Box::new(move |cc| Ok(Box::new(OrbitApp::new(cc, session, surface)))),
     )
     .map_err(|err| anyhow!("не удалось запустить GUI: {err}"))
 }

@@ -98,7 +98,7 @@ ADR-0026 «macOS: меню-бар и Now Playing при скрытом окне�
 | `Menu` | `/MenuBar`, собирается из снимка на каждое обновление |
 | Карточка станции | 1–3 неактивные строки: `text.tray.now_playing` или `paused` с `{station}`, либо `text.tray.nothing_playing`; затем `страна · NN kbps` и теги — из `station`, `playing`, `language` |
 | Групповой заголовок громкости | неактивная строка `Volume · NN%` из `volume_percent` |
-| Подменю таймера сна | `text::sleep_label` собирает `settings.sleep_timer · <вариант>` из `sleep_minutes`; радиогруппа Off/15/30/45/60/90, клик шлёт `SetSleep` |
+| Подменю таймера сна | `text::sleep_label` собирает `settings.sleep_timer · 12:34` из `sleep_remaining_secs` (или `… · 45 min`, пока снимок без остатка); радиогруппа Off/15/30/45/60/90, клик шлёт `SetSleep` (ADR-0057) |
 | Подменю «О станции» | `common.add_favorite`/`remove_favorite` по `favorite` и `text.tray.open_homepage`; без станции подменю неактивно, без `homepage` — неактивен пункт |
 | `ItemIsMenu` | `false` (константа `MENU_ON_ACTIVATE` по умолчанию) — только тогда хост вызывает `Activate` |
 
@@ -126,8 +126,9 @@ freedesktop-иконками:
    (`audio-volume-low-symbolic`) · разделитель;
 5. подменю `sleep_timer` (`preferences-system-time-symbolic`, ADR-0046):
    радиогруппа `Off`/15/30/45/60/90 из `settings::SLEEP_CHOICES`, подписи
-   `i18n::sleep_option_label`; выбранные минуты приходят в снимке, клик шлёт
-   `TrayCommand::SetSleep`;
+   `i18n::sleep_option_label`; выбранные минуты и остаток приходят в снимке,
+   заголовок подменю показывает `12:34`, клик шлёт `TrayCommand::SetSleep`
+   (ADR-0057);
 6. подменю `appearance` (`preferences-desktop-theme-symbolic`): радиогруппа
    System/Dark/Light · разделитель;
 7. подменю `about_station` (`help-about-symbolic`): избранное

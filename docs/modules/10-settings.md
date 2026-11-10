@@ -1,7 +1,7 @@
 # Модуль: Настройки оформления
 
 **Путь в коде:** `src/settings/*`  
-**Ответственность:** Хранение темы, акцентного цвета, языка, параметров визуализатора, аудио-движения, opt-in HTTP-обложек и поведения очереди, локальная персистентность.  
+**Ответственность:** Хранение темы, акцентного цвета, языка, параметров визуализатора, аудио-движения, opt-in HTTP-обложек, поведения очереди, профиля сети и ритуала сна, локальная персистентность.
 **Зависимости:** serde, serde_json, thiserror
 
 ---
@@ -18,7 +18,7 @@ ADR-0028.
 
 | Файл | Назначение |
 |------|------------|
-| `mod.rs` | `SettingsStore`, `Settings`, `ThemeMode`, `AccentColor`, `MotionReactivity`, `MotionStyle`, `VIZ_BAR_CHOICES`, `default_path` |
+| `mod.rs` | `SettingsStore`, `Settings`, `ThemeMode`, `AccentColor`, `MotionReactivity`, `MotionStyle`, `NetworkProfile`, `SleepAction`, `SLEEP_FADE_CHOICES`, `DEFAULT_SLEEP_FADE`, `VIZ_BAR_CHOICES`, `default_path` |
 | `language.rs` | `Language`, разрешение `System` из локалей, `deserialize_language` для устойчивости к неизвестному коду (ADR-0030) |
 
 ## 3. Данные
@@ -40,6 +40,10 @@ ADR-0028.
 | `reduce_motion` | отключает геометрию и качку, эфир продолжается | `false` |
 | `queue_wrap` | `next` после последней станции возвращается к первой (`false` — шаг за край запрещён, ADR-0046) | `true` |
 | `network_profile` | `unlimited`, `metered`, `offline-first`; фон и потолок discovery (ADR-0048) | `unlimited` |
+| `sleep_action` | `nothing`, `suspend`, `power-off`; что делать после остановки эфира по таймеру (ADR-0055) | `nothing` |
+| `sleep_fade_seconds` | `0`, `60`, `120`, `180`, `300`; иное притягивается к ближайшему (ADR-0056) | `300` |
+| `sleep_prevent_sleep` | не давать системе уснуть, пока играет эфир и тикает таймер (ADR-0054) | `true` |
+| `sleep_warning` | окно предупреждения за минуту до действия (ADR-0058) | `true` |
 
 Акценты — пресеты с фиксированными RGB-компонентами (`AccentColor::rgb`).
 Произвольный цвет отложен: перетаскивание color picker приводило бы к записи
@@ -113,16 +117,22 @@ $HOME/.config/orbitfm/settings.json   (если XDG_CONFIG_HOME не задан/
   (`visualizer_enabled`) и язык (`language`) меняются там же; громкость
   пишется по отпусканию слайдера, а клик, клавиша и щелчок колеса над ним —
   дискретный ввод, который пишет сразу (ADR-0031 § 8).
-- Категория «Аудио» содержит таймер сна (`sleep_minutes`, варианты
-  15/30/45/60/90 и «выключен»), тумблер `queue_wrap` и профиль сети
+- Категория «Аудио» содержит громкость, таймер сна (`sleep_minutes`, варианты
+  из `SLEEP_CHOICES` и «выключен»), действие по истечении (`sleep_action`),
+  затухание (`sleep_fade_seconds`) и тумблер `queue_wrap`; категория «Окно» —
+  тумблеры `sleep_prevent_sleep`/`sleep_warning` и профиль сети
   `network_profile`. Таймер хранится не в настройках, а в `Session`
   (`SleepTimer`): выбор в списке вызывает `UiAction::SetSleepTimer`, а при
   срабатывании эфир останавливается и появляется уведомление (ADR-0046).
+  Действие, фейд и тумблеры — настоящие настройки: они пишутся сразу и
+  применяются к активному таймеру (`set_sleep_action`,
+  `set_sleep_fade_seconds`, `set_sleep_prevent_sleep`, `set_sleep_warning`).
   `queue_wrap` сохраняется сразу и меняет доступность кнопок/MPRIS `can`.
   Профиль сети — выпадающий список `unlimited`/`metered`/`offline-first` с
   подсказкой под строкой; выбор даёт `UiAction::SetNetworkProfile`, сохраняется
   сразу и применяется к фону, discovery и favicon без перезапуска (ADR-0048).
-  Все три строки получают подписи из `i18n`.
+  Все строки получают подписи из `i18n`; отказ лока сна показывается
+  технической строкой под тумблером (ADR-0054).
 - Тумблер «Разрешить HTTP-обложки» (`artwork_allow_http`, категория «Внешний
   вид») сохраняет настройку и сразу переключает политику фетчера через
   `ArtworkFetcher::set_allow_http` (общий `AtomicBool`, ADR-0025 ред. 4).
@@ -151,10 +161,14 @@ Unit-тесты в `src/settings/mod.rs` покрывают XDG-пути и fall
 значения по умолчанию, roundtrip темы, акцента, языка, громкости, видимости
 визуализатора, `artwork_allow_http`, `help_visible`, `queue_wrap`,
 `network_profile`, настроек движения (включая `motion_style` и `allow_flips`),
-недостающие поля, повреждённый файл и эфемерное хранилище.
+ритуала сна (`sleep_action`, `sleep_fade_seconds`, `sleep_prevent_sleep`,
+`sleep_warning`), недостающие поля, повреждённый файл и эфемерное хранилище.
 Отдельно проверяются
 устойчивость к неизвестному коду языка (`language: "klingon"` → `System`,
-остальные поля сохраняются) и кламп громкости при загрузке и записи. В
+остальные поля сохраняются), кламп громкости при загрузке и записи,
+притягивание `sleep_fade_seconds` к `SLEEP_FADE_CHOICES` (75 → 60,
+9999 → `DEFAULT_SLEEP_FADE`), отказ на `sleep_action: "reboot"` и безопасные
+умолчания ритуала (`Nothing`, 300 с, оба тумблера включены). В
 `src/settings/language.rs` — уникальность кодов и нативных имён, roundtrip
 кодов, разбор locale-тегов и приоритет `LC_ALL > LC_MESSAGES > LANG`.
 В `app.rs` проверяются маппинг режима темы, выбор контрастного текста и
@@ -170,5 +184,9 @@ Unit-тесты в `src/settings/mod.rs` покрывают XDG-пути и fall
 - ADR-0013 ред. 2: Избранное и история станций (общий подход к JSON и durable-записи)
 - ADR-0046: Ритуалы слушания — `queue_wrap` и таймер сна
 - ADR-0048: Профиль сети — `network_profile`
+- ADR-0054: Запрет сна на время таймера — `sleep_prevent_sleep`
+- ADR-0055: Действие по истечении — `sleep_action`
+- ADR-0056: Затухание звука — `sleep_fade_seconds`
+- ADR-0058: Окно предупреждения — `sleep_warning`
 - `docs/interfaces/09-settings.md`
 - `docs/modules/07-app-core.md`

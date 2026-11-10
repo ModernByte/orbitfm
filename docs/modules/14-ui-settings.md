@@ -1,25 +1,33 @@
-# Модуль: Модальное окно настроек
+# Модуль: Окно настроек
 
 **Путь в коде:** `src/ui/settings_panel.rs`, `src/ui/onboarding.rs`, раздел «Статистика» — `src/ui/stats_view.rs`, примитивы строк — `src/ui/controls.rs`  
-**Ответственность:** Содержимое модального окна настроек и мастера первого запуска: шапка, категории, карточки и подвал; scrim и каркас стекла — в `app.rs`.  
-**Зависимости:** egui, `ui::animation`, `ui::controls`, `ui::palette`, `ui::widgets`, `ui::icons`, `i18n`, `settings`, `stats` (снимок счётчиков, ADR-0049), `session::WindowMode`, `integration::{status, wm}`.
+**Ответственность:** Содержимое окна настроек и мастера первого запуска: шапка, категории, карточки и подвал. Каркас окна, размеры и заголовки — `session/window.rs` (`RootSurface::Settings`) и `app.rs`.
+**Зависимости:** egui, `ui::animation`, `ui::controls`, `ui::palette`, `ui::widgets`, `ui::icons`, `i18n`, `settings`, `stats` (снимок счётчиков, ADR-0049), `session::{WindowMode, SettingsCategory}`, `integration::{status, wm}`.
 
 ---
 
 ## 1. Назначение
 
-Единое место изменения всех пользовательских настроек (ADR-0031, ред.
-2026-10-28). Модальное окно пришло на смену popup из шестерёнки HUD и drawer'у:
-слева — категории, справа — карточки строк с пояснениями, подписи берутся из
-каталога уже разрешённого языка, поэтому смена языка видна в том же кадре.
-Модуль только рисует содержимое и возвращает `Vec<UiAction>`; сохранение и
-прочие побочные эффекты выполняют `OrbitApp` и `Session`. Каркас стекла, scrim,
-тень и приход/уход считает `app.rs` (`draw_settings`) по прогрессам
-`animation::FrameMotion`.
+Единое место изменения всех пользовательских настроек (ADR-0031, ADR-0053).
+Настройки — не модалка стола, а самостоятельная root-поверхность: при живом
+окне стола `OrbitApp` открывает их immediate-потомком
+(`show_viewport_immediate`, ADR-0053), а при припаркованном процессе
+`run_session` создаёт отдельный прогон `RootSurface::Settings` с заголовком
+`OrbitFM · Settings · <вариант>`. Слева — категории, справа — карточки строк с
+пояснениями, подписи берутся из каталога уже разрешённого языка, поэтому смена
+языка видна в том же кадре. Модуль только рисует содержимое и возвращает
+`Vec<UiAction>`; сохранение и прочие побочные эффекты выполняют `OrbitApp` и
+`Session`.
+
+Ни scrim, ни `settings_rect`, ни `DeskLayout::blocks_point` у настроек больше
+нет: стол под ними не рисуется вовсе, а глобус не получает ввод, потому что в
+прогоне настроек его просто нет (ADR-0053 § 6). Приход/уход содержимого считает
+`app.rs` по прогрессу `animation::FrameMotion`; у отдельного окна нет перехода
+«поверх стола».
 
 `onboarding.rs` — соседний файл той же ответственности: модалка мастера первого
-запуска (ADR-0041) рисуется поверх стола и не входит в `DeskLayout`, пока она
-открыта, сцена не принимает ввод. Её шаги описаны в § 4.1.
+запуска (ADR-0041) по-прежнему рисуется поверх стола и не входит в `DeskLayout`;
+пока она открыта, сцена не принимает ввод. Её шаги описаны в § 4.1.
 
 ## 2. Состояние и геометрия
 
@@ -27,7 +35,10 @@
 |----------|------|-------|
 | `Session` | `settings_open: bool` | окно настроек открыто |
 | `Session` | `pending_volume: Option<f64>` | громкость незавершённого перетаскивания |
-| `OrbitApp` | `settings_rect: Option<Rect>` | прямоугольник с последнего открытого кадра |
+| `Session` | `window.surface: RootSurface` | `Desk(WindowMode)`, `Settings(SettingsSize)` или `Warning` (ADR-0053, ADR-0058) |
+| `Session` | `sleep_minutes: Option<u16>` | активный таймер сна для строки «Таймер сна» (ADR-0046) |
+| `Session` | `sleep_inhibition_status: Option<String>` | почему лок сна не взят; строка раздела «Окно» (ADR-0054) |
+| `OrbitApp` | `surface: RootSurface` | какая поверхность создала прогон |
 | `OrbitApp` | `settings_category: SettingsCategory` | открытая категория, состояние представления |
 | `OrbitApp` | `integrations: IntegrationPanel` | снимок целей и текущая фоновая операция |
 | `OrbitApp` | `stats: Option<StatsSnapshot>` | снимок счётчиков для раздела «Статистика»: читается при открытии окна и после сброса, а не на каждый кадр (тот же приём, что у `IntegrationPanel`, ADR-0042) |
@@ -35,23 +46,25 @@
 | `Session` | `onboarding_open: bool` | мастер первого запуска открыт |
 | `Session` | `onboarding_desktop: Desktop` | окружение, обнаруженное для шага 2 |
 | `OrbitApp` | `onboarding: onboarding::View` | шаг мастера, отклик правил и «Скопировано» |
-| `OrbitApp` | `transitions: Transitions` | прогрессы `settings` и `scrim` кадра |
+| `OrbitApp` | `transitions: Transitions` | прогрессы зон стола; у настроек используется только `settings` |
 | `OrbitApp` | `Toast` | сообщения об ошибках сохранения |
-| `DeskLayout` | `settings: Option<Rect>` | зона модалки в текущем кадре |
 
-`DeskLayout::compute` считает окно в `settings_rect`: размер
-`SETTINGS_MODAL = 760×544`, клампится до `viewport − 2·MARGIN`, центр — центр
-вьюпорта. Окно входит в `blocks_point`, поэтому глобус не получает клики и
-drag, начатые над ним. В `Listening` зоны нет: `Session::open_settings` в этом
-режиме сначала переводит окно в `Overlay`. В `Panel` сцена (шапка, список,
-подвал) остаётся под scrim'ом — настройки больше не занимают стеклянную
-поверхность целиком.
+Размер окна выбирается только автоматически, настройки размера нет
+(ADR-0053 § 5): `SettingsSize::for_open(category, mode)` отдаёт
+`Compact` 420×560 (мин. 360×480), `Medium` 760×544 (мин. 560×420) или
+`Wide` 1040×720 (мин. 760×480). `Integrations | Stats` → `Wide`,
+`Language | About` → `Compact`, остальные категории → `Medium`; `Listening`
+всегда получает `Overlay` через `Session::open_settings`. Геометрия не
+персистится: на Wayland размер задаёт правило WM по заголовку, иначе было бы
+два источника правды. Заголовок несёт вариант
+(`OrbitFM · Settings · Compact|Medium|Wide`), поэтому правила WM из
+`wm-configs/` подбирают размер по нему.
 
 Внутри окна:
 
 | Константа | Значение | Смысл |
 |-----------|----------|-------|
-| `HEADER_HEIGHT` | 58 | шапка со знаком, заголовком, `Esc` и крестиком |
+| `HEADER_HEIGHT` | 58 | шапка со знаком и заголовком; `Esc` и крестик рисует WM/`app.rs` |
 | `NAV_WIDTH` / `NAV_RAIL` | 188 / 64 | колонка подписей или рейка иконок |
 | `NAV_BREAKPOINT` | 640 | ниже этой ширины окна категории сжимаются до иконок |
 | `BODY_MARGIN` | 16 | поля тела и подвала |
@@ -120,14 +133,23 @@ ADR-0049 не требует. Выбранная категория залита
 - **Language** — `dropdown` по `Language::ALL`: `System` и 16 языков с нативными
   именами, пояснение `language_hint`.
 - **Audio** — громкость на всю ширину карточки (`widgets::volume_slider_width`)
-  с процентом справа и пояснениями `audio_hint` и `volume_hint`.
+  с процентом справа и пояснениями `audio_hint` и `volume_hint`; вторая
+  карточка — таймер сна (`dropdown` по `SLEEP_CHOICES`, `UiAction::SetSleepTimer`),
+  действие по истечении (`dropdown` по `SleepAction::ALL`,
+  `UiAction::SetSleepAction`, ADR-0055), затухание (`dropdown` по
+  `SLEEP_FADE_CHOICES`, `UiAction::SetSleepFade`, ADR-0056) и тумблер
+  `queue_wrap`. Активный таймер показывается выбранной длительностью; отсчёт
+  живёт в кнопке часов, трее и статусе (ADR-0057).
 - **Motion & accessibility** — реактивность (`dropdown` по
   `MotionReactivity::ALL`) с подсказкой `motion_spin_hint`, характер движения
   (`dropdown` по `MotionStyle::ALL`), reduce motion и flips — `switch_row`;
   под тумблерами остаётся текстовая подсказка, а на flips при недоступности
   показывается `flips_unavailable`.
 - **Window** — `dropdown` по `WindowMode::ALL` с `window_hint`, `switch_row`
-  карточки управления.
+  карточки управления; вторая карточка — тумблер «не давать системе уснуть»
+  (`UiAction::SetSleepPreventSleep`, ADR-0054) с технической строкой отказа
+  acquire, тумблер окна предупреждения (`UiAction::SetSleepWarning`,
+  ADR-0058) и `dropdown` профиля сети (ADR-0048).
 - **Stats** — раздел «Статистика» (ADR-0049 § 7): суммарные минуты и минуты за
   последние 7 и 30 дней, топ-10 станций, топ-10 стран и топ-10 тегов строками
   `controls::row` с полоской-долей (порядок — по убыванию `seconds`, большие
@@ -138,7 +160,7 @@ ADR-0049 не требует. Выбранная категория залита
   включить учёт — существующий файл при этом не трогается (интерфейс 09).
   Подтверждение инлайн: первое нажатие меняет подпись кнопки на
   `stats_clear_confirm`, второе даёт `UiAction::ClearStats`; отдельного диалога
-  в модалке нет — `src/ui` диалогов не знает. Тумблер даёт
+  в окне нет — `src/ui` диалогов не знает. Тумблер даёт
   `UiAction::SetStatsEnabled(bool)`.
 - **Integrations** — четыре группы `TargetGroup::ALL`: панели и бары, окружения
   рабочего стола (Plasma 6, GNOME, Omarchy, Noctalia), правила окон (`niri`,
@@ -196,20 +218,23 @@ ADR-0049 не требует. Выбранная категория залита
 |----------|-----------|
 | Шестерёнка HUD (Focus) | toggle окна настроек; видима и в узком окне |
 | Шестерёнка верхней капсулы (Overlay) | toggle окна настроек |
-| Шестерёнка шапки панели (Panel) | toggle окна настроек; сцена остаётся под scrim'ом (ADR-0033) |
+| Шестерёнка шапки панели (Panel) | toggle окна настроек (ADR-0033) |
 | Ctrl+, (`modifiers.command` + `Comma`) | toggle в Focus и Overlay |
-| Ctrl+, в Listening | `open_settings` переводит окно в Overlay и открывает настройки |
-| Трей «Settings…» | `open_settings`: показывает окно, при Listening — Overlay |
-| Scrim, крестик шапки, Escape | `CloseSettings` |
-| Hide, WM-close, park | закрытие вьюпорта закрывает настройки |
-| Смена WindowMode | настройки переживают пересоздание viewport |
+| Ctrl+, в Listening | `open_settings(SettingsOrigin::Desk)` переводит окно в Overlay и открывает настройки |
+| Трей «Settings…» | `open_settings(SettingsOrigin::Parked)`: при живом столе — immediate-потомок, при припаркованном процессе — `ParkOutcome::Settings` и отдельный прогон `RootSurface::Settings` |
+| Esc в окне настроек, кнопка WM | `close_settings()` — закрывается только окно настроек |
+| Esc в столе | закрывает только help-карточку; настройки не трогает |
+| Hide, WM-close, park | закрытие root-вьюпорта закрывает настройки; отдельный прогон возвращается в `park()` |
+| Смена WindowMode | настройки переживают пересоздание viewport (`take_reopen`) |
 | Выбор Listening | `SetWindowMode(Listening)` закрывает настройки |
 
 `run_session` после возврата `run_window` вызывает `end_window()`, затем
 проверяет `take_reopen()` и только после него `close_settings()`. Поэтому
 пересоздание viewport из-за смены режима сохраняет окно открытым, а любое другое
-закрытие — нет. В `OrbitApp::logic` Escape снимает самый верхний модальный слой:
-сначала настройки, затем help.
+закрытие — нет. В `OrbitApp::logic` Esc в столе снимает только help; Esc в
+корне настроек и `close_requested` этого окна вызывают `close_settings()`;
+Esc и close окна предупреждения — «Отменить» (ADR-0058). Закрытие корня
+настроек не показывает стол: следующий шаг — `park()`.
 
 ### 4.1. Мастер первого запуска
 
@@ -266,27 +291,29 @@ non-finite заменяется на `DEFAULT_VOLUME`.
 
 ## 6. Ввод
 
-Scrim — `egui::Area` на весь viewport в `Order::Foreground`, затемнение
-`SCRIM_ALPHA = 90` (чёрное в тёмной теме, белое в светлой); клик по нему даёт
-`CloseSettings`. Окно — область того же порядка, аллоцирована позже и забирает
-ввод у скрима; внутри окна `ui.interact` на теле не даёт клику провалиться к
-скриму. Тосты аллоцируются ещё позже и остаются выше. Пока окно открыто,
-`globe_view` считает кадр модальным (`layout.settings.is_some()`): вращение, зум
-и клик по сфере не обрабатываются, а вне модалки работает фильтр по
-`press_origin` — жест, начатый под панелью, глобус не двигает.
+У окна настроек нет ни scrim, ни модального перекрытия: это самостоятельная
+root-поверхность. В прогоне `RootSurface::Settings` `OrbitApp` не создаёт
+`GlobeRenderer` и не рисует стол, поэтому клики, колесо и drag некуда
+проваливаться — `DeskLayout::blocks_point` к настройкам не применяется.
+Immediate-потомок стола получает ввод как обычное окно; клик по телу панели
+остаётся внутри `ui.interact` и не уходит родителю. Тосты аллоцируются позже
+содержимого и остаются выше.
 
-На уходе `DeskLayout` уже не отдаёт зону, поэтому каркас и содержимое
-дорисовываются по сохранённому `settings_rect`: скрим получает `Sense::hover`,
-окно — `interactable(false)`. Гаснущие слои рисуются, но ввод не принимают.
-Скрытия окна по Escape нет.
+У отдельного прогона нет перехода «поверх стола»: содержимое входит по
+прогрессу `settings`, а закрытие окна сразу завершает `run_native` и уходит в
+`park()`. Гаснущих слоёв с сохранённым прямоугольником больше нет.
 
 ## 7. Тесты
 
-- `layout`: `open_settings_modal_is_centered_and_blocks_the_globe`,
-  `closed_settings_modal_does_not_block_anything`,
-  `settings_modal_clamps_to_a_narrow_viewport`,
-  `panel_keeps_its_scene_under_the_settings_modal`,
-  `listening_has_no_settings_zone`;
+- `session::window`: `settings_size_follows_the_opened_category` (таблица
+  категория → вариант), `every_settings_size_has_a_title_and_geometry`,
+  `each_surface_carries_its_geometry_title_and_decoration` — заголовок, размер,
+  минимум и декорации `RootSurface::Settings`/`Warning` (ADR-0053, ADR-0058);
+  `mode_switch_of_an_open_window_reopens_it` — reopen отличается от закрытия,
+  только поэтому настройки при смене режима сохраняются;
+- `layout`: `open_settings_modal_is_centered_and_blocks_the_globe` и соседние
+  тесты модалки удалены вместе с `settings_rect`/`blocks_point` для настроек;
+  `blocks_point` по-прежнему проверяет только зоны стола;
 - `controls`: `switch_state_does_not_move_the_row_or_the_track` (тумблер не меняет
   аллокацию и hit-зону), `disabled_switch_keeps_its_geometry`,
   `knob_travels_between_the_track_edges`,

@@ -81,7 +81,6 @@ pub(crate) fn sleep_option_label(language: Language, minutes: u16) -> String {
 /// Секунды и минуты всегда двузначные, часы — без ведущего нуля. Потолок
 /// таймера (`MAX_SLEEP_MINUTES = 720`) даёт ровно `12:00:00`. Язык пока не
 /// влияет: строка состоит только из цифр и двоеточий.
-#[allow(dead_code)]
 pub(crate) fn sleep_remaining_label(_language: Language, seconds: u64) -> String {
     let hours = seconds / 3_600;
     let minutes = (seconds % 3_600) / 60;

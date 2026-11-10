@@ -48,13 +48,13 @@ JSON не нормируются. Порядок полей не гаранти�
 Первая строка после подписки:
 
 ```json
-{"ev":1,"type":"snapshot","status":{"schema":1,"app":"orbitfm","version":"0.19.0-rc.1","state":"playing","station":{"uuid":"…","name":"…","country":"Германия","countrycode":"de","tags":"…","favicon":"https://…","homepage":"https://…","bitrate":128,"codec":"MP3","source":"radio","favorite":false},"volume":0.75,"window":{"visible":true,"mode":"focus"},"theme":"dark","accent":"blue","language":"ru","network":"unlimited","can":{"previous":true,"next":true},"sleep":null,"ui":{"play_pause":"Пуск/Пауза","stop":"Стоп","previous":"Предыдущая","next":"Следующая","radio_roulette":"Радиорулетка","settings":"Настройки","show_window":"Показать окно","hide_window":"Скрыть окно","nothing_playing":"Ничего не играет","volume_up":"Громче","volume_down":"Тише","search":"Поиск","no_match":"Нет совпадений","retry":"Повторить","close":"Закрыть","favorites":"Избранное","history":"История","play_this_page":"Играть эту страницу","no_audio":"На этой странице не нашлось аудио.","importing":"Импортирую поток…","stream_rejected":"Поток отклонён.","add_favorite":"В избранное","remove_favorite":"Убрать из избранного","now_playing":"Сейчас играет","volume":"Громкость","theme":"Тема","theme_system":"Системная","theme_dark":"Тёмная","theme_light":"Светлая","about_station":"О станции","open_homepage":"Открыть сайт","sleep_timer":"Таймер сна","sleep_off":"Выключен","sleep_minutes":"{minutes} мин","state_playing":"в эфире","state_paused":"пауза","state_buffering":"буферизация","state_reconnecting":"переподключение","state_stopped":"остановлено","state_error":"ошибка"}}}
+{"ev":1,"type":"snapshot","status":{"schema":1,"app":"orbitfm","version":"0.21.0-rc.3","state":"playing","station":{"uuid":"…","name":"…","country":"Германия","countrycode":"de","tags":"…","favicon":"https://…","homepage":"https://…","bitrate":128,"codec":"MP3","source":"radio","favorite":false},"volume":0.75,"window":{"visible":true,"mode":"focus"},"theme":"dark","accent":"blue","language":"ru","network":"unlimited","can":{"previous":true,"next":true},"sleep":null,"settings_open":false,"ui":{"play_pause":"Пуск/Пауза","stop":"Стоп","previous":"Предыдущая","next":"Следующая","radio_roulette":"Радиорулетка","settings":"Настройки","show_window":"Показать окно","hide_window":"Скрыть окно","nothing_playing":"Ничего не играет","volume_up":"Громче","volume_down":"Тише","search":"Поиск","no_match":"Нет совпадений","retry":"Повторить","close":"Закрыть","favorites":"Избранное","history":"История","play_this_page":"Играть эту страницу","no_audio":"На этой странице не нашлось аудио.","importing":"Импортирую поток…","stream_rejected":"Поток отклонён.","add_favorite":"В избранное","remove_favorite":"Убрать из избранного","now_playing":"Сейчас играет","volume":"Громкость","theme":"Тема","theme_system":"Системная","theme_dark":"Тёмная","theme_light":"Светлая","about_station":"О станции","open_homepage":"Открыть сайт","sleep_timer":"Таймер сна","sleep_off":"Выключен","sleep_minutes":"{minutes} мин","state_playing":"в эфире","state_paused":"пауза","state_buffering":"буферизация","state_reconnecting":"переподключение","state_stopped":"остановлено","state_error":"ошибка"}}}
 ```
 
 `status` — ровно объект `status --json` схемы 1 (ADR-0037,
 `docs/interfaces/05-ipc.md` §4). Поля, их типы и правило совместимости
 (`schema` растёт только при удалении/переименовании) те же. `sleep` равен
-`{ minutes, remaining_secs }` при активном таймере и `null` без него; кадр
+`{ minutes, remaining_secs, inhibited, action, warning, fade_seconds }` при активном таймере и `null` без него; кадр
 `state` приходит и в момент срабатывания таймера, когда эфир остановлен
 (ADR-0046).
 
@@ -224,6 +224,13 @@ for line in read_lines():
 - 2026-11-03 (0.19.0-rc.1): в `status` добавлено поле `network`
   (`unlimited` | `metered` | `offline-first`, ADR-0048); поле аддитивное,
   `ev` и `schema` не меняются.
+- 2026-11-06 (0.21.0-rc.2): в `sleep` добавлены `inhibited`, `action`,
+  `warning` и `fade_seconds` (ADR-0054…0058); в корень `status` добавлено
+  `settings_open` (ADR-0053). Поля аддитивные, `ev` и `schema` не меняются.
+- 2026-11-09 (0.21.0-rc.3): предупреждение таймера сна стало самостоятельной
+  root-поверхностью, `remaining_secs` считается по тем же отображаемым секундам,
+  что кнопка часов и трей (ADR-0057, ADR-0058). Конверт, `ev` и `schema` не
+  меняются.
 - 2026-11-03 (планируется, после 0.18.0-rc.1): опциональный флаг
   `events --spectrum` и аддитивный тип кадра `spectrum` для визуализаторов
   TUI (ADR-0047 ревизия 2). Без флага поток не меняется; реализация не

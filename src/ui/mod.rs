@@ -36,7 +36,7 @@ use crate::integration::Target;
 use crate::services::Station;
 use crate::session::WindowMode;
 use crate::settings::{
-    AccentColor, Language, MotionReactivity, MotionStyle, NetworkProfile, ThemeMode,
+    AccentColor, Language, MotionReactivity, MotionStyle, NetworkProfile, SleepAction, ThemeMode,
 };
 
 /// Режим поиска выбирает ядро, UI только показывает переключатель.
@@ -77,6 +77,14 @@ pub(crate) enum UiAction {
     SetArtworkAllowHttp(bool),
     /// Таймер сна: `Some(minutes)` включает, `None` выключает (ADR-0046).
     SetSleepTimer(Option<u16>),
+    /// Действие по истечении таймера: ничего / сон / выключение (ADR-0055).
+    SetSleepAction(SleepAction),
+    /// Длительность плавного затухания перед стопом (ADR-0056).
+    SetSleepFade(u16),
+    /// Запрет сна на время таймера (ADR-0054).
+    SetSleepPreventSleep(bool),
+    /// Окно предупреждения за минуту до действия (ADR-0058).
+    SetSleepWarning(bool),
     /// Кольцевой переход очереди после последней станции (ADR-0046).
     SetQueueWrap(bool),
     /// Профиль сети: фоновая загрузка, битрейт и favicon (ADR-0048).

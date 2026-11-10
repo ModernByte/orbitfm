@@ -29,6 +29,12 @@ pub(crate) const WINDOW_TITLE: &str = "OrbitFM";
 pub(crate) const OVERLAY_TITLE: &str = "OrbitFM · Overlay";
 pub(crate) const LISTENING_TITLE: &str = "OrbitFM · Listening";
 pub(crate) const PANEL_TITLE: &str = "OrbitFM · Panel";
+/// Заголовок окна предупреждения: по нему WM-правило задаёт размер (ADR-0058).
+pub(crate) const WARNING_TITLE: &str = "OrbitFM · Sleep Warning";
+/// Пресет окна предупреждения: 420×320 (ADR-0058).
+pub(crate) const WARNING_SIZE: [f32; 2] = [420.0, 320.0];
+/// Нижний лимит размера окна предупреждения.
+pub(crate) const WARNING_MIN_SIZE: [f32; 2] = [360.0, 280.0];
 
 /// Размер окна настроек: выбирается только автоматически, без настройки
 /// пользователем (ADR-0053). Геометрия не персистится — на Wayland размер
@@ -93,11 +99,62 @@ impl SettingsSize {
 pub(crate) enum RootSurface {
     Desk(WindowMode),
     Settings(SettingsSize),
+    /// Окно предупреждения таймера сна (ADR-0058). Отдельный прогон нужен,
+    /// когда процесс припаркован и immediate-потомка создать некому.
+    Warning,
 }
 
 impl Default for RootSurface {
     fn default() -> Self {
         Self::Desk(WindowMode::default())
+    }
+}
+
+impl RootSurface {
+    /// Заголовок окна: по нему WM-правила задают размер (ADR-0021 п. 4).
+    pub(crate) fn title(self) -> String {
+        match self {
+            Self::Desk(mode) => mode.title().to_owned(),
+            Self::Settings(size) => {
+                format!("OrbitFM · Settings · {}", size.title_suffix())
+            }
+            Self::Warning => WARNING_TITLE.to_owned(),
+        }
+    }
+
+    /// Капсулы и предупреждение живут без рамки; настройки — обычное окно.
+    pub(crate) fn is_borderless(self) -> bool {
+        match self {
+            Self::Desk(mode) => mode.is_borderless(),
+            Self::Settings(_) => false,
+            Self::Warning => true,
+        }
+    }
+
+    /// Прозрачность окна: стол и предупреждение рисуют стекло, настройки — нет.
+    pub(crate) fn is_transparent(self) -> bool {
+        match self {
+            Self::Desk(_) | Self::Warning => true,
+            Self::Settings(_) => false,
+        }
+    }
+
+    /// Пресет размера поверхности.
+    pub(crate) fn size(self) -> [f32; 2] {
+        match self {
+            Self::Desk(mode) => mode.default_size(),
+            Self::Settings(size) => size.size(),
+            Self::Warning => WARNING_SIZE,
+        }
+    }
+
+    /// Нижний лимит размера поверхности.
+    pub(crate) fn min_size(self) -> [f32; 2] {
+        match self {
+            Self::Desk(mode) => mode.min_size(),
+            Self::Settings(size) => size.min_size(),
+            Self::Warning => WARNING_MIN_SIZE,
+        }
     }
 }
 
@@ -213,6 +270,10 @@ pub(crate) enum UiIntent {
     /// Открыть окно настроек вместо стола (ADR-0053). Используется, когда
     /// процесс припаркован и нет UI-пасса для immediate-потомка.
     Settings,
+    /// Открыть окно предупреждения таймера сна вместо стола (ADR-0058).
+    /// Используется только припаркованным процессом: при живом UI-пассе
+    /// предупреждение рисуется immediate-потомком.
+    Warn,
 }
 
 /// Состояние окна (ADR-0018, ADR-0053).
@@ -346,6 +407,23 @@ impl WindowState {
         self.intent = Some(UiIntent::Settings);
     }
 
+    /// Запрос открыть окно предупреждения вместо стола (ADR-0058). Поверхность
+    /// меняется только у припаркованного процесса: живой UI-пасс рисует
+    /// предупреждение immediate-потомком, не трогая root-окно.
+    pub(super) fn request_warning(&mut self) {
+        if self.is_open() {
+            return;
+        }
+        self.surface = RootSurface::Warning;
+        self.intent = Some(UiIntent::Warn);
+    }
+
+    /// Открыт ли root-вьюпорт: по этому признаку `Session` понимает, есть ли
+    /// UI-пасс для immediate-потомка.
+    pub(super) fn is_open(&self) -> bool {
+        self.viewport
+    }
+
     /// Начало прогона UI: root-вьюпорт создан, поверхность и размер применены,
     /// намерений больше нет.
     pub(super) fn begin(&mut self, surface: RootSurface, size: [f32; 2]) {
@@ -372,6 +450,7 @@ impl WindowState {
             RootSurface::Desk(WindowMode::Focus) => self.size.unwrap_or(WINDOW_SIZE),
             RootSurface::Desk(mode) => mode.default_size(),
             RootSurface::Settings(size) => size.size(),
+            RootSurface::Warning => WARNING_SIZE,
         }
     }
 
@@ -584,6 +663,103 @@ mod tests {
     fn modes_are_listed_from_full_to_minimal() {
         let codes: Vec<&str> = WindowMode::ALL.iter().map(|mode| mode.as_str()).collect();
         assert_eq!(codes, ["focus", "overlay", "listening"]);
+    }
+
+    #[test]
+    fn settings_size_follows_the_opened_category() {
+        use SettingsCategory as C;
+        for category in [C::Integrations, C::Stats] {
+            assert_eq!(
+                SettingsSize::for_open(category, WindowMode::Focus),
+                SettingsSize::Wide,
+                "{category:?}"
+            );
+        }
+        for category in [C::Language, C::About] {
+            assert_eq!(
+                SettingsSize::for_open(category, WindowMode::Focus),
+                SettingsSize::Compact,
+                "{category:?}"
+            );
+        }
+        for category in [C::Appearance, C::Audio, C::Motion, C::Window] {
+            assert_eq!(
+                SettingsSize::for_open(category, WindowMode::Overlay),
+                SettingsSize::Medium,
+                "{category:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_settings_size_has_a_title_and_geometry() {
+        for (size, suffix, geometry, minimum) in [
+            (
+                SettingsSize::Compact,
+                "Compact",
+                [420.0, 560.0],
+                [360.0, 480.0],
+            ),
+            (
+                SettingsSize::Medium,
+                "Medium",
+                [760.0, 544.0],
+                [560.0, 420.0],
+            ),
+            (SettingsSize::Wide, "Wide", [1040.0, 720.0], [760.0, 480.0]),
+        ] {
+            let surface = RootSurface::Settings(size);
+            assert_eq!(surface.title(), format!("OrbitFM · Settings · {suffix}"));
+            assert_eq!(surface.size(), geometry);
+            assert_eq!(surface.min_size(), minimum);
+        }
+    }
+
+    #[test]
+    fn each_surface_carries_its_geometry_title_and_decoration() {
+        let settings = RootSurface::Settings(SettingsSize::Wide);
+        assert_eq!(settings.title(), "OrbitFM · Settings · Wide");
+        assert_eq!(settings.size(), [1040.0, 720.0]);
+        assert_eq!(settings.min_size(), [760.0, 480.0]);
+        assert!(!settings.is_borderless());
+        assert!(!settings.is_transparent());
+
+        let warning = RootSurface::Warning;
+        assert_eq!(warning.title(), WARNING_TITLE);
+        assert_eq!(warning.size(), WARNING_SIZE);
+        assert_eq!(warning.min_size(), WARNING_MIN_SIZE);
+        assert!(warning.is_borderless());
+        assert!(warning.is_transparent());
+
+        let desk = RootSurface::Desk(WindowMode::Panel);
+        assert_eq!(desk.title(), PANEL_TITLE);
+        assert_eq!(desk.size(), PANEL_SIZE);
+        assert!(desk.is_borderless());
+        assert!(desk.is_transparent());
+    }
+
+    #[test]
+    fn parked_warning_changes_the_surface_and_asks_park_to_open_it() {
+        let mut window = WindowState::default();
+        window.request_warning();
+        assert_eq!(window.surface, RootSurface::Warning);
+        assert_eq!(window.take_intent(), Some(UiIntent::Warn));
+
+        // Живой UI-пасс не меняет root: предупреждение станет потомком.
+        window.begin(RootSurface::Desk(WindowMode::Focus), WINDOW_SIZE);
+        window.request_warning();
+        assert_eq!(window.surface, RootSurface::Desk(WindowMode::Focus));
+        assert_eq!(window.intent(), None);
+
+        // То же для отдельного окна настроек: предупреждение — его потомок,
+        // а не замена поверхности.
+        window.begin(
+            RootSurface::Settings(SettingsSize::Medium),
+            SettingsSize::Medium.size(),
+        );
+        window.request_warning();
+        assert_eq!(window.surface, RootSurface::Settings(SettingsSize::Medium));
+        assert_eq!(window.intent(), None);
     }
 
     #[test]

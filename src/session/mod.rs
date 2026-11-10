@@ -194,6 +194,9 @@ pub(crate) struct Session {
     /// Почему лок не взят: показывается в настройках вместо `Unavailable`
     /// (ADR-0054 §3).
     pub(crate) sleep_inhibition_detail: Option<String>,
+    /// Попытка взять лок уже провалилась в текущем состоянии: не повторяем её
+    /// на каждом тике, пока не сменится таймер, настройка или состояние эфира.
+    pub(crate) sleep_inhibition_failed: bool,
     /// Открыто окно предупреждения таймера сна (ADR-0058).
     pub(crate) sleep_warning_open: bool,
     /// Единичное действие после предупреждения: Cancel выставляет `Nothing` и
@@ -287,6 +290,7 @@ impl Session {
             sleep_action_once: None,
             sleep_inhibition: None,
             sleep_inhibition_detail: None,
+            sleep_inhibition_failed: false,
             show_help,
             window: WindowState::shown(),
             notices: VecDeque::new(),
@@ -409,6 +413,9 @@ impl Session {
         self.settings_open = false;
         // Поверхность возвращается к столу: следующее окно — Desk.
         self.window.surface = RootSurface::Desk(self.window.mode);
+        // Подписчики `events` видят `settings_open: false` сразу, не дожидаясь
+        // следующего кадра или события парковки (ADR-0039, ADR-0053).
+        self.publish_status();
     }
 
     /// Мастер первого запуска (ADR-0041): показывается только на чистом профиле.
@@ -474,10 +481,7 @@ impl Session {
 
     /// Минимум для `ViewportBuilder` нового окна (ADR-0021 п. 4).
     pub(crate) fn window_min_size(&self) -> [f32; 2] {
-        match self.window.surface {
-            RootSurface::Desk(mode) => mode.min_size(),
-            RootSurface::Settings(size) => size.min_size(),
-        }
+        self.window.surface.min_size()
     }
 
     /// Какая поверхность открыта в текущем прогоне: стол или настройки.
@@ -546,6 +550,9 @@ impl Session {
 
     pub(crate) fn quit(&mut self) {
         self.window.quit();
+        // Выход снимает лок сна сразу, не дожидаясь `Drop` в конце процесса
+        // (ADR-0054 §4). `sync_inhibition` видит `quitting` и не берёт новый.
+        self.sync_inhibition();
     }
 
     pub(crate) fn is_quitting(&self) -> bool {
@@ -633,21 +640,21 @@ impl Session {
         let favorite =
             station.is_some_and(|station| self.library.is_favorite(&station.stationuuid));
         let (can_previous, can_next) = self.skip_availability();
-        let sleep = self
-            .sleep_minutes()
-            .zip(self.sleep_remaining())
-            .map(|(minutes, remaining)| {
-                let settings = self.settings.settings();
-                let inhibited = self.sleep_inhibition.is_some();
-                StatusSleep {
-                    minutes,
-                    remaining_secs: remaining.as_secs(),
-                    inhibited,
-                    action: settings.sleep_action.as_str(),
-                    warning: settings.sleep_warning,
-                    fade_seconds: settings.sleep_fade_seconds,
-                }
-            });
+        let sleep =
+            self.sleep_minutes()
+                .zip(self.sleep_display_seconds())
+                .map(|(minutes, remaining)| {
+                    let settings = self.settings.settings();
+                    let inhibited = self.sleep_inhibition.is_some();
+                    StatusSleep {
+                        minutes,
+                        remaining_secs: remaining,
+                        inhibited,
+                        action: settings.sleep_action.as_str(),
+                        warning: settings.sleep_warning,
+                        fade_seconds: settings.sleep_fade_seconds,
+                    }
+                });
         let payload = build_status_payload(
             &self.audio.state(),
             self.audio.volume(),

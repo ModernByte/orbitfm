@@ -23,8 +23,8 @@ use crate::services::{ArtworkFetcher, Station};
 use crate::session::heat::CountryMetric;
 use crate::session::search::SearchMode;
 use crate::session::{
-    Notice, NoticeKey, Session, SettingsCategory, SettingsOrigin, SettingsSize, StationStartError,
-    UiIntent, WindowMode,
+    Notice, NoticeKey, RootSurface, Session, SettingsCategory, SettingsOrigin, SettingsSize,
+    StationStartError, UiIntent, WindowMode,
 };
 use crate::settings::{Language, MotionReactivity, MotionStyle, Settings};
 use crate::stats::StatsSnapshot;
@@ -67,6 +67,73 @@ fn settings_viewport_id() -> egui::ViewportId {
 /// Идентификатор immediate-вьюпорта предупреждения таймера сна (ADR-0058).
 fn warning_viewport_id() -> egui::ViewportId {
     egui::ViewportId::from_hash_of("orbitfm_sleep_warning")
+}
+
+/// Окно предупреждения таймера сна как immediate-потомок живого окна
+/// (стола или настроек). Вызывается каждый кадр, пока предупреждение открыто;
+/// при припаркованном процессе его заменяет `RootSurface::Warning`.
+fn draw_sleep_warning_child(
+    ui: &mut egui::Ui,
+    session: &mut Session,
+    frame: &Frame,
+) -> Vec<UiAction> {
+    if !session.sleep_warning_open {
+        return Vec::new();
+    }
+    let warning_surface = RootSurface::Warning;
+    let builder = eframe::egui::ViewportBuilder::default()
+        .with_inner_size(warning_surface.size())
+        .with_min_inner_size(warning_surface.min_size())
+        .with_title(warning_surface.title())
+        .with_decorations(false)
+        .with_transparent(true);
+    let warning_actions =
+        ui.ctx()
+            .show_viewport_immediate(warning_viewport_id(), builder, |ui, class| {
+                let remaining = session.sleep_display_seconds().unwrap_or(0);
+                let action = session.effective_sleep_action();
+                let language = session.effective_language();
+                // Esc в потомке — тот же Cancel, что и кнопка
+                // (безопасная трактовка, ADR-0058).
+                let close_requested = ui.input(|input| input.key_pressed(egui::Key::Escape));
+                sleep_warning::show(
+                    ui,
+                    class,
+                    sleep_warning::WarningInputs {
+                        language,
+                        palette: &frame.palette,
+                        remaining_secs: remaining,
+                        action,
+                        close_requested,
+                    },
+                )
+            });
+
+    let mut actions = Vec::new();
+    for warning_action in warning_actions {
+        match warning_action {
+            sleep_warning::WarningAction::Cancel => {
+                actions.push(UiAction::SleepWarningCancel);
+            }
+        }
+    }
+
+    // Пользователь закрыл окно предупреждения кнопкой WM / Esc:
+    // считаем Cancel (безопасная трактовка, ADR-0058).
+    if ui.ctx().input(|input| {
+        input
+            .raw
+            .viewports
+            .get(&warning_viewport_id())
+            .is_some_and(|info| {
+                info.events
+                    .iter()
+                    .any(|event| matches!(event, egui::ViewportEvent::Close))
+            })
+    }) {
+        actions.push(UiAction::SleepWarningCancel);
+    }
+    actions
 }
 
 /// Строка тоста для ключа сообщения ядра: `detail` остаётся технической
@@ -121,6 +188,9 @@ fn notice_text(
 
 pub(crate) struct OrbitApp<'a> {
     session: &'a mut Session,
+    /// Какая поверхность создала этот прогон: стол, настройки или
+    /// предупреждение (ADR-0053, ADR-0058).
+    surface: RootSurface,
     globe_ready: bool,
     spectrum_overlay: SpectrumOverlay,
     /// Аудио-деформация планеты на время показа окна (ADR-0028).
@@ -164,7 +234,7 @@ impl<'a> OrbitApp<'a> {
     pub(crate) fn new(
         cc: &eframe::CreationContext<'_>,
         session: &'a mut Session,
-        is_settings: bool,
+        surface: RootSurface,
     ) -> Self {
         let egui_ctx = cc.egui_ctx.clone();
         palette::configure_style(&egui_ctx, session.settings.settings());
@@ -178,9 +248,9 @@ impl<'a> OrbitApp<'a> {
         // macOS: tray-icon требует запущенного run loop и главного потока,
         // поэтому иконка создаётся здесь, а не в spawn до старта окна (ADR-0026).
         session.attach_tray();
-        // Окно настроек не создаёт GlobeRenderer и не печатает AdapterReport
-        // (ADR-0053 §6b): там нет 3D-глобуса.
-        let globe_ready = if !is_settings {
+        // Окна настроек и предупреждения не создают GlobeRenderer и не печатают
+        // AdapterReport (ADR-0053 §6b, ADR-0058): там нет 3D-глобуса.
+        let globe_ready = if matches!(surface, RootSurface::Desk(_)) {
             if let Some(render_state) = &cc.wgpu_render_state {
                 // Отчёт пишется до создания глобуса: если GlobeRenderer::new упадёт на
                 // неподдерживаемом лимите, именно эти строки останутся в логе (ADR-0052 § 3).
@@ -214,6 +284,7 @@ impl<'a> OrbitApp<'a> {
         favicons.set_network_profile(session.network_profile());
         Self {
             session,
+            surface,
             globe_ready,
             spectrum_overlay: SpectrumOverlay::default(),
             motion: MotionMixer::default(),
@@ -345,6 +416,21 @@ impl<'a> OrbitApp<'a> {
 
     /// Кадр раскладки: снимаем состояние, рисуем слои, исполняем действия.
     fn draw(&mut self, ui: &mut egui::Ui) {
+        // Окно настроек и предупреждения — самостоятельные root-поверхности:
+        // стол под ними не рисуется и immediate-потомок не создаётся (ADR-0053,
+        // ADR-0058). Иначе получился бы вложенный вьюпорт настроек.
+        match self.surface {
+            RootSurface::Desk(_) => {}
+            RootSurface::Settings(_) => {
+                self.draw_settings_root(ui);
+                return;
+            }
+            RootSurface::Warning => {
+                self.draw_warning_root(ui);
+                return;
+            }
+        }
+
         let ctx = ui.ctx().clone();
         let viewport = ui.available_rect_before_wrap();
         let frame = Frame::capture(
@@ -378,12 +464,121 @@ impl<'a> OrbitApp<'a> {
         self.apply_actions(&ctx, actions);
     }
 
+    /// Root-окно настроек: панель рисуется прямо, без стола и без вложенного
+    /// immediate-вьюпорта (ADR-0053 §6b).
+    fn draw_settings_root(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        let viewport = ui.available_rect_before_wrap();
+        if !self.session.settings_open {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
+        let frame = Frame::capture(
+            &ctx,
+            self.session,
+            &mut self.visualizer,
+            viewport,
+            self.country_metric,
+        );
+        let sleep_inhibition_status = self
+            .session
+            .sleep_inhibition_detail
+            .as_deref()
+            .map(|detail| notice_text(frame.language, &NoticeKey::InhibitionLost, Some(detail)));
+        let session = &mut *self.session;
+        if session.settings_open && self.settings_category == SettingsCategory::Integrations {
+            self.integrations.ensure_loaded();
+        }
+        if session.settings_open && self.settings_category == SettingsCategory::Stats {
+            let stale = self
+                .stats_refreshed_at
+                .is_none_or(|refreshed| refreshed.elapsed() >= STATS_REFRESH);
+            if stale {
+                self.stats = session.stats_snapshot();
+                self.stats_refreshed_at = Some(Instant::now());
+            }
+        }
+        let integrations = self.integrations.view();
+        let stats = &self.stats;
+        let mut actions = draw_settings(
+            ui,
+            &frame,
+            egui::ViewportClass::Immediate,
+            SettingsInputs {
+                category: &mut self.settings_category,
+                sleep_minutes: session.sleep_minutes(),
+                sleep_inhibition_status,
+                integrations,
+                stats,
+                stats_clear_armed: self.stats_clear_armed,
+                stats_just_cleared: self.stats_just_cleared,
+            },
+        );
+        // Предупреждение таймера сна может сработать и поверх отдельного окна
+        // настроек: это тот же immediate-потомок, а не вложенные настройки.
+        actions.extend(draw_sleep_warning_child(ui, self.session, &frame));
+        self.toast.draw(
+            &ctx,
+            &frame.palette,
+            frame.layout.toast_offset(viewport),
+            frame.settings.reduce_motion,
+        );
+        self.apply_actions(&ctx, actions);
+    }
+
+    /// Root-окно предупреждения таймера сна: тот же `show`, что и у
+    /// immediate-потомка, но без родительского стола (ADR-0058).
+    fn draw_warning_root(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        if !self.session.sleep_warning_open {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
+        let viewport = ui.available_rect_before_wrap();
+        let frame = Frame::capture(
+            &ctx,
+            self.session,
+            &mut self.visualizer,
+            viewport,
+            self.country_metric,
+        );
+        let close_requested = ctx.input(|input| {
+            input.viewport().close_requested() || input.key_pressed(egui::Key::Escape)
+        });
+        let actions = sleep_warning::show(
+            ui,
+            egui::ViewportClass::Immediate,
+            sleep_warning::WarningInputs {
+                language: frame.language,
+                palette: &frame.palette,
+                remaining_secs: self.session.sleep_display_seconds().unwrap_or(0),
+                action: self.session.effective_sleep_action(),
+                close_requested,
+            },
+        );
+        let mut cancel = close_requested;
+        for action in actions {
+            match action {
+                sleep_warning::WarningAction::Cancel => cancel = true,
+            }
+        }
+        if cancel {
+            self.session.cancel_sleep_warning();
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    }
+
     /// Глобус — нижний слой, поверх него стеклянные зоны `DeskLayout`. Плотность
     /// зон выводится из `WindowMode` (ADR-0021): Focus рисует весь стол, Overlay —
     /// капсулу «станция / мини-глобус / избранное», Listening — одну строку.
     /// Фон зон — градиент с бликом — рисуется до содержимого, потому что
     /// `egui::Frame` умеет только сплошную заливку и остаётся прозрачным.
     fn draw_layers(&mut self, ui: &mut egui::Ui, frame: &Frame) -> Vec<UiAction> {
+        let sleep_inhibition_status = self
+            .session
+            .sleep_inhibition_detail
+            .as_deref()
+            .map(|detail| notice_text(frame.language, &NoticeKey::InhibitionLost, Some(detail)));
         let session = &mut *self.session;
         let (can_previous, can_next) = session.skip_availability();
         // Просьба панели прокрутить строку живёт один кадр: клик по маркеру
@@ -993,19 +1188,26 @@ impl<'a> OrbitApp<'a> {
             let settings_actions =
                 ui.ctx()
                     .show_viewport_immediate(settings_viewport_id(), builder, |ui, class| {
-                        draw_settings(
+                        let mut settings_actions = draw_settings(
                             ui,
                             frame,
                             class,
                             SettingsInputs {
                                 category: &mut self.settings_category,
                                 sleep_minutes: session.sleep_minutes(),
+                                sleep_inhibition_status: sleep_inhibition_status.clone(),
                                 integrations,
                                 stats,
                                 stats_clear_armed: self.stats_clear_armed,
                                 stats_just_cleared: self.stats_just_cleared,
                             },
-                        )
+                        );
+                        // Esc в потомке закрывает окно настроек: отдельного
+                        // крестика в шапке больше нет (ADR-0053 §6a).
+                        if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
+                            settings_actions.push(UiAction::CloseSettings);
+                        }
+                        settings_actions
                     });
             actions.extend(settings_actions);
 
@@ -1026,57 +1228,8 @@ impl<'a> OrbitApp<'a> {
         }
 
         // Окно предупреждения таймера сна — immediate-потомок стола или
-        // окна настроек (ADR-0058).
-        // Вызываем каждый кадр, пока предупреждение открыто.
-        if session.sleep_warning_open {
-            let builder = eframe::egui::ViewportBuilder::default()
-                .with_inner_size(sleep_warning::WARNING_SIZE)
-                .with_min_inner_size(sleep_warning::WARNING_MIN_SIZE)
-                .with_title("OrbitFM · Sleep Warning")
-                .with_decorations(false)
-                .with_transparent(true);
-            let warning_actions =
-                ui.ctx()
-                    .show_viewport_immediate(warning_viewport_id(), builder, |ui, class| {
-                        let remaining = session.sleep_remaining().map_or(0, |d| d.as_secs());
-                        let action = session.effective_sleep_action();
-                        let language = session.effective_language();
-                        sleep_warning::show(
-                            ui,
-                            class,
-                            sleep_warning::WarningInputs {
-                                language,
-                                palette: &frame.palette,
-                                remaining_secs: remaining,
-                                action,
-                                close_requested: false,
-                            },
-                        )
-                    });
-            for warning_action in warning_actions {
-                match warning_action {
-                    sleep_warning::WarningAction::Cancel => {
-                        actions.push(UiAction::SleepWarningCancel);
-                    }
-                }
-            }
-
-            // Пользователь закрыл окно предупреждения кнопкой WM / Esc:
-            // считаем Cancel (безопасная трактовка, ADR-0058).
-            if ui.ctx().input(|input| {
-                input
-                    .raw
-                    .viewports
-                    .get(&warning_viewport_id())
-                    .is_some_and(|info| {
-                        info.events
-                            .iter()
-                            .any(|event| matches!(event, egui::ViewportEvent::Close))
-                    })
-            }) {
-                actions.push(UiAction::SleepWarningCancel);
-            }
-        }
+        // окна настроек (ADR-0058). Вызываем каждый кадр, пока оно открыто.
+        actions.extend(draw_sleep_warning_child(ui, session, frame));
 
         if session.onboarding_open() {
             actions.extend(onboarding::show(
@@ -1198,6 +1351,26 @@ impl<'a> OrbitApp<'a> {
                 }
                 None => self.session.clear_sleep(),
             },
+            UiAction::SetSleepAction(action) => {
+                if let Err(err) = self.session.set_sleep_action(action) {
+                    self.error_toast(ctx, &NoticeKey::SettingNotSaved, Some(err.as_str()));
+                }
+            }
+            UiAction::SetSleepFade(seconds) => {
+                if let Err(err) = self.session.set_sleep_fade_seconds(seconds) {
+                    self.error_toast(ctx, &NoticeKey::SettingNotSaved, Some(err.as_str()));
+                }
+            }
+            UiAction::SetSleepPreventSleep(enabled) => {
+                if let Err(err) = self.session.set_sleep_prevent_sleep(enabled) {
+                    self.error_toast(ctx, &NoticeKey::SettingNotSaved, Some(err.as_str()));
+                }
+            }
+            UiAction::SetSleepWarning(enabled) => {
+                if let Err(err) = self.session.set_sleep_warning(enabled) {
+                    self.error_toast(ctx, &NoticeKey::SettingNotSaved, Some(err.as_str()));
+                }
+            }
             UiAction::SetQueueWrap(wrap) => {
                 if let Err(err) = self.session.set_queue_wrap(wrap) {
                     self.error_toast(ctx, &NoticeKey::SettingNotSaved, Some(err.as_str()));
@@ -1279,9 +1452,13 @@ impl<'a> OrbitApp<'a> {
                 self.session.cancel_sleep_warning();
             }
             UiAction::SetWindowMode(mode) => {
+                // Смена режима из корня-настроек закрывает окно настроек:
+                // новый режим относится к столу, а не к окну настроек.
+                let was_settings_root =
+                    matches!(self.session.root_surface(), RootSurface::Settings(_));
                 self.session.set_window_mode(mode);
                 // В Listening окно настроек не помещается: выбор режима закрывает его.
-                if mode == WindowMode::Listening {
+                if was_settings_root || mode == WindowMode::Listening {
                     self.session.close_settings();
                 }
             }
@@ -1460,6 +1637,8 @@ impl Frame {
 struct SettingsInputs<'a> {
     category: &'a mut SettingsCategory,
     sleep_minutes: Option<u16>,
+    /// Строка «ингибитор недоступен» для раздела «Окно» (ADR-0054 §3).
+    sleep_inhibition_status: Option<String>,
     integrations: IntegrationsView<'a>,
     stats: &'a StatsSnapshot,
     stats_clear_armed: bool,
@@ -1479,6 +1658,7 @@ fn draw_settings(
     let SettingsInputs {
         category,
         sleep_minutes,
+        sleep_inhibition_status,
         integrations,
         stats,
         stats_clear_armed,
@@ -1497,6 +1677,7 @@ fn draw_settings(
             &mut volume,
             category,
             sleep_minutes,
+            sleep_inhibition_status,
             integrations,
             stats,
             stats_clear_armed,
@@ -1511,6 +1692,9 @@ fn draw_settings(
         let motion =
             settings_frame_motion(1.0, 0.0, &mut keyed_store, frame.settings.reduce_motion);
         let rect = ui.available_rect_before_wrap();
+        // Отдельное окно непрозрачно: стеклянная панель заполняет клиентскую
+        // область, иначе прозрачный `clear_color` дал бы чёрный фон.
+        widgets::glass_panel(ui.painter(), rect, palette, SETTINGS_RADIUS, 1.0);
         actions.extend(settings_panel::show(
             ui,
             rect,
@@ -1523,6 +1707,7 @@ fn draw_settings(
                 volume: &mut volume,
                 show_help: frame.show_help,
                 sleep_minutes,
+                sleep_inhibition_status,
                 category,
                 integrations,
                 stats,
@@ -1570,6 +1755,7 @@ fn draw_settings_embedded(
     volume: &mut f64,
     category: &mut SettingsCategory,
     sleep_minutes: Option<u16>,
+    sleep_inhibition_status: Option<String>,
     integrations: IntegrationsView<'_>,
     stats: &'_ StatsSnapshot,
     stats_clear_armed: bool,
@@ -1637,6 +1823,7 @@ fn draw_settings_embedded(
                     volume,
                     show_help: frame.show_help,
                     sleep_minutes,
+                    sleep_inhibition_status,
                     category,
                     integrations,
                     stats,
@@ -1672,15 +1859,39 @@ impl eframe::App for OrbitApp<'_> {
             self.session.set_window_size([rect.width(), rect.height()]);
         }
 
-        // macOS: кнопка окна и Cmd-W — это скрытие, а не выход (ADR-0026).
-        // Реальное закрытие оставляем только для quit и смены режима.
-        #[cfg(target_os = "macos")]
-        if ctx.input(|input| input.viewport().close_requested())
-            && !self.session.is_quitting()
-            && !self.session.is_reopening()
-        {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.session.hide();
+        let close_requested = ctx.input(|input| input.viewport().close_requested());
+        let escape = ctx.input(|input| input.key_pressed(egui::Key::Escape));
+        match self.surface {
+            RootSurface::Desk(_) => {
+                // macOS: кнопка окна и Cmd-W — это скрытие, а не выход (ADR-0026).
+                // Реальное закрытие оставляем только для quit и смены режима.
+                #[cfg(target_os = "macos")]
+                if close_requested && !self.session.is_quitting() && !self.session.is_reopening() {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                    self.session.hide();
+                }
+            }
+            RootSurface::Settings(_) => {
+                // Esc и кнопка WM закрывают окно настроек целиком: процесс
+                // остаётся припаркованным, стол не показывается (ADR-0053 §6b).
+                // Пока поверх открыто предупреждение сна, Esc принадлежит ему.
+                if (close_requested || escape) && !self.session.sleep_warning_open {
+                    self.session.close_settings();
+                }
+                if !self.session.settings_open {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+            RootSurface::Warning => {
+                // Esc и close_requested предупреждения — Cancel, а не действие
+                // (безопасная трактовка, ADR-0058).
+                if (close_requested || escape) && self.session.sleep_warning_open {
+                    self.session.cancel_sleep_warning();
+                }
+                if !self.session.sleep_warning_open {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
         }
 
         match self.session.take_intent() {
@@ -1708,24 +1919,24 @@ impl eframe::App for OrbitApp<'_> {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             Some(UiIntent::Close) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
-            // `UiIntent::Settings` consumed `park()` и ведёт к окну настроек
-            // на следующей итерации `run_session` — здесь ничего не делаем.
-            Some(UiIntent::Settings) | None => {}
+            // `UiIntent::Settings` и `UiIntent::Warn` consumed `park()` и ведут
+            // к отдельному окну на следующей итерации `run_session`.
+            Some(UiIntent::Settings) | Some(UiIntent::Warn) | None => {}
         }
 
         // Мастер первого запуска держит фокус до явного «Пропустить» или «Готово»:
         // горячие клавиши стола под ним не срабатывают (ADR-0041).
         let onboarding = self.session.onboarding_open();
 
-        // Escape сначала снимает самый верхний модальный слой: настройки, затем help.
-        if !onboarding && ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
-            if self.session.settings_open {
-                self.session.close_settings();
-            } else if self.session.show_help
-                && let Err(err) = self.session.set_help_visible(false)
-            {
-                self.error_toast(ctx, &NoticeKey::SettingNotSaved, Some(err.as_str()));
-            }
+        // Esc в столе снимает help и больше не трогает отдельное окно настроек
+        // (ADR-0053 §6a). Esc в самом окне настроек обрабатывается выше.
+        if matches!(self.surface, RootSurface::Desk(_))
+            && !onboarding
+            && escape
+            && self.session.show_help
+            && let Err(err) = self.session.set_help_visible(false)
+        {
+            self.error_toast(ctx, &NoticeKey::SettingNotSaved, Some(err.as_str()));
         }
 
         // Ctrl+, — стандартный горячий вызов настроек (ADR-0031).

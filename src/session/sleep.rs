@@ -217,6 +217,11 @@ impl super::Session {
         // Прежний фейд относился к прежнему дедлайну: громкость возвращается,
         // а новый фейд взведён `set` (ADR-0056).
         self.cancel_sleep_fade(true);
+        // TTL `caffeinate` считается от нового дедлайна: старый носитель
+        // снимается, `sync_inhibition` берёт лок заново (ADR-0054 §3).
+        self.release_sleep_inhibition();
+        self.reset_inhibition_retry();
+        self.sync_inhibition();
         Ok(())
     }
 
@@ -225,6 +230,43 @@ impl super::Session {
         self.sleep.clear();
         self.sleep_action_once = None;
         self.cancel_sleep_fade(true);
+        self.release_sleep_inhibition();
+        self.reset_inhibition_retry();
+        self.sync_inhibition();
+    }
+
+    /// Действие по истечении таймера (ADR-0055).
+    pub(crate) fn set_sleep_action(&mut self, action: SleepAction) -> Result<(), String> {
+        self.settings
+            .set_sleep_action(action)
+            .map_err(|err| err.to_string())
+    }
+
+    /// Длительность затухания (ADR-0056): уже начатый фейд пересчитывается.
+    pub(crate) fn set_sleep_fade_seconds(&mut self, seconds: u16) -> Result<u16, String> {
+        self.settings
+            .set_sleep_fade_seconds(seconds)
+            .map_err(|err| err.to_string())?;
+        let applied = self.settings.settings().sleep_fade_seconds;
+        self.apply_sleep_fade_setting(applied);
+        Ok(applied)
+    }
+
+    /// Запрет сна на время таймера (ADR-0054): лок берётся или снимается сразу.
+    pub(crate) fn set_sleep_prevent_sleep(&mut self, enabled: bool) -> Result<(), String> {
+        self.settings
+            .set_sleep_prevent_sleep(enabled)
+            .map_err(|err| err.to_string())?;
+        self.reset_inhibition_retry();
+        self.sync_inhibition();
+        Ok(())
+    }
+
+    /// Окно предупреждения за минуту до действия (ADR-0058).
+    pub(crate) fn set_sleep_warning(&mut self, enabled: bool) -> Result<(), String> {
+        self.settings
+            .set_sleep_warning(enabled)
+            .map_err(|err| err.to_string())
     }
 
     /// Смена настройки затухания у активного таймера (ADR-0056): уже начатый
@@ -266,6 +308,9 @@ impl super::Session {
     /// припаркованного процесса (ADR-0058).
     fn show_sleep_warning(&mut self) {
         self.sleep_warning_open = true;
+        // Живой UI-пасс нарисует предупреждение immediate-потомком; парковка
+        // откроет отдельное окно (ADR-0058).
+        self.window.request_warning();
         self.wake.waker()();
     }
 
@@ -275,7 +320,6 @@ impl super::Session {
 
     /// «Отменить» в предупреждении: действие отменяется только на этот таймер,
     /// отсчёт досчитывает, громкость возвращается (ADR-0058).
-    #[allow(dead_code)]
     pub(crate) fn cancel_sleep_warning(&mut self) {
         self.sleep_action_once = Some(SleepAction::Nothing);
         self.close_sleep_warning();
@@ -290,6 +334,7 @@ impl super::Session {
     }
 
     /// Сколько осталось до срабатывания таймера.
+    #[allow(dead_code)]
     pub(crate) fn sleep_remaining(&self) -> Option<Duration> {
         self.sleep.remaining(Instant::now())
     }
@@ -299,14 +344,13 @@ impl super::Session {
     }
 
     /// Отображаемые секунды для кнопки часов, трея и статуса.
-    #[allow(dead_code)]
     pub(crate) fn sleep_display_seconds(&self) -> Option<u64> {
         self.sleep.display_seconds(Instant::now())
     }
 
     /// Оставшееся время, отформатированное под язык интерфейса (ADR-0057).
     pub(crate) fn sleep_remaining_label(&self) -> Option<String> {
-        let secs = self.sleep_remaining()?.as_secs();
+        let secs = self.sleep_display_seconds()?;
         Some(i18n::sleep_remaining_label(self.language, secs))
     }
 
@@ -357,43 +401,79 @@ impl super::Session {
 
     /// Синхронизирует ингибитор сна с текущим состоянием (ADR-0054 §4).
     /// Лок удерживается ровно пока играет эфир и тикает таймер.
+    ///
+    /// Отказ acquire и смерть носителя кэшируются: повторной попытки на каждом
+    /// тике нет, иначе лог и статус забивались бы одинаковыми ошибками. Сброс
+    /// кэша — смена таймера, настройки или состояния эфира.
     pub(crate) fn sync_inhibition(&mut self) {
         let enabled = self.settings.settings().sleep_prevent_sleep;
         let active =
             self.sleep.deadline().is_some() && self.audio.state() != PlaybackState::Stopped;
-        let needed = enabled && active;
+        let needed = enabled && active && !self.window.is_quitting();
 
         let mut keep = None;
         if let Some(mut guard) = self.sleep_inhibition.take() {
             if needed && guard.is_alive() {
                 keep = Some(guard);
-            } else {
-                if !guard.is_alive() {
-                    self.notify_info(NoticeKey::InhibitionLost);
-                }
+            } else if !guard.is_alive() && needed {
+                // Носитель умер: таймер работает, но лок больше не держится.
+                self.notify_info(NoticeKey::InhibitionLost);
+                self.sleep_inhibition_failed = true;
                 self.sleep_inhibition_detail = None;
             }
         }
         self.sleep_inhibition = keep;
 
-        if self.sleep_inhibition.is_none() && needed {
-            match PowerInhibit::acquire("сон таймера OrbitFM", 0) {
-                Ok(guard) => {
-                    self.sleep_inhibition = Some(guard);
-                    self.sleep_inhibition_detail = None;
-                }
-                Err(err) => {
-                    self.sleep_inhibition_detail = Some(err.to_string());
-                    tracing::warn!(error = %err, "лок сна не взят");
-                }
+        if !needed {
+            // Состояние «лок не нужен» — точка сброса кэша отказа: следующий
+            // запуск эфира или таймера снова попробует взять лок.
+            self.sleep_inhibition_failed = false;
+            self.sleep_inhibition_detail = None;
+            return;
+        }
+        if self.sleep_inhibition.is_some() || self.sleep_inhibition_failed {
+            return;
+        }
+
+        match PowerInhibit::acquire("сон таймера OrbitFM", self.sleep_inhibition_ttl()) {
+            Ok(guard) => {
+                self.sleep_inhibition = Some(guard);
+                self.sleep_inhibition_detail = None;
+            }
+            Err(err) => {
+                self.sleep_inhibition_failed = true;
+                self.sleep_inhibition_detail = Some(err.to_string());
+                tracing::warn!(error = %err, "лок сна не взят");
             }
         }
+    }
+
+    /// TTL для `caffeinate`: оставшееся время таймера, вверх до целой секунды.
+    /// `-t 0` означал бы «без таймаута» и оставил бы лок после выхода из строя
+    /// `-w`, поэтому минимум — одна секунда (ADR-0054 §3).
+    fn sleep_inhibition_ttl(&self) -> u64 {
+        self.sleep
+            .remaining(Instant::now())
+            .map_or(0, |remaining| {
+                remaining
+                    .as_secs()
+                    .saturating_add(u64::from(remaining.subsec_nanos() > 0))
+            })
+            .max(1)
+    }
+
+    /// Сбрасывает кэш неудачного acquire: вызывается при смене таймера и
+    /// настройки «не давать системе уснуть».
+    fn reset_inhibition_retry(&mut self) {
+        self.sleep_inhibition_failed = false;
+        self.sleep_inhibition_detail = None;
     }
 
     /// Освобождает лок сна перед собственным действием таймера (ADR-0055).
     pub(crate) fn release_sleep_inhibition(&mut self) {
         self.sleep_inhibition = None;
         self.sleep_inhibition_detail = None;
+        self.sleep_inhibition_failed = false;
     }
 
     /// Действие по истечении таймера: ничего / сон / выключение (ADR-0055).

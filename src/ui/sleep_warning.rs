@@ -30,11 +30,6 @@ pub(crate) struct WarningInputs<'a> {
     pub(crate) close_requested: bool,
 }
 
-/// Пресет окна предупреждения: 420×320.
-pub(crate) const WARNING_SIZE: [f32; 2] = [420.0, 320.0];
-/// Нижний лимит размера окна предупреждения.
-pub(crate) const WARNING_MIN_SIZE: [f32; 2] = [360.0, 280.0];
-
 /// Число сегментов кольца обратного отсчёта.
 const SEGMENTS: usize = 96;
 /// Радиус кольца: ≈48 px по центру окна.
