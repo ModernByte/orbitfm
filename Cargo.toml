@@ -1,6 +1,6 @@
 [package]
 name = "orbitfm"
-version = "0.21.0-rc.3"
+version = "0.21.0-rc.4"
 edition = "2024"
 rust-version = "1.95"
 description = "3D Interactive Global Radio Player"

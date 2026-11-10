@@ -1,7 +1,7 @@
 # OrbitFM
 
 **Плеер интернет-радио с 3D-глобусом**  
-Под эгидой [ModernByte](https://github.com/ModernByte) · версия `0.21.0-rc.3`
+Под эгидой [ModernByte](https://github.com/ModernByte) · версия `0.21.0-rc.4`
 
 [![Релиз](https://img.shields.io/github/v/release/ModernByte/orbitfm?include_prereleases)](https://github.com/ModernByte/orbitfm/releases)
 [![Статус CI](https://img.shields.io/github/actions/workflow/status/ModernByte/orbitfm/ci.yml?branch=main)](https://github.com/ModernByte/orbitfm/actions/workflows/ci.yml)
@@ -15,7 +15,7 @@ OrbitFM — плеер интернет-радио, где каталог пок
 и её станции лежат рядом в списке; так же можно искать по жанру или по названию станции. Закрытие окна музыку не
 останавливает: приложение работает одним процессом, живёт в системном трее и принимает команды из терминала и от
 медиа-клавиш. Для экрана есть три режима — от большого рабочего стола с глобусом до компактной капсулы в углу.
-Приоритетная платформа — Linux (Wayland и X11), сборки есть для Windows и macOS; версия `0.21.0-rc.3` —
+Приоритетная платформа — Linux (Wayland и X11), сборки есть для Windows и macOS; версия `0.21.0-rc.4` —
 пре-релиз, отдельные детали ещё могут меняться.
 
 ## Что умеет
@@ -131,19 +131,19 @@ MSI, два DMG (Apple Silicon и Intel), `.plasmoid` для Plasma 6 и `instal
 
 ### AppImage (Linux x86_64)
 
-Файл называется `OrbitFM-<версия>-x86_64.AppImage`, например `OrbitFM-0.21.0-rc.3-x86_64.AppImage`. Права root и
+Файл называется `OrbitFM-<версия>-x86_64.AppImage`, например `OrbitFM-0.21.0-rc.4-x86_64.AppImage`. Права root и
 установка не нужны — приложение rootless по определению, и `libmpv` с FFmpeg уже внутри:
 
 ```bash
-chmod +x OrbitFM-0.21.0-rc.3-x86_64.AppImage
-./OrbitFM-0.21.0-rc.3-x86_64.AppImage
+chmod +x OrbitFM-0.21.0-rc.4-x86_64.AppImage
+./OrbitFM-0.21.0-rc.4-x86_64.AppImage
 ```
 
 Чтобы добавить приложение в меню и `PATH` без root и без ручного `chmod +x`, положите рядом `install-appimage.sh`
 из релиза и запустите:
 
 ```bash
-bash install-appimage.sh OrbitFM-0.21.0-rc.3-x86_64.AppImage
+bash install-appimage.sh OrbitFM-0.21.0-rc.4-x86_64.AppImage
 ```
 
 Скрипт копирует образ в `~/.local/bin/orbitfm`, ставит desktop entry с абсолютным `Exec`, иконки и metainfo в
@@ -152,7 +152,7 @@ bash install-appimage.sh OrbitFM-0.21.0-rc.3-x86_64.AppImage
 Для обновления запустите скрипт с новым образом.
 
 Если FUSE недоступен (контейнеры, минимальные образы) или не нужна интеграция через монтирование, запускайте в
-режиме распаковки: `APPIMAGE_EXTRACT_AND_RUN=1 ./OrbitFM-0.21.0-rc.3-x86_64.AppImage`. Виджету Noctalia и командам
+режиме распаковки: `APPIMAGE_EXTRACT_AND_RUN=1 ./OrbitFM-0.21.0-rc.4-x86_64.AppImage`. Виджету Noctalia и командам
 `orbitfm …` нужен запускаемый `orbitfm` в `PATH` — скрипт выше ставит его, либо сделайте символьную ссылку на
 AppImage.
 
@@ -286,7 +286,7 @@ kbuildsycoca6 --noincremental
 Виджет также публикуется в Releases отдельным архивом `OrbitFM-<версия>-plasma.plasmoid`:
 
 ```bash
-kpackagetool6 -t Plasma/Applet -i OrbitFM-0.21.0-rc.3-plasma.plasmoid
+kpackagetool6 -t Plasma/Applet -i OrbitFM-0.21.0-rc.4-plasma.plasmoid
 ```
 
 Или в графическом интерфейсе: режим редактирования панели → «Добавить виджеты» → «Установить из файла» → выбрать
@@ -362,9 +362,10 @@ orbitfm integration uninstall niri
 orbitfm integration uninstall hyprland
 ```
 
-Правила подбираются по заголовку окна и фиксируют размеры поверхностей: Focus — 1100×800, Overlay —
+Правила подбираются по паре «класс окна (`app-id`) + заголовок» и фиксируют размеры поверхностей: Focus — 1100×800, Overlay —
 500×620, Listening — 420×152, Panel — 400×640, настройки — 420×560 / 760×544 / 1040×720 по варианту
-Compact/Medium/Wide, предупреждение таймера сна — 420×320. У niri установщик добавляет в `~/.config/niri/config.kdl` ровно одну
+Compact/Medium/Wide, предупреждение таймера сна — 420×320. Заголовок различает поверхности, `app-id`
+(`org.modernbyte.OrbitFM`) — принадлежность приложению: оба поля обязательны, иначе окно не найдёт своё правило. У niri установщик добавляет в `~/.config/niri/config.kdl` ровно одну
 строку `include "./cfg/orbitfm.kdl"` (с копией `config.kdl.orbitfm.bak` перед первой правкой, без дублей при
 переустановке). Снятие убирает только свою строку и свой файл; строку, добавленную вручную до установки, оно не
 трогает, но указывает на неё — висячий `include` без файла правил niri не разберёт.
@@ -531,8 +532,9 @@ Firefox; постоянная установка требует подписи M
 скрытом окне; при незапущенном плеере команда стартует сразу в этом режиме. Настройки из Listening открываются в
 компоновке Overlay — в одну строку панель не помещается. Режимы различаются заголовком окна (`OrbitFM`,
 `OrbitFM · Overlay`, `OrbitFM · Listening`, `OrbitFM · Panel`), поэтому правила окон из `wm-configs/` подбирают
-размер именно к капсуле: без них тайловый WM растянет Overlay и Listening на весь тайл, и капсула перестанет быть
-капсулой. Декорации окна — заголовок и рамка — остаются только у Focus: `Overlay`, `Listening` и `Panel`
+размер именно к капсуле; правила матчат пару «`app-id` + заголовок», и этот же app-id
+(`org.modernbyte.OrbitFM`) несут окна настроек и предупреждения таймера сна. Без них тайловый WM растянет
+Overlay и Listening на весь тайл, и капсула перестанет быть капсулой. Декорации окна — заголовок и рамка — остаются только у Focus: `Overlay`, `Listening` и `Panel`
 открываются без них, потому что CSD-полоса рисовалась бы поверх стеклянной поверхности. Panel — поверхность,
 а не раскладка стола: в переключателе «Компоновка» её нет, а повторный `orbitfm panel` скрывает окно.
 
@@ -656,6 +658,10 @@ Sans Arabic. Это зависимость от окружения, а не де
   тайлового WM: их ставит `orbitfm integration install niri` или `hyprland` (см. раздел про niri и Hyprland;
   у Hyprland правила живут до перезапуска сеанса, дальше — строка `source` в вашем `hyprland.conf`) либо не найден
   системный Noto Color Emoji.
+- **Окно настроек или предупреждения таймера сна растянуто на весь экран** — сборки до 0.21.0-rc.4 отдавали этим
+  окнам пустой класс (`app-id`), и правило с заголовком не могло сработать: обновите сборку и переустановите цель
+  `niri`/`hyprland`. Проверка — `niri msg windows`: у каждого окна OrbitFM должен быть
+  `App ID: "org.modernbyte.OrbitFM"`.
 - **Иконки трея нет.** На Linux трей работает по StatusNotifierItem и требует хоста SNI: Noctalia, KDE, Hyprland,
   Sway/waybar; в GNOME нужно расширение вроде AppIndicator/StatusNotifier. Без хоста иконка не появится — это
   штатная деградация, управляйте через `orbitfm …`. На macOS значок живёт в строке меню; на Windows трея пока
