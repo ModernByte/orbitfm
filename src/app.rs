@@ -69,6 +69,33 @@ fn warning_viewport_id() -> egui::ViewportId {
     egui::ViewportId::from_hash_of("orbitfm_sleep_warning")
 }
 
+/// Билдер окна настроек: заголовок с вариантом размера — матчер правил WM,
+/// app-id — второй обязательный матчер. Wayland не наследует app-id от
+/// родительского окна: без явного `with_app_id` дочерний вьюпорт получает
+/// `app_id = null`, и правила niri/Hyprland его не находят (ADR-0053).
+fn settings_viewport_builder(size: SettingsSize) -> egui::ViewportBuilder {
+    egui::ViewportBuilder::default()
+        .with_app_id(crate::APP_ID)
+        .with_inner_size(size.size())
+        .with_min_inner_size(size.min_size())
+        .with_title(format!("OrbitFM · Settings · {}", size.title_suffix()))
+        .with_decorations(true)
+        .with_transparent(false)
+}
+
+/// Билдер окна предупреждения: те же app-id и заголовок, по которым правило
+/// задаёт размер 420×320 и плавающий режим (ADR-0058).
+fn warning_viewport_builder() -> egui::ViewportBuilder {
+    let surface = RootSurface::Warning;
+    egui::ViewportBuilder::default()
+        .with_app_id(crate::APP_ID)
+        .with_inner_size(surface.size())
+        .with_min_inner_size(surface.min_size())
+        .with_title(surface.title())
+        .with_decorations(false)
+        .with_transparent(true)
+}
+
 /// Окно предупреждения таймера сна как immediate-потомок живого окна
 /// (стола или настроек). Вызывается каждый кадр, пока предупреждение открыто;
 /// при припаркованном процессе его заменяет `RootSurface::Warning`.
@@ -80,13 +107,7 @@ fn draw_sleep_warning_child(
     if !session.sleep_warning_open {
         return Vec::new();
     }
-    let warning_surface = RootSurface::Warning;
-    let builder = eframe::egui::ViewportBuilder::default()
-        .with_inner_size(warning_surface.size())
-        .with_min_inner_size(warning_surface.min_size())
-        .with_title(warning_surface.title())
-        .with_decorations(false)
-        .with_transparent(true);
+    let builder = warning_viewport_builder();
     let warning_actions =
         ui.ctx()
             .show_viewport_immediate(warning_viewport_id(), builder, |ui, class| {
@@ -1176,15 +1197,7 @@ impl<'a> OrbitApp<'a> {
         if session.settings_open {
             let settings_size =
                 SettingsSize::for_open(self.settings_category, session.window_mode());
-            let builder = eframe::egui::ViewportBuilder::default()
-                .with_inner_size(settings_size.size())
-                .with_min_inner_size(settings_size.min_size())
-                .with_title(format!(
-                    "OrbitFM · Settings · {}",
-                    settings_size.title_suffix()
-                ))
-                .with_decorations(true)
-                .with_transparent(false);
+            let builder = settings_viewport_builder(settings_size);
             let settings_actions =
                 ui.ctx()
                     .show_viewport_immediate(settings_viewport_id(), builder, |ui, class| {
@@ -2011,6 +2024,48 @@ fn search_field_id(mode: SearchMode, window: WindowMode) -> egui::Id {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Дочерние вьюпорты обязаны нести app-id: правила niri/Hyprland матчат
+    /// пару «класс + заголовок», а Wayland не наследует app-id от родителя.
+    #[test]
+    fn child_viewports_carry_app_id_and_titles_for_window_rules() {
+        for (size, title, inner, min) in [
+            (
+                SettingsSize::Compact,
+                "OrbitFM · Settings · Compact",
+                [420.0, 560.0],
+                [360.0, 480.0],
+            ),
+            (
+                SettingsSize::Medium,
+                "OrbitFM · Settings · Medium",
+                [760.0, 544.0],
+                [560.0, 420.0],
+            ),
+            (
+                SettingsSize::Wide,
+                "OrbitFM · Settings · Wide",
+                [1040.0, 720.0],
+                [760.0, 480.0],
+            ),
+        ] {
+            let builder = settings_viewport_builder(size);
+            assert_eq!(builder.app_id.as_deref(), Some(crate::APP_ID));
+            assert_eq!(builder.title.as_deref(), Some(title));
+            assert_eq!(builder.inner_size, Some(egui::vec2(inner[0], inner[1])));
+            assert_eq!(builder.min_inner_size, Some(egui::vec2(min[0], min[1])));
+            assert_eq!(builder.decorations, Some(true));
+            assert_eq!(builder.transparent, Some(false));
+        }
+
+        let warning = warning_viewport_builder();
+        assert_eq!(warning.app_id.as_deref(), Some(crate::APP_ID));
+        assert_eq!(warning.title, Some(RootSurface::Warning.title()));
+        assert_eq!(warning.inner_size, Some(egui::vec2(420.0, 320.0)));
+        assert_eq!(warning.min_inner_size, Some(egui::vec2(360.0, 280.0)));
+        assert_eq!(warning.decorations, Some(false));
+        assert_eq!(warning.transparent, Some(true));
+    }
 
     #[test]
     fn search_shortcut_targets_the_field_on_screen() {
