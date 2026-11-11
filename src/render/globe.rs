@@ -1,6 +1,6 @@
 //! GPU-ресурсы глобуса: UV-сфера, текстура Земли и wgpu-пайплайн.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use eframe::egui::{self, epaint::PaintCallbackInfo};
 use egui_wgpu::{CallbackResources, CallbackTrait, ScreenDescriptor, wgpu};
@@ -13,12 +13,15 @@ use super::motion::GlobeMotion;
 
 const GLOBE_SHADER: &str = include_str!("globe.wgsl");
 const EARTH_TEXTURE: &[u8] = include_bytes!("../../assets/textures/earth.jpg");
-/// Версия повышенного разрешения: грузится на GPU только при приближении.
+/// Версия повышенного разрешения: готовится в фоне при приближении.
 const EARTH_TEXTURE_HI: &[u8] = include_bytes!("../../assets/textures/earth@2x.jpg");
 /// Гистерезис LOD: детальная текстура включается на 2.6 и остаётся до 2.9 —
 /// без него колесо на границе переключало бы текстуры каждый кадр.
 const LOD_NEAR_ENTER: f32 = 2.6;
 const LOD_NEAR_EXIT: f32 = 2.9;
+/// Предзагрузка детального яруса: с этой дистанции кадр заказывает фоновую
+/// задачу, чтобы к моменту `LOD_NEAR_ENTER` текстур* уже лежала в GPU.
+const LOD_PREFETCH: f32 = 3.0;
 /// Глубина мипов: дальняя сторона сферы и мелкий силуэт сэмплируются с
 /// уменьшением, иначе на континентах появляется муар.
 const LOD_MAX_CLAMP: f32 = 32.0;
@@ -28,6 +31,100 @@ const ANISOTROPY: u16 = 8;
 
 const SPHERE_SEGMENTS: u32 = 64;
 const SPHERE_STACKS: u32 = 32;
+
+/// Пиксели текстуры Земли, готовые к загрузке в GPU: уровень 0 и его мипы.
+///
+/// Готовится либо сразу (базовый ярус, нужен первому кадру), либо в отдельном
+/// потоке (детальный ярус): кадр не декодирует текстуры и не строит мипы
+/// (ADR-0059 § 2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EarthTextureData {
+    width: u32,
+    height: u32,
+    /// `levels[0]` — уровень 0, дальше 2×2-усреднения до 1×1.
+    levels: Vec<Vec<u8>>,
+}
+
+impl EarthTextureData {
+    /// Декодирует JPEG и строит полную цепочку мипов усреднением 2×2.
+    fn decode(bytes: &[u8]) -> Option<Self> {
+        let base = image::load_from_memory(bytes).ok()?.into_rgba8();
+        let (width, height) = base.dimensions();
+        let mut levels = Vec::with_capacity(mip_levels(width, height) as usize);
+        levels.push(base.into_raw());
+        let (mut level_width, mut level_height) = (width, height);
+        while level_width > 1 || level_height > 1 {
+            let (next, next_width, next_height) = downsample(
+                levels.last().expect("уровень 0 только что добавлен"),
+                level_width,
+                level_height,
+            );
+            levels.push(next);
+            level_width = next_width;
+            level_height = next_height;
+        }
+        Some(Self {
+            width,
+            height,
+            levels,
+        })
+    }
+}
+
+/// Усреднение блоков 2×2 — корректный мип-фильтр. `Lanczos3` (было до ADR-0059)
+/// стоит 95 мс на 2048×1024 и 452 мс на 5400×2700 против 10 и 60 мс здесь.
+fn downsample(source: &[u8], width: u32, height: u32) -> (Vec<u8>, u32, u32) {
+    let next_width = (width / 2).max(1);
+    let next_height = (height / 2).max(1);
+    let mut target = vec![0u8; (next_width * next_height * 4) as usize];
+
+    for y in 0..next_height {
+        let top = (y * 2).min(height - 1);
+        let bottom = (y * 2 + 1).min(height - 1);
+        for x in 0..next_width {
+            let left = (x * 2).min(width - 1);
+            let right = (x * 2 + 1).min(width - 1);
+            let mut sum = [0u32; 4];
+            for row in [top, bottom] {
+                for column in [left, right] {
+                    let index = ((row * width + column) * 4) as usize;
+                    for channel in 0..4 {
+                        sum[channel] += u32::from(source[index + channel]);
+                    }
+                }
+            }
+            let index = ((y * next_width + x) * 4) as usize;
+            for channel in 0..4 {
+                // Крайние блоки вырожденного размера добираются повтором
+                // пикселя (clamp-to-edge), поэтому делитель всегда 4.
+                target[index + channel] = (sum[channel] / 4) as u8;
+            }
+        }
+    }
+    (target, next_width, next_height)
+}
+
+/// Итог фоновой подготовки детального яруса.
+#[derive(Debug)]
+enum LodOutcome {
+    Ready(wgpu::Texture),
+    /// Декодирование не удалось: повторять его каждый кадр бессмысленно.
+    Failed,
+}
+
+/// Состояние детального яруса текстуры: `Idle` — ещё не понадобился,
+/// `Preparing` — текстуру готовит фоновый поток, `Ready` — лежит в GPU.
+///
+/// Декодирование, мипы и загрузка в GPU идут в рабочем потоке: `wgpu::Device`
+/// и `wgpu::Queue` — многопоточные handle'ы, поэтому кадру остаётся только
+/// создать view и bind group (ADR-0059 § 2).
+#[derive(Debug)]
+enum LodState {
+    Idle,
+    Preparing(Arc<Mutex<Option<LodOutcome>>>),
+    Ready(wgpu::BindGroup),
+    Failed,
+}
 
 /// GPU-ресурсы рендерера глобуса.
 ///
@@ -42,14 +139,14 @@ pub struct GlobeRenderer {
     texture_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     bind_group: wgpu::BindGroup,
-    /// Детальная текстура создаётся при первом приближении и живёт дальше.
-    near_bind_group: Option<wgpu::BindGroup>,
+    /// Детальная текстура создаётся один раз, когда её пиксели готовы.
     near_active: bool,
     /// Тепловая карта стран: текстура фиксированного размера, содержимое
     /// обновляется только при смене выборки или режима.
     heat_texture: wgpu::Texture,
     heat_view: wgpu::TextureView,
     uploaded_heat: Option<Arc<HeatFrame>>,
+    lod: LodState,
 }
 
 impl GlobeRenderer {
@@ -83,7 +180,9 @@ impl GlobeRenderer {
             mapped_at_creation: false,
         });
 
-        let texture = earth_texture(device, queue, EARTH_TEXTURE, "earth texture");
+        let data = EarthTextureData::decode(EARTH_TEXTURE)
+            .expect("встроенная текстура Земли должна декодироваться");
+        let texture = earth_texture(device, queue, &data, "earth texture");
         let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("earth sampler"),
@@ -216,16 +315,17 @@ impl GlobeRenderer {
             texture_layout,
             sampler,
             bind_group,
-            near_bind_group: None,
             near_active: false,
             heat_texture,
             heat_view,
             uploaded_heat: None,
+            lod: LodState::Idle,
         }
     }
 
-    /// Загружает униформ-данные камеры и при приближении один раз создаёт
-    /// детальную текстуру; дальше кадры только выбирают нужный bind group.
+    /// Загружает униформ-данные камеры, заказывает и подхватывает детальный
+    /// ярус текстуры. Ни одна операция здесь не ждёт фоновую задачу: пока её
+    /// результат не готов, рисуется базовая текстура (ADR-0059 § 2).
     pub fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -269,32 +369,94 @@ impl GlobeRenderer {
 
         let eye = glam::Vec3::from_slice(&uniform.camera_position[..3]);
         let distance = eye.length();
+        if distance <= LOD_PREFETCH {
+            self.start_lod_job(device, queue);
+        }
+        self.take_lod_result(device);
         // Гистерезис: войти в детальный LOD на 2.6, выйти — только после 2.9.
         let near = if self.near_active {
             distance <= LOD_NEAR_EXIT
         } else {
             distance <= LOD_NEAR_ENTER
         };
-        if near && self.near_bind_group.is_none() {
-            let texture = earth_texture(device, queue, EARTH_TEXTURE_HI, "earth texture hi");
-            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-            self.near_bind_group = Some(earth_bind_group(
-                device,
-                &self.texture_layout,
-                &self.uniform_buffer,
-                &view,
-                &self.sampler,
-                &self.heat_view,
-            ));
+        self.near_active = near && matches!(self.lod, LodState::Ready(_));
+    }
+
+    /// Ставит фоновую задачу подготовки детального яруса, если она ещё не
+    /// поставлена и не провалилась.
+    fn start_lod_job(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        if matches!(self.lod, LodState::Idle) {
+            let slot: Arc<Mutex<Option<LodOutcome>>> = Arc::new(Mutex::new(None));
+            let worker = Arc::clone(&slot);
+            let device = device.clone();
+            let queue = queue.clone();
+            // Отдельный поток: декодирование 5400×2700, мипы (~150 мс) и
+            // загрузка 78 МБ в GPU — не работа кадра (ADR-0059 § 2).
+            if std::thread::Builder::new()
+                .name("orbitfm-lod".to_owned())
+                .spawn(move || {
+                    let outcome = EarthTextureData::decode(EARTH_TEXTURE_HI).map_or(
+                        LodOutcome::Failed,
+                        |data| {
+                            LodOutcome::Ready(earth_texture(
+                                &device,
+                                &queue,
+                                &data,
+                                "earth texture hi",
+                            ))
+                        },
+                    );
+                    // Блокировка короткая: кадр берёт её через `try_lock`.
+                    if let Ok(mut slot) = worker.lock() {
+                        *slot = Some(outcome);
+                    }
+                })
+                .is_ok()
+            {
+                self.lod = LodState::Preparing(slot);
+            } else {
+                tracing::warn!("orbitfm render: поток подготовки детальной текстуры не запустился");
+                self.lod = LodState::Failed;
+            }
         }
-        self.near_active = near && self.near_bind_group.is_some();
+    }
+
+    /// Забирает готовую текстуру у фоновой задачи и подключает её к пайплайну.
+    fn take_lod_result(&mut self, device: &wgpu::Device) {
+        let LodState::Preparing(slot) = &self.lod else {
+            return;
+        };
+        // `try_lock`: если поток ещё пишет результат, кадр этого не ждёт.
+        let Ok(mut slot) = slot.try_lock() else {
+            return;
+        };
+        let outcome = slot.take();
+        drop(slot);
+        let texture = match outcome {
+            Some(LodOutcome::Ready(texture)) => texture,
+            Some(LodOutcome::Failed) => {
+                tracing::warn!("orbitfm render: детальная текстура Земли не декодировалась");
+                self.lod = LodState::Failed;
+                return;
+            }
+            None => return,
+        };
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.lod = LodState::Ready(earth_bind_group(
+            device,
+            &self.texture_layout,
+            &self.uniform_buffer,
+            &view,
+            &self.sampler,
+            &self.heat_view,
+        ));
     }
 
     /// Рисует сферу в текущий render pass.
     pub fn paint(&self, render_pass: &mut wgpu::RenderPass<'_>) {
         render_pass.set_pipeline(&self.pipeline);
-        let bind_group = match &self.near_bind_group {
-            Some(near) if self.near_active => near,
+        let bind_group = match &self.lod {
+            LodState::Ready(near) if self.near_active => near,
             _ => &self.bind_group,
         };
         render_pass.set_bind_group(0, bind_group, &[]);
@@ -369,23 +531,17 @@ pub fn paint_globe(
 fn earth_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    bytes: &[u8],
+    data: &EarthTextureData,
     label: &str,
 ) -> wgpu::Texture {
-    let base = image::load_from_memory(bytes)
-        .expect("встроенная текстура Земли должна декодироваться")
-        .to_rgba8();
-    let (width, height) = base.dimensions();
-    let levels = mip_levels(width, height);
-
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some(label),
         size: wgpu::Extent3d {
-            width,
-            height,
+            width: data.width,
+            height: data.height,
             depth_or_array_layers: 1,
         },
-        mip_level_count: levels,
+        mip_level_count: data.levels.len() as u32,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Rgba8UnormSrgb,
@@ -393,27 +549,20 @@ fn earth_texture(
         view_formats: &[],
     });
 
-    let (mut level_width, mut level_height) = (width, height);
-    let mut level = base;
-    for mip in 0..levels {
+    let (mut level_width, mut level_height) = (data.width, data.height);
+    for (mip, level) in data.levels.iter().enumerate() {
         if mip > 0 {
             level_width = (level_width / 2).max(1);
             level_height = (level_height / 2).max(1);
-            level = image::imageops::resize(
-                &level,
-                level_width,
-                level_height,
-                image::imageops::FilterType::Lanczos3,
-            );
         }
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &texture,
-                mip_level: mip,
+                mip_level: mip as u32,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            level.as_raw(),
+            level,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(4 * level_width),
@@ -527,6 +676,10 @@ fn sphere_mesh() -> (Vec<GlobeVertex>, Vec<u32>) {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::super::GlobeInput;
+
     use glam::Vec3;
 
     use super::*;
@@ -566,5 +719,163 @@ mod tests {
             assert!((0.0..=1.0).contains(&vertex.uv[0]));
             assert!((0.0..=1.0).contains(&vertex.uv[1]));
         }
+    }
+
+    #[test]
+    fn downsample_halves_and_averages() {
+        // Шахматка 2×2: каждый канал усредняется до середины диапазона.
+        let source = vec![
+            0, 0, 0, 10, 200, 200, 200, 20, 200, 200, 200, 30, 0, 0, 0, 40,
+        ];
+        let (level, width, height) = downsample(&source, 2, 2);
+
+        assert_eq!((width, height), (1, 1));
+        assert_eq!(level, vec![100, 100, 100, 25]);
+    }
+
+    #[test]
+    fn downsample_uses_the_spec_mip_size_and_repeats_degenerate_pixels() {
+        // Нечётная ширина: размер уровня — floor(3/2) = 1 (как у мип-цепочки),
+        // третий пиксель в усреднение не попадает.
+        let source = vec![0, 0, 0, 0, 40, 40, 40, 40, 200, 200, 200, 200];
+        let (level, width, height) = downsample(&source, 3, 1);
+
+        assert_eq!((width, height), (1, 1));
+        assert_eq!(level, vec![20, 20, 20, 20]);
+
+        // Вырожденное ребро 1×1: блок добирается повтором того же пикселя.
+        let (single, width, height) = downsample(&[7, 8, 9, 10], 1, 1);
+        assert_eq!((width, height), (1, 1));
+        assert_eq!(single, vec![7, 8, 9, 10]);
+    }
+
+    #[test]
+    fn earth_texture_data_builds_a_full_mip_chain() {
+        let data = EarthTextureData::decode(EARTH_TEXTURE).expect("встроенная текстура");
+
+        assert_eq!(
+            data.levels.len() as u32,
+            mip_levels(data.width, data.height),
+            "цепочка мипов строится до 1×1"
+        );
+        assert_eq!(
+            data.levels[0].len(),
+            (data.width * data.height * 4) as usize
+        );
+        assert_eq!(
+            data.levels.last().map(Vec::len),
+            Some(4),
+            "последний уровень — 1×1 RGBA"
+        );
+
+        let mut level_width = data.width;
+        let mut level_height = data.height;
+        for (mip, level) in data.levels.iter().enumerate().skip(1) {
+            level_width = (level_width / 2).max(1);
+            level_height = (level_height / 2).max(1);
+            assert_eq!(
+                level.len(),
+                (level_width * level_height * 4) as usize,
+                "уровень {mip} должен быть {level_width}×{level_height}"
+            );
+        }
+    }
+
+    #[test]
+    fn lod_state_starts_idle_and_reports_only_ready_near_by() {
+        // До GPU-устройства проверяется ровно то, что решает выбор bind group:
+        // `near_active` включается только при готовом детальном ярусе.
+        let lod = LodState::Idle;
+        assert!(!matches!(lod, LodState::Ready(_)));
+        assert!(matches!(LodState::Failed, LodState::Failed));
+    }
+
+    /// Ручной замер ADR-0059 § 2 и § 4: переход через порог LOD не должен
+    /// стоить кадру ничего. Нужен GPU, поэтому из обычного прогона исключён —
+    /// запускается вручную: `cargo test --release lod_crossing -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "ручной замер: нужен GPU"]
+    fn lod_crossing_never_stalls_the_frame() {
+        let runtime = tokio::runtime::Runtime::new().expect("tokio");
+        let Some((device, queue)) = runtime.block_on(async {
+            let instance =
+                wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+            let adapters = instance.enumerate_adapters(wgpu::Backends::all()).await;
+            let adapter = adapters.into_iter().max_by_key(|adapter| {
+                matches!(
+                    adapter.get_info().device_type,
+                    wgpu::DeviceType::DiscreteGpu
+                )
+            })?;
+            adapter
+                .request_device(&wgpu::DeviceDescriptor::default())
+                .await
+                .ok()
+        }) else {
+            println!("LOD: GPU не найден, замер пропущен");
+            return;
+        };
+
+        let mut renderer = GlobeRenderer::new(&device, &queue, wgpu::TextureFormat::Bgra8Unorm);
+        let mut camera = GlobeCamera::default();
+        let motion = GlobeMotion::default();
+        let mut worst = Duration::ZERO;
+        let start = Instant::now();
+        // Приближение 3.2 → ~1.4: порог предзагрузки 3.0 и порог LOD 2.6 внутри.
+        for _ in 0..120 {
+            camera.advance(
+                0.016,
+                0.016,
+                &GlobeInput {
+                    scroll_delta: 3.0,
+                    viewport_height: 800.0,
+                    ..GlobeInput::default()
+                },
+                &motion,
+                false,
+                false,
+            );
+            let uniform = camera.uniform_with_motion(1.0, &motion);
+            let frame = Instant::now();
+            renderer.prepare(&device, &queue, &uniform, None);
+            worst = worst.max(frame.elapsed());
+        }
+        println!(
+            "LOD: 120 кадров приближения, худший кадр {:.2} мс",
+            worst.as_secs_f64() * 1e3
+        );
+        assert!(
+            worst < Duration::from_millis(2),
+            "кадр не должен ждать подготовку текстуры: {worst:?}"
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut ready = None;
+        while Instant::now() < deadline {
+            let uniform = camera.uniform_with_motion(1.0, &motion);
+            let frame = Instant::now();
+            renderer.prepare(&device, &queue, &uniform, None);
+            if matches!(renderer.lod, LodState::Ready(_)) {
+                ready = Some((frame.elapsed(), Instant::now()));
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        device
+            .poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: None,
+            })
+            .expect("poll");
+        let (frame, at) = ready.expect("детальный ярус должен быть готов");
+        println!(
+            "LOD: ярус готов через {:.0} мс, подключение стоило кадру {:.2} мс",
+            at.duration_since(start).as_secs_f64() * 1e3,
+            frame.as_secs_f64() * 1e3
+        );
+        assert!(
+            frame < Duration::from_millis(2),
+            "подключение яруса — не работа кадра: {frame:?}"
+        );
     }
 }

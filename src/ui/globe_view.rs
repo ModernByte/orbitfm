@@ -277,7 +277,12 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
     });
     // Окно настроек теперь отдельное вьюпорт-окно (ADR-0053): глобус стола
     // не блокируется настройками.
-    let mut input = GlobeInput::default();
+    let mut input = GlobeInput {
+        // Перетаскивание переводится в поворот через фокусное расстояние
+        // кадра: поверхность следует за курсором (ADR-0060 § 3).
+        viewport_height: globe_rect.height(),
+        ..GlobeInput::default()
+    };
     if sense.dragged_by(egui::PointerButton::Secondary) && !press_blocked {
         input.drag_delta = ui.input(|input| input.pointer.delta());
     }

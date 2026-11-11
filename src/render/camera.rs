@@ -17,14 +17,24 @@ const FAR_PLANE: f32 = 50.0;
 const DEFAULT_DISTANCE: f32 = 3.2;
 const MIN_DISTANCE: f32 = 1.4;
 const MAX_DISTANCE: f32 = 6.0;
+/// Глубина силуэта `sqrt(distance² − 1)` — расстояние от глаза до передней
+/// точки сферы. Видимый радиус силуэта равен `focal / depth`, поэтому единицей
+/// зума выбрана она: колесо меняет видимый размер на одну и ту же долю при
+/// любой дистанции (ADR-0060 § 1). Контрактом остаются дистанции
+/// [`MIN_DISTANCE`]/[`MAX_DISTANCE`], в глубину они переводятся этой функцией.
+fn depth_from_distance(distance: f32) -> f32 {
+    (distance * distance - 1.0).sqrt()
+}
+/// Относительный шаг видимого размера на пункт прокрутки.
 const ZOOM_SENSITIVITY: f32 = 0.002;
-
-const DRAG_SENSITIVITY: f32 = 0.006;
-/// Вблизи пиксель перетаскивания приходится на меньший участок сферы, поэтому
-/// чувствительность падает; вдали — растёт. Крайние множители подобраны так,
-/// чтобы на дистанции по умолчанию остался прежний темп.
-const DRAG_SCALE_MIN: f32 = 0.30;
-const DRAG_SCALE_MAX: f32 = 1.35;
+/// Доводка зума к цели: без неё прокрутка рассыпается на шаги там, где окно
+/// не получило повода перерисоваться (ADR-0060 § 2).
+const ZOOM_TAU: f32 = 0.06;
+/// Порог, после которого зум считается сошедшимся, глубина.
+const ZOOM_SETTLE: f32 = 2e-3;
+/// Высота вьюпорта, когда раскладка её не передала: поведение без геометрии
+/// должно оставаться определённым.
+const NOMINAL_VIEWPORT_HEIGHT: f32 = 800.0;
 /// Затухание броска: τ ≈ 0.67 с, вращение живёт несколько секунд.
 const INERTIA_DAMPING: f32 = 1.5;
 const INERTIA_STOP: f32 = 0.004;
@@ -94,7 +104,10 @@ pub(crate) struct CameraUniform {
 pub struct GlobeCamera {
     yaw: f32,
     pitch: f32,
-    distance: f32,
+    /// Глубина силуэта в текущем кадре, `sqrt(distance² − 1)`.
+    depth: f32,
+    /// Куда зум доводится: колесо меняет цель, кадр — текущую глубину.
+    depth_target: f32,
     yaw_velocity: f32,
     pitch_velocity: f32,
     fly: Option<FlyAnimation>,
@@ -123,7 +136,8 @@ impl Default for GlobeCamera {
         Self {
             yaw: 0.0,
             pitch: 0.0,
-            distance: DEFAULT_DISTANCE,
+            depth: depth_from_distance(DEFAULT_DISTANCE),
+            depth_target: depth_from_distance(DEFAULT_DISTANCE),
             yaw_velocity: 0.0,
             pitch_velocity: 0.0,
             fly: None,
@@ -228,9 +242,10 @@ impl GlobeCamera {
                 self.fly = None;
             }
         } else if input.drag_delta != Vec2::ZERO {
-            let sensitivity = drag_sensitivity(self.distance);
-            let yaw_delta = -input.drag_delta.x * sensitivity;
-            let pitch_delta = input.drag_delta.y * sensitivity;
+            let focal = viewport_focal(input.viewport_height);
+            let distance = self.distance();
+            let yaw_delta = -rotation_for_screen_travel(input.drag_delta.x, distance, focal);
+            let pitch_delta = rotation_for_screen_travel(input.drag_delta.y, distance, focal);
 
             self.yaw += yaw_delta;
             self.pitch += pitch_delta;
@@ -260,8 +275,11 @@ impl GlobeCamera {
         }
 
         if input.scroll_delta != 0.0 {
-            let scale = (-input.scroll_delta * ZOOM_SENSITIVITY).exp();
-            self.distance = (self.distance * scale).clamp(MIN_DISTANCE, MAX_DISTANCE);
+            self.scroll(input.scroll_delta);
+        }
+        self.depth = approach(self.depth, self.depth_target, dt, ZOOM_TAU);
+        if (self.depth - self.depth_target).abs() < ZOOM_SETTLE {
+            self.depth = self.depth_target;
         }
 
         if auto_spin
@@ -337,14 +355,32 @@ impl GlobeCamera {
     }
 
     /// Идёт ли движение, требующее перерисовки: доворот, инерция,
-    /// авто-вращение в простое, переворот или затухание под курсором.
+    /// авто-вращение в простое, переворот, доводка зума или затухание
+    /// под курсором.
     pub fn is_animating(&self) -> bool {
         self.fly.is_some()
             || self.yaw_velocity != 0.0
             || self.pitch_velocity != 0.0
             || self.is_idle_spinning()
             || self.is_flipping()
+            || self.is_zooming()
             || (self.hover > 0.0 && self.hover < 1.0)
+    }
+
+    /// Зум ещё не сошёлся с целью: окно обязано просить кадры, иначе
+    /// прокрутка рисуется шагами (ADR-0060 § 2).
+    pub fn is_zooming(&self) -> bool {
+        (self.depth - self.depth_target).abs() >= ZOOM_SETTLE
+    }
+
+    /// Зум колесом: цель меняется на постоянную долю видимого размера, а не
+    /// дистанции, поэтому одна и та же прокрутка читается одинаково на всём
+    /// диапазоне (ADR-0060 § 1).
+    fn scroll(&mut self, scroll_delta: f32) {
+        self.depth_target = (self.depth_target * (-scroll_delta * ZOOM_SENSITIVITY).exp()).clamp(
+            depth_from_distance(MIN_DISTANCE),
+            depth_from_distance(MAX_DISTANCE),
+        );
     }
 
     /// 0 — курсор вне глобуса, 1 — над ним; сглаженный сигнал покоя.
@@ -391,7 +427,12 @@ impl GlobeCamera {
             cos_pitch * yaw.sin(),
             self.pitch.sin(),
             cos_pitch * yaw.cos(),
-        ) * self.distance
+        ) * self.distance()
+    }
+
+    /// Дистанция до центра сферы, посчитанная из глубины силуэта.
+    fn distance(&self) -> f32 {
+        (1.0 + self.depth * self.depth).sqrt()
     }
 
     /// Матрица вида и проекции для текущего aspect. Музыкальная качка
@@ -410,12 +451,10 @@ impl GlobeCamera {
     /// Радиус силуэта единичной сферы на экране в пикселях. Центр силуэта
     /// совпадает с центром viewport'а: камера всегда смотрит в начало координат.
     pub fn projected_radius(&self, viewport: Rect) -> f32 {
-        if !viewport.is_finite() || viewport.height() <= 0.0 {
+        if !viewport.is_finite() || viewport.height() <= 0.0 || self.depth <= 0.0 {
             return 0.0;
         }
-        let focal = viewport.height() * 0.5 / (FOV_Y_RADIANS * 0.5).tan();
-        let depth = (self.distance * self.distance - 1.0).max(1e-4).sqrt();
-        focal / depth
+        focal_length(viewport.height()) / self.depth
     }
 
     /// Пересечение луча из экранной точки со сферой радиусом 1.
@@ -509,11 +548,41 @@ fn shortest_delta(from: f32, to: f32) -> f32 {
     (to - from + std::f32::consts::PI).rem_euclid(tau) - std::f32::consts::PI
 }
 
-/// Чувствительность орбиты на текущей дистанции: на дистанции по умолчанию
-/// совпадает с [`DRAG_SENSITIVITY`], вблизи уменьшается, вдали растёт.
-fn drag_sensitivity(distance: f32) -> f32 {
-    let scale = ((distance - 1.0) / (DEFAULT_DISTANCE - 1.0)).clamp(DRAG_SCALE_MIN, DRAG_SCALE_MAX);
-    DRAG_SENSITIVITY * scale
+/// Фокусное расстояние в пикселях для высоты вьюпорта.
+fn focal_length(viewport_height: f32) -> f32 {
+    viewport_height * 0.5 / (FOV_Y_RADIANS * 0.5).tan()
+}
+
+/// Фокусное расстояние кадра; при отсутствии геометрии — номинальная высота,
+/// чтобы поведение без раскладки оставалось определённым.
+fn viewport_focal(viewport_height: f32) -> f32 {
+    if viewport_height.is_finite() && viewport_height > 0.0 {
+        focal_length(viewport_height)
+    } else {
+        focal_length(NOMINAL_VIEWPORT_HEIGHT)
+    }
+}
+
+/// Поворот, при котором передняя точка сферы проходит по экрану `pixels`
+/// пунктов — перетаскивание один к одному (ADR-0060 § 3).
+///
+/// Точка удалена от глаза на `distance − 1`, но камера вращается вокруг центра
+/// планеты, поэтому её экранный ход равен `focal · sin δ / (distance − cos δ)`.
+/// Приравняв его к `pixels` и решив уравнение (`k = pixels / focal`), получаем
+/// `δ = asin(k·distance / √(1 + k²)) − atan(k)`: 1:1 держится и на быстром
+/// жесте, где линейной оценки уже не хватает.
+fn rotation_for_screen_travel(pixels: f32, distance: f32, focal: f32) -> f32 {
+    if !pixels.is_finite() || focal <= 0.0 || !distance.is_finite() {
+        return 0.0;
+    }
+    let k = pixels / focal;
+    let ratio = k * distance / (1.0 + k * k).sqrt();
+    if ratio.abs() >= 1.0 {
+        // Жест длиннее силуэта: 1:1 недостижимо, передняя точка уходит за
+        // горизонт — берём поворот максимального экранного хода.
+        return (1.0 / distance.max(1.0)).acos() * pixels.signum();
+    }
+    ratio.asin() - k.atan()
 }
 
 fn approach(current: f32, target: f32, dt: f32, tau: f32) -> f32 {
@@ -644,35 +713,157 @@ mod tests {
     #[test]
     fn zoom_is_clamped() {
         let mut camera = GlobeCamera::default();
-        camera.update(
-            0.016,
-            &GlobeInput {
-                scroll_delta: 100_000.0,
-                ..GlobeInput::default()
-            },
+        camera.scroll(100_000.0);
+        settle(&mut camera);
+        assert!(
+            (camera.distance() - MIN_DISTANCE).abs() < 1e-5,
+            "ближняя граница: {}",
+            camera.distance()
         );
-        assert!((camera.distance - MIN_DISTANCE).abs() < 1e-5);
 
+        camera.scroll(-100_000.0);
+        settle(&mut camera);
+        assert!(
+            (camera.distance() - MAX_DISTANCE).abs() < 1e-5,
+            "дальняя граница: {}",
+            camera.distance()
+        );
+    }
+
+    /// Доводит зум до цели без покадровой отрисовки.
+    fn settle(camera: &mut GlobeCamera) {
+        camera.depth = camera.depth_target;
+    }
+
+    /// ADR-0060 § 1: одна и та же прокрутка меняет видимый размер планеты на
+    /// одну и ту же долю при любой дистанции — расхождение с «руками» не растёт
+    /// при масштабировании.
+    #[test]
+    fn zoom_step_is_constant_in_visible_size() {
+        // Начала выбраны внутри диапазона: у самой границы шаг законно упирается
+        // в кламп, и это отдельная проверка `zoom_is_clamped`.
+        let notches = [1.6, 2.4, DEFAULT_DISTANCE, 4.5, 5.4];
+        let mut ratios = Vec::new();
+        for start in notches {
+            let mut camera = GlobeCamera {
+                depth: depth_from_distance(start),
+                depth_target: depth_from_distance(start),
+                ..GlobeCamera::default()
+            };
+            let before = camera.projected_radius(viewport());
+            camera.scroll(40.0);
+            settle(&mut camera);
+            let after = camera.projected_radius(viewport());
+            ratios.push(after / before);
+        }
+
+        let first = ratios[0];
+        for ratio in &ratios {
+            assert!(
+                (ratio - first).abs() < 1e-5,
+                "доля прироста видимого размера должна совпадать: {ratios:?}"
+            );
+        }
+        assert!(first > 1.0, "колесо вверх приближает: {first}");
+    }
+
+    /// ADR-0060 § 2: пока зум не сошёлся, камера обязана просить кадры.
+    #[test]
+    fn zoom_reports_itself_as_an_animation_until_it_settles() {
+        let mut camera = GlobeCamera::default();
         camera.update(
             0.016,
             &GlobeInput {
-                scroll_delta: -100_000.0,
+                scroll_delta: 40.0,
                 ..GlobeInput::default()
             },
         );
-        assert!((camera.distance - MAX_DISTANCE).abs() < 1e-5);
+        let eased = camera.distance();
+        assert!(camera.is_zooming());
+        assert!(
+            eased > MIN_DISTANCE && eased < DEFAULT_DISTANCE,
+            "за кадр зум приходит частично: {eased}"
+        );
+
+        for _ in 0..60 {
+            camera.update(0.016, &GlobeInput::default());
+        }
+        assert!(!camera.is_zooming(), "зум должен сойтись");
+        assert!(!camera.is_animating());
+        assert!(camera.distance() < DEFAULT_DISTANCE);
+    }
+
+    /// ADR-0060 § 3: точка поверхности под курсором остаётся под курсором —
+    /// один пункт перетаскивания двигает её ровно на пункт, на любой дистанции.
+    #[test]
+    fn drag_moves_the_surface_with_the_cursor() {
+        let rect = viewport();
+        // Покадровый жест быстрого броска на 60 Гц; он же проверяется большим
+        // одиночным смещением — «не обгонять руку» важнее точности на выбросе.
+        let drag = Vec2::new(24.0, 14.0);
+
+        for start in [MIN_DISTANCE, DEFAULT_DISTANCE, MAX_DISTANCE] {
+            let mut camera = GlobeCamera {
+                depth: depth_from_distance(start),
+                depth_target: depth_from_distance(start),
+                ..GlobeCamera::default()
+            };
+            let grabbed = camera
+                .screen_to_sphere_deformed(rect.center(), rect, &GlobeDeform::IDENTITY)
+                .expect("центр экрана попадает в сферу");
+            let before = camera
+                .project_on_sphere(grabbed, rect)
+                .expect("точка видна до перетаскивания");
+
+            camera.advance(
+                0.016,
+                0.016,
+                &GlobeInput {
+                    drag_delta: drag,
+                    viewport_height: rect.height(),
+                    ..GlobeInput::default()
+                },
+                &GlobeMotion::default(),
+                false,
+                false,
+            );
+
+            let after = camera
+                .project_on_sphere(grabbed, rect)
+                .expect("точка видна после перетаскивания");
+            let moved = after - before;
+            let error = ((moved.x - drag.x).powi(2) + (moved.y - drag.y).powi(2)).sqrt();
+            assert!(
+                error < drag.length() * 0.01,
+                "на дистанции {start} поверхность ушла на {moved:?} вместо {drag:?}"
+            );
+            assert!(
+                moved.x <= drag.x && moved.y <= drag.y,
+                "поверхность не должна обгонять курсор: {moved:?} vs {drag:?}"
+            );
+        }
+    }
+
+    /// Высота вьюпорта участвует в переводе пунктов в угол: без неё берётся
+    /// номинальная, и поведение остаётся определённым.
+    #[test]
+    fn drag_falls_back_to_the_nominal_viewport_height() {
+        assert!((viewport_focal(0.0) - viewport_focal(NOMINAL_VIEWPORT_HEIGHT)).abs() < 1e-9);
+        assert!((viewport_focal(f32::NAN) - viewport_focal(NOMINAL_VIEWPORT_HEIGHT)).abs() < 1e-9);
+        assert!((viewport_focal(-10.0) - viewport_focal(NOMINAL_VIEWPORT_HEIGHT)).abs() < 1e-9);
     }
 
     #[test]
     fn pitch_is_clamped() {
         let mut camera = GlobeCamera::default();
-        camera.update(
-            0.016,
-            &GlobeInput {
-                drag_delta: Vec2::new(0.0, 100_000.0),
-                ..GlobeInput::default()
-            },
-        );
+        let drag = GlobeInput {
+            drag_delta: Vec2::new(0.0, 400.0),
+            viewport_height: 600.0,
+            ..GlobeInput::default()
+        };
+        for _ in 0..20 {
+            camera.update(0.016, &drag);
+        }
 
         assert!((camera.pitch - MAX_PITCH).abs() < 1e-5);
         assert!(camera.eye().is_finite());
@@ -871,12 +1062,14 @@ mod tests {
     fn fling_keeps_momentum_for_several_seconds() {
         let mut camera = GlobeCamera::default();
         let drag = GlobeInput {
-            drag_delta: Vec2::new(30.0, 0.0),
+            drag_delta: Vec2::new(100.0, 0.0),
+            viewport_height: 600.0,
             ..GlobeInput::default()
         };
         camera.advance(0.05, 0.05, &drag, &GlobeMotion::default(), false, false);
         let start = camera.yaw;
-        for _ in 0..60 {
+        let mut seconds = 0.0;
+        while camera.yaw_velocity.abs() > 0.0 && seconds < 10.0 {
             camera.advance(
                 0.05,
                 0.05,
@@ -885,11 +1078,16 @@ mod tests {
                 false,
                 false,
             );
+            seconds += 0.05;
         }
         let glide = shortest_delta(start, camera.yaw).abs();
         assert!(
-            glide > 0.6,
-            "бросок должен катить глобус несколько секунд, получено {glide}"
+            glide > 0.5,
+            "бросок должен катить глобус дальше самого жеста, получено {glide}"
+        );
+        assert!(
+            seconds > 2.0,
+            "инерция должна жить несколько секунд, получено {seconds}"
         );
     }
 
@@ -957,11 +1155,11 @@ mod tests {
     #[test]
     fn projected_radius_grows_when_zooming_in() {
         let near = GlobeCamera {
-            distance: 2.0,
+            depth: depth_from_distance(2.0),
             ..GlobeCamera::default()
         };
         let far = GlobeCamera {
-            distance: 4.0,
+            depth: depth_from_distance(4.0),
             ..GlobeCamera::default()
         };
 
@@ -1196,21 +1394,53 @@ mod tests {
         assert!((hit - point).length() < 1e-3, "hit: {hit:?}");
     }
 
+    /// Поворот подобран так, чтобы экранный ход передней точки совпал с
+    /// жестом; вблизи планета ближе, поэтому на тот же пункт нужен меньший угол
+    /// (ADR-0060 § 3).
     #[test]
-    fn drag_speed_follows_the_zoom_level() {
-        let near = drag_sensitivity(MIN_DISTANCE);
-        let default = drag_sensitivity(DEFAULT_DISTANCE);
-        let far = drag_sensitivity(MAX_DISTANCE);
+    fn drag_rotation_equals_the_screen_travel_of_the_front_point() {
+        let focal = focal_length(NOMINAL_VIEWPORT_HEIGHT);
+        for distance in [MIN_DISTANCE, DEFAULT_DISTANCE, MAX_DISTANCE] {
+            // Передняя точка уходит за силуэт, пройдя один его радиус: дальше
+            // 1:1 геометрически невозможно, и поворот упирается в максимум.
+            let limit = focal / (distance * distance - 1.0).sqrt();
+            for pixels in [1.0f32, 20.0, 100.0] {
+                let pixels = pixels.min(limit * 0.9);
+                let rotation = rotation_for_screen_travel(pixels, distance, focal);
+                let travel = screen_travel(rotation, distance, focal);
+                assert!(
+                    (travel - pixels).abs() < pixels * 1e-3 + 1e-3,
+                    "d = {distance}, {pixels} px → {travel} px (δ = {rotation})"
+                );
+            }
+
+            let beyond = rotation_for_screen_travel(limit * 10.0, distance, focal);
+            let travel = screen_travel(beyond, distance, focal);
+            assert!(
+                (travel - limit).abs() < limit * 1e-3 + 1e-3,
+                "за пределом силуэта поворот максимален: {travel} vs {limit}"
+            );
+        }
+
+        let near = rotation_for_screen_travel(100.0, MIN_DISTANCE, focal);
+        let far = rotation_for_screen_travel(100.0, MAX_DISTANCE, focal);
+        assert!(near < far, "вблизи пункт стоит дешевле: {near} vs {far}");
+
+        // Малый жест остаётся линейным: δ ≈ pixels·(distance − 1)/focal.
+        let small = rotation_for_screen_travel(4.0, DEFAULT_DISTANCE, focal);
+        let linear = 4.0 * (DEFAULT_DISTANCE - 1.0) / focal;
         assert!(
-            near < default,
-            "вблизи вращение медленнее: {near} vs {default}"
+            (small - linear).abs() < linear * 0.01,
+            "{small} vs {linear}"
         );
-        assert!(far > default, "вдали вращение быстрее: {far} vs {default}");
-        assert!(
-            (default - DRAG_SENSITIVITY).abs() < 1e-6,
-            "дистанция по умолчанию сохраняет прежний темп"
+        assert_eq!(
+            rotation_for_screen_travel(f32::NAN, DEFAULT_DISTANCE, focal),
+            0.0
         );
-        assert!((near - DRAG_SENSITIVITY * DRAG_SCALE_MIN).abs() < 1e-6);
-        assert!((far - DRAG_SENSITIVITY * DRAG_SCALE_MAX).abs() < 1e-6);
+    }
+
+    /// Экранный ход передней точки при повороте камеры на `rotation`.
+    fn screen_travel(rotation: f32, distance: f32, focal: f32) -> f32 {
+        focal * rotation.sin() / (distance - rotation.cos())
     }
 }

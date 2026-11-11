@@ -483,6 +483,9 @@ fn run_window(session: &mut Session, size: [f32; 2], surface: RootSurface) -> Re
     let options = eframe::NativeOptions {
         viewport,
         renderer: eframe::Renderer::Wgpu,
+        // Политика выбора GPU и задержка показа — ADR-0059: окно стола просит
+        // дискретную карту, если она есть, и один кадр в очереди вместо двух.
+        wgpu_options: render::wgpu_options(),
         ..Default::default()
     };
 
