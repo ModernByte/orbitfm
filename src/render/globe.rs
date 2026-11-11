@@ -20,7 +20,7 @@ const EARTH_TEXTURE_HI: &[u8] = include_bytes!("../../assets/textures/earth@2x.j
 const LOD_NEAR_ENTER: f32 = 2.6;
 const LOD_NEAR_EXIT: f32 = 2.9;
 /// Предзагрузка детального яруса: с этой дистанции кадр заказывает фоновую
-/// задачу, чтобы к моменту `LOD_NEAR_ENTER` текстур* уже лежала в GPU.
+/// задачу, чтобы к моменту `LOD_NEAR_ENTER` текстура уже лежала в GPU.
 const LOD_PREFETCH: f32 = 3.0;
 /// Глубина мипов: дальняя сторона сферы и мелкий силуэт сэмплируются с
 /// уменьшением, иначе на континентах появляется муар.
@@ -37,7 +37,7 @@ const SPHERE_STACKS: u32 = 32;
 /// Готовится либо сразу (базовый ярус, нужен первому кадру), либо в отдельном
 /// потоке (детальный ярус): кадр не декодирует текстуры и не строит мипы
 /// (ADR-0059 § 2).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 struct EarthTextureData {
     width: u32,
     height: u32,
