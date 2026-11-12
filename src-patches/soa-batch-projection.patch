@@ -1,0 +1,379 @@
+diff --git a/src/render/camera.rs b/src/render/camera.rs
+index c493c1b..960afa1 100644
+--- a/src/render/camera.rs
++++ b/src/render/camera.rs
+@@ -506,22 +506,114 @@ impl GlobeCamera {
+         if viewport.width() <= 0.0 || viewport.height() <= 0.0 {
+             return None;
+         }
+-        if point.dot(self.eye()) <= point.length_squared() {
+-            return None;
++        let eye = self.eye();
++        let view_proj = self.view_proj(viewport.aspect_ratio());
++        project_point_eye_vp(view_proj, eye, point, viewport)
++    }
++
++    /// Батч-проекция точек поверхности (world / deformed) в экран.
++    ///
++    /// Одна матрица `view_proj` и один `eye` на весь слайс. В `out_positions` /
++    /// `out_indices` попадают только видимые точки; `out_indices[i]` — индекс во
++    /// входном слайсе. Буферы очищаются в начале вызова.
++    ///
++    /// Семантика отбора совпадает с [`Self::project_on_sphere`].
++    pub fn project_points_on_sphere(
++        &self,
++        points: &[Vec3],
++        viewport: Rect,
++        out_positions: &mut Vec<Pos2>,
++        out_indices: &mut Vec<u32>,
++    ) {
++        out_positions.clear();
++        out_indices.clear();
++        if points.is_empty() || viewport.width() <= 0.0 || viewport.height() <= 0.0 {
++            return;
++        }
++        let eye = self.eye();
++        let view_proj = self.view_proj(viewport.aspect_ratio());
++        out_positions.reserve(points.len());
++        out_indices.reserve(points.len());
++        for (index, point) in points.iter().enumerate() {
++            if let Some(position) = project_point_eye_vp(view_proj, eye, *point, viewport) {
++                out_positions.push(position);
++                out_indices.push(index as u32);
++            }
+         }
++    }
+ 
+-        let clip = self.view_proj(viewport.aspect_ratio()) * point.extend(1.0);
+-        if clip.w <= f32::EPSILON {
+-            return None;
++    /// SoA-батч: отдельные массивы `x/y/z` (одинаковая длина) — world/deformed.
++    ///
++    /// Удобно после [`crate::render::markers::SpherePointSoA::deform_into`].
++    /// Длины слайсов должны совпадать; иначе метод ничего не пишет в out.
++    pub fn project_points_on_sphere_soa(
++        &self,
++        xs: &[f32],
++        ys: &[f32],
++        zs: &[f32],
++        viewport: Rect,
++        out_positions: &mut Vec<Pos2>,
++        out_indices: &mut Vec<u32>,
++    ) {
++        out_positions.clear();
++        out_indices.clear();
++        let n = xs.len();
++        if n == 0 || ys.len() != n || zs.len() != n {
++            return;
++        }
++        if viewport.width() <= 0.0 || viewport.height() <= 0.0 {
++            return;
+         }
++        let eye = self.eye();
++        let view_proj = self.view_proj(viewport.aspect_ratio());
++        // Столбцы матрицы один раз — цикл без glam::Mat4 * на каждую точку
++        // (те же 16 mul + 12 add, но без временного Vec4 и с плотным SoA-доступом).
++        let c0 = view_proj.col(0);
++        let c1 = view_proj.col(1);
++        let c2 = view_proj.col(2);
++        let c3 = view_proj.col(3);
++        let left = viewport.left();
++        let top = viewport.top();
++        let width = viewport.width();
++        let height = viewport.height();
++        let eye_x = eye.x;
++        let eye_y = eye.y;
++        let eye_z = eye.z;
++
++        out_positions.reserve(n);
++        out_indices.reserve(n);
++
++        for i in 0..n {
++            let px = xs[i];
++            let py = ys[i];
++            let pz = zs[i];
++            let len_sq = px * px + py * py + pz * pz;
++            if px * eye_x + py * eye_y + pz * eye_z <= len_sq {
++                continue;
++            }
+ 
+-        let ndc = clip.truncate() / clip.w;
+-        let position = Pos2::new(
+-            viewport.left() + (ndc.x * 0.5 + 0.5) * viewport.width(),
+-            viewport.top() + (0.5 - ndc.y * 0.5) * viewport.height(),
+-        );
+-        (position.x.is_finite() && position.y.is_finite() && viewport.contains(position))
+-            .then_some(position)
++            let clip_x = c0.x * px + c1.x * py + c2.x * pz + c3.x;
++            let clip_y = c0.y * px + c1.y * py + c2.y * pz + c3.y;
++            let clip_z = c0.z * px + c1.z * py + c2.z * pz + c3.z;
++            let clip_w = c0.w * px + c1.w * py + c2.w * pz + c3.w;
++            if clip_w <= f32::EPSILON {
++                continue;
++            }
++            let inv_w = 1.0 / clip_w;
++            let ndc_x = clip_x * inv_w;
++            let ndc_y = clip_y * inv_w;
++            let _ndc_z = clip_z * inv_w;
++            let sx = left + (ndc_x * 0.5 + 0.5) * width;
++            let sy = top + (0.5 - ndc_y * 0.5) * height;
++            if !sx.is_finite() || !sy.is_finite() {
++                continue;
++            }
++            let position = Pos2::new(sx, sy);
++            if viewport.contains(position) {
++                out_positions.push(position);
++                out_indices.push(i as u32);
++            }
++        }
+     }
+ 
+     pub(crate) fn uniform_with_motion(&self, aspect: f32, motion: &GlobeMotion) -> CameraUniform {
+@@ -538,6 +630,29 @@ impl GlobeCamera {
+     }
+ }
+ 
++
++/// Общая проекция для [`GlobeCamera::project_on_sphere`] и AoS-батча.
++fn project_point_eye_vp(
++    view_proj: Mat4,
++    eye: Vec3,
++    point: Vec3,
++    viewport: Rect,
++) -> Option<Pos2> {
++    if point.dot(eye) <= point.length_squared() {
++        return None;
++    }
++    let clip = view_proj * point.extend(1.0);
++    if clip.w <= f32::EPSILON {
++        return None;
++    }
++    let ndc = clip.truncate() / clip.w;
++    let position = Pos2::new(
++        viewport.left() + (ndc.x * 0.5 + 0.5) * viewport.width(),
++        viewport.top() + (0.5 - ndc.y * 0.5) * viewport.height(),
++    );
++    (position.x.is_finite() && position.y.is_finite() && viewport.contains(position)).then_some(position)
++}
++
+ fn unproject(inverse_view_proj: Mat4, x: f32, y: f32, z: f32) -> Option<Vec3> {
+     let clip = inverse_view_proj * Vec4::new(x, y, z, 1.0);
+     (clip.w.abs() > f32::EPSILON).then(|| clip.truncate() / clip.w)
+@@ -679,6 +794,47 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn batch_and_soa_match_scalar_projection() {
++        let camera = GlobeCamera::default();
++        let rect = viewport();
++        let points = [
++            sphere_point(0.0, 0.0),
++            sphere_point(37.97, 23.72),
++            sphere_point(0.0, 180.0), // back — отфильтруется
++            sphere_point(52.52, 13.405),
++        ];
++
++        let mut positions = Vec::new();
++        let mut indices = Vec::new();
++        camera.project_points_on_sphere(&points, rect, &mut positions, &mut indices);
++
++        let mut expect_pos = Vec::new();
++        let mut expect_idx = Vec::new();
++        for (i, p) in points.iter().enumerate() {
++            if let Some(screen) = camera.project_on_sphere(*p, rect) {
++                expect_pos.push(screen);
++                expect_idx.push(i as u32);
++            }
++        }
++        assert_eq!(indices, expect_idx);
++        assert_eq!(positions.len(), expect_pos.len());
++        for (a, b) in positions.iter().zip(expect_pos.iter()) {
++            assert!((*a - *b).length() < 1e-4);
++        }
++
++        let xs: Vec<f32> = points.iter().map(|p| p.x).collect();
++        let ys: Vec<f32> = points.iter().map(|p| p.y).collect();
++        let zs: Vec<f32> = points.iter().map(|p| p.z).collect();
++        let mut soa_pos = Vec::new();
++        let mut soa_idx = Vec::new();
++        camera.project_points_on_sphere_soa(&xs, &ys, &zs, rect, &mut soa_pos, &mut soa_idx);
++        assert_eq!(soa_idx, expect_idx);
++        for (a, b) in soa_pos.iter().zip(expect_pos.iter()) {
++            assert!((*a - *b).length() < 1e-4, "soa vs scalar");
++        }
++    }
++
+     #[test]
+     fn corner_ray_misses_sphere() {
+         let camera = GlobeCamera::default();
+diff --git a/src/render/markers.rs b/src/render/markers.rs
+index 7228bad..26bd440 100644
+--- a/src/render/markers.rs
++++ b/src/render/markers.rs
+@@ -57,6 +57,84 @@ pub fn sphere_point(lat_deg: f32, lon_deg: f32) -> Vec3 {
+     Vec3::new(lat.cos() * lon.sin(), lat.sin(), lat.cos() * lon.cos())
+ }
+ 
++/// SoA-набор точек на единичной сфере (или уже в world после [`Self::deform_into`]).
++///
++/// Координаты станций кладутся один раз при смене списка; каждый кадр — только
++/// `deform_into` + [`crate::render::GlobeCamera::project_points_on_sphere_soa`].
++#[derive(Debug, Clone, Default)]
++pub struct SpherePointSoA {
++    pub x: Vec<f32>,
++    pub y: Vec<f32>,
++    pub z: Vec<f32>,
++}
++
++impl SpherePointSoA {
++    pub fn with_capacity(capacity: usize) -> Self {
++        Self {
++            x: Vec::with_capacity(capacity),
++            y: Vec::with_capacity(capacity),
++            z: Vec::with_capacity(capacity),
++        }
++    }
++
++    pub fn len(&self) -> usize {
++        self.x.len()
++    }
++
++    pub fn is_empty(&self) -> bool {
++        self.x.is_empty()
++    }
++
++    pub fn clear(&mut self) {
++        self.x.clear();
++        self.y.clear();
++        self.z.clear();
++    }
++
++    /// Добавляет точку единичной сферы по широте/долготе в градусах.
++    pub fn push_lat_lon(&mut self, lat_deg: f32, lon_deg: f32) {
++        let p = sphere_point(lat_deg, lon_deg);
++        self.x.push(p.x);
++        self.y.push(p.y);
++        self.z.push(p.z);
++    }
++
++    /// Перестраивает буфер из пар (lat, lon) в градусах.
++    pub fn fill_lat_lons<I>(&mut self, coords: I)
++    where
++        I: IntoIterator<Item = (f32, f32)>,
++    {
++        self.clear();
++        for (lat, lon) in coords {
++            self.push_lat_lon(lat, lon);
++        }
++    }
++
++    /// Пишет деформированные world-координаты в `out_*` (длины совпадают с `self`).
++    pub fn deform_into(
++        &self,
++        deform: super::motion::GlobeDeform,
++        out_x: &mut Vec<f32>,
++        out_y: &mut Vec<f32>,
++        out_z: &mut Vec<f32>,
++    ) {
++        let n = self.len();
++        out_x.clear();
++        out_y.clear();
++        out_z.clear();
++        out_x.reserve(n);
++        out_y.reserve(n);
++        out_z.reserve(n);
++        let sx = deform.scale_xz();
++        let sy = deform.scale_y();
++        for i in 0..n {
++            out_x.push(self.x[i] * sx);
++            out_y.push(self.y[i] * sy);
++            out_z.push(self.z[i] * sx);
++        }
++    }
++}
++
+ /// Осветление к белому без изменения альфы.
+ fn lighten(color: Color32, amount: f32) -> Color32 {
+     let amount = amount.clamp(0.0, 1.0);
+@@ -289,4 +367,16 @@ mod tests {
+         }
+         assert_eq!(pulse_fraction(f64::NAN), 0.0);
+     }
++
++    #[test]
++    fn soa_push_matches_sphere_point() {
++        let mut soa = SpherePointSoA::with_capacity(2);
++        soa.push_lat_lon(0.0, 0.0);
++        soa.push_lat_lon(45.0, 10.0);
++        let a = sphere_point(0.0, 0.0);
++        let b = sphere_point(45.0, 10.0);
++        assert!((soa.x[0] - a.x).abs() < 1e-6);
++        assert!((soa.y[1] - b.y).abs() < 1e-6);
++        assert!((soa.z[1] - b.z).abs() < 1e-6);
++    }
+ }
+diff --git a/src/render/mod.rs b/src/render/mod.rs
+index 293c176..15dcb01 100644
+--- a/src/render/mod.rs
++++ b/src/render/mod.rs
+@@ -20,7 +20,7 @@ pub use countries::{CountryStyle, paint_country};
+ pub use globe::{GlobeRenderer, paint_globe};
+ pub use gpu::wgpu_options;
+ pub(crate) use heatmap::{CountryColor, HEAT_SIZE, HeatFrame, build as build_heat_map};
+-pub use markers::{MarkerLabel, MarkerVisual, paint_markers, sphere_point};
++pub use markers::{MarkerLabel, MarkerVisual, SpherePointSoA, paint_markers, sphere_point};
+ pub use motion::{GlobeDeform, GlobeMotion, MotionMixer};
+ pub use spectrum::{BandTargets, SpectrumOverlay, SpectrumTarget};
+ pub(crate) use spectrum::{MIN_RMS_DB, RMS_RANGE_DB};
+diff --git a/src/ui/globe_view.rs b/src/ui/globe_view.rs
+index 02d7318..6818a57 100644
+--- a/src/ui/globe_view.rs
++++ b/src/ui/globe_view.rs
+@@ -946,17 +946,35 @@ fn marker_screens(
+     viewport: egui::Rect,
+     deform: &GlobeDeform,
+ ) -> Vec<(usize, egui::Pos2)> {
+-    markers
+-        .iter()
+-        .enumerate()
+-        .filter_map(|(index, marker)| {
+-            camera
+-                .project_on_sphere(
+-                    deform.to_world(sphere_point(marker.lat, marker.lon)),
+-                    viewport,
+-                )
+-                .map(|position| (index, position))
+-        })
++    if markers.is_empty() {
++        return Vec::new();
++    }
++
++    // SoA: lat/lon → единичная сфера → deform → батч-проекция (одна view_proj / eye).
++    let mut unit = crate::render::SpherePointSoA::with_capacity(markers.len());
++    for marker in markers {
++        unit.push_lat_lon(marker.lat, marker.lon);
++    }
++    let mut world_x = Vec::with_capacity(markers.len());
++    let mut world_y = Vec::with_capacity(markers.len());
++    let mut world_z = Vec::with_capacity(markers.len());
++    unit.deform_into(*deform, &mut world_x, &mut world_y, &mut world_z);
++
++    let mut positions = Vec::new();
++    let mut indices = Vec::new();
++    camera.project_points_on_sphere_soa(
++        &world_x,
++        &world_y,
++        &world_z,
++        viewport,
++        &mut positions,
++        &mut indices,
++    );
++
++    indices
++        .into_iter()
++        .zip(positions)
++        .map(|(index, position)| (index as usize, position))
+         .collect()
+ }
+ 
