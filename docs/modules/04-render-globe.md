@@ -22,10 +22,18 @@ pub use motion::{GlobeDeform, GlobeMotion, MotionMixer};
 pub use spectrum::{SpectrumOverlay, SpectrumTarget};
 pub use visualizer::VisualizerModel;
 
-pub struct GlobeCamera { /* yaw, pitch, distance, velocities, fly, idle */ }
+pub struct GlobeCamera { /* yaw, pitch, depth, depth_target, velocities, fly, idle */ }
 
 impl GlobeCamera {
-    pub fn advance(&mut self, dt: f32, elapsed: f32, input: &GlobeInput);
+    pub fn advance(
+        &mut self,
+        dt: f32,
+        elapsed: f32,
+        input: &GlobeInput,
+        motion: &GlobeMotion,
+        allow_flips: bool,
+        auto_spin: bool,
+    );
     pub fn fly_to(&mut self, lat: f64, lon: f64, duration: std::time::Duration);
     pub fn is_animating(&self) -> bool;
     /// Зум ещё не сошёлся с целью (ADR-0060 § 2).
@@ -66,6 +74,7 @@ pub fn paint_globe(
     rect: egui::Rect,
     camera: &GlobeCamera,
     motion: &GlobeMotion,
+    heat: Option<&std::sync::Arc<HeatFrame>>,
 );
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -234,8 +243,9 @@ downlevel-зависимость модуля: вычислительных ко
   инерция с экспоненциальным затуханием (damping 1.5, порог остановки 0.004,
   скорости ограничены 8 рад/с по yaw и 5 рад/с по pitch).
 - Zoom: колесо, состояние — глубина силуэта `depth = sqrt(distance² − 1)`,
-  видимый радиус силуэта `focal/depth`. Цель меняется на постоянную долю
-  видимого размера `exp(−scroll·0.002)` при любой дистанции, текущая глубина
+  видимый радиус силуэта `focal/depth`. Цель глубины меняется на
+  `exp(−scroll·0.002)`, поэтому видимый размер — на постоянную долю
+  `exp(+scroll·0.002)` при любой дистанции, текущая глубина
   доводится к цели с `ZOOM_TAU = 0.06` с и порогом `ZOOM_SETTLE = 2e-3`;
   `is_zooming` держит кадры до остановки (ADR-0060 § 1–2). Дистанция `[1.4, 6.0]`
   остаётся контрактом, по умолчанию 3.2 (ТЗ §5.1 п. 6 требовал крупную Землю;
@@ -308,9 +318,12 @@ downlevel-зависимость модуля: вычислительных ко
   пересоздания пайплайна. На дальнем плане остаётся лёгкая 2048×1024.
 - Детальный ярус готовит рабочий поток (`orbitfm-lod`) целиком: декодирование,
   мипы и загрузка в GPU; задача ставится с дистанции `LOD_PREFETCH = 3.0`,
-  кадр подхватывает готовую текстуру через `try_lock` (ADR-0059 § 2). Ни одна
+  кадр подхватывает готовую текстуру через `try_lock` (ADR-0059 § 2). Уровень
+  копируется в staging-буфер с `mapped_at_creation` и отдаётся командой
+  `copy_buffer_to_texture`: `write_texture` держал бы блокировку очереди всё
+  копирование и задерживал кадровый `write_buffer` (измерено 4,1 мс). Ни одна
   ветка `prepare` не ждёт поток, поэтому переход через порог LOD стоит кадру
-  меньше 0,1 мс вместо 541 мс на потоке кадра. Оба яруса — один и тот же снимок
+  медианно 0,02 мс и p95 0,06 мс вместо 541 мс на потоке кадра. Оба яруса — один и тот же снимок
   (2048 — даунскейл 5400), иначе на зуме была бы видна подмена картинок, а не
   только деталей.
 - Мипы: для обеих текстур строится полная цепочка до 1×1 усреднением 2×2
@@ -576,8 +589,8 @@ downlevel-зависимость модуля: вычислительных ко
 - текстура Земли: усреднение 2×2 даёт вдвое меньший уровень, вырожденное ребро
   1×1 повторяет пиксель, цепочка мипов встроенной 2048×1024 доходит до 1×1
   с правильными размерами уровней; ручной замер
-  `lod_crossing_never_stalls_the_frame` (`#[ignore]`) держит переход через порог
-  LOD дешевле 2 мс на кадр.
+  `lod_crossing_never_stalls_the_frame` (`#[ignore]`) держит медиану кадра
+  дешевле 0,5 мс и p95 дешевле 2 мс (бюджет ADR-0059 § 4), пока ярус готовится.
 
 ## 11. Связанные ADR
 

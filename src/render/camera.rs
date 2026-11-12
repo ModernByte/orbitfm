@@ -1061,8 +1061,11 @@ mod tests {
     #[test]
     fn fling_keeps_momentum_for_several_seconds() {
         let mut camera = GlobeCamera::default();
+        // Жест — тот же, что до ADR-0060: 30 пунктов за кадр 50 мс. Скорость
+        // броска следует за рукой один к одному, поэтому выбег обязан остаться
+        // многсекундным без подгонки порога.
         let drag = GlobeInput {
-            drag_delta: Vec2::new(100.0, 0.0),
+            drag_delta: Vec2::new(30.0, 0.0),
             viewport_height: 600.0,
             ..GlobeInput::default()
         };
@@ -1082,8 +1085,8 @@ mod tests {
         }
         let glide = shortest_delta(start, camera.yaw).abs();
         assert!(
-            glide > 0.5,
-            "бросок должен катить глобус дальше самого жеста, получено {glide}"
+            glide > 0.6,
+            "бросок должен катить глобус несколько секунд, получено {glide}"
         );
         assert!(
             seconds > 2.0,

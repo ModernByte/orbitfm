@@ -26,7 +26,7 @@ pub struct GlobeInput {
 /// Орбитальная камера вокруг глобуса радиусом 1.
 #[derive(Debug)]
 pub struct GlobeCamera {
-    /* yaw, pitch, distance, velocities, fly, idle,
+    /* yaw, pitch, depth, depth_target, velocities, fly, idle,
        priority, sway, flip, roll, flip_cooldown, flip_direction */
 }
 
@@ -115,7 +115,7 @@ pub struct GlobeRenderer { /* ... */ }
 impl GlobeRenderer {
     /// Создаётся один раз при старте и кладётся в CallbackResources.
     /// Базовая текстура Земли декодируется здесь же, мипы строит усреднение
-    /// 2×2 (ADR-0059 § 2), поэтому старт платит ~24 мс вместо 109 мс.
+    /// 2×2 (ADR-0059 § 2), поэтому старт платит 23–29 мс вместо 109 мс.
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -519,7 +519,9 @@ impl SpectrumOverlay {
 - Текстура Земли — два яруса (2048×1024 и 5400×2700) с полной цепочкой мипов
   (усреднение 2×2), линейным `mipmap_filter` и анизотропией 8; детальный ярус
   включается при `distance ≤ 2.6` и выключается после 2.9, а готовится в фоновом
-  потоке с дистанции 3.0 (ADR-0059 § 2).
+  потоке с дистанции 3.0 (ADR-0059 § 2); уровень заливается через
+  staging-буфер с `mapped_at_creation` и `copy_buffer_to_texture`, чтобы не
+  держать блокировку очереди, которую кадр берёт в `write_buffer`.
 - Атмосфера — только Fresnel-обод сферы; облака, ночная сторона и свечение
   поверхности не моделируются.
 - Подписи стран — вне текущего объёма; маркеры станций и контуры стран
