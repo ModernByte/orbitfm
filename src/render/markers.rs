@@ -289,4 +289,53 @@ mod tests {
         }
         assert_eq!(pulse_fraction(f64::NAN), 0.0);
     }
+
+    /// Ручной замер цены отрисовки маркеров (волна 4.3 плана): построение
+    /// форм в painter и тесселяция egui. Нужен release:
+    /// `cargo test --release marker_paint_budget -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "ручной замер: запускать в release"]
+    fn marker_paint_budget_probe() {
+        let ctx = egui::Context::default();
+        let bounds = Rect::from_min_size(Pos2::ZERO, Vec2::new(1100.0, 800.0));
+        for count in [100usize, 200, 500, 1000] {
+            let visuals: Vec<MarkerVisual> = (0..count)
+                .map(|index| MarkerVisual {
+                    pos: Pos2::new((index * 37 % 1100) as f32, (index * 53 % 800) as f32),
+                    playing: index % 20 == 0,
+                    selected: index % 50 == 0,
+                })
+                .collect();
+            let mut paint = Vec::with_capacity(40);
+            let mut tess = Vec::with_capacity(40);
+            for _ in 0..40 {
+                let started = std::time::Instant::now();
+                ctx.begin_pass(egui::RawInput::default());
+                let painter = ctx.layer_painter(egui::LayerId::new(
+                    egui::Order::Foreground,
+                    egui::Id::unique("marker-paint-probe"),
+                ));
+                paint_markers(&painter, bounds, &visuals, None, None, Color32::WHITE, 1.0);
+                let output = ctx.end_pass();
+                paint.push(started.elapsed().as_secs_f64() * 1e3);
+
+                let started = std::time::Instant::now();
+                let primitives = ctx.tessellate(output.shapes, output.pixels_per_point);
+                tess.push(started.elapsed().as_secs_f64() * 1e3);
+                std::hint::black_box(&primitives);
+            }
+            paint.sort_by(|a, b| a.total_cmp(b));
+            tess.sort_by(|a, b| a.total_cmp(b));
+            let quantile = |samples: &[f64], q: f64| {
+                samples[((samples.len() - 1) as f64 * q).round() as usize]
+            };
+            println!(
+                "markers_paint N={count}: paint p50={:.3} p95={:.3} мс, tessellate p50={:.3} p95={:.3} мс",
+                quantile(&paint, 0.5),
+                quantile(&paint, 0.95),
+                quantile(&tess, 0.5),
+                quantile(&tess, 0.95),
+            );
+        }
+    }
 }

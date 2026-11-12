@@ -1,8 +1,8 @@
 # Интерфейс: Globe Renderer
 
-Публичная поверхность модуля `render`: `GlobeInput`, `GlobeCamera`, `GlobeRenderer`,
-`CountryStyle`, функции `paint_globe`/`paint_country`, типы маркеров и спектра,
-конфигурация wgpu окна стола (`wgpu_options`).
+Публичная поверхность модуля `render`: `GlobeInput`, `GlobeCamera`, `GlobeProjector`,
+`GlobeRenderer`, `CountryStyle`, функции `paint_globe`/`paint_country`, типы маркеров и
+спектра, конфигурация wgpu окна стола (`wgpu_options`).
 Трейт рендерера не используется; GPU-ресурсы живут в `CallbackResources` egui-wgpu.
 
 ```rust
@@ -107,6 +107,21 @@ impl GlobeCamera {
         point: glam::Vec3,
         viewport: egui::Rect,
     ) -> Option<egui::Pos2>;
+}
+
+/// Проектор кадра: одна `view_proj` и один `eye` на все точки.
+///
+/// Для цикла точек на кадр (маркеры): `project_on_sphere` собирает матрицу на
+/// каждый вызов, проектор — один раз. Отбор и пиксели совпадают с
+/// `project_on_sphere` точка в точку (план `docs/plans/render-frame-budget.md` § 11–12).
+pub struct GlobeProjector { /* ... */ }
+
+impl GlobeProjector {
+    /// Собирает проектор кадра; `None` — у вьюпорта нет площади.
+    pub fn new(camera: &GlobeCamera, viewport: egui::Rect) -> Option<Self>;
+
+    /// Проецирует точку (единичную или уже деформированную).
+    pub fn project(&self, point: glam::Vec3) -> Option<egui::Pos2>;
 }
 
 /// GPU-ресурсы: пайплайн, сфера, текстура Земли, uniform-буфер.
