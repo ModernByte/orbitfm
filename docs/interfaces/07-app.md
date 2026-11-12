@@ -156,8 +156,10 @@ root-вьюпорта: цикл завершается, управление в�
 3. GeoService::from_embedded()    — ошибка фатальна: без границ стран нет поиска
 4. MediaControls::new(wake)       — ошибка логируется, приложение работает без MPRIS
 5. RadioBrowserClient::new()      — без сетевых обращений
-6. StationLibrary::load_default() — ошибка логируется, используется ephemeral()
-7. SettingsStore::load_default()  — ошибка логируется, используется ephemeral()
+6. StationLibrary::load_default() — ошибка чтения логируется, используется ephemeral();
+                                       повреждённый JSON уезжает в карантин (ADR-0062)
+7. SettingsStore::load_default()  — то же; повреждённые настройки не включают мастер
+                                       первого запуска
 8. фоновая задача refresh_servers — прогрев пула; ошибка только логируется
 9. фоновая задача: audio events → wake()
 10. IpcServer::run(wake, shutdown) — accept-loop
