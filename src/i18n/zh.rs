@@ -307,6 +307,9 @@ pub(crate) const CATALOG: Catalog = Catalog {
         inhibition_lost: "休眠抑制已丢失 — 电脑可能在计时结束前休眠",
         sleep_action_failed: "睡眠定时器操作失败",
         stats_damaged: "无法读取收听统计 — 计数已从 0 开始",
+        settings_damaged: "无法读取设置 — 正在使用默认值",
+        library_damaged: "无法读取电台库 — 收藏和历史已从零开始",
+        audio_worker_failed: "音频引擎已停止 — 重启前无法播放",
     },
     labels: LabelText {
         theme_system: "系统",

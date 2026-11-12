@@ -115,6 +115,8 @@ Listening — `Off`. `motion_reactivity()`, `analysis_needed()` и `sync_analysi
 | `onboarding_open` | `bool` | Открыт ли мастер первого запуска (ADR-0041): `true` только когда файла настроек не было при загрузке **и** `onboarding_done == false`; гасится `finish_onboarding` |
 | `onboarding_desktop` | `Desktop` | Окружение, определённое один раз в `Session::new` (`integration::wm::Desktop::detect`); от него зависят шаг «Ваш рабочий стол» и доступность runtime-правил |
 | `pending_volume` | `Option<f64>` | Громкость перетаскивания, ещё не записанная на диск: `preview_volume` ставит, `commit_volume` и `set_volume` снимают, `end_window` дописывает в настройки через `flush_pending_volume` |
+| `pending_stream` | `Option<PendingStream>` | Незавершённый `play-url`: запрос и канал резолвера; ответ уходит после `start_station` (ADR-0040) |
+| `pending_play` | `Option<PendingPlay>` | Незавершённый `play <uuid>` с незнакомым UUID: запрос и канал поиска в каталоге; ответ уходит после `start_station`, параллельный запрос отклоняется (ADR-0063) |
 | `notices` | `VecDeque<Notice>` | Очередь сообщений Core → пользователю; `Notice` — ключ причины плюс незапереводимый `detail` (`src/session/notice.rs`, ADR-0030); `take_notices()` забирает всю очередь через `std::mem::take` |
 | `tray_snapshot` | `Option<TraySnapshot>` | Последний опубликованный треем снимок: `sync_tray` шлёт в SNI только изменение |
 | `publish_gate` | `PublishGate` | Bounded-кэш вердиктов яруса 2 для `artUrl`/`xesam:url` (ADR-0025 ред. 4): `permits` читает готовое решение, при отсутствии ставит проверку в фон и пробуждает кадр |
@@ -147,7 +149,7 @@ MPRIS и `TraySnapshot` (ADR-0026), а `window_visible()` читают `status`,
 | `notice.rs` | Типизированные сообщения пользователю: ядро называет причину, строку берёт каталог `i18n` (ADR-0030) | `Notice { Info(NoticeKey), Error { key, detail } }`, `NoticeKey` |
 | `window.rs` | Состояние окна: режим (`WindowMode`), поверхность (`RootSurface`), геометрия и заголовки режима/настроек/предупреждения, намерения UI (`Show`/`Hide`/`Close`/`Settings`/`Warn`), признак перезапуска, видимость без пересоздания вьюпорта (ADR-0018, ADR-0021, ADR-0026, ADR-0053, ADR-0058) | `WindowMode` (+ `ALL`/`default_size`/`min_size`/`title`/`as_str`/`is_borderless`), `RootSurface` (+ `title`/`is_borderless`/`is_transparent`/`size`/`min_size`), `SettingsSize` (+ `for_open`/`title_suffix`/`size`/`min_size`), `SettingsCategory`, `UiIntent`, `WindowState` (+ `mark_hidden`/`mark_shown`/`request_settings`/`request_warning`), `WINDOW_SIZE`, `WINDOW_MIN_SIZE`, `WINDOW_TITLE`, `OVERLAY_SIZE`, `OVERLAY_MIN_SIZE`, `OVERLAY_TITLE`, `LISTENING_SIZE`, `LISTENING_MIN_SIZE`, `LISTENING_TITLE`, `PANEL_SIZE`, `PANEL_MIN_SIZE`, `PANEL_TITLE`, `WARNING_SIZE`, `WARNING_MIN_SIZE`, `WARNING_TITLE` |
 | `commands.rs` | Разбор `IpcCommand` (общий для окна и парковки), `impl From<WindowModeArg> for WindowMode`, `impl From<ThemeArg> for ThemeMode`, диспетчеризация команд управления (ADR-0037), настроек оформления, языка, движения, ритуала сна и переноса библиотеки | `Session::{execute, process_commands, set_theme, set_accent, set_language, set_viz_bars, set_visualizer_enabled, set_artwork_allow_http, set_motion, set_motion_style, set_allow_flips, set_reduce_motion, set_queue_wrap, settle_analysis, set_help_visible}`; `library-export`/`library-import` обрабатываются прямо в `execute` через `StationLibrary::{export_to, import_from}`; подкоманды `sleep action|fade|inhibit|warning` вызывают методы `sleep.rs` (ADR-0054…0058) |
-| `playback.rs` | Аудио-события, запуск/остановка, выбор станции, громкость commit-on-release, избранное, история, очередь `prev`/`next` с учётом `queue_wrap`, витрина MPRIS через гейт публикации | `Session::{process_audio_events, apply_audio_event, resolve_station, start_station, select_station, take_station_reveal, spawn_click, toggle_favorite, clear_history, focus_country, set_volume, preview_volume, commit_volume, flush_pending_volume, set_audio_paused, resume_playback, toggle_playback, stop_playback, process_media_commands, execute_media_command, visible_queue, visible_queue_len, play_relative, skip_availability, sync_media}` |
+| `playback.rs` | Аудио-события, запуск/остановка, выбор станции, локальный и отложенный резолв `play`, громкость commit-on-release, избранное, история, очередь `prev`/`next` с учётом `queue_wrap`, витрина MPRIS через гейт публикации | `Session::{process_audio_events, apply_audio_event, local_station, begin_play, poll_play_lookup, finish_play_lookup, start_station, select_station, take_station_reveal, spawn_click, toggle_favorite, clear_history, focus_country, set_volume, preview_volume, commit_volume, flush_pending_volume, set_audio_paused, resume_playback, toggle_playback, stop_playback, process_media_commands, execute_media_command, visible_queue, visible_queue_len, play_relative, skip_availability, sync_media}` |
 | `economy.rs` | Экономный режим (ADR-0043 § 3–4): профиль буфера, таймер буферизации, однократный подбор более лёгкого дубля и признак ECO | `EconomyState`, `Session::{observe_economy, note_station_selected, poll_economy, note_reconnect_attempt, economy_stream}` (приватные `enter_economy`, `try_economy_alternative`, `poll_economy_alternative`, `start_alternative`, `alternative_from`) |
 | `publish_gate.rs` | Вердикт яруса 2 для публикуемых метаданных (ADR-0025 ред. 4): bounded-кэш `url → публичный/нет`, TTL 60 с, stale-while-revalidate; резолв фоном, пробуждение кадра | `PublishGate` (+ `new`/`permits`), приватные `Verdict`, `refresh`, `evict` |
 | `sleep.rs` | Таймер сна (ADR-0046) и его ритуал: дедлайн, остаток, отсчёт, фейд, предупреждение, лок сна и действие по истечении | `SleepTimer` (+ `set`/`set_fade`/`clear`/`deadline`/`minutes`/`remaining`/`expired`/`fade_start`/`take_fade`/`warning_start`/`warning_shown`/`mark_warning_shown`/`warning_due`/`display_seconds`/`next_display_change`/`next_event`), `Session::{set_sleep, clear_sleep, set_sleep_action, set_sleep_fade_seconds, set_sleep_prevent_sleep, set_sleep_warning, apply_sleep_fade_setting, close_sleep_warning, cancel_sleep_warning, effective_sleep_action, sleep_remaining, sleep_minutes, sleep_display_seconds, sleep_remaining_label, poll_sleep_events, sleep_repaint_after, sleep_next_event, sync_inhibition, release_sleep_inhibition, perform_sleep_action}` (приватные `start_sleep_fade`, `cancel_sleep_fade`, `show_sleep_warning`, `sleep_expiry`, `sleep_inhibition_ttl`, `reset_inhibition_retry`) |
@@ -156,7 +158,7 @@ MPRIS и `TraySnapshot` (ADR-0026), а `window_visible()` читают `status`,
 | `heat.rs` | Метрики тепловой карты стран (ADR-0035): нормировка в `0,15..=1` по выборке станций и по глобальным счётчикам | `CountryMetric` (+ `ALL`/`is_on`), `intensities`, `densities` |
 | `world.rs` | Глобальный снимок Radio Browser для карты (ADR-0035) и локальный офлайн-снимок станций (ADR-0043): подстановка до сети, запись после живого ответа, очистка | `WorldBaseline` (+ `counts`/`sample`/`sample_shared`/`revision`/`offline`), `Session::{load_snapshot, start_world, poll_world, clear_offline_snapshot, cancel_world_fetch}` (приватные `adopt_snapshot`, `save_world_snapshot`) |
 | `tray.rs` | Трей: публикация снимка и исполнение `TrayCommand` тем же dispatch; `nudge_volume` общий для трея, IPC `volume-up/down` и media-команд | `Session::{sync_tray, process_tray_commands, execute_tray_command, nudge_volume}` (приватный `tray_snapshot`) |
-| `park.rs` | Простой без окна: `select!` по IPC, MPRIS, трею, аудио, рулетке, импорту потока, поиску попапа, ближайшему событию таймера сна и дедлайну статистики | `ParkOutcome` (`Show`/`Settings`/`Warn`/`Quit`), `Session::park` (приватные `Parked`, `wait_on`, `media_recv`, `tray_recv`, `roulette_recv`, `stream_recv`, `companion_recv`, `sleep_until`) |
+| `park.rs` | Простой без окна: `select!` по IPC, MPRIS, трею, аудио, рулетке, импорту потока, поиску станции для `play`, поиску попапа, ближайшему событию таймера сна и дедлайну статистики | `ParkOutcome` (`Show`/`Settings`/`Warn`/`Quit`), `Session::park` (приватные `Parked`, `wait_on`, `media_recv`, `tray_recv`, `roulette_recv`, `stream_recv`, `play_recv`, `companion_recv`, `sleep_until`) |
 
 Помощники `mpris_artist`, `country_search_params`, `roulette_label`,
 `station_geo`, `station_popularity`, `analysis_required`, `sync_analysis`,
@@ -172,24 +174,36 @@ Core: `src/i18n/labels.rs` и `mode_label` в `src/ui/settings_panel.rs`.
 `process_audio_events` вычерпывает `audio_events` через `try_recv`: `Empty` и
 `Closed` завершают цикл, `Lagged(skipped)` логируется (`warn!`) и продолжается
 дальше. `apply_audio_event` пишет URL из `AudioEvent::Started { url }` в
-`current_url`, затем передаёт каждое событие в `observe_economy` (ADR-0043):
+`current_url`, превращает `WorkerFailed` в тост `NoticeKey::AudioWorkerFailed`
+(ADR-0061), затем передаёт каждое событие в `observe_economy` (ADR-0043):
 `Started` снимает таймер и возвращает буфер libmpv к умолчаниям, `Buffering`
 запускает таймер на 3 с, `Reconnecting { attempt }` со второй попытки включает
-экономный буфер и однократный подбор альтернативы, `Stopped`/`Error` сбрасывают
-ECO, таймер, попытку и буфер. `EndOfFile` в Core ничего не меняет: состояние
-воспроизведения читается из `audio.state()` по требованию.
+экономный буфер и однократный подбор альтернативы, `Stopped`/`Error`/
+`WorkerFailed` сбрасывают ECO, таймер, попытку и буфер. `EndOfFile` в Core
+ничего не меняет: состояние воспроизведения читается из `audio.state()` по
+требованию.
 
 ### 4.2. Разрешение и запуск станции
 
-`resolve_station(station_uuid)`:
+`local_station(station_uuid) -> Option<Station>`:
 1. линейный поиск в `search.results` — если станция уже в выдаче, сетевой запрос
    не делается (внимание: берётся полный список выдачи, локальные фильтры
    панели в подборе не участвуют);
 2. поиск в `world.sample()` — UUID из офлайн-снимка уже есть локально, каталог
-   без сети не нужен (ADR-0043);
-3. иначе `runtime.block_on` + `tokio::time::timeout(STATION_LOOKUP_TIMEOUT /* 8 с */,
-   radio.get_station(uuid))`;
-4. таймаут маппится в `RadioError::Network("stations catalog timeout")`.
+   без сети не нужен (ADR-0043).
+
+`begin_play(request)`:
+1. локальная станция есть ⇒ `start_station` и немедленный ответ `ok`/`error`;
+2. иначе — `PendingPlay { request, rx }`, второй `play` до ответа получает
+   `error поиск станции уже выполняется`;
+3. в tokio-задаче `timeout(STATION_LOOKUP_TIMEOUT /* 8 с */,
+   radio.get_station(uuid))`; таймаут маппится в
+   `RadioError::Network("stations catalog timeout")`, результат будит GUI.
+
+`finish_play_lookup(outcome)` забирает `PendingPlay`, запускает станцию и
+отвечает клиенту после `start_station`; `None` (канал исчез) даёт
+`error поиск станции завершился`. Открытое окно забирает результат в
+`poll_play_lookup` из `tick()`, простое — через `Parked::Play` (ADR-0063).
 
 `start_station(station) -> Result<(), StationStartError>`:
 1. `url_resolved.trim()` — пусто ⇒ `Err(StationStartError::NoUrl)`;
@@ -412,7 +426,7 @@ accent-строку списка и белое кольцо маркера по�
 
 ```
 poll_sleep_events → sync_inhibition → poll_stats → process_audio_events
-→ poll_economy → process_commands → process_media_commands
+→ poll_economy → process_commands → poll_play_lookup → process_media_commands
 → process_tray_commands → poll_search → poll_companion_search
 → poll_stream_import → poll_roulette → poll_world → start_world
 → sync_media → sync_tray
@@ -451,10 +465,11 @@ poll_sleep_events → sync_inhibition → poll_stats → process_audio_events
 
 Цикл: перед каждым `runtime.block_on(wait_on(...))` вычисляется
 `sleep_next_event()`; `wait_on` получает `commands`, `audio_events`, `media`,
-`tray`, `search.roulette_rx`, `pending_stream`, `companion.rx`, ближайшее
+`tray`, `search.roulette_rx`, `pending_stream`, `pending_play`, `companion.rx`, ближайшее
 событие таймера сна и дедлайн статистики.
 Обработка одного события: `Parked::Ipc` → `execute` + `try_respond` (кроме
-`play-url`, который уходит в `begin_play_url`), `Parked::Audio` →
+`play-url` и `play <uuid>`, которые уходят в `begin_play_url`/`begin_play` и
+отвечают после резолва), `Parked::Audio` →
 `apply_audio_event`, `Parked::Media` → `execute_media_command`, `Parked::Tray` →
 `execute_tray_command`, `Parked::Roulette` → `apply_roulette`, `Parked::Stream` →
 `finish_stream_import`, `Parked::CompanionSearch` → `apply_companion_response`,
@@ -705,7 +720,7 @@ root-поверхность `RootSurface::Settings(SettingsSize)` (ADR-0053): п
   пропускается, если снимок моложе TTL или пользователь его очистил.
 - Потребители офлайн-данных: тепловая карта и счётчики (`world`), поиск
   (`begin_search` подставляет `offline_results` при ошибке каталога), рулетка
-  (`random_from_snapshot`), разрешение UUID (`resolve_station` ищет в
+  (`random_from_snapshot`), разрешение UUID (`local_station` ищет в
   `world.sample` до сети). Пока данные офлайн, `country_total()` возвращает
   `None`: счётчик снимка — не счётчик базы.
 - `clear_offline_snapshot` (кнопка About) удаляет файл; отсутствие файла —

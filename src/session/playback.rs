@@ -5,8 +5,11 @@
 
 use std::fmt;
 
+use tokio::sync::mpsc;
+
 use crate::audio::{AudioEvent, PlaybackState};
 use crate::geo::Country;
+use crate::ipc::{IpcCommand, IpcRequest};
 use crate::media::{MediaCommand, PlaybackInfo};
 use crate::services::{RadioError, Station, StationSource, publishable};
 use crate::station_filter::filtered_results;
@@ -37,6 +40,15 @@ impl fmt::Display for StationStartError {
     }
 }
 
+/// Незавершённый `play <uuid>`: запрос ждёт ответа, резолвер — результата.
+///
+/// Локальная станция запускается сразу; сюда попадают только UUID, которых
+/// нет ни в выдаче поиска, ни в офлайн-снимке (ADR-0063).
+pub(crate) struct PendingPlay {
+    request: IpcRequest,
+    pub(crate) rx: mpsc::UnboundedReceiver<Result<Station, RadioError>>,
+}
+
 impl super::Session {
     /// Собирает аудио-события, накопившиеся с прошлого кадра.
     pub(crate) fn process_audio_events(&mut self) {
@@ -58,41 +70,96 @@ impl super::Session {
         if let AudioEvent::Started { url } = event {
             self.current_url = Some(url.clone());
         }
+        // Ядро уже выставило `Error` в `Shared`; пользователю нужен видимый
+        // след, иначе кнопки просто перестанут отвечать (ADR-0061).
+        if let AudioEvent::WorkerFailed { message } = event {
+            self.notify_error_detail(NoticeKey::AudioWorkerFailed, message.clone());
+        }
         self.observe_economy(event);
     }
 
-    /// Ищет станцию в видимом списке, иначе тянет из Radio Browser по UUID.
-    pub(crate) fn resolve_station(&self, station_uuid: &str) -> Result<Station, RadioError> {
-        if let Some(station) = self
-            .search
+    /// Ищет станцию без сети: видимая выдача поиска, затем офлайн-снимок мира.
+    pub(crate) fn local_station(&self, station_uuid: &str) -> Option<Station> {
+        self.search
             .results
             .iter()
+            .chain(self.world.sample().iter())
             .find(|station| station.stationuuid == station_uuid)
-        {
-            return Ok(station.clone());
+            .cloned()
+    }
+
+    /// Ставит `play <uuid>` в работу.
+    ///
+    /// Известная станция запускается в этом же кадре; незнакомый UUID
+    /// резолвится в tokio-задаче, чтобы каталог не останавливал UI на 8 с
+    /// (ADR-0063). Повторная команда до ответа отклоняется: два параллельных
+    /// поиска путали бы ответы по времени.
+    pub(crate) fn begin_play(&mut self, request: IpcRequest) {
+        let IpcCommand::Play { station_uuid } = request.command().clone() else {
+            request.try_respond("error play: ожидается UUID");
+            return;
+        };
+        if self.pending_play.is_some() {
+            request.try_respond("error поиск станции уже выполняется");
+            return;
         }
-        // UUID из офлайн-снимка уже есть локально: без сети каталог не нужен.
-        if let Some(station) = self
-            .world
-            .sample()
-            .iter()
-            .find(|station| station.stationuuid == station_uuid)
-        {
-            return Ok(station.clone());
+        if let Some(station) = self.local_station(&station_uuid) {
+            let response = match self.start_station(station) {
+                Ok(()) => "ok".to_owned(),
+                Err(err) => format!("error {err}"),
+            };
+            request.try_respond(response);
+            return;
         }
 
-        let result = self.runtime.block_on(async {
-            tokio::time::timeout(
+        let (sender, receiver) = mpsc::unbounded_channel();
+        self.pending_play = Some(PendingPlay {
+            request,
+            rx: receiver,
+        });
+        let radio = self.radio.clone();
+        let waker = self.wake.waker();
+        self.runtime.spawn(async move {
+            let result = tokio::time::timeout(
                 super::search::STATION_LOOKUP_TIMEOUT,
-                self.radio.get_station(station_uuid),
+                radio.get_station(&station_uuid),
             )
             .await
+            .unwrap_or_else(|_| Err(RadioError::Network("stations catalog timeout".to_owned())));
+            let _ = sender.send(result);
+            waker();
         });
+    }
 
-        match result {
-            Ok(result) => result,
-            Err(_) => Err(RadioError::Network("stations catalog timeout".to_owned())),
-        }
+    /// Забирает результат завершившегося поиска станции при открытом окне.
+    pub(crate) fn poll_play_lookup(&mut self) {
+        let outcome = {
+            let Some(pending) = self.pending_play.as_mut() else {
+                return;
+            };
+            match pending.rx.try_recv() {
+                Ok(outcome) => Some(outcome),
+                Err(mpsc::error::TryRecvError::Empty) => return,
+                Err(mpsc::error::TryRecvError::Disconnected) => None,
+            }
+        };
+        self.finish_play_lookup(outcome);
+    }
+
+    /// Ответ клиенту после поиска: `ok`, ошибка каталога или отказ запуска.
+    pub(crate) fn finish_play_lookup(&mut self, outcome: Option<Result<Station, RadioError>>) {
+        let Some(PendingPlay { request, .. }) = self.pending_play.take() else {
+            return;
+        };
+        let response = match outcome {
+            Some(Ok(station)) => match self.start_station(station) {
+                Ok(()) => "ok".to_owned(),
+                Err(err) => format!("error {err}"),
+            },
+            Some(Err(err)) => format!("error {err}"),
+            None => "error поиск станции завершился".to_owned(),
+        };
+        request.try_respond(response);
     }
 
     /// Адрес запуска станции: алиас пользователя, иначе `url_resolved` каталога

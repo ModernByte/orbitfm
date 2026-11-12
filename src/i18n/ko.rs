@@ -307,6 +307,9 @@ pub(crate) const CATALOG: Catalog = Catalog {
         inhibition_lost: "절전 방지가 해제되었습니다 — 타이머가 끝나기 전에 컴퓨터가 절전될 수 있습니다",
         sleep_action_failed: "수면 타이머 동작에 실패했습니다",
         stats_damaged: "청취 통계를 읽을 수 없습니다 — 집계는 0부터 시작합니다",
+        settings_damaged: "설정을 읽을 수 없습니다 — 기본값을 사용합니다",
+        library_damaged: "방송국 라이브러리를 읽을 수 없습니다 — 즐겨찾기와 기록이 처음부터 시작됩니다",
+        audio_worker_failed: "오디오 엔진이 중지되었습니다 — 다시 시작할 때까지 재생할 수 없습니다",
     },
     labels: LabelText {
         theme_system: "시스템",

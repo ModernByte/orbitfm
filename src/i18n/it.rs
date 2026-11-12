@@ -307,6 +307,9 @@ pub(crate) const CATALOG: Catalog = Catalog {
         inhibition_lost: "Inibizione della sospensione persa — il computer potrebbe sospendersi prima della fine del timer",
         sleep_action_failed: "Azione del timer di sonno non riuscita",
         stats_damaged: "Impossibile leggere le statistiche di ascolto — i contatori ripartono da zero",
+        settings_damaged: "Impossibile leggere le impostazioni — vengono usati i valori predefiniti",
+        library_damaged: "Impossibile leggere la libreria delle stazioni — preferiti e cronologia ripartono da zero",
+        audio_worker_failed: "Motore audio arrestato — riproduzione non disponibile fino al riavvio",
     },
     labels: LabelText {
         theme_system: "Sistema",

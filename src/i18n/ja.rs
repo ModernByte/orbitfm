@@ -307,6 +307,9 @@ pub(crate) const CATALOG: Catalog = Catalog {
         inhibition_lost: "スリープ防止が失われました — タイマー終了前にコンピューターがスリープする可能性があります",
         sleep_action_failed: "スリープタイマーの実行に失敗しました",
         stats_damaged: "聴取統計を読み込めませんでした — 集計はゼロから開始します",
+        settings_damaged: "設定を読み込めませんでした — 既定値を使用します",
+        library_damaged: "放送局ライブラリを読み込めませんでした — お気に入りと履歴はゼロから開始します",
+        audio_worker_failed: "オーディオエンジンが停止しました — 再起動まで再生できません",
     },
     labels: LabelText {
         theme_system: "システム",

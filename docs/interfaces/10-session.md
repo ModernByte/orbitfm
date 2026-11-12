@@ -64,7 +64,10 @@ Application Core — слой, который переживает закрыт�
 | `process_tray_commands` | `pub(crate) fn process_tray_commands(&mut self)` | Вычерпывает очередь `TrayCommand` (`try_recv`), путь открытого окна |
 | `execute_tray_command` | `pub(crate) fn execute_tray_command(&mut self, command: TrayCommand)` | Реакция на одну команду трея; общее для окна и парковки |
 | `sync_tray` | `pub(crate) fn sync_tray(&mut self)` | Публикует `TraySnapshot` в SNI, только если снимок изменился |
-| `resolve_station` | `pub(crate) fn resolve_station(&self, station_uuid: &str) -> Result<Station, RadioError>` | Станция по UUID: `search.results`, затем `world.sample()` (офлайн-снимок), затем `radio.get_station` с таймаутом `STATION_LOOKUP_TIMEOUT` |
+| `local_station` | `pub(crate) fn local_station(&self, station_uuid: &str) -> Option<Station>` | Станция без сети: `search.results`, затем `world.sample()` (офлайн-снимок) |
+| `begin_play` | `pub(crate) fn begin_play(&mut self, request: IpcRequest)` | `play <uuid>`: локальная станция запускается сразу, иначе `PendingPlay` и `radio.get_station` в tokio-задаче с таймаутом `STATION_LOOKUP_TIMEOUT`; ответ уходит после `start_station` (ADR-0063) |
+| `poll_play_lookup` | `pub(crate) fn poll_play_lookup(&mut self)` | Забирает результат фонового поиска станции при открытом окне (`tick`) |
+| `finish_play_lookup` | `pub(crate) fn finish_play_lookup(&mut self, outcome: Option<Result<Station, RadioError>>)` | Запускает найденную станцию и отвечает клиенту; `None` — `error поиск станции завершился` |
 | `start_station` | `pub(crate) fn start_station(&mut self, station: Station) -> Result<(), StationStartError>` | Проверка `NoUrl`/`PrivateUrl`, `audio.play(url_resolved)`, `note_station_selected`, `selected_station`, история, click, MPRIS (ADR-0043) |
 | `select_station` | `pub(crate) fn select_station(&mut self, station: &Station)` | Клик по маркеру до запуска: `selected_station`, разовый `reveal_station`, сброс `country_filter`, вкладка `Results` (ADR-0036) |
 | `take_station_reveal` | `pub(crate) fn take_station_reveal(&mut self) -> Option<String>` | Забирает просьбу прокрутки один раз; `OrbitApp::draw_layers` передаёт UUID строке |
@@ -487,7 +490,7 @@ ADR-0037).
 | `ModeQuery` | `window_mode()` | `mode <focus\|overlay\|listening\|panel>`, без побочных эффектов |
 | `SetMode { mode }` | `set_window_mode(mode.into())` — из `WindowModeArg` (ADR-0021 п. 5) | `ok` |
 | `Quit` | `quit()` | `ok` |
-| `Play { station_uuid }` | `resolve_station` → `start_station` | `ok`, иначе `error <ошибка>` |
+| `Play { station_uuid }` | Перехватывается в `process_commands`/`park`: `begin_play` — локальная станция сразу, иначе фоновый резолв (ADR-0063) | `ok`, иначе `error <ошибка>`; до ответа повторный `play` — `error поиск станции уже выполняется` |
 | `Stop` | `stop_playback()` | `ok`, иначе `error <ошибка>` |
 | `Volume { level }` | `set_volume(level)` | `ok`, иначе `error <ошибка>` |
 | `PlayPause` | `toggle_playback()` | `ok`, иначе `error <ошибка>` |
@@ -582,7 +585,7 @@ mode <focus|overlay|listening|panel>
 
 | Ветка `select!` | Событие | Реакция |
 |-----------------|---------|---------|
-| `commands.recv()` | `Some(request)` | `execute` + `try_respond` — без UI |
+| `commands.recv()` | `Some(request)` | `Play`/`PlayUrl` перехватываются в отложенную ветку, остальные — `execute` + `try_respond` — без UI |
 | `commands.recv()` | `None` | `Parked::QueueClosed` → `self.quit()` |
 | `audio_events.recv()` | `Ok(event)` | `apply_audio_event` |
 | `audio_events.recv()` | `Err(_)` | `continue` — ждать дальше |
@@ -592,6 +595,7 @@ mode <focus|overlay|listening|panel>
 | `tray_recv(tray)` | мёртвый `TrayHandle` | `*tray = None` и ждать дальше; без трея ветка — `std::future::pending()` |
 | `roulette_recv(roulette)` | `Some`/`None` | `apply_roulette` (`None` — задача исчезла); без рулетки ветка не готова никогда |
 | `stream_recv(stream)` | `Some`/`None` | `finish_stream_import` — ответ на `play-url` уходит в открытое соединение (ADR-0040); без импорта ветка не готова никогда |
+| `play_recv(play)` | `Some`/`None` | `finish_play_lookup` — ответ на `play <uuid>` после поиска станции (ADR-0063); без запроса ветка не готова никогда |
 | `companion_recv(companion)` | `Some`/`None` | `apply_companion_response` — ответ поиска попапа; без поиска ветка не готова никогда |
 | `sleep_until(sleep_event)` | ближайшее событие таймера | `park` считает `next_event(now)` (дедлайн, начало фейда, начало предупреждения, тик отсчёта) перед каждым `block_on`; `Parked::Sleep` → `poll_sleep_events()` выполняет fade → warning → expiry, останавливает эфир и шлёт `NoticeKey::SleepExpired`; без таймера ветка не готова никогда (ADR-0057) |
 
@@ -681,7 +685,7 @@ mode <focus|overlay|listening|panel>
   `onboarding_desktop()`/`finish_onboarding()`/`apply_window_rules()`, а
   установку интеграций исполняет `src/integration/` (ADR-0041, ADR-0042);
 - `Parked`, `wait_on`, `media_recv`, `tray_recv`, `roulette_recv`,
-  `stream_recv`, `companion_recv`, `sleep_until`,
+  `stream_recv`, `play_recv`, `companion_recv`, `sleep_until`,
   `format_status`, `analysis_required`, `mpris_artist`, `station_geo`,
   `station_popularity`, `country_search_params`, `roulette_label`,
   `nudge_volume`, `tray_snapshot`, `sync_analysis`, `apply_and_persist_volume` —

@@ -156,8 +156,10 @@ root-вьюпорта: цикл завершается, управление в�
 3. GeoService::from_embedded()    — ошибка фатальна: без границ стран нет поиска
 4. MediaControls::new(wake)       — ошибка логируется, приложение работает без MPRIS
 5. RadioBrowserClient::new()      — без сетевых обращений
-6. StationLibrary::load_default() — ошибка логируется, используется ephemeral()
-7. SettingsStore::load_default()  — ошибка логируется, используется ephemeral()
+6. StationLibrary::load_default() — ошибка чтения логируется, используется ephemeral();
+                                       повреждённый JSON уезжает в карантин (ADR-0062)
+7. SettingsStore::load_default()  — то же; повреждённые настройки не включают мастер
+                                       первого запуска
 8. фоновая задача refresh_servers — прогрев пула; ошибка только логируется
 9. фоновая задача: audio events → wake()
 10. IpcServer::run(wake, shutdown) — accept-loop
@@ -216,7 +218,7 @@ root-вьюпорта: цикл завершается, управление в�
 | Команда       | Действие |
 |---------------|----------|
 | Toggle/Show/Hide | Через `WindowState` ядра и `UiIntent` для UI (ADR-0018). Скрытие: `Session::hide` (или `toggle` в состоянии «открыто») → `UiIntent::Close` → `logic()` шлёт `ViewportCommand::Close` → `run_native` возвращается → `Session::end_window` (окно реально уходит из раскладки, `wake.clear()`, `sync_media()`) → `settle_analysis` (снимает `@level`/`@spectrum`) → `Session::park`. Показать: `Session::show`/`toggle` в скрытом состоянии → `UiIntent::Show` → `park` выходит с `ParkOutcome::Show` → новый `run_window` с восстановленным размером; на niri 26.04 окно с полностью отрисованным деском появляется за ≈1.02 с от приёма команды (≈73 мс из них — сам IPC-запрос). `ViewportCommand::Visible`, `CancelClose` и сжатие поверхности до 1×1 не используются: на Wayland `Visible` — no-op (редакция 1 ADR отклонена live-проверкой) |
-| Play          | `Session::resolve_station`: поиск в результатах последнего поиска, затем в офлайн-снимке (`world.sample()`), затем `radio.get_station` (таймаут 8 с); `audio.play(url_resolved)`, запись в историю, асинхронный `radio.send_click`, `sync_media` |
+| Play          | `Session::begin_play`: локальный поиск в результатах и офлайн-снимке (`local_station`) — ответ в том же кадре; иначе `PendingPlay` и `radio.get_station` в tokio-задаче (таймаут 8 с), ответ после `start_station` (ADR-0063); `audio.play(url_resolved)`, запись в историю, асинхронный `radio.send_click`, `sync_media` |
 | Stop          | `Session::stop_playback` → `audio.stop()`; последний URL и станция сохраняются в `Session` для повторного запуска из MPRIS |
 | Volume        | `Session::set_volume` → `audio.set_volume(level)` + сохранение в `Settings::volume` (дискретная команда, pending-preview сбрасывается, ADR-0031); витрина MPRIS обновляется `sync_media()` в том же кадре (`tick`) или сразу после команды в `park()` |
 | Status        | `status <state>`, при активной станции `stationuuid`/`name`, затем `volume <0.00>` и `window visible\|hidden` |

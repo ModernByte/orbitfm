@@ -61,7 +61,7 @@ impl EconomyState {
                     None
                 }
             }
-            AudioEvent::Stopped | AudioEvent::Error { .. } => {
+            AudioEvent::Stopped | AudioEvent::Error { .. } | AudioEvent::WorkerFailed { .. } => {
                 self.buffering_since = None;
                 self.eco_station = None;
                 self.pending = None;

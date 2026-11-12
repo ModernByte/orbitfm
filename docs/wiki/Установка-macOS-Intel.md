@@ -3,7 +3,7 @@
 ← [Установка](01-Установка) · [Домой](Home)
 
 Эта страница — для Mac на процессоре Intel. Нужен файл
-`OrbitFM-0.22.0-rc.1-macos-x86_64.dmg`.
+`OrbitFM-0.22.0-rc.2-macos-x86_64.dmg`.
 
 Apple Silicon эту сборку тоже запустит через Rosetta, но нативная arm64
 быстрее и не требует Rosetta — для таких Mac есть
@@ -40,7 +40,7 @@ Mach-O требует другую macOS.
 
 Со страницы релизов <https://github.com/ModernByte/orbitfm/releases> скачайте:
 
-- `OrbitFM-0.22.0-rc.1-macos-x86_64.dmg`;
+- `OrbitFM-0.22.0-rc.2-macos-x86_64.dmg`;
 - `SHA256SUMS` — если хотите сверить контрольную сумму.
 
 В macOS нет `sha256sum` из GNU coreutils, зато есть `shasum`. Проверка только
@@ -53,7 +53,7 @@ shasum -a 256 -c orbitfm-x86_64.sha256
 rm orbitfm-x86_64.sha256
 ```
 
-Ожидаемый вывод — `OrbitFM-0.22.0-rc.1-macos-x86_64.dmg: OK`. Сумма подтверждает,
+Ожидаемый вывод — `OrbitFM-0.22.0-rc.2-macos-x86_64.dmg: OK`. Сумма подтверждает,
 что файл скачался целиком и совпадает с опубликованным; подписью она не является.
 
 ## 3. Установите приложение
@@ -122,7 +122,7 @@ orbitfm --version
 file /Applications/OrbitFM.app/Contents/MacOS/orbitfm
 ```
 
-Ожидается версия `0.22.0-rc.1` и `Mach-O 64-bit executable x86_64`.
+Ожидается версия `0.22.0-rc.2` и `Mach-O 64-bit executable x86_64`.
 
 ### Если картинка не появилась — снять лог рендера
 
@@ -191,7 +191,7 @@ bash packaging/macos/build-dmg.sh --arch x86_64
 неизвестным значением) — это замена прежнему поведению, когда арка молча бралась из
 `uname -m` и сборка на чужой архитектуре оставляла `.app` не того среза.
 
-Готовый файл появится в `dist/OrbitFM-0.22.0-rc.1-macos-x86_64.dmg`. Внутри — `libmpv`
+Готовый файл появится в `dist/OrbitFM-0.22.0-rc.2-macos-x86_64.dmg`. Внутри — `libmpv`
 из бутылок Homebrew под macOS 13, бандлится в `.app` (путь к `dylibbundler` задаётся
 через `PATH`, он создаётся скриптом в префиксе). Перед тем как положить файл в `dist/`,
 бандл проходят гейты, встроенные в скрипт: `check-app-arch.sh` (каждый Mach-O обязан

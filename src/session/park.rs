@@ -20,6 +20,7 @@ use crate::tray::{TrayCommand, TrayHandle};
 
 use super::UiIntent;
 use super::companion::CompanionResponse;
+use super::playback::PendingPlay;
 use super::stream_import::PendingStream;
 
 /// Что делать главному циклу после простоя.
@@ -46,6 +47,9 @@ enum Parked {
     Roulette(Box<Option<Result<Station, RadioError>>>),
     /// Завершился резолв `play-url`: клиент ждёт ответа с открытым соединением.
     Stream(Option<Result<ResolvedStream, StreamError>>),
+    /// Завершился поиск станции для `play <uuid>` (ADR-0063).
+    /// `Station` велика, поэтому значение убрано в `Box`.
+    Play(Box<Option<Result<Station, RadioError>>>),
     /// Ответ поиска попапа: `None` — фоновая задача исчезла.
     CompanionSearch(Option<CompanionResponse>),
     /// IPC-сервер закрыл очередь: держать процесс без смысла нечем.
@@ -71,6 +75,7 @@ impl super::Session {
                 &mut self.tray,
                 &mut self.search.roulette_rx,
                 &mut self.pending_stream,
+                &mut self.pending_play,
                 &mut self.companion.rx,
                 sleep_deadline,
                 stats_deadline,
@@ -81,6 +86,8 @@ impl super::Session {
                     // резолва, а окно при этом может оставаться скрытым.
                     if matches!(request.command(), IpcCommand::PlayUrl { .. }) {
                         self.begin_play_url(request);
+                    } else if matches!(request.command(), IpcCommand::Play { .. }) {
+                        self.begin_play(request);
                     } else {
                         let response = self.execute(request.command());
                         request.try_respond(response);
@@ -91,6 +98,7 @@ impl super::Session {
                 Parked::Tray(command) => self.execute_tray_command(command),
                 Parked::Roulette(outcome) => self.apply_roulette(*outcome),
                 Parked::Stream(outcome) => self.finish_stream_import(outcome),
+                Parked::Play(outcome) => self.finish_play_lookup(*outcome),
                 Parked::CompanionSearch(response) => {
                     self.apply_companion_response(response);
                 }
@@ -127,6 +135,7 @@ async fn wait_on(
     tray: &mut Option<TrayHandle>,
     roulette: &mut Option<mpsc::UnboundedReceiver<Result<Station, RadioError>>>,
     stream: &mut Option<PendingStream>,
+    play: &mut Option<PendingPlay>,
     companion: &mut Option<mpsc::UnboundedReceiver<CompanionResponse>>,
     sleep_deadline: Option<Instant>,
     stats_deadline: Option<Instant>,
@@ -149,6 +158,7 @@ async fn wait_on(
             command = tray_recv(tray) => Parked::Tray(command),
             outcome = roulette_recv(roulette) => Parked::Roulette(Box::new(outcome)),
             outcome = stream_recv(stream) => Parked::Stream(outcome),
+            outcome = play_recv(play) => Parked::Play(Box::new(outcome)),
             response = companion_recv(companion) => Parked::CompanionSearch(response),
             () = sleep_until(sleep_deadline) => Parked::Sleep,
             () = sleep_until(stats_deadline) => Parked::Stats,
@@ -205,6 +215,14 @@ async fn roulette_recv(
 async fn stream_recv(
     pending: &mut Option<PendingStream>,
 ) -> Option<Result<ResolvedStream, StreamError>> {
+    match pending {
+        Some(pending) => pending.rx.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Результат поиска станции для `play <uuid>`; без запроса ветка молчит.
+async fn play_recv(pending: &mut Option<PendingPlay>) -> Option<Result<Station, RadioError>> {
     match pending {
         Some(pending) => pending.rx.recv().await,
         None => std::future::pending().await,

@@ -390,8 +390,6 @@ pub enum SettingsError {
     Path(String),
     #[error("не удалось прочитать настройки: {0}")]
     Read(String),
-    #[error("не удалось разобрать настройки: {0}")]
-    Parse(String),
     #[error("не удалось сохранить настройки: {0}")]
     Write(String),
 }
@@ -407,27 +405,56 @@ pub struct SettingsStore {
     /// Существовал ли файл на момент загрузки: признак первого запуска берётся
     /// отсюда, а не из значения поля (ADR-0041).
     existed_at_load: bool,
+    /// Файл при старте не разобрался: взяты значения по умолчанию.
+    damaged_at_load: bool,
+    /// Куда переехал повреждённый файл, если карантин удался (ADR-0062).
+    quarantined_path: Option<PathBuf>,
 }
 
 impl SettingsStore {
     /// Загружает настройки из файла. Отсутствующий файл — значения по умолчанию.
+    ///
+    /// Неразбираемый файл уезжает в карантин, а не перезаписывается: мастер
+    /// первого запуска при этом не показывается — профиль уже существовал
+    /// (ADR-0062). Если карантин не удался, стор остаётся временным.
     pub fn load(path: PathBuf) -> Result<Self, SettingsError> {
-        let (mut settings, existed) = match fs::read(&path) {
-            Ok(bytes) => (
-                serde_json::from_slice::<Settings>(&bytes)
-                    .map_err(|err| SettingsError::Parse(format!("{}: {err}", path.display())))?,
-                true,
-            ),
-            Err(err) if err.kind() == ErrorKind::NotFound => (Settings::default(), false),
+        let (mut settings, existed, damaged, quarantined) = match fs::read(&path) {
+            Ok(bytes) => match serde_json::from_slice::<Settings>(&bytes) {
+                Ok(settings) => (settings, true, false, None),
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        path = %path.display(),
+                        "настройки не разобрались"
+                    );
+                    let quarantined = match crate::storage::quarantine(&path) {
+                        Ok(path) => Some(path),
+                        Err(err) => {
+                            tracing::warn!(
+                                error = %err,
+                                path = %path.display(),
+                                "повреждённые настройки не удалось отодвинуть"
+                            );
+                            None
+                        }
+                    };
+                    (Settings::default(), true, true, quarantined)
+                }
+            },
+            Err(err) if err.kind() == ErrorKind::NotFound => {
+                (Settings::default(), false, false, None)
+            }
             Err(err) => return Err(SettingsError::Read(format!("{}: {err}", path.display()))),
         };
         settings.viz_bars = nearest_viz_bars(settings.viz_bars);
         settings.volume = sanitized_volume(settings.volume);
         settings.sleep_fade_seconds = nearest_sleep_fade(settings.sleep_fade_seconds);
         Ok(Self {
-            path: Some(path),
+            path: (!damaged || quarantined.is_some()).then_some(path),
             settings,
             existed_at_load: existed,
+            damaged_at_load: damaged,
+            quarantined_path: quarantined,
         })
     }
 
@@ -442,17 +469,31 @@ impl SettingsStore {
             path: None,
             settings: Settings::default(),
             existed_at_load: false,
+            damaged_at_load: false,
+            quarantined_path: None,
         }
     }
 
     /// Файл настроек существовал при старте: действующего пользователя мастер
-    /// первого запуска не беспокоит (ADR-0041).
+    /// первого запуска не беспокоит (ADR-0041). Повреждённый файл тоже
+    /// считается существующим: профиль был, сбрасывать его в первый запуск
+    /// нельзя (ADR-0062).
     pub fn existed_at_load(&self) -> bool {
         self.existed_at_load
     }
 
     pub fn path(&self) -> Option<&Path> {
         self.path.as_deref()
+    }
+
+    /// Файл при старте не разобрался: UI показывает тост (ADR-0062).
+    pub fn damaged_at_load(&self) -> bool {
+        self.damaged_at_load
+    }
+
+    /// Путь, куда переехал повреждённый файл: `None`, если карантин не удался.
+    pub fn quarantined_path(&self) -> Option<&Path> {
+        self.quarantined_path.as_deref()
     }
 
     pub fn settings(&self) -> Settings {
@@ -1025,14 +1066,33 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_file_returns_parse_error() {
+    fn corrupt_file_is_quarantined_and_starts_from_defaults() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("settings.json");
         fs::write(&path, b"{ not json").unwrap();
-        assert!(matches!(
-            SettingsStore::load(path),
-            Err(SettingsError::Parse(_))
-        ));
+
+        let mut store = SettingsStore::load(path.clone()).unwrap();
+        assert!(store.damaged_at_load());
+        assert!(
+            store.existed_at_load(),
+            "профиль существовал до повреждения"
+        );
+        assert_eq!(
+            store.quarantined_path(),
+            Some(directory.path().join("settings.json.corrupt").as_path())
+        );
+        assert_eq!(store.settings().theme, ThemeMode::default());
+
+        // Карантин освободил рабочий путь: следующая запись создаёт валидный
+        // файл, повреждённая копия остаётся нетронутой.
+        store.set_theme(ThemeMode::Dark).unwrap();
+        let reloaded = SettingsStore::load(path).unwrap();
+        assert!(!reloaded.damaged_at_load());
+        assert_eq!(reloaded.settings().theme, ThemeMode::Dark);
+        assert_eq!(
+            fs::read(directory.path().join("settings.json.corrupt")).unwrap(),
+            b"{ not json"
+        );
     }
 
     #[test]
@@ -1059,14 +1119,13 @@ mod tests {
     }
 
     #[test]
-    fn unknown_sleep_action_is_a_parse_error() {
+    fn unknown_sleep_action_is_quarantined() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("settings.json");
         fs::write(&path, br#"{"sleep_action":"reboot"}"#).unwrap();
-        assert!(matches!(
-            SettingsStore::load(path),
-            Err(SettingsError::Parse(_))
-        ));
+        let store = SettingsStore::load(path).unwrap();
+        assert!(store.damaged_at_load());
+        assert_eq!(store.settings().sleep_action, SleepAction::Nothing);
     }
 
     #[test]

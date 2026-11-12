@@ -7,7 +7,7 @@
 
 use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub(crate) fn write_atomic(path: &Path, tmp_name: &str, bytes: &[u8]) -> io::Result<()> {
     let directory = path.parent().ok_or_else(|| {
@@ -31,6 +31,44 @@ pub(crate) fn write_atomic(path: &Path, tmp_name: &str, bytes: &[u8]) -> io::Res
         let _ = fs::remove_file(&tmp);
     }
     result
+}
+
+/// Максимум попыток подобрать свободное имя рядом с повреждённым файлом.
+const QUARANTINE_ATTEMPTS: u32 = 100;
+
+/// Отодвигает повреждённый файл в сторону, не затирая прежние копии:
+/// `<path>.corrupt`, затем `<path>.corrupt-1`, `<path>.corrupt-2`…
+///
+/// Возвращает путь, куда переехал файл. Ошибка означает, что карантин не
+/// удался: вызывающий обязан оставить стор временным, иначе первая же запись
+/// уничтожила бы пользовательские данные (ADR-0062).
+pub(crate) fn quarantine(path: &Path) -> io::Result<PathBuf> {
+    for attempt in 0..QUARANTINE_ATTEMPTS {
+        let candidate = quarantine_path(path, attempt);
+        // `rename` на Unix молча заменяет цель, поэтому занятое имя
+        // пропускаем: прежний карантин — тоже пользовательские данные.
+        if candidate.exists() {
+            continue;
+        }
+        match fs::rename(path, &candidate) {
+            Ok(()) => return Ok(candidate),
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(err),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "не удалось подобрать свободное имя для карантина",
+    ))
+}
+
+fn quarantine_path(path: &Path, attempt: u32) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(".corrupt");
+    if attempt > 0 {
+        name.push(format!("-{attempt}"));
+    }
+    PathBuf::from(name)
 }
 
 /// `fsync` каталога фиксирует сам `rename`. На Windows каталог так не
@@ -67,5 +105,29 @@ mod tests {
     fn missing_directory_is_reported() {
         let path = Path::new("");
         assert!(write_atomic(path, "x.tmp", b"{}").is_err());
+    }
+
+    #[test]
+    fn quarantine_moves_damaged_file_without_clobbering() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("library.json");
+        fs::write(&path, b"broken").expect("damaged file");
+
+        let first = quarantine(&path).expect("first quarantine");
+        assert_eq!(first, dir.path().join("library.json.corrupt"));
+        assert_eq!(fs::read(&first).unwrap(), b"broken");
+        assert!(!path.exists(), "повреждённый файл уехал из рабочего пути");
+
+        fs::write(&path, b"broken again").expect("damaged file again");
+        let second = quarantine(&path).expect("second quarantine");
+        assert_eq!(second, dir.path().join("library.json.corrupt-1"));
+        assert_eq!(fs::read(&first).unwrap(), b"broken", "прежняя копия цела");
+        assert_eq!(fs::read(&second).unwrap(), b"broken again");
+    }
+
+    #[test]
+    fn quarantine_reports_missing_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert!(quarantine(&dir.path().join("absent.json")).is_err());
     }
 }

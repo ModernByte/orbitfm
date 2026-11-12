@@ -65,6 +65,12 @@ impl super::Session {
                 self.begin_play_url(request);
                 continue;
             }
+            // Незнакомый `play <uuid>` тоже отвечает после поиска в каталоге,
+            // но кадр UI при этом не ждёт сеть (ADR-0063).
+            if matches!(request.command(), IpcCommand::Play { .. }) {
+                self.begin_play(request);
+                continue;
+            }
             let response = self.execute(request.command());
             request.try_respond(response);
         }
@@ -151,13 +157,9 @@ impl super::Session {
                 self.quit();
                 "ok".to_owned()
             }
-            IpcCommand::Play { station_uuid } => match self.resolve_station(station_uuid) {
-                Ok(station) => match self.start_station(station) {
-                    Ok(()) => "ok".to_owned(),
-                    Err(err) => format!("error {err}"),
-                },
-                Err(err) => format!("error {err}"),
-            },
+            // `play` обслуживается отложенно: ответ приходит после поиска
+            // станции в каталоге (ADR-0063).
+            IpcCommand::Play { .. } => "error play обслуживается отложенно".to_owned(),
             IpcCommand::Stop => match self.stop_playback() {
                 Ok(()) => "ok".to_owned(),
                 Err(err) => format!("error {err}"),

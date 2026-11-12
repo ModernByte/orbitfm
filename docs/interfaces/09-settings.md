@@ -189,8 +189,6 @@ pub enum SettingsError {
     Path(String),
     #[error("не удалось прочитать настройки: {0}")]
     Read(String),
-    #[error("не удалось разобрать настройки: {0}")]
-    Parse(String),
     #[error("не удалось сохранить настройки: {0}")]
     Write(String),
 }
@@ -204,6 +202,10 @@ impl SettingsStore {
     pub fn path(&self) -> Option<&Path>;
     /// Был ли файл настроек на месте при загрузке (признак первого запуска).
     pub fn existed_at_load(&self) -> bool;
+    /// Файл не разобрался и был отодвинут в карантин (ADR-0062).
+    pub fn damaged_at_load(&self) -> bool;
+    /// Куда переехал повреждённый файл; `None`, если карантин не удался.
+    pub fn quarantined_path(&self) -> Option<&Path>;
     pub fn settings(&self) -> Settings;
     pub fn set_theme(&mut self, theme: ThemeMode) -> Result<(), SettingsError>;
     pub fn set_accent(&mut self, accent: AccentColor) -> Result<(), SettingsError>;
@@ -243,10 +245,11 @@ pub fn default_path() -> Result<PathBuf, SettingsError>;
 
 | Метод | Поведение |
 |-------|-----------|
-| `load` | Читает JSON; `NotFound` → значения по умолчанию; повреждённый JSON → `Parse`; при загрузке `viz_bars` притягивается к ближайшему допустимому числу, `volume` клампится |
+| `load` | Читает JSON; `NotFound` → значения по умолчанию; повреждённый JSON уезжает в `<файл>.corrupt*`, значения начинаются с нуля, путь остаётся рабочим (ADR-0062); при загрузке `viz_bars` притягивается к ближайшему допустимому числу, `volume` клампится |
 | `load_default` | `load(default_path()?)` |
 | `ephemeral` | Хранилище в памяти; `save` — no-op, файл не создаётся |
-| `existed_at_load` | `true`, если файл был прочитан при `load`; вместе с `onboarding_done == false` это признак первого запуска (ADR-0041) |
+| `existed_at_load` | `true`, если файл был прочитан при `load`, в том числе повреждённый; вместе с `onboarding_done == false` это признак первого запуска (ADR-0041, ADR-0062) |
+| `damaged_at_load` / `quarantined_path` | Признак карантина и путь копии; Application Core показывает тост, не блокируя воспроизведение (ADR-0062) |
 | `settings` | Возвращает копию `Settings` для применения в GUI |
 | `set_theme` / `set_accent` | Меняет значение и сохраняет; повторная установка того же значения — успех без записи |
 | `set_language` | Меняет язык (`System` или один из 16 языков каталога); сохраняет только при изменении |
@@ -331,8 +334,10 @@ Low/Normal/High, `ripple_limit` — 0,50/1,00/1,80 %, `idle_amplitude` —
 - Запись синхронная, только при изменении настройки; файл мал.
 - Атомарная запись: `settings.json.tmp` + `rename`; каталог создаётся при
   необходимости; при неудачном `rename` временный файл удаляется.
-- При ошибке загрузки Application Core использует `ephemeral()` и показывает
-  предупреждение: повреждённый файл не перезаписывается.
+- При повреждённом JSON стор переименовывает файл в карантин и продолжает с
+  рабочего пути; если переименование не удалось, Application Core использует
+  `ephemeral()` и показывает предупреждение — повреждённый файл не
+  перезаписывается (ADR-0062).
 - Ошибки записи возвращаются вызывающему; выбранное значение остаётся в памяти до
   завершения процесса, GUI показывает ошибку локализованным тостом (ADR-0030).
 - `set_volume` зовётся из commit-пути: `Session::set_volume` (дискретные команды
@@ -380,11 +385,11 @@ Application Core затемняет акцент для текста (ссылк
 - `sleep_ritual_defaults_are_safe` — `sleep_action: Nothing`,
   `sleep_fade_seconds: DEFAULT_SLEEP_FADE`, `sleep_prevent_sleep: true`,
   `sleep_warning: true`
-- `unknown_sleep_action_is_a_parse_error`, `sleep_action_roundtrip_and_tokens`
+- `unknown_sleep_action_is_quarantined`, `sleep_action_roundtrip_and_tokens`
 - `sleep_fade_snaps_to_choices` — 75 → 60, 9999 → `DEFAULT_SLEEP_FADE`
 - `roundtrip_persists_sleep_ritual` — все четыре поля переживают запись и чтение
 - `out_of_range_bar_count_snaps_to_nearest_choice`
-- `corrupt_file_returns_parse_error`
+- `corrupt_file_is_quarantined_and_starts_from_defaults`
 - `ephemeral_store_keeps_changes_without_file`
 - `language`: `codes_round_trip`, `locale_tags_map_to_primary_languages`,
   `system_resolution_uses_lc_all_then_messages_then_lang` (ADR-0030)

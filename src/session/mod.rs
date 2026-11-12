@@ -50,6 +50,7 @@ use economy::EconomyState;
 use markers::GlobeMarker;
 pub(crate) use notice::{Notice, NoticeKey};
 pub(crate) use park::ParkOutcome;
+use playback::PendingPlay;
 pub(crate) use playback::StationStartError;
 use publish_gate::PublishGate;
 use search::SearchState;
@@ -170,6 +171,8 @@ pub(crate) struct Session {
     pub(crate) companion: CompanionSearchState,
     /// Незавершённый `play-url`: ответ клиенту ждёт сетевой резолвер.
     pub(crate) pending_stream: Option<PendingStream>,
+    /// Незнакомый `play <uuid>` резолвится в фоне (ADR-0063).
+    pub(crate) pending_play: Option<PendingPlay>,
     pub(crate) markers: Vec<GlobeMarker>,
     /// Глобальный снимок Radio Browser: счётчики стран и мировой топ для
     /// тепловой карты (ADR-0035).
@@ -275,6 +278,7 @@ impl Session {
             economy: EconomyState::default(),
             companion: CompanionSearchState::default(),
             pending_stream: None,
+            pending_play: None,
             markers: Vec::new(),
             world: WorldBaseline::default(),
             library_tab: LibraryTab::default(),
@@ -313,6 +317,29 @@ impl Session {
         if session.stats_damaged() {
             session.notify_error(NoticeKey::StatsDamaged);
         }
+        // Повреждённые `library.json` и `settings.json` уже отодвинуты в
+        // карантин (ADR-0062): пользователь должен увидеть, почему данные
+        // начались с нуля, а не искать причину в тишине.
+        if session.library.damaged_at_load() {
+            let detail = session
+                .library
+                .quarantined_path()
+                .map(|path| path.display().to_string());
+            match detail {
+                Some(detail) => session.notify_error_detail(NoticeKey::LibraryDamaged, detail),
+                None => session.notify_error(NoticeKey::LibraryDamaged),
+            }
+        }
+        if session.settings.damaged_at_load() {
+            let detail = session
+                .settings
+                .quarantined_path()
+                .map(|path| path.display().to_string());
+            match detail {
+                Some(detail) => session.notify_error_detail(NoticeKey::SettingsDamaged, detail),
+                None => session.notify_error(NoticeKey::SettingsDamaged),
+            }
+        }
         session
     }
 
@@ -324,6 +351,7 @@ impl Session {
         self.process_audio_events();
         self.poll_economy();
         self.process_commands();
+        self.poll_play_lookup();
         self.process_media_commands();
         self.process_tray_commands();
         self.poll_search();

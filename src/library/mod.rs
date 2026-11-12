@@ -94,23 +94,53 @@ pub struct ImportSummary {
 pub struct StationLibrary {
     path: Option<PathBuf>,
     data: LibraryData,
+    /// Файл при старте не разобрался: библиотека начата с нуля.
+    damaged_at_load: bool,
+    /// Куда переехал повреждённый файл, если карантин удался (ADR-0062).
+    quarantined_path: Option<PathBuf>,
 }
 
 impl StationLibrary {
     /// Загружает библиотеку из файла. Отсутствующий файл — пустая библиотека.
+    ///
+    /// Неразбираемый файл не перезаписывается: он уезжает в карантин, и только
+    /// после успешного `rename` библиотека получает рабочий путь (ADR-0062).
+    /// Если карантин не удался, стор остаётся временным, как раньше.
     pub fn load(path: PathBuf) -> Result<Self, LibraryError> {
-        let mut data = match fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice::<LibraryData>(&bytes)
-                .map_err(|err| LibraryError::Parse(format!("{}: {err}", path.display())))?,
-            Err(err) if err.kind() == ErrorKind::NotFound => LibraryData::default(),
+        let (mut data, damaged, quarantined) = match fs::read(&path) {
+            Ok(bytes) => match serde_json::from_slice::<LibraryData>(&bytes) {
+                Ok(data) => (data, false, None),
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        path = %path.display(),
+                        "библиотека станций не разобралась"
+                    );
+                    let quarantined = match crate::storage::quarantine(&path) {
+                        Ok(path) => Some(path),
+                        Err(err) => {
+                            tracing::warn!(
+                                error = %err,
+                                path = %path.display(),
+                                "повреждённую библиотеку не удалось отодвинуть"
+                            );
+                            None
+                        }
+                    };
+                    (LibraryData::default(), true, quarantined)
+                }
+            },
+            Err(err) if err.kind() == ErrorKind::NotFound => (LibraryData::default(), false, None),
             Err(err) => {
                 return Err(LibraryError::Read(format!("{}: {err}", path.display())));
             }
         };
         normalize(&mut data);
         Ok(Self {
-            path: Some(path),
+            path: (!damaged || quarantined.is_some()).then_some(path),
             data,
+            damaged_at_load: damaged,
+            quarantined_path: quarantined,
         })
     }
 
@@ -124,11 +154,23 @@ impl StationLibrary {
         Self {
             path: None,
             data: LibraryData::default(),
+            damaged_at_load: false,
+            quarantined_path: None,
         }
     }
 
     pub fn path(&self) -> Option<&Path> {
         self.path.as_deref()
+    }
+
+    /// Файл при старте не разобрался: UI показывает тост (ADR-0062).
+    pub fn damaged_at_load(&self) -> bool {
+        self.damaged_at_load
+    }
+
+    /// Путь, куда переехал повреждённый файл: `None`, если карантин не удался.
+    pub fn quarantined_path(&self) -> Option<&Path> {
+        self.quarantined_path.as_deref()
     }
 
     pub fn favorites(&self) -> &[Station] {
@@ -712,14 +754,32 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_file_returns_parse_error() {
+    fn corrupt_file_is_quarantined_and_starts_empty() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("library.json");
         fs::write(&path, b"{ not json").unwrap();
-        assert!(matches!(
-            StationLibrary::load(path),
-            Err(LibraryError::Parse(_))
-        ));
+
+        let mut library = StationLibrary::load(path.clone()).unwrap();
+        assert!(library.damaged_at_load());
+        assert_eq!(
+            library.quarantined_path(),
+            Some(directory.path().join("library.json.corrupt").as_path())
+        );
+        assert!(library.favorites().is_empty());
+        assert!(library.history().is_empty());
+
+        // После успешного карантина рабочий путь свободен: свежая запись
+        // создаёт валидную библиотеку, а повреждённая копия остаётся рядом.
+        library
+            .toggle_favorite(&station("11111111-1111-1111-1111-111111111111"))
+            .unwrap();
+        let reloaded = StationLibrary::load(path).unwrap();
+        assert!(!reloaded.damaged_at_load());
+        assert_eq!(reloaded.favorites().len(), 1);
+        assert_eq!(
+            fs::read(directory.path().join("library.json.corrupt")).unwrap(),
+            b"{ not json"
+        );
     }
 
     #[test]

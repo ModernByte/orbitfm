@@ -307,6 +307,9 @@ pub(crate) const CATALOG: Catalog = Catalog {
         inhibition_lost: "Sleep inhibition was lost — the computer may sleep before the timer ends",
         sleep_action_failed: "Sleep timer action failed",
         stats_damaged: "Listening stats could not be read — counters started from zero",
+        settings_damaged: "Settings could not be read — defaults are in use",
+        library_damaged: "Station library could not be read — favorites and history started from scratch",
+        audio_worker_failed: "Audio engine stopped — playback is unavailable until restart",
     },
     labels: LabelText {
         theme_system: "System",

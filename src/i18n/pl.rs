@@ -307,6 +307,9 @@ pub(crate) const CATALOG: Catalog = Catalog {
         inhibition_lost: "Utracono blokadę usypiania — komputer może zasnąć przed końcem wyłącznika",
         sleep_action_failed: "Działanie wyłącznika czasowego nie powiodło się",
         stats_damaged: "Nie udało się odczytać statystyk słuchania — liczniki zaczęły od zera",
+        settings_damaged: "Nie udało się odczytać ustawień — używane są wartości domyślne",
+        library_damaged: "Nie udało się odczytać biblioteki stacji — ulubione i historia zaczynają od zera",
+        audio_worker_failed: "Silnik audio zatrzymany — odtwarzanie niedostępne do restartu",
     },
     labels: LabelText {
         theme_system: "Systemowy",
