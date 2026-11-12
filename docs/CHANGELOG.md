@@ -55,6 +55,10 @@ PATCH дисциплины кадров: инструментация бюдже
 - Релиз `v0.22.0-rc.3`: шесть артефактов и `SHA256SUMS`, сумма AppImage совпала,
   AppImage из релиза запускается как `orbitfm 0.22.0-rc.3`; PR #35 CI
   (43311904307), CI на main (43313423337) и release (43313423293) зелёные.
+- Живой прогон `ORBITFM_FRAME_STATS=1` (изолированный инстанс, release, GTX 1050 Ti):
+  Asleep — **0 кадров**, Breathing — 14,8 fps, Auto-spin — 29,4, Play — 29,4,
+  `reduce_motion` + эфир — 30,8–31,0; `globe_show` p95 0,07 мс, `globe_prepare`
+  p95 0,02 мс.
 
 ## [0.22.0-rc.2] - 2026-11-12
 
