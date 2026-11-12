@@ -52,6 +52,9 @@ PATCH дисциплины кадров: инструментация бюдже
   читает `ViewportOutput::repaint_delay` — та же частота кадра, что получит winit.
 - Ручные пробы в release: `marker_projection_budget_probe` (проекция),
   `marker_paint_budget_probe` (отрисовка), `backdrop_paint_budget_probe` (фон).
+- Релиз `v0.22.0-rc.3`: шесть артефактов и `SHA256SUMS`, сумма AppImage совпала,
+  AppImage из релиза запускается как `orbitfm 0.22.0-rc.3`; PR #35 CI
+  (43311904307), CI на main (43313423337) и release (43313423293) зелёные.
 
 ## [0.22.0-rc.2] - 2026-11-12
 
