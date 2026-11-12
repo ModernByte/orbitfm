@@ -44,9 +44,15 @@ $HOME/.local/share/orbitfm/library.json   (если XDG_DATA_HOME не зада�
 - Запись синхронная, вызывается только на действие пользователя (переключение
   избранного, старт станции, очистка истории). Фоновой записи нет.
 - Отсутствующий файл — пустая библиотека, не ошибка.
-- Повреждённый JSON — `LibraryError::Parse`; Application Core создаёт
-  `StationLibrary::ephemeral()`, которая не пишет файл, поэтому повреждённые данные
-  не теряются.
+- Повреждённый JSON не перезаписывается: файл переименовывается в
+  `library.json.corrupt` (занятое имя — `library.json.corrupt-1` и далее), после
+  чего библиотека снова получает рабочий путь и первую же запись делает свежей.
+  Если переименование не удалось, Application Core оставляет эфемерную
+  библиотеку, чтобы не уничтожить повреждённые данные (ADR-0062).
+- `damaged_at_load()` и `quarantined_path()` позволяют Application Core
+  показать тост с путём карантина; повреждение не блокирует воспроизведение.
+- Ошибки чтения (нет прав и т.п.) остаются `LibraryError::Read` и дают
+  эфемерную библиотеку без карантина.
 - Ошибки записи не прерывают воспроизведение; Application Core показывает их
   тостом.
 
@@ -89,8 +95,10 @@ $HOME/.local/share/orbitfm/library.json   (если XDG_DATA_HOME не зада�
 
 ## 7. Связь с Application Core
 
-- `main` загружает `StationLibrary::load_default()` до `run_gui`; при ошибке
-  логирует предупреждение и использует `ephemeral()`.
+- `main` загружает `StationLibrary::load_default()` до `run_gui`; ошибка
+  чтения логируется, и используется `ephemeral()`. Повреждённый JSON
+  карантинится внутри `load`, а `Session::new` показывает тост
+  `NoticeKey::LibraryDamaged` с путём копии (ADR-0062).
 - `start_station` вызывает `record_played` после успешного `audio.play`; это
   касается строки результатов, избранного, истории, маркера и IPC `play`.
   Возобновление из MPRIS историю не меняет.
@@ -123,7 +131,7 @@ Unit-тесты в `src/library/mod.rs`:
 - `roundtrip_persists_favorites_and_history`
 - `toggle_favorite_adds_and_removes_station`
 - `history_deduplicates_moves_to_front_and_caps`
-- `corrupt_file_returns_parse_error`
+- `corrupt_file_is_quarantined_and_starts_empty`
 - `load_normalizes_duplicates_and_history_limit`
 - `ephemeral_library_keeps_changes_without_file`
 - `export_import_roundtrip_merges_and_deduplicates`

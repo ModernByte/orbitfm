@@ -84,8 +84,8 @@ display-tick). `poll_sleep` → `poll_sleep_events` с порядком fade →
 четыре ключа с `#[serde(default)]`: `sleep_action` = `Nothing`, `sleep_fade_seconds` =
 `300` (ряд `SLEEP_FADE_CHOICES = [0, 60, 120, 180, 300]` + sanitize по образцу
 `nearest_viz_bars`, `settings/mod.rs:371–372`), `sleep_prevent_sleep` = `true`,
-`sleep_warning` = `true`. Неизвестное значение ⇒ `SettingsError::Parse` и фолбэк на
-`ephemeral()` (уже есть, `main.rs:287–300`) — покрыть тестом.
+`sleep_warning` = `true`. Неизвестное значение — ошибка разбора и карантин файла по
+ADR-0062 (на момент плана — `SettingsError::Parse` и фолбэк на `ephemeral()`).
 
 `src/i18n/mod.rs`: `sleep_remaining_label(language, secs)` рядом с `sleep_option_label`
 (:70–77) — `M:SS` / `H:MM:SS` (`MAX_SLEEP_MINUTES = 720` ⇒ потолок `12:00:00`), новых

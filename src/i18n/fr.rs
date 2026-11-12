@@ -307,6 +307,9 @@ pub(crate) const CATALOG: Catalog = Catalog {
         inhibition_lost: "Inhibition de veille perdue — l'ordinateur peut se mettre en veille avant la fin du minuteur",
         sleep_action_failed: "L'action du minuteur de sommeil a échoué",
         stats_damaged: "Impossible de lire les statistiques d’écoute — les compteurs repartent de zéro",
+        settings_damaged: "Impossible de lire les réglages — les valeurs par défaut sont utilisées",
+        library_damaged: "Impossible de lire la bibliothèque de stations — favoris et historique repartent de zéro",
+        audio_worker_failed: "Moteur audio arrêté — lecture indisponible jusqu’au redémarrage",
     },
     labels: LabelText {
         theme_system: "Système",

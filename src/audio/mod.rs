@@ -33,11 +33,21 @@ impl PlaybackState {
 /// События, публикуемые аудио-ядром.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AudioEvent {
-    Started { url: String },
+    Started {
+        url: String,
+    },
     Stopped,
     Buffering,
-    Reconnecting { attempt: u32 },
-    Error { message: String },
+    Reconnecting {
+        attempt: u32,
+    },
+    Error {
+        message: String,
+    },
+    /// Аудио-поток завершился паникой: команды больше не обслуживаются.
+    WorkerFailed {
+        message: String,
+    },
     EndOfFile,
 }
 

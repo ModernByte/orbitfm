@@ -307,6 +307,9 @@ pub(crate) const CATALOG: Catalog = Catalog {
         inhibition_lost: "Uyku engeli kayboldu — bilgisayar zamanlayıcı bitmeden uykuya geçebilir",
         sleep_action_failed: "Uyku zamanlayıcısı eylemi başarısız oldu",
         stats_damaged: "Dinleme istatistikleri okunamadı — sayaçlar sıfırdan başladı",
+        settings_damaged: "Ayarlar okunamadı — varsayılan değerler kullanılıyor",
+        library_damaged: "İstasyon kitaplığı okunamadı — favoriler ve geçmiş sıfırdan başladı",
+        audio_worker_failed: "Ses motoru durdu — yeniden başlatılana kadar oynatma kullanılamaz",
     },
     labels: LabelText {
         theme_system: "Sistem",

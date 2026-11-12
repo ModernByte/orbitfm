@@ -143,7 +143,16 @@ impl AudioEngine {
 
         let worker = thread::Builder::new()
             .name("orbitfm-audio".to_owned())
-            .spawn(move || AudioWorker::new(mpv, worker_shared, command_rx).run())
+            .spawn({
+                let shared = Arc::clone(&shared);
+                move || {
+                    // Паника внутри libmpv-обёртки не должна оставлять UI
+                    // в состоянии `Playing` с мёртвыми командами (ADR-0061).
+                    run_guarded(&shared, || {
+                        AudioWorker::new(mpv, worker_shared, command_rx).run();
+                    });
+                }
+            })
             .map_err(|err| AudioError::Init(format!("не удалось запустить аудио-поток: {err}")))?;
 
         Ok(Self {
@@ -280,6 +289,30 @@ impl Drop for AudioEngine {
     }
 }
 
+/// Выполняет цикл аудио-потока за границей паники.
+///
+/// Panic payload не переводится: это техническая подробность, она уходит в
+/// лог и в тост как `detail` (ADR-0030, ADR-0061). Состояние публикуется
+/// раньше события, чтобы первый же кадр после паники увидел `Error`, а не
+/// устаревшее `Playing`.
+fn run_guarded(shared: &Shared, worker: impl FnOnce()) {
+    let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(worker)) else {
+        return;
+    };
+    let detail = panic_detail(payload.as_ref());
+    tracing::error!(detail = %detail, "аудио-поток завершился паникой");
+    shared.set_state(PlaybackState::Error(detail.clone()));
+    shared.emit(AudioEvent::WorkerFailed { message: detail });
+}
+
+fn panic_detail(payload: &(dyn std::any::Any + Send)) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|message| (*message).to_owned())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "неизвестная паника".to_owned())
+}
+
 fn create_mpv() -> Result<Mpv, AudioError> {
     let mpv = Mpv::with_initializer(|init| {
         init.set_option("config", "no")?;
@@ -393,6 +426,36 @@ mod tests {
     #[test]
     fn spectrum_is_enabled_by_default() {
         assert!(Shared::new().spectrum_enabled());
+    }
+
+    #[test]
+    fn worker_panic_publishes_error_state_and_event() {
+        let shared = Shared::new();
+        let mut events = shared.events.subscribe();
+
+        run_guarded(&shared, || panic!("сбой libmpv"));
+
+        assert_eq!(
+            shared.state(),
+            PlaybackState::Error("сбой libmpv".to_owned())
+        );
+        assert_eq!(
+            events.try_recv().expect("событие паники"),
+            AudioEvent::WorkerFailed {
+                message: "сбой libmpv".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn worker_without_panic_leaves_shared_untouched() {
+        let shared = Shared::new();
+        let mut events = shared.events.subscribe();
+
+        run_guarded(&shared, || {});
+
+        assert_eq!(shared.state(), PlaybackState::Stopped);
+        assert!(events.try_recv().is_err());
     }
 
     #[tokio::test]

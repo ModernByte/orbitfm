@@ -200,6 +200,9 @@ fn notice_text(
         NoticeKey::InhibitionLost => notices.inhibition_lost,
         NoticeKey::SleepActionFailed => notices.sleep_action_failed,
         NoticeKey::StatsDamaged => notices.stats_damaged,
+        NoticeKey::SettingsDamaged => notices.settings_damaged,
+        NoticeKey::LibraryDamaged => notices.library_damaged,
+        NoticeKey::AudioWorkerFailed => notices.audio_worker_failed,
     };
     match detail {
         Some(detail) => format!("{base}: {detail}"),

@@ -470,6 +470,9 @@ mod tests {
                 inhibition_lost,
                 sleep_action_failed,
                 stats_damaged,
+                settings_damaged,
+                library_damaged,
+                audio_worker_failed,
             }
         );
         assert_group_non_empty!(

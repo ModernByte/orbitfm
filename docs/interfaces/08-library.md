@@ -18,7 +18,10 @@ pub enum LibraryError {
     Write(String),
 }
 
-pub struct StationLibrary { /* path: Option<PathBuf>, data: LibraryData */ }
+pub struct StationLibrary {
+    /* path: Option<PathBuf>, data: LibraryData,
+       damaged_at_load: bool, quarantined_path: Option<PathBuf> */
+}
 
 /// Версия схемы переноса (docs/interfaces/15-library-export.md).
 pub const EXPORT_SCHEMA: u32 = 1;
@@ -43,6 +46,12 @@ impl StationLibrary {
 
     /// Путь к файлу; `None` у эфемерной библиотеки.
     pub fn path(&self) -> Option<&Path>;
+
+    /// Файл не разобрался и был отодвинут в карантин (ADR-0062).
+    pub fn damaged_at_load(&self) -> bool;
+
+    /// Куда переехал повреждённый файл; `None`, если карантин не удался.
+    pub fn quarantined_path(&self) -> Option<&Path>;
 
     pub fn favorites(&self) -> &[Station];
     pub fn history(&self) -> &[Station];
@@ -84,7 +93,7 @@ pub fn default_path() -> Result<PathBuf, LibraryError>;
 
 | Метод | Поведение |
 |-------|-----------|
-| `load` | Читает JSON; `NotFound` → пустая библиотека; повреждённый JSON → `Parse` |
+| `load` | Читает JSON; `NotFound` → пустая библиотека; повреждённый JSON уезжает в `<файл>.corrupt*`, библиотека начинается с нуля, путь остаётся рабочим (ADR-0062) |
 | `load_default` | `load(default_path()?)` |
 | `ephemeral` | Библиотека в памяти; `save` — no-op, файл не создаётся и не перезаписывается |
 | `favorites` / `history` | Срезы в порядке хранения: избранное — порядок добавления, история — от новых к старым |
@@ -153,7 +162,8 @@ pub fn default_path() -> Result<PathBuf, LibraryError>;
 
 Модульные тесты покрывают: выбор XDG-пути и fallback на `HOME`, загрузку без файла,
 roundtrip избранного и истории, переключение избранного, дедупликацию/перемещение
-в начало и лимит истории, ошибку разбора повреждённого файла, нормализацию при
+в начало и лимит истории, карантин повреждённого файла и свежую запись после
+него, нормализацию при
 загрузке, работу эфемерной библиотеки без файла, roundtrip экспорт → импорт,
 отказ неизвестной схемы и чужого `app`, потолки размера и числа станций,
 пропуск приватных/некорректных URL, пропуск локальных `stream`-станций при

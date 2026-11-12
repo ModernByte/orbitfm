@@ -477,6 +477,12 @@ pub(crate) struct NoticeText {
     pub sleep_action_failed: &'static str,
     /// Файл статистики не читается — счётчики начались с нуля (ADR-0049).
     pub stats_damaged: &'static str,
+    /// Файл настроек не читается — взяты значения по умолчанию (ADR-0062).
+    pub settings_damaged: &'static str,
+    /// Библиотека станций не читается — начата с нуля (ADR-0062).
+    pub library_damaged: &'static str,
+    /// Аудио-поток упал — воспроизведение недоступно до перезапуска (ADR-0061).
+    pub audio_worker_failed: &'static str,
 }
 
 pub(crate) struct LabelText {

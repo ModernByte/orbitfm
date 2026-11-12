@@ -307,6 +307,9 @@ pub(crate) const CATALOG: Catalog = Catalog {
         inhibition_lost: "Standby-Blockade verloren — der Computer kann vor Ablauf des Timers in Standby gehen",
         sleep_action_failed: "Aktion des Schlaf-Timers fehlgeschlagen",
         stats_damaged: "Hörstatistik konnte nicht gelesen werden — Zähler starten wieder bei Null",
+        settings_damaged: "Einstellungen konnten nicht gelesen werden — Standardwerte werden verwendet",
+        library_damaged: "Stationsbibliothek konnte nicht gelesen werden — Favoriten und Verlauf starten von vorn",
+        audio_worker_failed: "Audio-Engine beendet — Wiedergabe erst nach Neustart verfügbar",
     },
     labels: LabelText {
         theme_system: "System",

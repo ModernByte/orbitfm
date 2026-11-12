@@ -310,6 +310,9 @@ pub(crate) const CATALOG: Catalog = Catalog {
         inhibition_lost: "فُقد منع السكون — قد يدخل الحاسوب في السكون قبل انتهاء المؤقت",
         sleep_action_failed: "تعذّر تنفيذ إجراء مؤقت النوم",
         stats_damaged: "تعذّرت قراءة إحصائيات الاستماع — بدأت العدادات من الصفر",
+        settings_damaged: "تعذّرت قراءة الإعدادات — تُستخدم القيم الافتراضية",
+        library_damaged: "تعذّرت قراءة مكتبة المحطات — بدأت المفضلة والسجل من الصفر",
+        audio_worker_failed: "توقف محرك الصوت — التشغيل غير متاح حتى إعادة التشغيل",
     },
     labels: LabelText {
         theme_system: "النظام",

@@ -646,9 +646,11 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
   проверяется непустой `url_resolved`, выполняется `audio.play`, сохраняются
   `current_url`/`current_station`/`selected_station`, асинхронно отправляется
   click (`Session::spawn_click`).
-- `play <uuid>` сначала ищет станцию в последних результатах поиска
-  (`Session::resolve_station`), затем вызывает `get_station` с таймаутом 8 с
-  (`STATION_LOOKUP_TIMEOUT`); таймаут маппится в `RadioError::Network`.
+- `play <uuid>` сначала ищет станцию без сети в последних результатах поиска и
+  офлайн-снимке (`Session::local_station`); незнакомый UUID резолвится в
+  tokio-задаче с таймаутом 8 с (`STATION_LOOKUP_TIMEOUT`), ответ уходит после
+  `start_station`, повторный запрос до ответа отклоняется (ADR-0063). Таймаут
+  маппится в `RadioError::Network`.
 
 ### 8.1. Roulette
 

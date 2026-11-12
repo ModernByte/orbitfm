@@ -69,6 +69,8 @@ pub enum AudioEvent {
     Buffering,
     Reconnecting { attempt: u32 },
     Error { message: String },
+    /// Аудио-поток упал: команды больше не обслуживаются (ADR-0061).
+    WorkerFailed { message: String },
     EndOfFile,
 }
 ```
@@ -123,6 +125,7 @@ pub enum AudioEvent {
 | любой активный → `Reconnecting` | обрыв или `EndFile(Error/Eof)` | `Reconnecting { attempt }` |
 | `Reconnecting` → `Playing` | успешный `FileLoaded` | `Started { url }` |
 | `Reconnecting` → `Error` | попытки исчерпаны | `Error { message }` |
+| любой → `Error` | паника в потоке воркера | `WorkerFailed { message }` |
 | любой → `Stopped` | команда `stop` | `Stopped` |
 
 Причины `EndFile::Stop`, `EndFile::Quit` и `EndFile::Redirect` реконнект не запускают.
@@ -192,12 +195,20 @@ Application Core — ADR-0043 § 3, `docs/interfaces/10-session.md`.
 `Init` означает, что модуль неработоспособен; Application Core считает это фатальной
 ошибкой запуска. Остальные варианты возвращаются из конкретной команды.
 
+Цикл `AudioWorker::run` исполняется через `run_guarded` (`catch_unwind`).
+Паника не завершает процесс и не оставляет UI в устаревшем `Playing`: в
+`Shared` публикуется `PlaybackState::Error`, в broadcast — `WorkerFailed`,
+`Session` показывает тост. Автоматического перезапуска нет: подписки `events`,
+MPRIS и трекер реконнекта не переживают подмену движка. После паники команды
+отвечают сразу, потому что канал команд закрыт (ADR-0061).
+
 ## 9. Тестирование
 
 - Unit-тесты: валидация URL (только http/https с хостом), диапазон громкости, backoff,
   исчерпание попыток, сброс трекера, включённость спектра по умолчанию, разбор и
   ограничение FFT-метрик, карта раскладок каналов, форма stereo/mono-графов,
-  объединение L/R по мощности и санитизация полос.
+  объединение L/R по мощности и санитизация полос, граница паники воркера
+  (`worker_panic_publishes_error_state_and_event`).
 - Живой тест `plays_and_stops_live_stream` (`#[ignore]`, требует сеть и аудиоустройство):
   `ORBITFM_TEST_STREAM_URL=... cargo test --all-targets plays_and_stops_live_stream -- --ignored`
   проверяет play → pause → resume → stop.

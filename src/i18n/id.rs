@@ -307,6 +307,9 @@ pub(crate) const CATALOG: Catalog = Catalog {
         inhibition_lost: "Penghalang tidur hilang — komputer bisa tidur sebelum pengatur waktu berakhir",
         sleep_action_failed: "Tindakan pengatur waktu tidur gagal",
         stats_damaged: "Statistik mendengarkan tidak dapat dibaca — penghitung mulai dari nol",
+        settings_damaged: "Pengaturan tidak dapat dibaca — nilai bawaan digunakan",
+        library_damaged: "Pustaka stasiun tidak dapat dibaca — favorit dan riwayat dimulai dari nol",
+        audio_worker_failed: "Mesin audio berhenti — pemutaran tidak tersedia sampai dimulai ulang",
     },
     labels: LabelText {
         theme_system: "Sistem",
