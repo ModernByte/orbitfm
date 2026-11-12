@@ -676,9 +676,7 @@ cargo test --release marker_projection_budget -- --ignored --nocapture
 
 #### Ещё не собрано
 
-Живые fps по режимам (Asleep / Breathing / Auto-spin / Play) — `frame_tick`
-пишет их при `ORBITFM_FRAME_STATS=1`, но нужен ручной прогон на столе владельца;
-числа добавить сюда и в CHANGELOG при релизе.
+Живые fps по режимам — снято изолированным прогоном, см. ниже.
 
 ### Волна 1 — политика перерисовки (2026-11-12)
 
@@ -882,4 +880,29 @@ p95 0,013 мс на 500 — авто-векторизация LLVM и так н�
 после `repaint::schedule`: Input → 0, Interaction/Callout → 16 мс, Playback/
 IdleSpin → 33 мс, IdleBreath → 66 мс, IdleBreathSlow → 125 мс, Deadline → свой
 срок. Это тот же `repaint_delay`, который получает winit, то есть адрес и
-частота кадра закреплены без окна. Живые fps остаются ручной проверкой владельца.
+частота кадра закреплены без окна. Живые fps сняты ниже отдельным прогоном.
+
+#### Живой прогон по режимам (2026-11-12)
+
+Стенд: i5-8300H, GTX 1050 Ti Mobile (Vulkan), release `0.22.0-rc.3`. Чтобы не
+трогать запущенный на столе инстанс (single-instance), поднят изолированный:
+свой `XDG_RUNTIME_DIR`/`XDG_CONFIG_HOME`/`XDG_DATA_HOME` в `/tmp` и рендер на
+X11 (`DISPLAY=:1`, Wayland-дисплей не тронут); для эфира громкость 0.
+
+| Режим | Настройки | Ожидалось | Снято |
+|---|---|---|---|
+| Asleep | `reduce_motion`, без эфира | 0 кадров | **0 кадров** |
+| Breathing (фокус) | `motion = Normal`, без эфира | 15 fps | **14,8 fps** |
+| Auto-spin | `motion = Off`, `reduce_motion = false` | 30 fps | **29,4 fps** |
+| Play | эфир, визуализатор | 30 fps | **29,4 fps** |
+| `reduce_motion` + эфир | `reduce_motion`, эфир | 30 fps | **30,8–31,0 fps** |
+
+Per-metric из тех же логов (`frame_stats`, p50/p95): `motion_update` 0,00/0,01 мс,
+`globe_show` 0,03/0,07 мс, `globe_prepare` 0,01/0,02 мс, `globe_callback`
+0,01/0,02 мс. Разовые максимумы `globe_prepare` до 1,6 мс — вытеснение ОС, не
+бюджет (в ADR-0059 § 2 такое же наблюдалось на живом стенде).
+
+Оговорка: в прогоне без поиска список маркеров пуст, поэтому `markers_project`
+и `markers_paint` там ~0 — цена маркеров измеряется пробами (проекция § 11,
+тесселяция § «Волна 4»), а не этим прогоном. `BreathingSlow` без фокуса
+отдельно не снимался: окно получало фокус, и режим подтверждён тестом cadence.
