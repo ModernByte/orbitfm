@@ -8,6 +8,7 @@ use wgpu::util::DeviceExt;
 
 use super::GlobeCamera;
 use super::camera::CameraUniform;
+use super::frame_stats;
 use super::heatmap::{HEAT_SIZE, HeatFrame};
 use super::motion::GlobeMotion;
 
@@ -346,6 +347,7 @@ impl GlobeRenderer {
         uniform: &CameraUniform,
         heat: Option<&Arc<HeatFrame>>,
     ) {
+        let started = frame_stats::begin();
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(uniform));
 
         if let Some(frame) = heat
@@ -393,6 +395,7 @@ impl GlobeRenderer {
             distance <= LOD_NEAR_ENTER
         };
         self.near_active = near_texture_in_use(&self.lod, near);
+        frame_stats::end(frame_stats::Metric::GlobePrepare, started);
     }
 
     /// Ставит фоновую задачу подготовки детального яруса, если она ещё не
@@ -532,9 +535,11 @@ impl CallbackTrait for GlobeCallback {
         _egui_encoder: &mut wgpu::CommandEncoder,
         callback_resources: &mut CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
+        let callback_started = frame_stats::begin();
         if let Some(renderer) = callback_resources.get_mut::<GlobeRenderer>() {
             renderer.prepare(device, queue, &self.uniform, self.heat.as_ref());
         }
+        frame_stats::end(frame_stats::Metric::GlobeCallback, callback_started);
         Vec::new()
     }
 

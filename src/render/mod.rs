@@ -2,6 +2,7 @@
 
 mod camera;
 mod countries;
+pub(crate) mod frame_stats;
 mod globe;
 mod gpu;
 mod heatmap;

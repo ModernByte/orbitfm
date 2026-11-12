@@ -17,7 +17,7 @@ use crate::integration::status::{
 };
 use crate::render::{
     AdapterReport, BandTargets, GlobeRenderer, MotionMixer, SpectrumOverlay, SpectrumTarget,
-    VisualizerModel,
+    VisualizerModel, frame_stats,
 };
 use crate::services::{ArtworkFetcher, Station};
 use crate::session::heat::CountryMetric;
@@ -455,6 +455,9 @@ impl<'a> OrbitApp<'a> {
             }
         }
 
+        // Кадр стола: считаем fps и, раз в окно, печатаем бюджет (план § 3.2).
+        frame_stats::frame_tick();
+
         let ctx = ui.ctx().clone();
         let viewport = ui.available_rect_before_wrap();
         let frame = Frame::capture(
@@ -697,12 +700,17 @@ impl<'a> OrbitApp<'a> {
         } else {
             None
         };
-        let motion = motion_mixer.update(
-            motion_target,
-            frame.motion_reactivity,
-            frame.motion_style,
-            ui.input(|input| input.stable_dt),
-        );
+        let motion = {
+            let started = frame_stats::begin();
+            let motion = motion_mixer.update(
+                motion_target,
+                frame.motion_reactivity,
+                frame.motion_style,
+                ui.input(|input| input.stable_dt),
+            );
+            frame_stats::end(frame_stats::Metric::MotionUpdate, started);
+            motion
+        };
 
         // Кольцо — часть Focus-сцены: в капсулах оно не рисуется и гаснет.
         let ring_live = density == LayoutDensity::Full

@@ -8,7 +8,7 @@ use eframe::egui;
 use crate::geo::{Country, GeoService};
 use crate::render::{
     CountryStyle, GlobeCamera, GlobeDeform, GlobeInput, GlobeMotion, MarkerLabel, MarkerVisual,
-    paint_country, paint_globe, paint_markers, sphere_point,
+    frame_stats, paint_country, paint_globe, paint_markers, sphere_point,
 };
 use crate::services::Station;
 use crate::session::markers::GlobeMarker;
@@ -239,6 +239,8 @@ pub(crate) struct GlobeResponse {
 
 #[allow(clippy::needless_pass_by_value)] // пучок аргументов с `&mut`-полем
 pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) -> GlobeResponse {
+    // Граница кадра глобуса: замер включается только `ORBITFM_FRAME_STATS=1`.
+    let show_started = frame_stats::begin();
     let mut response = GlobeResponse::default();
 
     ui.set_min_size(ui.available_size());
@@ -260,6 +262,7 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
             egui::FontId::proportional(16.0),
             palette.muted,
         );
+        frame_stats::end(frame_stats::Metric::GlobeShow, show_started);
         return response;
     }
 
@@ -319,7 +322,12 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
     motion.roll = state.camera.roll();
     let deform = motion.deform;
 
-    let marker_screens = marker_screens(state.camera, state.markers, globe_rect, &deform);
+    let marker_screens = {
+        let started = frame_stats::begin();
+        let screens = marker_screens(state.camera, state.markers, globe_rect, &deform);
+        frame_stats::end(frame_stats::Metric::MarkersProject, started);
+        screens
+    };
 
     if let Some(position) = input.primary_clicked {
         if let Some(index) = nearest_marker(&marker_screens, position) {
@@ -361,6 +369,7 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
         };
 
     if state.country_enabled {
+        let started = frame_stats::begin();
         paint_country_highlights(
             ui.painter(),
             globe_rect,
@@ -375,6 +384,7 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
             },
             palette,
         );
+        frame_stats::end(frame_stats::Metric::CountriesPaint, started);
     }
 
     if hovered.is_some() || hovered_country.is_some() {
@@ -404,6 +414,7 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
             .collect();
         any_playing = visuals.iter().any(|visual| visual.playing);
         let hovered_label = hovered.map(|index| marker_label(&state.markers[index]));
+        let started = frame_stats::begin();
         paint_markers(
             ui.painter(),
             globe_rect,
@@ -413,6 +424,7 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
             palette.marker,
             ui.input(|input| input.time),
         );
+        frame_stats::end(frame_stats::Metric::MarkersPaint, started);
     }
 
     let active_country = state
@@ -491,6 +503,7 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
             .request_repaint_after(std::time::Duration::from_secs_f32(remaining.max(0.05)));
     }
 
+    frame_stats::end(frame_stats::Metric::GlobeShow, show_started);
     response
 }
 
@@ -1346,5 +1359,83 @@ mod tests {
             squashed[0].1.y > identity[0].1.y,
             "при вертикальном сжатии маркер опускается к центру"
         );
+    }
+
+    /// Синтетический список станций для замера: детерминированное распределение
+    /// по обеим полусферам, чтобы отбор задней стороны входил в цену кадра.
+    fn synthetic_markers(count: usize) -> Vec<GlobeMarker> {
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        (0..count)
+            .map(|index| {
+                let value = next();
+                let lat = (value % 12_000) as f32 / 100.0 - 60.0;
+                let lon = ((value >> 24) % 36_000) as f32 / 100.0 - 180.0;
+                GlobeMarker {
+                    station: geo_station(&format!("s{index}"), f64::from(lat), f64::from(lon)),
+                    lat,
+                    lon,
+                    count: 1,
+                    popularity: 0.0,
+                    bitrate: 0,
+                    members: vec![format!("s{index}")],
+                }
+            })
+            .collect()
+    }
+
+    /// Ручной baseline проекции маркеров (план § 3.2, волны 0 и 2). Нужен release:
+    /// `cargo test --release marker_projection_budget -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "ручной замер: запускать в release"]
+    fn marker_projection_budget_probe() {
+        let camera = GlobeCamera::default();
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1100.0, 800.0));
+        let deform = GlobeDeform::IDENTITY;
+        for count in [100usize, 200, 500, 1000] {
+            let markers = synthetic_markers(count);
+            // Прогрев: страницы кода в кэше, а не в бюджете.
+            for _ in 0..20 {
+                std::hint::black_box(marker_screens(&camera, &markers, viewport, &deform));
+            }
+            let mut samples = Vec::with_capacity(200);
+            for _ in 0..200 {
+                let started = std::time::Instant::now();
+                let screens = marker_screens(&camera, &markers, viewport, &deform);
+                samples.push(started.elapsed().as_secs_f64() * 1e3);
+                std::hint::black_box(&screens);
+            }
+            samples.sort_by(|left, right| left.total_cmp(right));
+            let quantile = |q: f64| samples[((samples.len() - 1) as f64 * q).round() as usize];
+            // Сколько из этой цены — повторная сборка `view_proj` на точку: ровно
+            // то, что убирает батч-проекция волны 2.
+            let mut matrix_samples = Vec::with_capacity(200);
+            let aspect = viewport.aspect_ratio();
+            for _ in 0..200 {
+                let started = std::time::Instant::now();
+                for _ in 0..count {
+                    std::hint::black_box(camera.view_proj(aspect));
+                }
+                matrix_samples.push(started.elapsed().as_secs_f64() * 1e3);
+            }
+            matrix_samples.sort_by(|left, right| left.total_cmp(right));
+            let matrix_quantile =
+                |q: f64| matrix_samples[((matrix_samples.len() - 1) as f64 * q).round() as usize];
+            println!(
+                "markers_project N={count}: видимых {}, p50={:.3} мс, p95={:.3} мс, макс={:.3} мс \
+                 (view_proj×N: p50={:.3} мс, p95={:.3} мс)",
+                marker_screens(&camera, &markers, viewport, &deform).len(),
+                quantile(0.5),
+                quantile(0.95),
+                samples[samples.len() - 1],
+                matrix_quantile(0.5),
+                matrix_quantile(0.95),
+            );
+        }
     }
 }
