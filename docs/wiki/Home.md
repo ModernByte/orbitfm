@@ -65,7 +65,7 @@ macOS), MPRIS и IPC продолжают работать, а `orbitfm quit` �
 
 ## Версия, о которой идёт речь
 
-Wiki описывает ветку `main` после **0.22.0-rc.2**. В этой сборке:
+Wiki описывает ветку `main` после **0.22.0-rc.3**. В этой сборке:
 
 - работают панели и виджеты для Noctalia, Plasma 6, GNOME Shell, Omarchy,
   Waybar, Polybar, i3blocks, swaybar, i3status-rust, XFCE, Cinnamon, MATE и
