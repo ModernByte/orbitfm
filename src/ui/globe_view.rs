@@ -17,12 +17,12 @@ use super::animation;
 use super::layout::DeskLayout;
 use super::orbit_ring::OrbitRing;
 use super::palette::{Palette, heat_color};
+use super::repaint::{self, RepaintReason};
 use super::station_row::row_place;
 use super::widgets::{faded, flag_emoji, glass_panel};
 use super::{UiAction, single_line, truncate};
 
 const MARKER_CLICK_RADIUS: f32 = 10.0;
-const SPECTRUM_REPAINT: std::time::Duration = std::time::Duration::from_millis(33);
 const COUNTRY_HEAT_MIN_ALPHA: u8 = 26;
 const COUNTRY_HEAT_MAX_ALPHA: u8 = 96;
 const COUNTRY_HOVER_ALPHA: u8 = 120;
@@ -42,7 +42,6 @@ const CALLOUT_ROUNDING: f32 = 11.0;
 /// Минимальный просвет между плашкой страны и плашкой станции, px.
 const CALLOUT_STACK_GAP: f32 = 6.0;
 const CALLOUT_EPSILON: f32 = 0.004;
-const CALLOUT_REPAINT: std::time::Duration = std::time::Duration::from_millis(16);
 
 /// Звезда фона: нормализованные координаты 0..1 и яркость.
 #[derive(Clone, Copy)]
@@ -484,23 +483,25 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
         &mut callout_fading,
     );
     if callout_fading {
-        ui.ctx().request_repaint_after(CALLOUT_REPAINT);
+        repaint::schedule(ui.ctx(), RepaintReason::Callout);
     }
 
     if any_playing || (state.backdrop && state.ring.is_animating()) {
         // Пульс маркера и орбитальное кольцо живут на кадрах — держим ~30 fps.
-        ui.ctx().request_repaint_after(SPECTRUM_REPAINT);
+        repaint::schedule(ui.ctx(), RepaintReason::Playback);
     }
 
     if state.camera.is_idle_spinning() {
         // Медленному авто-вращению хватает 30 fps и без эфира.
-        ui.ctx().request_repaint_after(SPECTRUM_REPAINT);
+        repaint::schedule(ui.ctx(), RepaintReason::IdleSpin);
     } else if state.camera.is_animating() {
-        ui.ctx().request_repaint();
+        repaint::schedule(ui.ctx(), RepaintReason::Interaction);
     } else if let Some(remaining) = state.camera.idle_countdown() {
         // Без эфира окно может спать: будим его к началу авто-вращения.
-        ui.ctx()
-            .request_repaint_after(std::time::Duration::from_secs_f32(remaining.max(0.05)));
+        repaint::schedule(
+            ui.ctx(),
+            RepaintReason::Deadline(std::time::Duration::from_secs_f32(remaining.max(0.05))),
+        );
     }
 
     frame_stats::end(frame_stats::Metric::GlobeShow, show_started);

@@ -679,3 +679,27 @@ cargo test --release marker_projection_budget -- --ignored --nocapture
 Живые fps по режимам (Asleep / Breathing / Auto-spin / Play) — `frame_tick`
 пишет их при `ORBITFM_FRAME_STATS=1`, но нужен ручной прогон на столе владельца;
 числа добавить сюда и в CHANGELOG при релизе.
+
+### Волна 1 — политика перерисовки (2026-11-12)
+
+Реализовано:
+
+- `src/ui/repaint.rs` — `RepaintReason` + `cadence(reason)` + `schedule(ctx, reason)`
+  и `FrameMode` + `frame_mode(...)` + `periodic_reason(mode)`. Таблица частот
+  (16/33/66 мс) живёт в одном месте; локальные константы `SPECTRUM_REPAINT`,
+  `MOTION_IDLE_REPAINT` (app) и `SPECTRUM_REPAINT`, `CALLOUT_REPAINT`
+  (globe_view) удалены.
+- `app.rs` и `globe_view.rs` переведены на `repaint::schedule`; поведение
+  сохранено. Уточнение эфира (`intensity > 0.01 || flipping` → 30 fps) осталось
+  внутри `periodic_reason`.
+- `docs/modules/04-render-globe.md` § 3.1 — режимы зафиксированы как контракт.
+- Тесты: таблица `cadence`, Asleep без кадров (`reduce_motion` / скрытое окно),
+  Play держит кадры при `reduce_motion`, `motion = Off` — авто-спин, а не сон,
+  Deadline не периодичен.
+
+Проверки: fmt, clippy `-D warnings` (обе конфигурации), `cargo test --locked`
+(732 passed, 7 ignored). Живые fps по режимам — по-прежнему за ручным прогоном.
+
+Осталось по волне 1 (требует решения владельца, § 8): снижать ли Breathing при
+потере фокуса/Overlay до 10 fps; удалять ли дублирующие источники Play
+(`app.rs` визуализатор и `globe_view` `any_playing` дают ту же частоту 33 мс).

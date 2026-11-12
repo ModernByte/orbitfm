@@ -37,16 +37,13 @@ use crate::ui::layout::{DeskLayout, LayoutDensity};
 use crate::ui::onboarding::{self, RuleState};
 use crate::ui::orbit_ring::OrbitRing;
 use crate::ui::palette::{self, Palette};
+use crate::ui::repaint::{self, RepaintReason};
 use crate::ui::settings_panel::{self, SettingsState};
 use crate::ui::sleep_warning;
 use crate::ui::toast::Toast;
 use crate::ui::transport::{self, TransportState};
 use crate::ui::{capsule, hud, overlays, station_panel, widgets};
 
-/// Частота перерисовки при включённом FFT: ~30 кадров в секунду.
-const SPECTRUM_REPAINT: Duration = Duration::from_millis(33);
-/// Idle-дыхание планеты: около 15 кадров в секунду (ADR-0028).
-const MOTION_IDLE_REPAINT: Duration = Duration::from_millis(66);
 /// Опрос фоновых favicon-загрузок.
 const FAVICON_REPAINT: Duration = Duration::from_millis(120);
 /// Как часто раздел «Статистика» пересобирает снимок счётчиков, пока открыт.
@@ -267,7 +264,7 @@ impl<'a> OrbitApp<'a> {
         crate::ui::fonts::install(&egui_ctx);
         session.wake.install({
             let ctx = egui_ctx;
-            move || ctx.request_repaint()
+            move || repaint::schedule(&ctx, RepaintReason::Input)
         });
         // macOS: tray-icon требует запущенного run loop и главного потока,
         // поэтому иконка создаётся здесь, а не в spawn до старта окна (ADR-0026).
@@ -394,7 +391,7 @@ impl<'a> OrbitApp<'a> {
                 );
             }
         }
-        ctx.request_repaint();
+        repaint::schedule(ctx, RepaintReason::Input);
     }
 
     /// Фоновые favicon-загрузки: очередь → сетевая политика → декод → текстура.
@@ -424,7 +421,7 @@ impl<'a> OrbitApp<'a> {
         }
         let busy = self.favicons.is_busy();
         if busy {
-            ctx.request_repaint_after(FAVICON_REPAINT);
+            repaint::schedule(ctx, RepaintReason::Background(FAVICON_REPAINT));
         } else if self.favicon_was_busy {
             let stats = self.favicons.stats();
             debug!(
@@ -1269,14 +1266,27 @@ impl<'a> OrbitApp<'a> {
             ));
         }
 
-        if frame.motion_reactivity.is_enabled() {
-            // Активный эфир — 30 fps; idle-дыханию хватает 15 fps.
-            let cadence = if motion.intensity > 0.01 || session.globe_camera.is_flipping() {
-                SPECTRUM_REPAINT
+        // Единый периодический источник кадров стола: Asleep молчит, Breathing —
+        // 15 fps, авто-вращение и эфир — 30 fps (план § 3.1, ADR-0023/0028).
+        let playing = matches!(
+            &frame.playback,
+            PlaybackState::Playing | PlaybackState::Buffering | PlaybackState::Reconnecting
+        );
+        let mode = repaint::frame_mode(
+            session.window_visible(),
+            frame.settings.reduce_motion,
+            frame.motion_reactivity.is_enabled(),
+            playing,
+        );
+        if let Some(fallback) = repaint::periodic_reason(mode) {
+            // Затухание эфира и переворот камеры требуют 30 fps; чистому дыханию
+            // хватает fallback-частоты режима.
+            let reason = if motion.intensity > 0.01 || session.globe_camera.is_flipping() {
+                RepaintReason::Playback
             } else {
-                MOTION_IDLE_REPAINT
+                fallback
             };
-            ui.ctx().request_repaint_after(cadence);
+            repaint::schedule(ui.ctx(), reason);
         }
 
         actions
@@ -1523,7 +1533,7 @@ impl<'a> OrbitApp<'a> {
                 self.start_integration(PanelAction::Reload(target));
             }
         }
-        ctx.request_repaint();
+        repaint::schedule(ctx, RepaintReason::Input);
     }
 
     /// Одна фоновая операция интеграций за раз: конфиг и квитанции не должны
@@ -2003,12 +2013,12 @@ impl eframe::App for OrbitApp<'_> {
                 PlaybackState::Playing | PlaybackState::Buffering
             )
         {
-            ctx.request_repaint_after(SPECTRUM_REPAINT);
+            repaint::schedule(ctx, RepaintReason::Playback);
         }
 
         // Таймер сна обязан сработать в срок и без пользовательских событий.
         if let Some(remaining) = self.session.sleep_repaint_after() {
-            ctx.request_repaint_after(remaining);
+            repaint::schedule(ctx, RepaintReason::Deadline(remaining));
         }
     }
 

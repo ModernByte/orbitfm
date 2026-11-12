@@ -19,6 +19,7 @@ pub(crate) mod orbit_ring;
 pub(crate) mod overlays;
 pub(crate) mod palette;
 pub(crate) mod procedural;
+pub(crate) mod repaint;
 pub(crate) mod settings_panel;
 pub(crate) mod sleep_picker;
 pub(crate) mod sleep_warning;
