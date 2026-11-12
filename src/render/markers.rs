@@ -319,7 +319,9 @@ mod tests {
                     egui::Id::unique("marker-paint-probe"),
                 ));
                 paint_markers(&painter, bounds, &visuals, None, None, Color32::WHITE, 1.0);
-                let output = ctx.end_pass();
+                let mut output = ctx.end_pass();
+                // Дельты текстур никто не применяет: в пробе они не нужны.
+                output.textures_delta.clear();
                 paint.push(started.elapsed().as_secs_f64() * 1e3);
                 shapes = output.shapes.len();
 
