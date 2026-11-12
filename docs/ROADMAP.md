@@ -1236,8 +1236,12 @@ PATCH: три подтверждённых дефекта независимог
       повреждённые библиотека и настройки; i18n-ключи во всех 16 языках
 - [x] `fmt`, `clippy --all-targets -D warnings` (включая `--no-default-features`),
       `cargo test --locked` — 722 passed, 6 ignored
-- [ ] CI и релиз GitHub: AppImage, MSI, оба DMG, `.plasmoid`,
-      `install-appimage.sh`, SHA256SUMS
+- [x] CI (43147697819) и релиз GitHub (43147697788): AppImage, MSI, оба
+      DMG, `.plasmoid`, `install-appimage.sh` и SHA256SUMS — шесть артефактов,
+      суммы всех файлов совпали. AppImage установлен скриптом из релиза и
+      запускается как `orbitfm 0.22.0-rc.2`; `.plasmoid` — сверка суммы (Plasma
+      на машине нет); DMG и MSI — сверка сумм и имён. Тело релиза — две фразы,
+      подробности остаются в CHANGELOG
 
 ## Патч 0.21.0-rc.4 — окна снова находят свои правила (2026-11-10)
 
