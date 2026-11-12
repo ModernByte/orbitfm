@@ -1267,13 +1267,16 @@ impl<'a> OrbitApp<'a> {
         }
 
         // Единый периодический источник кадров стола: Asleep молчит, Breathing —
-        // 15 fps, авто-вращение и эфир — 30 fps (план § 3.1, ADR-0023/0028).
+        // 15 fps (8 без фокуса), авто-вращение и эфир — 30 fps (план § 3.1,
+        // ADR-0023/0028, ADR-0064).
         let playing = matches!(
             &frame.playback,
             PlaybackState::Playing | PlaybackState::Buffering | PlaybackState::Reconnecting
         );
         let mode = repaint::frame_mode(
             session.window_visible(),
+            layout.globe.is_some(),
+            ui.input(|input| input.focused),
             frame.settings.reduce_motion,
             frame.motion_reactivity.is_enabled(),
             playing,

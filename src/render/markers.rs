@@ -308,6 +308,9 @@ mod tests {
                 .collect();
             let mut paint = Vec::with_capacity(40);
             let mut tess = Vec::with_capacity(40);
+            let mut shapes = 0;
+            let mut primitives = 0;
+            let mut vertices = 0;
             for _ in 0..40 {
                 let started = std::time::Instant::now();
                 ctx.begin_pass(egui::RawInput::default());
@@ -318,11 +321,20 @@ mod tests {
                 paint_markers(&painter, bounds, &visuals, None, None, Color32::WHITE, 1.0);
                 let output = ctx.end_pass();
                 paint.push(started.elapsed().as_secs_f64() * 1e3);
+                shapes = output.shapes.len();
 
                 let started = std::time::Instant::now();
-                let primitives = ctx.tessellate(output.shapes, output.pixels_per_point);
+                let tessellated = ctx.tessellate(output.shapes, output.pixels_per_point);
                 tess.push(started.elapsed().as_secs_f64() * 1e3);
-                std::hint::black_box(&primitives);
+                primitives = tessellated.len();
+                vertices = tessellated
+                    .iter()
+                    .map(|primitive| match primitive.primitive {
+                        egui::epaint::Primitive::Mesh(ref mesh) => mesh.vertices.len(),
+                        egui::epaint::Primitive::Callback(_) => 0,
+                    })
+                    .sum();
+                std::hint::black_box(&tessellated);
             }
             paint.sort_by(|a, b| a.total_cmp(b));
             tess.sort_by(|a, b| a.total_cmp(b));
@@ -330,11 +342,12 @@ mod tests {
                 samples[((samples.len() - 1) as f64 * q).round() as usize]
             };
             println!(
-                "markers_paint N={count}: paint p50={:.3} p95={:.3} мс, tessellate p50={:.3} p95={:.3} мс",
+                "markers_paint N={count}: paint p50={:.3} p95={:.3} мс, tessellate p50={:.3} p95={:.3} мс; shapes={shapes}, primitives={primitives}, vertices={vertices} (shapes/маркер={:.2})",
                 quantile(&paint, 0.5),
                 quantile(&paint, 0.95),
                 quantile(&tess, 0.5),
                 quantile(&tess, 0.95),
+                shapes as f64 / count as f64,
             );
         }
     }
