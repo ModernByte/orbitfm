@@ -1263,6 +1263,10 @@ PATCH поверх rc.2: кадр глобуса стал предсказуем
       с egui через `ViewportOutput::repaint_delay`
 - [x] `fmt`, `clippy --all-targets -D warnings` (включая `--no-default-features`),
       `cargo test --locked` — 737 passed, 9 ignored
+- [x] PR #35 CI (43311904307) и CI на main (43313423337) — Linux, Windows, macOS
+      зелёные; Release (43313423293) опубликовал шесть артефактов и SHA256SUMS,
+      сумма AppImage из релиза совпала, запускается как `orbitfm 0.22.0-rc.3`;
+      `.plasmoid`, DMG и MSI — сверка сумм и имён
 
 ## Патч 0.21.0-rc.4 — окна снова находят свои правила (2026-11-10)
 
