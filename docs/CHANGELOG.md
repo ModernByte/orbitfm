@@ -5,7 +5,12 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),  
 проект следует [Semantic Versioning](https://semver.org/lang/ru/).
 
-## [Unreleased]
+## [0.22.0-rc.2] - 2026-11-12
+
+PATCH: аудио-поток переживает панику честным состоянием ошибки, `play <uuid>`
+больше не блокирует кадр на время запроса к каталогу, повреждённые
+`library.json` и `settings.json` уезжают в карантин вместо молчаливой потери.
+Схема `status --json`, IPC, настройки и правила окон не меняются.
 
 ### Исправлено
 - **Паника аудио-потока больше не оставляет мёртвые кнопки.** Цикл `AudioWorker`
@@ -23,9 +28,13 @@
   запуска не показывается повторно. `stats.json` сохраняет поведение ADR-0049
   (ADR-0062).
 
-Разбор аудита и отклонённые пункты —
-[`docs/audit/OrbitFM-audit-0.22.0-rc.1-response.md`](audit/OrbitFM-audit-0.22.0-rc.1-response.md).
-Версия не поднимается: тег и релиз не создаются.
+### Проверено
+- `cargo test --locked` — 722 passed, 6 ignored; `fmt` и `clippy -D warnings`
+  (включая `--no-default-features`) чистые; CI зелёный на Linux, Windows и macOS.
+- Разбор аудита и отклонённые пункты —
+  [`docs/audit/OrbitFM-audit-0.22.0-rc.1-response.md`](audit/OrbitFM-audit-0.22.0-rc.1-response.md).
+- Границы, которые не меняются: схема `status --json` остаётся 1, текстовый IPC,
+  настройки и правила окон — прежние.
 
 ## [0.22.0-rc.1] - 2026-11-12
 
