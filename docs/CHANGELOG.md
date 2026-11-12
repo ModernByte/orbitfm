@@ -5,10 +5,10 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),  
 проект следует [Semantic Versioning](https://semver.org/lang/ru/).
 
-## [Unreleased]
+## [0.22.0-rc.3] - 2026-11-12
 
-Дисциплина кадров глобуса: инструментация бюджета, единая политика перерисовки
-и экономия на проекции маркеров. Схема `status --json`, IPC, настройки и правила
+PATCH дисциплины кадров: инструментация бюджета, единая политика перерисовки
+и дешёвая проекция маркеров. Схема `status --json`, IPC, настройки и правила
 окон не меняются.
 
 ### Добавлено
@@ -44,6 +44,14 @@
 - **Наведение на маркер глобуса подсвечивает тот маркер, что под курсором.**
   Слот в массиве видимых больше не путается с исходным индексом: при скрытых
   маркерах впереди кольцо подсветки попадало на соседнюю станцию.
+
+### Проверено
+- `cargo fmt --all --check`; `clippy --all-targets -D warnings` и то же
+  `--no-default-features`; `cargo test --locked` — 737 passed, 9 ignored.
+- Политика кадров закреплена и без окна: `schedule_hands_egui_the_expected_delay`
+  читает `ViewportOutput::repaint_delay` — та же частота кадра, что получит winit.
+- Ручные пробы в release: `marker_projection_budget_probe` (проекция),
+  `marker_paint_budget_probe` (отрисовка), `backdrop_paint_budget_probe` (фон).
 
 ## [0.22.0-rc.2] - 2026-11-12
 

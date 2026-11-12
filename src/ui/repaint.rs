@@ -242,6 +242,38 @@ mod tests {
     }
 
     #[test]
+    fn schedule_hands_egui_the_expected_delay() {
+        // Проверка интеграции с egui: смотрим `repaint_delay` — ровно то, что
+        // видит winit в конце кадра. egui держит `outstanding = 1` на старте
+        // (пара кадров «на разгон»), поэтому контекст прогреваем.
+        for (reason, expected) in [
+            (RepaintReason::Input, Duration::ZERO),
+            (RepaintReason::Interaction, INTERACTION),
+            (RepaintReason::Callout, INTERACTION),
+            (RepaintReason::Playback, PLAYBACK),
+            (RepaintReason::IdleSpin, PLAYBACK),
+            (RepaintReason::IdleBreath, IDLE_BREATH),
+            (RepaintReason::IdleBreathSlow, IDLE_BREATH_UNFOCUSED),
+            (
+                RepaintReason::Deadline(Duration::from_millis(250)),
+                Duration::from_millis(250),
+            ),
+        ] {
+            let ctx = egui::Context::default();
+            for _ in 0..2 {
+                ctx.begin_pass(egui::RawInput::default());
+                ctx.end_pass().textures_delta.clear();
+            }
+            ctx.begin_pass(egui::RawInput::default());
+            schedule(&ctx, reason);
+            let mut output = ctx.end_pass();
+            output.textures_delta.clear();
+            let delay = output.viewport_output[&egui::ViewportId::ROOT].repaint_delay;
+            assert_eq!(delay, expected, "{reason:?}");
+        }
+    }
+
+    #[test]
     fn deadline_is_a_single_alarm_not_a_periodic_frame() {
         let reason = RepaintReason::Deadline(Duration::from_secs(5));
         assert_eq!(cadence(reason), Some(Duration::from_secs(5)));

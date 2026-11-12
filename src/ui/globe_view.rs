@@ -1414,6 +1414,67 @@ mod tests {
             .collect()
     }
 
+    /// Ручной замер фона кадра (волна 4.2 плана): звёздное поле, градиент космоса
+    /// и виньетка. Решение «ппечь звёзды в mesh» принимается по этому числу.
+    /// `cargo test --release backdrop_paint_budget -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "ручной замер: запускать в release"]
+    fn backdrop_paint_budget_probe() {
+        use crate::settings::AccentColor;
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1100.0, 800.0));
+        let palette = Palette::for_ui(egui::Theme::Dark, AccentColor::Blue);
+        for mode in ["starfield", "space+vignette", "backdrop"] {
+            let mut shapes = 0;
+            let mut vertices = 0;
+            let mut paint_samples = Vec::with_capacity(40);
+            let mut tess_samples = Vec::with_capacity(40);
+            for _ in 0..40 {
+                let started = std::time::Instant::now();
+                ctx.begin_pass(egui::RawInput::default());
+                let painter = ctx.layer_painter(egui::LayerId::new(
+                    egui::Order::Background,
+                    egui::Id::unique("backdrop-paint-probe"),
+                ));
+                if mode != "space+vignette" {
+                    paint_starfield(&painter, rect);
+                }
+                if mode != "starfield" {
+                    paint_space(&painter, rect, &palette);
+                    paint_vignette(&painter, rect);
+                }
+                let mut output = ctx.end_pass();
+                output.textures_delta.clear();
+                paint_samples.push(started.elapsed().as_secs_f64() * 1e3);
+                shapes = output.shapes.len();
+
+                let started = std::time::Instant::now();
+                let tessellated = ctx.tessellate(output.shapes, output.pixels_per_point);
+                tess_samples.push(started.elapsed().as_secs_f64() * 1e3);
+                vertices = tessellated
+                    .iter()
+                    .map(|primitive| match primitive.primitive {
+                        egui::epaint::Primitive::Mesh(ref mesh) => mesh.vertices.len(),
+                        egui::epaint::Primitive::Callback(_) => 0,
+                    })
+                    .sum();
+                std::hint::black_box(&tessellated);
+            }
+            paint_samples.sort_by(|a, b| a.total_cmp(b));
+            tess_samples.sort_by(|a, b| a.total_cmp(b));
+            let quantile = |samples: &[f64], q: f64| {
+                samples[((samples.len() - 1) as f64 * q).round() as usize]
+            };
+            println!(
+                "backdrop {mode}: paint p50={:.3} p95={:.3} мс, tessellate p50={:.3} p95={:.3} мс; shapes={shapes}, vertices={vertices}",
+                quantile(&paint_samples, 0.5),
+                quantile(&paint_samples, 0.95),
+                quantile(&tess_samples, 0.5),
+                quantile(&tess_samples, 0.95),
+            );
+        }
+    }
+
     /// Ручной baseline проекции маркеров (план § 3.2, волны 0 и 2). Нужен release:
     /// `cargo test --release marker_projection_budget -- --ignored --nocapture`.
     #[test]
