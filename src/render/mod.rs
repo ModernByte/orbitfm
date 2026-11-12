@@ -3,6 +3,7 @@
 mod camera;
 mod countries;
 mod globe;
+mod gpu;
 mod heatmap;
 mod markers;
 mod motion;
@@ -17,6 +18,7 @@ use egui_wgpu::wgpu;
 pub use camera::GlobeCamera;
 pub use countries::{CountryStyle, paint_country};
 pub use globe::{GlobeRenderer, paint_globe};
+pub use gpu::wgpu_options;
 pub(crate) use heatmap::{CountryColor, HEAT_SIZE, HeatFrame, build as build_heat_map};
 pub use markers::{MarkerLabel, MarkerVisual, paint_markers, sphere_point};
 pub use motion::{GlobeDeform, GlobeMotion, MotionMixer};
@@ -35,6 +37,10 @@ pub struct GlobeInput {
     pub primary_clicked: Option<Pos2>,
     /// Курсор над глобусом: авто-движение плавно замирает.
     pub hovered: bool,
+    /// Высота области глобуса в пунктах: из неё считается фокусное расстояние
+    /// для перетаскивания 1:1 (ADR-0060 § 3). Ноль — раскладки нет, камера
+    /// берёт номинальную высоту.
+    pub viewport_height: f32,
 }
 
 /// Что приложение видит про устройство вывода при старте (ADR-0052 § 3).

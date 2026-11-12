@@ -5,7 +5,7 @@
 Эта страница — для Mac на процессоре Apple Silicon: любой модели, от M1 и новее,
 включая варианты Pro/Max/Ultra. Потолка по поколениям нет: сборка собирается под
 архитектуру `arm64` и минимальную macOS 13.0, а не под список чипов. Нужен файл
-`OrbitFM-0.21.0-rc.4-macos-arm64.dmg`. Сборка для Intel (`x86_64`) на такой
+`OrbitFM-0.22.0-rc.1-macos-arm64.dmg`. Сборка для Intel (`x86_64`) на такой
 Mac тоже запустится через Rosetta, но нативная arm64 быстрее и не требует Rosetta —
 берите её.
 
@@ -30,7 +30,7 @@ Rosetta на Apple Silicon: `uname -m` отвечает архитектуру �
 
 Со страницы релизов <https://github.com/ModernByte/orbitfm/releases> скачайте:
 
-- `OrbitFM-0.21.0-rc.4-macos-arm64.dmg`;
+- `OrbitFM-0.22.0-rc.1-macos-arm64.dmg`;
 - `SHA256SUMS` — если хотите сверить контрольную сумму.
 
 В macOS нет `sha256sum` из GNU coreutils, зато есть `shasum`. Проверка только своего
@@ -43,7 +43,7 @@ shasum -a 256 -c orbitfm-arm64.sha256
 rm orbitfm-arm64.sha256
 ```
 
-Ожидаемый вывод — `OrbitFM-0.21.0-rc.4-macos-arm64.dmg: OK`. Сумма подтверждает, что
+Ожидаемый вывод — `OrbitFM-0.22.0-rc.1-macos-arm64.dmg: OK`. Сумма подтверждает, что
 файл скачался целиком и совпадает с опубликованным; подписью она не является.
 
 ## 3. Установите приложение
@@ -111,7 +111,7 @@ orbitfm --version
 file /Applications/OrbitFM.app/Contents/MacOS/orbitfm
 ```
 
-Ожидается версия `0.21.0-rc.4` и `Mach-O 64-bit executable arm64`.
+Ожидается версия `0.22.0-rc.1` и `Mach-O 64-bit executable arm64`.
 
 ### Если картинка не появилась — снять лог рендера
 
@@ -185,7 +185,7 @@ bash packaging/macos/build-dmg.sh --arch arm64
 неизвестным значением) — это замена прежнему поведению, когда арка молча бралась из
 `uname -m` и сборка на чужой архитектуре оставляла `.app` не того среза.
 
-Готовый файл появится в `dist/OrbitFM-0.21.0-rc.4-macos-arm64.dmg`. Внутри `libmpv`
+Готовый файл появится в `dist/OrbitFM-0.22.0-rc.1-macos-arm64.dmg`. Внутри `libmpv`
 из бутылок Homebrew бандлится в `.app` (путь к `dylibbundler` задаётся через `PATH`,
 он создаётся скриптом в префиксе). Перед тем как положить файл в `dist/`,
 бандл проходят гейты, встроенные в скрипт: `check-app-arch.sh` (каждый Mach-O обязан
