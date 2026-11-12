@@ -501,27 +501,10 @@ impl GlobeCamera {
     /// как единичной, так и уже деформированной (`GlobeDeform::to_world`).
     ///
     /// Возвращает `None` для обратной полусферы, выхода за viewport и
-    /// нечисловых координат.
+    /// нечисловых координат. Для цикла точек на кадр берётся [`GlobeProjector`]:
+    /// здесь `view_proj` собирается заново на каждый вызов.
     pub fn project_on_sphere(&self, point: Vec3, viewport: Rect) -> Option<Pos2> {
-        if viewport.width() <= 0.0 || viewport.height() <= 0.0 {
-            return None;
-        }
-        if point.dot(self.eye()) <= point.length_squared() {
-            return None;
-        }
-
-        let clip = self.view_proj(viewport.aspect_ratio()) * point.extend(1.0);
-        if clip.w <= f32::EPSILON {
-            return None;
-        }
-
-        let ndc = clip.truncate() / clip.w;
-        let position = Pos2::new(
-            viewport.left() + (ndc.x * 0.5 + 0.5) * viewport.width(),
-            viewport.top() + (0.5 - ndc.y * 0.5) * viewport.height(),
-        );
-        (position.x.is_finite() && position.y.is_finite() && viewport.contains(position))
-            .then_some(position)
+        GlobeProjector::new(self, viewport)?.project(point)
     }
 
     pub(crate) fn uniform_with_motion(&self, aspect: f32, motion: &GlobeMotion) -> CameraUniform {
@@ -535,6 +518,51 @@ impl GlobeCamera {
             motion2: motion.uniform2_values(),
             heat: [0.0; 4],
         }
+    }
+}
+
+/// Проектор кадра: одна `view_proj` и один `eye` на все точки.
+///
+/// [`GlobeCamera::project_on_sphere`] собирает матрицу на каждый вызов; в цикле
+/// по маркерам это почти вся цена проекции (замер: `docs/plans/render-frame-budget.md`
+/// § 11). Новой геометрии нет — [`Self::project`] повторяет отбор
+/// `project_on_sphere` точка в точку.
+#[derive(Debug, Clone, Copy)]
+pub struct GlobeProjector {
+    view_proj: Mat4,
+    eye: Vec3,
+    viewport: Rect,
+}
+
+impl GlobeProjector {
+    /// Собирает проектор кадра; `None` — у вьюпорта нет площади.
+    pub fn new(camera: &GlobeCamera, viewport: Rect) -> Option<Self> {
+        if viewport.width() <= 0.0 || viewport.height() <= 0.0 {
+            return None;
+        }
+        Some(Self {
+            view_proj: camera.view_proj(viewport.aspect_ratio()),
+            eye: camera.eye(),
+            viewport,
+        })
+    }
+
+    /// Проецирует точку (единичную или уже деформированную).
+    pub fn project(&self, point: Vec3) -> Option<Pos2> {
+        if point.dot(self.eye) <= point.length_squared() {
+            return None;
+        }
+        let clip = self.view_proj * point.extend(1.0);
+        if clip.w <= f32::EPSILON {
+            return None;
+        }
+        let ndc = clip.truncate() / clip.w;
+        let position = Pos2::new(
+            self.viewport.left() + (ndc.x * 0.5 + 0.5) * self.viewport.width(),
+            self.viewport.top() + (0.5 - ndc.y * 0.5) * self.viewport.height(),
+        );
+        (position.x.is_finite() && position.y.is_finite() && self.viewport.contains(position))
+            .then_some(position)
     }
 }
 
@@ -606,6 +634,41 @@ mod tests {
         let lat = lat.to_radians() as f32;
         let lon = lon.to_radians() as f32;
         Vec3::new(lat.cos() * lon.sin(), lat.sin(), lat.cos() * lon.cos())
+    }
+
+    /// Проектор кадра обязан совпадать с одиночной проекцией точка в точку:
+    /// hoisting `view_proj` не меняет ни отбор, ни пиксели.
+    #[test]
+    fn projector_matches_project_on_sphere() {
+        let camera = GlobeCamera::default();
+        let rect = viewport();
+        let projector = GlobeProjector::new(&camera, rect).expect("вьюпорт с площадью");
+        for (lat, lon) in [
+            (0.0, 0.0),
+            (37.97, 23.72),
+            (0.0, 180.0),
+            (52.52, 13.405),
+            (-45.0, -70.0),
+        ] {
+            let point = sphere_point(lat, lon);
+            let single = camera.project_on_sphere(point, rect);
+            let batched = projector.project(point);
+            match (single, batched) {
+                (Some(a), Some(b)) => assert!(
+                    (a - b).length() < 1e-4,
+                    "({lat}, {lon}): {a:?} против {b:?}"
+                ),
+                (None, None) => {}
+                (a, b) => panic!("({lat}, {lon}): разный отбор {a:?} / {b:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn projector_rejects_empty_viewport() {
+        let camera = GlobeCamera::default();
+        let empty = Rect::from_min_size(Pos2::ZERO, Vec2::ZERO);
+        assert!(GlobeProjector::new(&camera, empty).is_none());
     }
 
     #[test]

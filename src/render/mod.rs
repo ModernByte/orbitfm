@@ -16,7 +16,7 @@ use std::fmt;
 use eframe::egui::{Pos2, Vec2};
 use egui_wgpu::wgpu;
 
-pub use camera::GlobeCamera;
+pub use camera::{GlobeCamera, GlobeProjector};
 pub use countries::{CountryStyle, paint_country};
 pub use globe::{GlobeRenderer, paint_globe};
 pub use gpu::wgpu_options;

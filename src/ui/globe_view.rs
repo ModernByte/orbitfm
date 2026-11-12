@@ -7,8 +7,8 @@ use eframe::egui;
 
 use crate::geo::{Country, GeoService};
 use crate::render::{
-    CountryStyle, GlobeCamera, GlobeDeform, GlobeInput, GlobeMotion, MarkerLabel, MarkerVisual,
-    frame_stats, paint_country, paint_globe, paint_markers, sphere_point,
+    CountryStyle, GlobeCamera, GlobeDeform, GlobeInput, GlobeMotion, GlobeProjector, MarkerLabel,
+    MarkerVisual, frame_stats, paint_country, paint_globe, paint_markers, sphere_point,
 };
 use crate::services::Station;
 use crate::session::markers::GlobeMarker;
@@ -329,9 +329,9 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
     };
 
     if let Some(position) = input.primary_clicked {
-        if let Some(index) = nearest_marker(&marker_screens, position) {
+        if let Some(slot) = nearest_marker(&marker_screens, position) {
             response.actions.push(UiAction::SelectStation(
-                state.markers[index].station.clone(),
+                state.markers[marker_screens[slot].0].station.clone(),
             ));
         } else {
             response.clicked_empty = true;
@@ -412,7 +412,8 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
             })
             .collect();
         any_playing = visuals.iter().any(|visual| visual.playing);
-        let hovered_label = hovered.map(|index| marker_label(&state.markers[index]));
+        let hovered_label =
+            hovered.map(|slot| marker_label(&state.markers[marker_screens[slot].0]));
         let started = frame_stats::begin();
         paint_markers(
             ui.painter(),
@@ -960,29 +961,39 @@ fn marker_screens(
     viewport: egui::Rect,
     deform: &GlobeDeform,
 ) -> Vec<(usize, egui::Pos2)> {
+    // Один `view_proj` на кадр: сборка матрицы на точку была почти всей ценой
+    // проекции (план § 11). Семантика отбора не меняется (тест паритета).
+    let Some(projector) = GlobeProjector::new(camera, viewport) else {
+        return Vec::new();
+    };
     markers
         .iter()
         .enumerate()
         .filter_map(|(index, marker)| {
-            camera
-                .project_on_sphere(
-                    deform.to_world(sphere_point(marker.lat, marker.lon)),
-                    viewport,
-                )
+            projector
+                .project(deform.to_world(sphere_point(marker.lat, marker.lon)))
                 .map(|position| (index, position))
         })
         .collect()
 }
 
+/// Наводимый маркер: индекс в массиве **видимых** (`slot`), а не исходный.
+///
+/// Подсветка в `paint_markers` и подпись обязаны указывать на тот же слот,
+/// что и отрисовка; исходный индекс (для клика и одиночной карточки) берётся
+/// как `screens[slot].0`. Раньше сравнивался исходный индекс со слотом, и при
+/// скрытом маркере перед наведённым кольцо попадало не на тот маркер.
 fn nearest_marker(screens: &[(usize, egui::Pos2)], position: egui::Pos2) -> Option<usize> {
+    let radius_sq = MARKER_CLICK_RADIUS * MARKER_CLICK_RADIUS;
     screens
         .iter()
-        .filter_map(|(index, marker)| {
-            let distance = (*marker - position).length();
-            (distance <= MARKER_CLICK_RADIUS).then_some((distance, *index))
+        .enumerate()
+        .filter_map(|(slot, (_, marker))| {
+            let distance_sq = (*marker - position).length_sq();
+            (distance_sq <= radius_sq).then_some((distance_sq, slot))
         })
         .min_by(|left, right| left.0.total_cmp(&right.0))
-        .map(|(_, index)| index)
+        .map(|(_, slot)| slot)
 }
 
 /// Подпись маркера: имя, а при наведении — место, качество потока и рейтинг.
@@ -1038,6 +1049,19 @@ mod tests {
 
         assert_eq!(nearest_marker(&screens, egui::pos2(14.0, 12.0)), Some(0));
         assert_eq!(nearest_marker(&screens, egui::pos2(50.0, 50.0)), None);
+    }
+
+    /// Регрессия индекса наведения: при скрытом маркере перед наведённым
+    /// `nearest_marker` обязан вернуть слот в массиве видимых, а не исходный
+    /// индекс, иначе кольцо подсветки уезжает на соседний маркер.
+    #[test]
+    fn nearest_marker_returns_visible_slot_not_source_index() {
+        // Первый видимый слот — станция №7 (далеко), второй — станция №8 (под курсором).
+        let screens = vec![(7, egui::pos2(300.0, 300.0)), (8, egui::pos2(12.0, 10.0))];
+
+        assert_eq!(nearest_marker(&screens, egui::pos2(13.0, 11.0)), Some(1));
+        // Клик и подпись достают исходный индекс через `screens[slot].0`.
+        assert_eq!(screens[1].0, 8);
     }
 
     #[test]
@@ -1420,7 +1444,9 @@ mod tests {
             for _ in 0..200 {
                 let started = std::time::Instant::now();
                 for _ in 0..count {
-                    std::hint::black_box(camera.view_proj(aspect));
+                    // `black_box` на аргументе: иначе LLVM выносит сборку матрицы
+                    // из цикла и колонка становится нулевой.
+                    std::hint::black_box(camera.view_proj(std::hint::black_box(aspect)));
                 }
                 matrix_samples.push(started.elapsed().as_secs_f64() * 1e3);
             }
