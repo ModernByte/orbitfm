@@ -337,7 +337,13 @@ ADR-0059 § 4: оптимизация только по замеру. Что и�
    локальная пересортировка списка снята; категория «Каталог» (9-я).
    Тесты: `roundtrip_persists_catalog_order`,
    `station_order_maps_to_api_tokens_and_reverse`, `filters_keep_the_server_order`.
-3. **Волна 2 — слой карты.** Отдельный запрос, состояние, счётчики, офлайн.
+3. **Волна 2 — слой карты.** Сделана: `start_map_layer`/`poll_map_layer`,
+   запрос `has_geo_info=true` по стране/жанру (`MAP_MARKER_LIMIT = 800`,
+   порядок из `settings.catalog_order`, потолок битрейта профиля), поколение
+   запроса и офлайн-фолбэк из снимка; маркеры больше не зависят от пагинации
+   списка, а поиск по имени сохраняет прежний путь. Тесты:
+   `map_layer_covers_the_whole_country_with_geo_and_order`,
+   `map_layer_follows_the_genre_context`, `map_layer_is_empty_without_context`.
 4. **Волна 3 — кластеризация.** Гео + экранная, форма маркера, бюджет тесселяции
    (замер до/после).
 5. **Волна 4 — веер станций.** Раскладка, выбор, клавиатура, callout-канал,
