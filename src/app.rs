@@ -31,7 +31,7 @@ use crate::stats::StatsSnapshot;
 use crate::ui::UiAction;
 use crate::ui::animation::{self, FrameMotion, Transitions, ZoneFlags};
 use crate::ui::country_map::{CountryHeatCache, HeatScope, HeatSource};
-use crate::ui::globe_view::{self, CalloutState, GlobeState};
+use crate::ui::globe_view::{self, CalloutState, FanState, GlobeState};
 use crate::ui::images::{FaviconCache, decode_favicon};
 use crate::ui::layout::{DeskLayout, LayoutDensity};
 use crate::ui::onboarding::{self, RuleState};
@@ -222,6 +222,8 @@ pub(crate) struct OrbitApp<'a> {
     callout: CalloutState,
     /// Callout активной станции: отдельная плашка с обходом страны.
     station_callout: CalloutState,
+    /// Веер станций кластера: порог наведения, закрепление и карточка «+N».
+    fan: FanState,
     visualizer: VisualizerModel,
     favicons: FaviconCache,
     artwork: ArtworkFetcher,
@@ -312,6 +314,7 @@ impl<'a> OrbitApp<'a> {
             orbit_ring: OrbitRing::default(),
             callout: CalloutState::default(),
             station_callout: CalloutState::default(),
+            fan: FanState::default(),
             visualizer,
             favicons,
             artwork,
@@ -614,6 +617,7 @@ impl<'a> OrbitApp<'a> {
         let orbit_ring = &mut self.orbit_ring;
         let callout = &mut self.callout;
         let station_callout = &mut self.station_callout;
+        let fan = &mut self.fan;
         let visualizer = &self.visualizer;
         let palette = &frame.palette;
         let layout = frame.layout;
@@ -727,6 +731,9 @@ impl<'a> OrbitApp<'a> {
         );
 
         let mut actions = Vec::new();
+        // «Точек» — кластеры именно этого кадра: панель ниже читает счётчик
+        // после отрисовки глобуса (ADR-0065 § 4).
+        let mut map_points = 0;
 
         if let Some(globe_rect) = layout.globe {
             let country_enabled = frame.country_mode && density == LayoutDensity::Full;
@@ -761,11 +768,14 @@ impl<'a> OrbitApp<'a> {
                             heat: country_heat.as_ref(),
                             country_callout: callout,
                             station_callout,
+                            fan,
+                            language: frame.language,
                             reduce_motion: ui_motion.reduce,
                         },
                     )
                 })
                 .inner;
+            map_points = globe.clusters;
             actions.extend(globe.actions);
             // Клик мимо маркера и стран снимает выбранную страну целиком:
             // подсветка, список и маркеры гаснут вместе (ADR-0036, ревизия
@@ -851,7 +861,8 @@ impl<'a> OrbitApp<'a> {
                                     tab: &mut session.library_tab,
                                     country: session.search.context.country.as_ref(),
                                     genre: session.search.context.genre.as_deref(),
-                                    markers_total: frame.markers_total,
+                                    map_stations: frame.map_stations,
+                                    map_points,
                                     results: &session.search.results,
                                     favorites: session.library.favorites(),
                                     aliases: session.library.aliases(),
@@ -1121,7 +1132,8 @@ impl<'a> OrbitApp<'a> {
                                     tab: &mut session.library_tab,
                                     country: session.search.context.country.as_ref(),
                                     genre: session.search.context.genre.as_deref(),
-                                    markers_total: frame.markers_total,
+                                    map_stations: frame.map_stations,
+                                    map_points,
                                     results: &session.search.results,
                                     favorites: session.library.favorites(),
                                     aliases: session.library.aliases(),
@@ -1583,7 +1595,8 @@ struct Frame {
     settings: Settings,
     playback: PlaybackState,
     volume: f64,
-    markers_total: usize,
+    /// Станции в гео-маркерах: «на карте A станций» (ADR-0065 § 4).
+    map_stations: usize,
     current_favorite: bool,
     can_resume: bool,
     spectrum_target: Option<SpectrumTarget>,
@@ -1644,7 +1657,7 @@ impl Frame {
             motion_style: settings.motion_style,
             settings,
             volume: session.audio.volume(),
-            markers_total: session.markers.iter().map(|marker| marker.count).sum(),
+            map_stations: session.markers.iter().map(|marker| marker.count()).sum(),
             current_favorite: session
                 .current_station
                 .as_ref()

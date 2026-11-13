@@ -48,11 +48,21 @@ pub(crate) enum PanelChrome {
     Embedded,
 }
 
+/// Счётчики слоя карты: станции за маркерами и кластеры кадра (ADR-0065 § 4).
+#[derive(Debug, Clone, Copy, Default)]
+struct MapCounts {
+    stations: usize,
+    points: usize,
+}
+
 pub(crate) struct PanelState<'a> {
     pub tab: &'a mut LibraryTab,
     pub country: Option<&'a Country>,
     pub genre: Option<&'a str>,
-    pub markers_total: usize,
+    /// Сумма станций в гео-маркерах: «на карте A станций» (ADR-0065 § 4).
+    pub map_stations: usize,
+    /// Кластеры, нарисованные в кадре глобуса: «B точек» (ADR-0065 § 4).
+    pub map_points: usize,
     pub results: &'a [Station],
     pub favorites: &'a [Station],
     /// Ручные ссылки станций (ADR-0050): строка с алиасом показывает хост.
@@ -114,7 +124,8 @@ pub(crate) fn show(
         tab,
         country,
         genre,
-        markers_total,
+        map_stations,
+        map_points,
         results,
         favorites,
         aliases,
@@ -152,7 +163,10 @@ pub(crate) fn show(
                     palette,
                     country,
                     genre,
-                    markers_total,
+                    MapCounts {
+                        stations: map_stations,
+                        points: map_points,
+                    },
                     language,
                     &mut actions,
                 );
@@ -435,7 +449,7 @@ fn draw_header(
     palette: &Palette,
     country: Option<&Country>,
     genre: Option<&str>,
-    markers_total: usize,
+    map: MapCounts,
     language: Language,
     actions: &mut Vec<UiAction>,
 ) {
@@ -478,13 +492,25 @@ fn draw_header(
                 .strong(),
         );
     }
-    if markers_total > 0 {
-        let count = markers_total.to_string();
-        ui.label(
-            egui::RichText::new(i18n::fill(text.panel.on_map, &[("count", &count)]))
-                .size(11.0)
-                .color(palette.muted),
-        );
+    if map.stations > 0 || map.points > 0 {
+        ui.horizontal_wrapped(|ui| {
+            if map.stations > 0 {
+                let count = map.stations.to_string();
+                ui.label(
+                    egui::RichText::new(i18n::fill(text.panel.map_stations, &[("count", &count)]))
+                        .size(11.0)
+                        .color(palette.muted),
+                );
+            }
+            if map.points > 0 {
+                let count = map.points.to_string();
+                ui.label(
+                    egui::RichText::new(i18n::fill(text.panel.map_points, &[("count", &count)]))
+                        .size(11.0)
+                        .color(palette.muted),
+                );
+            }
+        });
     }
 }
 

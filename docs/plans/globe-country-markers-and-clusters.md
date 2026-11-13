@@ -59,8 +59,8 @@
 (`SearchState::poll_search` → `build_markers(self.search.results.clone())`), то
 есть глобус зависит от пагинации списка, а не от страны.
 
-**Побочное расхождение.** Подпись «На карте: 33 станции» считает
-`sum(marker.count)` (`src/app.rs` → `Frame::markers_total`), тогда как ADR-0036
+**Побочное расхождение.** Подпись «На карте: 33 станции» считала
+`sum(marker.count)` (`src/app.rs` → `Frame::markers_total`, теперь `map_stations`), тогда как ADR-0036
 § 4 называет этот счётчик «маркеры». Рисуется 9 точек, подпись говорит 33
 «станций». Число в подписи верно (станций на карте 33), но не совпадает с числом
 точек — это и создаёт ощущение «явно не сто».
@@ -268,17 +268,19 @@ ADR-0059 § 4: оптимизация только по замеру. Что и�
 | `src/settings/mod.rs` | `CatalogOrder`, `catalog_order` |
 | `src/station_filter.rs` | слияние `StationSort` → `CatalogOrder` |
 | `src/ui/globe_view.rs` | кластеры, веер, новый канал callout, hit-test |
-| `src/ui/station_panel.rs` | подписи «на карте», смена порядка = перезапуск |
+| `src/ui/globe_view/fan.rs`, `fan/card.rs`, `fan/paint.rs` | состояние веера, дуга, чипы, карточка «+N», клавиатура |
+| `src/ui/station_panel.rs` | подписи «на карте»/«точек», смена порядка = перезапуск |
 | `src/ui/settings_panel.rs` | категория «Каталог» |
-| `src/app.rs` | `markers_total` → число точек и число станций отдельно |
+| `src/app.rs` | `map_stations` из маркеров и `map_points` из кластеров кадра |
 | `src/i18n/*` | 16 каталогов: строки сортировки, категории, веера |
 
 ### 4.3. Счётчики (честность подписей)
 
 - Панель: «загружено X из M» — как сейчас (M из `/json/countrycodes`).
-- Глобус: «на карте: A станций, B маркеров» — **два** числа, потому что именно
+- Глобус: «на карте: A станций, B точек» — **два** числа, потому что именно
   их расхождение сбивало с толку. При потолке — «на карте: A из M (гео)».
-- `markers_total` перестаёт быть `sum(count)` без пояснения.
+- `map_stations` остаётся `sum(count)`, но подписан как «станций»; `map_points`
+  берётся из `GlobeResponse.clusters` того же кадра и подписан как «точек».
 
 ### 4.4. Как узнать число гео-станций страны
 
@@ -354,8 +356,17 @@ ADR-0059 § 4: оптимизация только по замеру. Что и�
    склейка снижает число **нарисованных** чипов, поэтому типичный зум укладывается
    в бюджет. Тесты: `cluster_screens_merges_neighbours_and_sums_stations`,
    `nearest_cluster_uses_click_radius`, `nearest_cluster_returns_visible_slot_not_source_index`.
-5. **Волна 4 — веер станций.** Раскладка, выбор, клавиатура, callout-канал,
-   i18n, тесты взаимодействия.
+5. **Волна 4 — веер станций.** Сделана: `GlobeMarker` хранит все станции
+   гео-группы (`station()`/`count()`), состояние веера вынесено в
+   `ui::globe_view::fan` (порог 200 мс, grace 300 мс, клик-`pin`, `Esc`/`←`/`→`/
+   `Enter`, дуга 52 px/22°/7 слотов, «+N» → прокручиваемая карточка со
+   «Играть лучшую»), `reduce_motion` отключает вылет, строки веера и карточки
+   локализованы в 16 каталогах. Счётчики разведены: «на карте A станций» —
+   `sum(count)`, «B точек» — кластеры кадра (`GlobeResponse.clusters`).
+   Тесты: `fan_opens_only_after_dwell`, `fan_closes_after_grace_but_pin_survives`,
+   `fan_keeps_six_stations_and_more_chip`,
+   `cluster_station_indexes_across_geo_groups`,
+   `card_avoids_country_and_station_rects`.
 6. **Волна 5 — приёмка.** Живой прогон на niri, скриншоты, числа fps/тесселяции,
    документация и CHANGELOG.
 

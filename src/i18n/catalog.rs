@@ -73,7 +73,16 @@ pub(crate) struct PanelText {
     pub stations: &'static str,
     pub country_prefix: &'static str,
     pub genre_prefix: &'static str,
-    pub on_map: &'static str,
+    /// «На карте: A станций» — сумма станций в гео-маркерах (ADR-0065 § 4).
+    pub map_stations: &'static str,
+    /// «Точек: B» — кластеры, реально нарисованные в кадре (ADR-0065 § 4).
+    pub map_points: &'static str,
+    /// Слот веера «+N»: сколько станций кластера не поместилось на дуге.
+    pub cluster_more: &'static str,
+    /// Заголовок карточки списка всех станций кластера.
+    pub cluster_show_all: &'static str,
+    /// Кнопка «играть лучшую» в карточке кластера.
+    pub cluster_play_best: &'static str,
     pub searching: &'static str,
     pub no_stations: &'static str,
     pub intro: &'static str,

@@ -172,8 +172,9 @@ Application Core — слой, который переживает закрыт�
   `start_station` работают, `reveal_station` не расходуется (прокручивать нечего),
   тоста нет.
 - Счётчики не смешиваются: подпись панели — строки списка (`results.len()`,
-  `country_total()`); «станции на карте» — `sum(marker.count)`; число кластеров
-  считает presentation. Это явно уточняет ADR-0036 § 4.
+  `country_total()`); «станции на карте» — `sum(marker.count())` (`map_stations`);
+  число кластеров `B` presentation берёт из `GlobeResponse.clusters` того же
+  кадра (`map_points`). Это явно уточняет ADR-0036 § 4 и ADR-0065 § 4.
 - Смена `settings.catalog_order` применяется к запросу списка **и** к слою карты и
   перезапускает выборку с `offset = 0`; `CatalogOrder::Random` даёт `has_more =
   false` без догрузки (ADR-0066).

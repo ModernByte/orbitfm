@@ -13,16 +13,28 @@ const GROUP_SCALE: f64 = 100.0;
 /// Станция (или группа станций), отображаемая на глобусе.
 #[derive(Debug, Clone)]
 pub(crate) struct GlobeMarker {
-    pub station: Station,
+    /// Все станции гео-группы в порядке каталога. Первая — представитель
+    /// маркера; веер и карточка «+N» показывают список целиком (ADR-0065 § 3).
+    pub stations: Vec<Station>,
     pub lat: f32,
     pub lon: f32,
-    pub count: usize,
     /// Максимум голосов по группе: рейтинг в подписи при наведении.
     pub popularity: f32,
     /// Лучший битрейт по группе: качество в подписи при наведении.
     pub bitrate: u32,
-    /// UUID всех станций группы — играющей считается любая из них.
-    pub members: Vec<String>,
+}
+
+impl GlobeMarker {
+    /// Представитель группы: по нему строится подпись и одиночный маркер.
+    pub(crate) fn station(&self) -> &Station {
+        // Инвариант `build_markers`: группа создаётся только вместе со станцией.
+        &self.stations[0]
+    }
+
+    /// Число станций за маркером.
+    pub(crate) fn count(&self) -> usize {
+        self.stations.len()
+    }
 }
 
 /// Рейтинг станции: голоса Radio Browser. На вид маркера не влияет — только
@@ -51,18 +63,15 @@ pub(crate) fn build_markers(stations: Vec<Station>) -> Vec<GlobeMarker> {
         );
         if let Some(&index) = groups.get(&key) {
             let marker = &mut markers[index];
-            marker.count += 1;
             marker.popularity = marker.popularity.max(popularity);
             marker.bitrate = marker.bitrate.max(bitrate);
-            marker.members.push(station.stationuuid);
+            marker.stations.push(station);
         } else {
             groups.insert(key, markers.len());
             markers.push(GlobeMarker {
-                members: vec![station.stationuuid.clone()],
-                station,
+                stations: vec![station],
                 lat: lat as f32,
                 lon: lon as f32,
-                count: 1,
                 popularity,
                 bitrate,
             });
@@ -135,9 +144,9 @@ mod tests {
         ]);
 
         assert_eq!(markers.len(), 2);
-        assert_eq!(markers[0].count, 2);
-        assert_eq!(markers[1].count, 1);
-        assert_eq!(markers[0].station.stationuuid, "a");
+        assert_eq!(markers[0].count(), 2);
+        assert_eq!(markers[1].count(), 1);
+        assert_eq!(markers[0].station().stationuuid, "a");
     }
 
     #[test]
@@ -156,7 +165,7 @@ mod tests {
         ]);
 
         assert_eq!(markers.len(), 1);
-        assert_eq!(markers[0].station.stationuuid, "valid");
+        assert_eq!(markers[0].station().stationuuid, "valid");
     }
 
     #[test]
@@ -167,7 +176,7 @@ mod tests {
         ]);
 
         assert_eq!(markers.len(), 1);
-        assert_eq!(markers[0].station.stationuuid, "same");
+        assert_eq!(markers[0].station().stationuuid, "same");
     }
 
     #[test]
@@ -199,16 +208,20 @@ mod tests {
         let markers = build_markers(vec![light, heavy]);
 
         assert_eq!(markers.len(), 1);
-        assert_eq!(markers[0].count, 2);
+        assert_eq!(markers[0].count(), 2);
         assert_eq!(
             markers[0].popularity, 4_000.0,
             "голоса группы — по максимуму"
         );
         assert_eq!(markers[0].bitrate, 256, "цвет группы — по лучшему потоку");
         assert_eq!(
-            markers[0].members,
-            ["light".to_owned(), "heavy".to_owned()],
-            "любая станция группы считается играющей"
+            markers[0]
+                .stations
+                .iter()
+                .map(|station| station.stationuuid.as_str())
+                .collect::<Vec<_>>(),
+            ["light", "heavy"],
+            "станции группы сохраняют порядок каталога"
         );
     }
 }
