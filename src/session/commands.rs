@@ -378,6 +378,11 @@ impl super::Session {
         if !profile.allows_background_network() {
             self.cancel_world_fetch();
         }
+        // Потолок битрейта входит в слой карты: перезапускаем его с новым капом
+        // (ADR-0048, ADR-0065).
+        if self.search.context.is_active() {
+            self.start_map_layer();
+        }
         Ok(())
     }
 

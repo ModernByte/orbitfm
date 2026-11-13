@@ -155,6 +155,130 @@ impl SearchResponse {
     }
 }
 
+/// Станций в слое карты глобуса: потолок API-слоя после гео-склейки и до
+/// экранной кластеризации (ADR-0065 § 1). Не обещание нарисовать 800 дисков.
+pub(crate) const MAP_MARKER_LIMIT: u32 = 800;
+
+/// Слой карты глобуса: гео-станции текущего контекста (страна/жанр).
+/// Живёт отдельно от `SearchState`: маркеры больше не зависят от пагинации
+/// списка (ADR-0065 § 1).
+#[derive(Default)]
+pub(crate) struct MapLayerState {
+    generation: u64,
+    rx: Option<mpsc::UnboundedReceiver<MapLayerResponse>>,
+    /// Идёт запрос слоя карты: повторные старты не плодят задач.
+    pub(crate) pending: bool,
+    /// Слой собран из офлайн-снимка после сетевой ошибки (ADR-0043).
+    pub(crate) offline: bool,
+}
+
+impl MapLayerState {
+    /// Отбрасывает незавершённый запрос: его ответ больше не применится.
+    fn invalidate(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
+        self.rx = None;
+        self.pending = false;
+        self.offline = false;
+    }
+}
+
+/// Ответ слоя карты с номером поколения.
+pub(crate) struct MapLayerResponse {
+    generation: u64,
+    result: Result<Vec<Station>, RadioError>,
+    offline: bool,
+}
+
+impl super::Session {
+    /// Запускает слой карты по текущему контексту: вся страна или жанр с
+    /// координатами, порядок — из `settings.catalog_order`. Без контекста слой
+    /// пуст. Потолок — `MAP_MARKER_LIMIT`; офлайн-фолбэк — из мирового снимка
+    /// (ADR-0043).
+    pub(crate) fn start_map_layer(&mut self) {
+        let Some(params) = self.map_layer_params() else {
+            self.clear_map_layer();
+            return;
+        };
+        self.map_layer.generation = self.map_layer.generation.wrapping_add(1);
+        let generation = self.map_layer.generation;
+        let (sender, receiver) = mpsc::unbounded_channel();
+        self.map_layer.rx = Some(receiver);
+        self.map_layer.pending = true;
+        self.map_layer.offline = false;
+        // Старые маркеры другой страны/жанра не должны висеть под новой
+        // подсветкой: до ответа глобус чистый.
+        self.markers.clear();
+
+        let radio = self.radio.clone();
+        let sample = self.world.sample_shared();
+        let waker = self.wake.waker();
+        let fallback = params.clone();
+        self.runtime.spawn(async move {
+            let (result, offline) = match radio.search(params).await {
+                Ok(stations) => (Ok(stations), false),
+                Err(err) if !sample.is_empty() => {
+                    warn!(error = %err, "слой карты: отвечает офлайн-снимок");
+                    (Ok(offline_results(&sample, &fallback)), true)
+                }
+                Err(err) => (Err(err), false),
+            };
+            let _ = sender.send(MapLayerResponse {
+                generation,
+                result,
+                offline,
+            });
+            waker();
+        });
+    }
+
+    /// Гасит слой карты без нового запроса: контекст снят или поиск по имени.
+    pub(crate) fn clear_map_layer(&mut self) {
+        self.map_layer.invalidate();
+        self.markers.clear();
+    }
+
+    pub(crate) fn poll_map_layer(&mut self) {
+        let Some(receiver) = self.map_layer.rx.as_mut() else {
+            return;
+        };
+        match receiver.try_recv() {
+            Ok(response) if response.generation != self.map_layer.generation => {
+                tracing::debug!(
+                    generation = response.generation,
+                    current = self.map_layer.generation,
+                    "устаревший ответ слоя карты отброшен"
+                );
+            }
+            Ok(response) => {
+                self.map_layer.rx = None;
+                self.map_layer.pending = false;
+                self.map_layer.offline = response.offline;
+                match response.result {
+                    Ok(stations) => self.markers = build_markers(stations),
+                    Err(err) => {
+                        warn!(error = %err, "слой карты не удалось загрузить");
+                        self.markers.clear();
+                    }
+                }
+            }
+            Err(mpsc::error::TryRecvError::Empty) => {}
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                self.map_layer.rx = None;
+                self.map_layer.pending = false;
+            }
+        }
+    }
+
+    /// Параметры слоя карты по контексту; `None` — нет ни страны, ни жанра.
+    fn map_layer_params(&self) -> Option<SearchParams> {
+        build_map_layer_params(
+            &self.search.context,
+            self.settings.settings().catalog_order,
+            self.network_profile().bitrate_cap(),
+        )
+    }
+}
+
 impl super::Session {
     /// Поиск по имени: при активном контексте страны/жанра работает локальным фильтром.
     pub(crate) fn start_search(&mut self) {
@@ -175,6 +299,8 @@ impl super::Session {
         }
 
         self.search.context.clear();
+        // Поиск по имени: слой карты гаснет, маркеры снова строятся из строк.
+        self.clear_map_layer();
         self.begin_search(SearchParams {
             name: Some(query),
             limit: SEARCH_RESULT_LIMIT,
@@ -205,6 +331,8 @@ impl super::Session {
         self.country_filter.reset();
         self.begin_search(country_search_params(&iso_a2));
         self.search.country_query.clear();
+        // Слой карты — вся страна, не загруженная страница (ADR-0065).
+        self.start_map_layer();
     }
 
     /// Клик мимо маркера и стран снимает выбранную страну целиком: гаснет
@@ -215,7 +343,7 @@ impl super::Session {
             return;
         }
         self.country_filter.reset();
-        self.markers.clear();
+        self.clear_map_layer();
         self.reveal_station = None;
         self.library_tab = LibraryTab::Results;
     }
@@ -235,6 +363,7 @@ impl super::Session {
             ..SearchParams::default()
         });
         self.search.genre_query.clear();
+        self.start_map_layer();
     }
 
     /// Смена порядка загрузки каталога (ADR-0066): настройка сохраняется, а
@@ -263,7 +392,7 @@ impl super::Session {
 
         self.search.invalidate();
         self.search.results.clear();
-        self.markers.clear();
+        self.clear_map_layer();
         self.search.revision = self.search.revision.wrapping_add(1);
         self.country_filter.reset();
         self.library_tab = LibraryTab::Results;
@@ -288,7 +417,6 @@ impl super::Session {
         self.search.has_more = false;
         self.search.loading_more = false;
         self.search.results.clear();
-        self.markers.clear();
         self.search.revision = self.search.revision.wrapping_add(1);
         self.library_tab = LibraryTab::Results;
 
@@ -418,7 +546,11 @@ impl super::Session {
                         let page_len = stations.len() as u32;
                         append_unique(&mut self.search.results, stations);
                         self.search.next_offset = self.search.next_offset.saturating_add(page_len);
-                        self.markers = build_markers(self.search.results.clone());
+                        // В контексте страны/жанра маркеры ведёт слой карты
+                        // (ADR-0065), а по имени — загруженные строки.
+                        if !self.search.context.is_active() {
+                            self.markers = build_markers(self.search.results.clone());
+                        }
                         self.update_has_more(page_len);
                         self.search.revision = self.search.revision.wrapping_add(1);
                         self.search.loading_more = false;
@@ -428,8 +560,10 @@ impl super::Session {
                         let page_len = stations.len() as u32;
                         self.search.next_offset = self.search.next_offset.saturating_add(page_len);
                         self.search.empty = stations.is_empty();
-                        self.markers = build_markers(stations.clone());
                         self.search.results = stations;
+                        if !self.search.context.is_active() {
+                            self.markers = build_markers(self.search.results.clone());
+                        }
                         self.search.offline = offline;
                         if offline {
                             // Снимок уже целиком в списке: догружать нечего.
@@ -450,7 +584,9 @@ impl super::Session {
                     }
                     Err(err) => {
                         self.search.error = Some(err.to_string());
-                        self.markers.clear();
+                        if !self.search.context.is_active() {
+                            self.markers.clear();
+                        }
                         self.search.revision = self.search.revision.wrapping_add(1);
                         self.search.pending = false;
                         self.search.rx = None;
@@ -696,6 +832,32 @@ fn needle(value: &Option<String>) -> Option<String> {
         .map(str::to_lowercase)
 }
 
+/// Параметры слоя карты по контексту (ADR-0065 § 1): вся страна или жанр
+/// с координатами, порядок — из `CatalogOrder`, потолок — `MAP_MARKER_LIMIT`.
+/// Без страны и жанра — `None` (слой карты не нужен).
+fn build_map_layer_params(
+    context: &SearchContext,
+    catalog_order: CatalogOrder,
+    bitrate_cap: Option<u32>,
+) -> Option<SearchParams> {
+    let mut params = SearchParams {
+        has_geo_info: true,
+        hide_broken: true,
+        limit: MAP_MARKER_LIMIT,
+        order: station_order(catalog_order),
+        bitrate_max: bitrate_cap,
+        ..SearchParams::default()
+    };
+    if let Some(country) = &context.country {
+        params.country_code = Some(country.iso_a2.to_uppercase());
+    } else if let Some(tag) = &context.genre {
+        params.tag = Some(tag.clone());
+    } else {
+        return None;
+    }
+    Some(params)
+}
+
 /// Настройка `settings::CatalogOrder` → параметр Radio Browser (ADR-0066).
 /// Маппинг живёт в Core, чтобы `services` не зависел от `settings`.
 fn station_order(order: CatalogOrder) -> StationOrder {
@@ -859,6 +1021,45 @@ mod tests {
             "список страны — полная выдача, маркеры лишь подмножество"
         );
         assert_eq!(params.limit, COUNTRY_RESULT_LIMIT);
+    }
+
+    #[test]
+    fn map_layer_covers_the_whole_country_with_geo_and_order() {
+        let mut context = SearchContext::default();
+        context.activate_country(germany());
+        let params = build_map_layer_params(&context, CatalogOrder::Quality, Some(128))
+            .expect("страна даёт слой карты");
+        assert!(params.has_geo_info, "слой карты — только гео-станции");
+        assert_eq!(
+            params.country_code.as_deref(),
+            Some("DE"),
+            "ISO в верхнем регистре"
+        );
+        assert_eq!(params.limit, MAP_MARKER_LIMIT);
+        assert_eq!(params.order, StationOrder::Quality, "порядок из каталога");
+        assert_eq!(params.bitrate_max, Some(128), "потолок профиля сети");
+        assert!(params.name.is_none() && params.tag.is_none());
+        assert!(params.hide_broken);
+    }
+
+    #[test]
+    fn map_layer_follows_the_genre_context() {
+        let mut context = SearchContext::default();
+        context.activate_genre("jazz".to_owned());
+        let params = build_map_layer_params(&context, CatalogOrder::Rating, None)
+            .expect("жанр даёт слой карты");
+        assert_eq!(params.tag.as_deref(), Some("jazz"));
+        assert!(params.country_code.is_none());
+        assert_eq!(params.order, StationOrder::Rating);
+        assert!(params.has_geo_info);
+    }
+
+    #[test]
+    fn map_layer_is_empty_without_context() {
+        assert!(
+            build_map_layer_params(&SearchContext::default(), CatalogOrder::Rating, None).is_none(),
+            "без страны/жанра слой карты не нужен"
+        );
     }
 
     #[test]

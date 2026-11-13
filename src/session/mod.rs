@@ -53,7 +53,7 @@ pub(crate) use park::ParkOutcome;
 use playback::PendingPlay;
 pub(crate) use playback::StationStartError;
 use publish_gate::PublishGate;
-use search::SearchState;
+use search::{MapLayerState, SearchState};
 use stream_import::PendingStream;
 pub(crate) use window::{
     RootSurface, SettingsCategory, SettingsSize, UiIntent, WINDOW_TITLE, WindowMode, WindowState,
@@ -174,6 +174,8 @@ pub(crate) struct Session {
     /// Незнакомый `play <uuid>` резолвится в фоне (ADR-0063).
     pub(crate) pending_play: Option<PendingPlay>,
     pub(crate) markers: Vec<GlobeMarker>,
+    /// Слой карты глобуса: гео-станции выбранной страны/жанра (ADR-0065).
+    pub(crate) map_layer: MapLayerState,
     /// Глобальный снимок Radio Browser: счётчики стран и мировой топ для
     /// тепловой карты (ADR-0035).
     pub(crate) world: WorldBaseline,
@@ -280,6 +282,7 @@ impl Session {
             pending_stream: None,
             pending_play: None,
             markers: Vec::new(),
+            map_layer: MapLayerState::default(),
             world: WorldBaseline::default(),
             library_tab: LibraryTab::default(),
             country_filter: CountryFilterState::default(),
@@ -355,6 +358,7 @@ impl Session {
         self.process_media_commands();
         self.process_tray_commands();
         self.poll_search();
+        self.poll_map_layer();
         self.poll_companion_search();
         self.poll_stream_import();
         self.poll_roulette();

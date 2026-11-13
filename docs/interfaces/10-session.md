@@ -99,6 +99,7 @@ Application Core — слой, который переживает закрыт�
 | `load_more` | `pub(crate) fn load_more(&mut self)` | Догрузка следующей страницы по `last_params`/`next_offset`; ошибка не очищает список, а даёт `NoticeKey::LoadMoreFailed` |
 | `country_total` | `pub(crate) fn country_total(&self) -> Option<u32>` | Мировой счётчик станций выбранной страны; `None` без страны, снимка или при офлайн-данных (ADR-0043) |
 | `poll_search` | `pub(crate) fn poll_search(&mut self)` | Забор ответа фонового поиска; ответ может быть собран из офлайн-снимка (`SearchState::offline`) |
+| `poll_map_layer` | `pub(crate) fn poll_map_layer(&mut self)` | Забор ответа слоя карты: маркеры пересобираются, устаревший ответ отбрасывается по `generation`, ошибка гасит маркеры (ADR-0065) |
 | `start_roulette` | `pub(crate) fn start_roulette(&mut self)` | Запрос случайной станции |
 | `poll_roulette` | `pub(crate) fn poll_roulette(&mut self)` | Забор результата рулетки через `try_recv` |
 | `apply_roulette` | `pub(crate) fn apply_roulette(&mut self, outcome: Option<Result<Station, RadioError>>)` | Применение результата рулетки: общий путь UI-кадра и припаркованного цикла |
