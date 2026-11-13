@@ -167,6 +167,11 @@ pub(crate) struct SettingsText {
     /// Категория установки оболочек и браузерных расширений (ADR-0042).
     pub integrations: &'static str,
     pub about: &'static str,
+    /// Категория «Каталог»: порядок загрузки станций (ADR-0066).
+    pub catalog: &'static str,
+    pub catalog_page_hint: &'static str,
+    pub catalog_order: &'static str,
+    pub catalog_order_hint: &'static str,
     pub theme: &'static str,
     pub accent: &'static str,
     pub visualizer: &'static str,
@@ -523,6 +528,10 @@ pub(crate) struct LabelText {
     pub sort_popularity: &'static str,
     pub sort_bitrate: &'static str,
     pub sort_name: &'static str,
+    /// Варианты `CatalogOrder` (ADR-0066).
+    pub sort_rating: &'static str,
+    pub sort_trend: &'static str,
+    pub sort_random: &'static str,
     pub playback_stopped: &'static str,
     pub playback_on_air: &'static str,
     pub playback_paused: &'static str,

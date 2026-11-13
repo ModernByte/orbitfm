@@ -163,13 +163,8 @@ pub enum CatalogOrder {
 }
 
 impl CatalogOrder {
+    /// Все варианты в порядке навигации UI.
     pub const ALL: [Self; 6];
-    /// Токен `settings.json`.
-    pub fn as_str(self) -> &'static str;
-    /// Обратный разбор токена; неизвестный — `None` (ядро падает на `Rating`).
-    pub fn from_str(token: &str) -> Option<Self>;
-    /// Требует ли порядок стабильной пагинации; `Random` — нет.
-    pub fn paginates(self) -> bool;
 }
 
 /// `Settings` теряет `Eq` из-за `volume: f64`, остаётся `PartialEq`.
@@ -424,9 +419,9 @@ Application Core затемняет акцент для текста (ссылк
 - `sleep_fade_snaps_to_choices` — 75 → 60, 9999 → `DEFAULT_SLEEP_FADE`
 - `roundtrip_persists_sleep_ritual` — все четыре поля переживают запись и чтение
 - `roundtrip_persists_catalog_order` — `catalog_order` по умолчанию `rating`,
-  переживает запись и чтение; неизвестный токен падает в `rating` (ADR-0066)
-- `catalog_order_maps_tokens_and_pagination` — `as_str`/`from_str`,
-  `Random::paginates() == false`
+  переживает запись и чтение (токены — `serde` `kebab-case`, ADR-0066)
+- `catalog_order_reads_from_missing_field_as_rating` — старый файл без поля
+  читается как `rating`
 - `out_of_range_bar_count_snaps_to_nearest_choice`
 - `corrupt_file_is_quarantined_and_starts_from_defaults`
 - `ephemeral_store_keeps_changes_without_file`

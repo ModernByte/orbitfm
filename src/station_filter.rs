@@ -46,33 +46,6 @@ impl GenreTag {
     }
 }
 
-/// Порядок станций в панели страны; исходная выдача API — по votes.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) enum StationSort {
-    #[default]
-    Popularity,
-    Bitrate,
-    Name,
-}
-
-impl StationSort {
-    pub(crate) const ALL: [StationSort; 3] = [
-        StationSort::Popularity,
-        StationSort::Bitrate,
-        StationSort::Name,
-    ];
-
-    /// Подпись пункта сортировки для языка интерфейса (ADR-0030).
-    pub(crate) fn label(self, language: Language) -> &'static str {
-        let labels = &i18n::catalog(language).labels;
-        match self {
-            StationSort::Popularity => labels.sort_popularity,
-            StationSort::Bitrate => labels.sort_bitrate,
-            StationSort::Name => labels.sort_name,
-        }
-    }
-}
-
 /// Состояние фильтров панели страны; живёт между кадрами в App Core.
 #[derive(Debug, Clone)]
 pub(crate) struct CountryFilterState {
@@ -83,7 +56,6 @@ pub(crate) struct CountryFilterState {
     /// Показана ли строка жанров и бейджи выбранных фильтров. По умолчанию
     /// фильтры видны: это рабочая строка списка, а не скрытая настройка.
     pub filters_visible: bool,
-    pub sort: StationSort,
     /// Компактные строки списка (переключатель плотности).
     pub compact_rows: bool,
 }
@@ -94,15 +66,14 @@ impl Default for CountryFilterState {
             text: String::new(),
             genres: Vec::new(),
             filters_visible: true,
-            sort: StationSort::default(),
             compact_rows: false,
         }
     }
 }
 
 impl CountryFilterState {
-    /// Сбрасывает текстовый фильтр и жанры, сохраняя сортировку, плотность и
-    /// видимость строки фильтров.
+    /// Сбрасывает текстовый фильтр и жанры, сохраняя плотность и видимость
+    /// строки фильтров.
     pub(crate) fn reset(&mut self) {
         self.text.clear();
         self.genres.clear();
@@ -126,13 +97,15 @@ impl CountryFilterState {
     }
 }
 
-/// Применяет текстовый и жанровый фильтры, затем сортировку.
+/// Применяет текстовый и жанровый фильтры. Порядок строк задаёт сервер по
+/// `settings.catalog_order` (ADR-0066) — локальной пересортировки нет, иначе
+/// появился бы второй источник порядка.
 pub(crate) fn filtered_results<'a>(
     results: &'a [Station],
     filter: &CountryFilterState,
 ) -> Vec<&'a Station> {
     let text = filter.text.trim().to_lowercase();
-    let mut stations: Vec<&Station> = results
+    results
         .iter()
         .filter(|station| {
             (filter.genres.is_empty()
@@ -142,24 +115,7 @@ pub(crate) fn filtered_results<'a>(
                     .any(|genre| genre.matches(&station.tags)))
                 && (text.is_empty() || matches_text(station, &text))
         })
-        .collect();
-
-    match filter.sort {
-        StationSort::Popularity => stations.sort_by(|left, right| {
-            right
-                .votes
-                .cmp(&left.votes)
-                .then_with(|| name_key(left).cmp(&name_key(right)))
-        }),
-        StationSort::Bitrate => stations.sort_by(|left, right| {
-            right
-                .bitrate
-                .cmp(&left.bitrate)
-                .then_with(|| name_key(left).cmp(&name_key(right)))
-        }),
-        StationSort::Name => stations.sort_by_cached_key(|station| name_key(station)),
-    }
-    stations
+        .collect()
 }
 
 fn matches_text(station: &Station, query: &str) -> bool {
@@ -171,10 +127,6 @@ fn matches_text(station: &Station, query: &str) -> bool {
     ]
     .iter()
     .any(|field| field.to_lowercase().contains(query))
-}
-
-fn name_key(station: &Station) -> String {
-    station.name.to_lowercase()
 }
 
 #[cfg(test)]
@@ -245,18 +197,8 @@ mod tests {
         for (tag, expected) in genres {
             assert_eq!(tag.label(Language::English), expected);
         }
-        assert_eq!(
-            StationSort::Popularity.label(Language::English),
-            labels.sort_popularity
-        );
-        assert_eq!(
-            StationSort::Bitrate.label(Language::English),
-            labels.sort_bitrate
-        );
-        assert_eq!(StationSort::Name.label(Language::English), labels.sort_name);
         // Английский источник каталога зафиксирован литералом.
         assert_eq!(GenreTag::Rock.label(Language::English), "Rock");
-        assert_eq!(StationSort::Name.label(Language::English), "Name");
     }
 
     #[test]
@@ -289,8 +231,8 @@ mod tests {
             .iter()
             .map(|station| station.name.as_str())
             .collect();
-        // Сортировка по популярности сохраняется: у «Nacht-News» больше votes.
-        assert_eq!(names, vec!["Nacht-News", "Berlin Jazz"], "OR-семантика");
+        // Локальной пересортировки нет: порядок строк — серверный (ADR-0066).
+        assert_eq!(names, vec!["Berlin Jazz", "Nacht-News"], "OR-семантика");
     }
 
     #[test]
@@ -308,36 +250,21 @@ mod tests {
     }
 
     #[test]
-    fn sorts_by_popularity_bitrate_and_name() {
+    fn filters_keep_the_server_order() {
         let stations = sample();
         let filter = CountryFilterState::default();
-        let popular = filtered_results(&stations, &filter);
-        assert_eq!(popular[0].name, "Rock Hauptstadt");
-
-        let filter = CountryFilterState {
-            sort: StationSort::Bitrate,
-            ..CountryFilterState::default()
-        };
-        let bitrate = filtered_results(&stations, &filter);
-        assert_eq!(bitrate[0].name, "Nacht-News");
-
-        let filter = CountryFilterState {
-            sort: StationSort::Name,
-            ..CountryFilterState::default()
-        };
         let names: Vec<&str> = filtered_results(&stations, &filter)
             .iter()
             .map(|station| station.name.as_str())
             .collect();
-        assert_eq!(names, vec!["Berlin Jazz", "Nacht-News", "Rock Hauptstadt"]);
+        assert_eq!(names, vec!["Berlin Jazz", "Rock Hauptstadt", "Nacht-News"]);
     }
 
     #[test]
-    fn reset_clears_text_and_genre_but_keeps_sort() {
+    fn reset_clears_text_and_genres_but_keeps_view() {
         let mut filter = CountryFilterState {
             text: "jazz".to_owned(),
             genres: vec![GenreTag::Jazz, GenreTag::Rock],
-            sort: StationSort::Name,
             compact_rows: true,
             filters_visible: false,
         };
@@ -346,7 +273,6 @@ mod tests {
         filter.reset();
         assert!(!filter.is_active());
         assert!(filter.genres.is_empty());
-        assert_eq!(filter.sort, StationSort::Name);
         assert!(filter.compact_rows, "плотность — настройка вида, не фильтр");
         assert!(
             !filter.filters_visible,

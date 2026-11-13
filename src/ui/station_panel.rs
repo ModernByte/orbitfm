@@ -12,7 +12,7 @@ use crate::i18n;
 use crate::library::StationAlias;
 use crate::services::Station;
 use crate::session::LibraryTab;
-use crate::settings::Language;
+use crate::settings::{CatalogOrder, Language};
 
 use super::animation;
 use super::icons;
@@ -25,7 +25,7 @@ use super::widgets::{
     faded_group, focus_ring, quiet_button, search_field, segmented_tabs, skeleton_rows,
 };
 use super::{UiAction, single_line, truncate};
-use crate::station_filter::{self, CountryFilterState, GenreTag, StationSort};
+use crate::station_filter::{self, CountryFilterState, GenreTag};
 
 /// Корень именованного перехода вкладок. `Id::unique` детерминирован, поэтому
 /// прогресс переживает кадры и не зависит от порядка аллокаций.
@@ -70,6 +70,8 @@ pub(crate) struct PanelState<'a> {
     /// У текущей выборки есть ещё страницы.
     pub has_more: bool,
     pub filter: &'a mut CountryFilterState,
+    /// Порядок загрузки каталога: сортировка строк и слоя карты (ADR-0066).
+    pub catalog_order: CatalogOrder,
     pub favicons: &'a mut FaviconCache,
     pub playing_uuid: Option<&'a str>,
     /// Выбранная станция: маркер глобуса и строка списка делят одно выделение
@@ -125,6 +127,7 @@ pub(crate) fn show(
         loading_more,
         has_more,
         filter,
+        catalog_order,
         favicons,
         playing_uuid,
         selected_uuid,
@@ -222,7 +225,9 @@ pub(crate) fn show(
                     context_mode,
                     total_available,
                     filter,
+                    catalog_order,
                     language,
+                    &mut actions,
                 );
             }
             ui.add_space(6.0);
@@ -496,7 +501,9 @@ fn draw_meta(
     context_mode: bool,
     total_available: Option<u32>,
     filter: &mut CountryFilterState,
+    catalog_order: CatalogOrder,
     language: Language,
+    actions: &mut Vec<UiAction>,
 ) {
     let text = i18n::catalog(language);
     let caption = if tab == LibraryTab::Results && context_mode && filter.is_active() {
@@ -539,13 +546,15 @@ fn draw_meta(
             if sortable {
                 let response = icons::sort_button(ui, palette, text.panel.sort_by);
                 egui::Popup::menu(&response).show(|ui| {
-                    for sort in StationSort::ALL {
-                        let selected = filter.sort == sort;
+                    for order in CatalogOrder::ALL {
+                        let selected = catalog_order == order;
                         if ui
-                            .selectable_label(selected, sort.label(language))
+                            .selectable_label(selected, i18n::catalog_order_label(language, order))
                             .clicked()
                         {
-                            filter.sort = sort;
+                            // Порядок — общая настройка: список и карта глобуса
+                            // перезапускаются с `offset = 0` (ADR-0066).
+                            actions.push(UiAction::SetCatalogOrder(order));
                             ui.close();
                         }
                     }

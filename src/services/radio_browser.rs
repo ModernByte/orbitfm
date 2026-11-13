@@ -39,6 +39,44 @@ pub struct SearchParams {
     pub has_geo_info: bool,
     /// Потолок битрейта, kbps: метрированный профиль режет сервер (ADR-0048).
     pub bitrate_max: Option<u32>,
+    /// Порядок выдачи каталога (`order`); по умолчанию — по голосам (ADR-0066).
+    pub order: StationOrder,
+}
+
+/// Порядок выдачи каталога — подмножество официального `order`
+/// `/json/stations/search` (ADR-0066). Токены API: `Rating → votes`,
+/// `Popularity → clickcount`, `Trend → clicktrend`, `Quality → bitrate`,
+/// `Name → name`, `Random → random`. Настройка `settings::CatalogOrder`
+/// переводится в этот тип в `session/search.rs`, чтобы `services` не зависел
+/// от `settings`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum StationOrder {
+    #[default]
+    Rating,
+    Popularity,
+    Trend,
+    Quality,
+    Name,
+    Random,
+}
+
+impl StationOrder {
+    /// Значение параметра `order` в запросе.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Rating => "votes",
+            Self::Popularity => "clickcount",
+            Self::Trend => "clicktrend",
+            Self::Quality => "bitrate",
+            Self::Name => "name",
+            Self::Random => "random",
+        }
+    }
+
+    /// Требует ли порядок стабильной пагинации; `Random` — нет (ADR-0066 § 3).
+    pub fn paginates(self) -> bool {
+        self != Self::Random
+    }
 }
 
 /// Источник станции: каталог Radio Browser или внешний поток, добавленный
@@ -427,9 +465,12 @@ fn http_error(status: StatusCode) -> RadioError {
 fn search_query(params: &SearchParams) -> Vec<(&'static str, String)> {
     let mut query = vec![
         ("hidebroken", params.hide_broken.to_string()),
-        ("order", "votes".to_owned()),
-        ("reverse", "true".to_owned()),
+        ("order", params.order.as_str().to_owned()),
     ];
+    // `random` порядок неопределён: `reverse` не передаём (ADR-0066 § 3).
+    if params.order.paginates() {
+        query.push(("reverse", "true".to_owned()));
+    }
 
     if let Some(name) = trimmed(&params.name) {
         query.push(("name", name));
@@ -675,6 +716,7 @@ mod tests {
             hide_broken: true,
             has_geo_info: true,
             bitrate_max: None,
+            order: StationOrder::default(),
         };
 
         let query = search_query(&params);
@@ -689,6 +731,31 @@ mod tests {
         assert!(!query.iter().any(|(key, _)| *key == "tag"));
         assert!(!query.iter().any(|(key, _)| *key == "language"));
         assert!(!query.iter().any(|(key, _)| *key == "bitrateMax"));
+    }
+
+    #[test]
+    fn station_order_maps_to_api_tokens_and_reverse() {
+        let expected = [
+            (StationOrder::Rating, "votes"),
+            (StationOrder::Popularity, "clickcount"),
+            (StationOrder::Trend, "clicktrend"),
+            (StationOrder::Quality, "bitrate"),
+            (StationOrder::Name, "name"),
+            (StationOrder::Random, "random"),
+        ];
+        assert_eq!(expected.len(), 6, "все варианты StationOrder");
+        for (order, token) in expected {
+            assert_eq!(order.as_str(), token);
+            let params = SearchParams {
+                order,
+                ..SearchParams::default()
+            };
+            let query = search_query(&params);
+            assert!(query.contains(&("order", token.to_owned())), "{token}");
+            // `random` не сортируется — `reverse` не передаётся (ADR-0066 § 3).
+            let reverse = query.iter().any(|(key, _)| *key == "reverse");
+            assert_eq!(reverse, order.paginates(), "{token}");
+        }
     }
 
     #[test]

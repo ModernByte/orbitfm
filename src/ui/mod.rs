@@ -37,7 +37,8 @@ use crate::integration::Target;
 use crate::services::Station;
 use crate::session::WindowMode;
 use crate::settings::{
-    AccentColor, Language, MotionReactivity, MotionStyle, NetworkProfile, SleepAction, ThemeMode,
+    AccentColor, CatalogOrder, Language, MotionReactivity, MotionStyle, NetworkProfile,
+    SleepAction, ThemeMode,
 };
 
 /// Режим поиска выбирает ядро, UI только показывает переключатель.
@@ -90,6 +91,8 @@ pub(crate) enum UiAction {
     SetQueueWrap(bool),
     /// Профиль сети: фоновая загрузка, битрейт и favicon (ADR-0048).
     SetNetworkProfile(NetworkProfile),
+    /// Порядок загрузки каталога: список и слой карты глобуса (ADR-0066).
+    SetCatalogOrder(CatalogOrder),
     /// Учёт статистики прослушивания (ADR-0049, `stats_enabled`).
     SetStatsEnabled(bool),
     /// Первое нажатие «Очистить»: кнопка просит подтверждения.

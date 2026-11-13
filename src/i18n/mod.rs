@@ -25,8 +25,8 @@ mod zh;
 
 pub(crate) use catalog::{Catalog, IntegrationsText, LabelText, SettingsText, WelcomeText};
 pub(crate) use labels::{
-    accent_label, language_label, motion_label, network_profile_hint, network_profile_label,
-    style_label, theme_label,
+    accent_label, catalog_order_label, language_label, motion_label, network_profile_hint,
+    network_profile_label, style_label, theme_label,
 };
 
 use crate::settings::Language;

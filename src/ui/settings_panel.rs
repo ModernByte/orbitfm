@@ -16,8 +16,8 @@ use crate::integration::status::{Availability, InstallState, IntegrationsView, T
 use crate::integration::{Target, TargetGroup};
 use crate::session::{SettingsCategory, WindowMode};
 use crate::settings::{
-    AccentColor, Language, MotionReactivity, MotionStyle, NetworkProfile, SLEEP_CHOICES,
-    SLEEP_FADE_CHOICES, Settings, SleepAction, ThemeMode, VIZ_BAR_CHOICES,
+    AccentColor, CatalogOrder, Language, MotionReactivity, MotionStyle, NetworkProfile,
+    SLEEP_CHOICES, SLEEP_FADE_CHOICES, Settings, SleepAction, ThemeMode, VIZ_BAR_CHOICES,
 };
 use crate::stats::StatsSnapshot;
 
@@ -61,6 +61,7 @@ fn settings_category_icon(category: SettingsCategory) -> Icon {
         SettingsCategory::Audio => Icon::Volume,
         SettingsCategory::Motion => Icon::Sparkles,
         SettingsCategory::Window => Icon::AppWindow,
+        SettingsCategory::Catalog => Icon::Sort,
         SettingsCategory::Stats => Icon::Clock,
         SettingsCategory::Integrations => Icon::Panel,
         SettingsCategory::About => Icon::Help,
@@ -357,6 +358,9 @@ fn draw_category(
                 actions,
             );
         }
+        SettingsCategory::Catalog => {
+            catalog_page(ui, palette, &text.settings, state, cards[0], actions);
+        }
         SettingsCategory::Stats => {
             stats_view::draw(
                 ui,
@@ -484,6 +488,43 @@ fn appearance(
         .clicked()
         {
             actions.push(UiAction::SetArtworkAllowHttp(!allow_http));
+        }
+    });
+}
+
+fn catalog_page(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    strings: &i18n::SettingsText,
+    state: &mut SettingsState<'_>,
+    alpha: f32,
+    actions: &mut Vec<UiAction>,
+) {
+    card(ui, palette, alpha, |ui| {
+        let dim = faded_palette(palette, alpha);
+        if let Some(index) = row(
+            ui,
+            &dim,
+            strings.catalog_order,
+            Some(strings.catalog_order_hint),
+            DROPDOWN_SLOT,
+            |ui| {
+                dropdown(
+                    ui,
+                    &dim,
+                    "orbitfm_set_catalog_order",
+                    ui.available_width(),
+                    &CatalogOrder::ALL,
+                    state.settings.catalog_order,
+                    |index| {
+                        i18n::catalog_order_label(state.language, CatalogOrder::ALL[index])
+                            .to_owned()
+                    },
+                )
+            },
+        ) {
+            // Порядок — общая настройка списка и карты (ADR-0066).
+            actions.push(UiAction::SetCatalogOrder(CatalogOrder::ALL[index]));
         }
     });
 }
@@ -1194,6 +1235,7 @@ fn category_label(strings: &i18n::SettingsText, category: SettingsCategory) -> &
         SettingsCategory::Audio => strings.audio,
         SettingsCategory::Motion => strings.motion,
         SettingsCategory::Window => strings.window,
+        SettingsCategory::Catalog => strings.catalog,
         SettingsCategory::Stats => strings.stats,
         SettingsCategory::Integrations => strings.integrations,
         SettingsCategory::About => strings.about,
@@ -1208,6 +1250,7 @@ fn category_hint(strings: &i18n::SettingsText, category: SettingsCategory) -> &'
         SettingsCategory::Audio => strings.audio_page_hint,
         SettingsCategory::Motion => strings.motion_page_hint,
         SettingsCategory::Window => strings.window_page_hint,
+        SettingsCategory::Catalog => strings.catalog_page_hint,
         SettingsCategory::Stats => strings.stats_page_hint,
         SettingsCategory::Integrations => strings.integrations_page_hint,
         SettingsCategory::About => strings.about_page_hint,
