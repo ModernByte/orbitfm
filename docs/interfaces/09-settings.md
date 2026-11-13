@@ -141,6 +141,37 @@ pub const DEFAULT_VIZ_BARS: u8 = 24;
 /// Стартовая громкость: mpv по умолчанию звучит громче, чем нужно ночью.
 pub const DEFAULT_VOLUME: f64 = 0.7;
 
+/// Порядок загрузки каталога: список станций и слой карты глобуса
+/// сортируются одинаково (ADR-0066). Соответствие параметру `order`
+/// Radio Browser — в интерфейсе 02 (`StationOrder`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CatalogOrder {
+    /// `votes` — голоса каталога; поведение по умолчанию.
+    #[default]
+    Rating,
+    /// `clickcount` — число прослушиваний.
+    Popularity,
+    /// `clicktrend` — прирост прослушиваний.
+    Trend,
+    /// `bitrate` — битрейт потока.
+    Quality,
+    /// `name` — алфавит.
+    Name,
+    /// `random` — случайно; пагинация нестабильна и отключается.
+    Random,
+}
+
+impl CatalogOrder {
+    pub const ALL: [Self; 6];
+    /// Токен `settings.json`.
+    pub fn as_str(self) -> &'static str;
+    /// Обратный разбор токена; неизвестный — `None` (ядро падает на `Rating`).
+    pub fn from_str(token: &str) -> Option<Self>;
+    /// Требует ли порядок стабильной пагинации; `Random` — нет.
+    pub fn paginates(self) -> bool;
+}
+
 /// `Settings` теряет `Eq` из-за `volume: f64`, остаётся `PartialEq`.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -181,6 +212,9 @@ pub struct Settings {
     pub sleep_prevent_sleep: bool,
     /// Окно предупреждения за минуту до действия (ADR-0058).
     pub sleep_warning: bool,
+    /// Порядок загрузки каталога: список и слой карты, по умолчанию
+    /// «по рейтингу» (ADR-0066).
+    pub catalog_order: CatalogOrder,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -269,6 +303,7 @@ pub fn default_path() -> Result<PathBuf, SettingsError>;
 | `set_sleep_fade_seconds` | Притягивает длительность к ближайшей из `SLEEP_FADE_CHOICES` (0/60/120/180/300) и сохраняет; по умолчанию 300 с (ADR-0056) |
 | `set_sleep_prevent_sleep` | Запрещает системе уходить в сон, пока играет эфир и тикает таймер; по умолчанию `true`, сохраняет только при изменении (ADR-0054) |
 | `set_sleep_warning` | Показывает окно предупреждения за минуту до действия; по умолчанию `true`, сохраняет только при изменении (ADR-0058) |
+| `set_catalog_order` | Меняет порядок загрузки каталога (`rating`/`popularity`/`trend`/`quality`/`name`/`random`); по умолчанию `rating`, сохраняет только при изменении. Смена порядка перезапускает контекстный запрос с `offset = 0` и слой карты глобуса (ADR-0066) |
 
 ## 3. Расположение и формат
 
@@ -355,9 +390,9 @@ Application Core затемняет акцент для текста (ссылк
 Подписей у самих enum'ов нет: `MotionReactivity::label`, `MotionStyle::label` и
 `WindowMode::label` удалены как мёртвый код. Единственное место, где переводятся
 значения настроек, — `src/i18n/labels.rs`: `theme_label`, `accent_label`,
-`motion_label`, `style_label`, `language_label`, `network_profile_label` и
-`network_profile_hint` (ADR-0030, ADR-0048). Модуль `settings` не знает про
-каталог.
+`motion_label`, `style_label`, `language_label`, `network_profile_label`,
+`network_profile_hint` и `catalog_order_label` (ADR-0030, ADR-0048, ADR-0066).
+Модуль `settings` не знает про каталог.
 
 ## 6. Тесты
 
@@ -388,6 +423,10 @@ Application Core затемняет акцент для текста (ссылк
 - `unknown_sleep_action_is_quarantined`, `sleep_action_roundtrip_and_tokens`
 - `sleep_fade_snaps_to_choices` — 75 → 60, 9999 → `DEFAULT_SLEEP_FADE`
 - `roundtrip_persists_sleep_ritual` — все четыре поля переживают запись и чтение
+- `roundtrip_persists_catalog_order` — `catalog_order` по умолчанию `rating`,
+  переживает запись и чтение; неизвестный токен падает в `rating` (ADR-0066)
+- `catalog_order_maps_tokens_and_pagination` — `as_str`/`from_str`,
+  `Random::paginates() == false`
 - `out_of_range_bar_count_snaps_to_nearest_choice`
 - `corrupt_file_is_quarantined_and_starts_from_defaults`
 - `ephemeral_store_keeps_changes_without_file`
