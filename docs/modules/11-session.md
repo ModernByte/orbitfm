@@ -310,6 +310,7 @@ Core: `src/i18n/labels.rs` и `mode_label` в `src/ui/settings_panel.rs`.
 | `start_search` | `search.query.trim()` пуста — no-op; контекст активен → запрос кладётся в `country_filter.text` (локальный фильтр, без сети), вкладка переключается на `Results`; `search.pending` → no-op; иначе контекст очищается и запускается `SearchParams { name, limit = 100, hide_broken = true }` |
 | `start_country_search(country)` | активирует страну, `country_filter.reset()`, запрос `country_code = <ISO alpha-2>`, `limit = 100`, `hide_broken = true`, `order = settings.catalog_order`, затем `country_query.clear()`; выдача полная, без `has_geo_info`. Тут же запускается слой карты (ADR-0065) |
 | `start_genre_search(tag)` | `tag.trim().to_lowercase()` пуст — no-op; активирует жанр, `country_filter.reset()`, `tag`, `limit = 200`, `hide_broken = true`, затем `genre_query.clear()` |
+| `set_catalog_order(order)` | сохраняет `settings.catalog_order`; при активном контексте перезапускает `start_country_search`/`start_genre_search` с `offset = 0` — иначе «первая пачка» перестанет быть первой (ADR-0066); ошибка записи — тост `SettingNotSaved` |
 | `clear_country_selection()` | клик мимо маркера и стран: `SearchState::clear_country` снимает `context.country`, отбрасывает запрос и очищает результаты, затем сбрасываются `country_filter`, маркеры и `reveal_station`, вкладка — `Results`; `selected_station` сохраняется (ADR-0036, ревизия 2026-10-31) |
 | `switch_mode(mode)` | если режим не изменился — no-op; иначе `SearchState::invalidate()`, очистка результатов, маркеров и фильтров, `library_tab = Results` |
 | `load_more()` | no-op при `pending`/`loading_more`/активном `rx`/`has_more = false`; клонирует `last_params`, ставит `offset = next_offset`, помечает `loading_more` и спавнит `radio.search` с `append: true`; офлайн-fallback не применяется — ошибка догрузки только тост `LoadMoreFailed` |
@@ -318,9 +319,11 @@ Core: `src/i18n/labels.rs` и `mode_label` в `src/ui/settings_panel.rs`.
 `begin_search` увеличивает `generation` (`wrapping_add`), создаёт
 `mpsc::unbounded_channel`, выставляет `pending = true`, `empty = false`,
 `error = None`, очищает `results` и `markers`, увеличивает `revision`, ставит
-вкладку `Results` и спавнит одну tokio-задачу `radio.search(params)`. Если
-каталог не ответил, а `world.sample()` непуст, задача отвечает локальной
-выборкой `offline_results(&sample, &params)` и помечает ответ `offline = true`
+вкладку `Results` и спавнит одну tokio-задачу `radio.search(params)`. Порядок
+запроса `params.order` берётся из `settings.catalog_order` (`Rating → votes` и т. д.,
+ADR-0066); `load_more` наследует его через `last_params`, а `Random` закрывает
+пагинацию. Если каталог не ответил, а `world.sample()` непуст, задача отвечает
+локальной выборкой `offline_results(&sample, &params)` и помечает ответ `offline = true`
 (ADR-0043); та же фильтрация по имени/стране/тегу/языку, `hide_broken`,
 `has_geo_info`, `offset` и `limit` выполняется без сети. `has_geo_info` больше
 не форсируется: страна и жанр отдают полную выдачу, а маркеры строятся из строк

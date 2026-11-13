@@ -9,7 +9,8 @@ pub(crate) mod stream;
 
 pub(crate) use artwork::{ArtworkFetcher, public_verdict, publishable};
 pub use radio_browser::{
-    CountryCount, RadioBrowserClient, RadioError, SearchParams, Station, StationSource,
+    CountryCount, RadioBrowserClient, RadioError, SearchParams, Station, StationOrder,
+    StationSource,
 };
 pub(crate) use radio_browser::{USER_AGENT, random_below};
 pub(crate) use ssrf::classify_reference;

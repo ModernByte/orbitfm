@@ -8,7 +8,8 @@ use tokio::sync::mpsc;
 use tracing::warn;
 
 use crate::geo::Country;
-use crate::services::{RadioError, SearchParams, Station, random_below};
+use crate::services::{RadioError, SearchParams, Station, StationOrder, random_below};
+use crate::settings::CatalogOrder;
 use crate::text::single_line;
 
 use super::LibraryTab;
@@ -236,6 +237,25 @@ impl super::Session {
         self.search.genre_query.clear();
     }
 
+    /// Смена порядка загрузки каталога (ADR-0066): настройка сохраняется, а
+    /// контекстная выборка (страна или жанр) перезапускается с `offset = 0` —
+    /// иначе уже загруженные страницы остались бы упорядочены по старому
+    /// порядку, и «первая пачка» перестала бы быть первой. Без активного
+    /// контекста порядок применится к следующему запросу.
+    pub(crate) fn set_catalog_order(&mut self, order: CatalogOrder) {
+        if self.settings.settings().catalog_order == order {
+            return;
+        }
+        if let Err(err) = self.settings.set_catalog_order(order) {
+            self.notify_error_detail(NoticeKey::SettingNotSaved, err.to_string());
+        }
+        if let Some(country) = self.search.context.country.clone() {
+            self.start_country_search(country);
+        } else if let Some(tag) = self.search.context.genre.clone() {
+            self.start_genre_search(&tag);
+        }
+    }
+
     pub(crate) fn switch_mode(&mut self, mode: SearchMode) {
         if !self.search.context.switch_mode(mode) {
             return;
@@ -255,6 +275,9 @@ impl super::Session {
         if params.bitrate_max.is_none() {
             params.bitrate_max = self.network_profile().bitrate_cap();
         }
+        // Порядок каталога — из настроек; `load_more` наследует его через
+        // `last_params` (ADR-0066).
+        params.order = station_order(self.settings.settings().catalog_order);
         self.search.generation = self.search.generation.wrapping_add(1);
         let generation = self.search.generation;
         let (sender, receiver) = mpsc::unbounded_channel();
@@ -353,6 +376,17 @@ impl super::Session {
     /// Обновляет признак «есть ещё страницы» по размеру пришедшей страницы и
     /// мировому счётчику страны, если он уже прогрет.
     fn update_has_more(&mut self, page_len: u32) {
+        // Случайный порядок не даёт стабильной пагинации: продолжения нет
+        // (ADR-0066 § 3).
+        if self
+            .search
+            .last_params
+            .as_ref()
+            .is_some_and(|params| !params.order.paginates())
+        {
+            self.search.has_more = false;
+            return;
+        }
         let limit = self
             .search
             .last_params
@@ -660,6 +694,19 @@ fn needle(value: &Option<String>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_lowercase)
+}
+
+/// Настройка `settings::CatalogOrder` → параметр Radio Browser (ADR-0066).
+/// Маппинг живёт в Core, чтобы `services` не зависел от `settings`.
+fn station_order(order: CatalogOrder) -> StationOrder {
+    match order {
+        CatalogOrder::Rating => StationOrder::Rating,
+        CatalogOrder::Popularity => StationOrder::Popularity,
+        CatalogOrder::Trend => StationOrder::Trend,
+        CatalogOrder::Quality => StationOrder::Quality,
+        CatalogOrder::Name => StationOrder::Name,
+        CatalogOrder::Random => StationOrder::Random,
+    }
 }
 
 /// Запрос «только станции выбранной страны» (ТЗ §5.3): фильтр по ISO без примеси

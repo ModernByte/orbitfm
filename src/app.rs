@@ -864,6 +864,7 @@ impl<'a> OrbitApp<'a> {
                                     loading_more: session.search.loading_more,
                                     has_more: session.search.has_more,
                                     filter: &mut session.country_filter,
+                                    catalog_order: frame.settings.catalog_order,
                                     favicons,
                                     playing_uuid: session
                                         .current_station
@@ -1133,6 +1134,7 @@ impl<'a> OrbitApp<'a> {
                                     loading_more: session.search.loading_more,
                                     has_more: session.search.has_more,
                                     filter: &mut session.country_filter,
+                                    catalog_order: frame.settings.catalog_order,
                                     favicons,
                                     playing_uuid: session
                                         .current_station
@@ -1419,6 +1421,7 @@ impl<'a> OrbitApp<'a> {
                 }
                 self.favicons.set_network_profile(profile);
             }
+            UiAction::SetCatalogOrder(order) => self.session.set_catalog_order(order),
             UiAction::SetStatsEnabled(enabled) => {
                 if let Err(err) = self.session.set_stats_enabled(enabled) {
                     self.error_toast(ctx, &NoticeKey::SettingNotSaved, Some(err.as_str()));

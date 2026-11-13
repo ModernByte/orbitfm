@@ -1,7 +1,7 @@
 //! Подписи enum'ов настроек: единственное место, где i18n знает о `settings`.
 
 use crate::settings::{
-    AccentColor, Language, MotionReactivity, MotionStyle, NetworkProfile, ThemeMode,
+    AccentColor, CatalogOrder, Language, MotionReactivity, MotionStyle, NetworkProfile, ThemeMode,
 };
 
 use super::catalog;
@@ -55,6 +55,20 @@ pub(crate) fn language_label(ui: Language, value: Language) -> &'static str {
     match value {
         Language::System => catalog(ui).settings.system_language,
         other => other.native_name(),
+    }
+}
+
+/// Варианты порядка загрузки каталога (ADR-0066). `Quality` использует готовую
+/// подпись `sort_bitrate` — отдельный ключ не вводится.
+pub(crate) fn catalog_order_label(ui: Language, order: CatalogOrder) -> &'static str {
+    let labels = &catalog(ui).labels;
+    match order {
+        CatalogOrder::Rating => labels.sort_rating,
+        CatalogOrder::Popularity => labels.sort_popularity,
+        CatalogOrder::Trend => labels.sort_trend,
+        CatalogOrder::Quality => labels.sort_bitrate,
+        CatalogOrder::Name => labels.sort_name,
+        CatalogOrder::Random => labels.sort_random,
     }
 }
 

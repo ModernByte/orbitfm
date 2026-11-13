@@ -247,6 +247,38 @@ impl NetworkProfile {
 /// потоковые станции остаются доступны, видео-битрейты отсекаются.
 pub const METERED_BITRATE_CAP: u32 = 128;
 
+/// Порядок загрузки каталога (ADR-0066): один и тот же для списка станций и
+/// слоя карты глобуса. Соответствие параметру `order` Radio Browser — в
+/// интерфейсе 02 (`services::StationOrder`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CatalogOrder {
+    /// Голоса каталога (`votes`); поведение по умолчанию.
+    #[default]
+    Rating,
+    /// Число прослушиваний (`clickcount`).
+    Popularity,
+    /// Прирост прослушиваний (`clicktrend`).
+    Trend,
+    /// Битрейт потока (`bitrate`).
+    Quality,
+    /// Алфавит (`name`).
+    Name,
+    /// Случайно (`random`); пагинация нестабильна.
+    Random,
+}
+
+impl CatalogOrder {
+    pub const ALL: [Self; 6] = [
+        Self::Rating,
+        Self::Popularity,
+        Self::Trend,
+        Self::Quality,
+        Self::Name,
+        Self::Random,
+    ];
+}
+
 /// Действие по истечении таймера сна (ADR-0055).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -336,6 +368,9 @@ pub struct Settings {
     pub sleep_prevent_sleep: bool,
     /// Показывать окно предупреждения за минуту до действия (ADR-0058).
     pub sleep_warning: bool,
+    /// Порядок загрузки каталога: список и слой карты, по умолчанию
+    /// «по рейтингу» (ADR-0066).
+    pub catalog_order: CatalogOrder,
 }
 
 fn default_stats_enabled() -> bool {
@@ -379,6 +414,7 @@ impl Default for Settings {
             sleep_fade_seconds: DEFAULT_SLEEP_FADE,
             sleep_prevent_sleep: true,
             sleep_warning: true,
+            catalog_order: CatalogOrder::Rating,
         }
     }
 }
@@ -615,6 +651,17 @@ impl SettingsStore {
             return Ok(());
         }
         self.settings.network_profile = profile;
+        self.save()
+    }
+
+    /// Порядок загрузки каталога (ADR-0066): сохраняется сразу, как остальные
+    /// переключатели. Смена порядка — повод перезапустить контекстный поиск,
+    /// это делает `Session::set_catalog_order`.
+    pub fn set_catalog_order(&mut self, order: CatalogOrder) -> Result<(), SettingsError> {
+        if self.settings.catalog_order == order {
+            return Ok(());
+        }
+        self.settings.catalog_order = order;
         self.save()
     }
 
@@ -937,6 +984,35 @@ mod tests {
 
         let store = SettingsStore::load(path).unwrap();
         assert_eq!(store.settings().network_profile, NetworkProfile::Metered);
+    }
+
+    #[test]
+    fn roundtrip_persists_catalog_order() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        assert_eq!(
+            Settings::default().catalog_order,
+            CatalogOrder::Rating,
+            "по умолчанию — по рейтингу (ADR-0066)"
+        );
+        {
+            let mut store = SettingsStore::load(path.clone()).unwrap();
+            store.set_catalog_order(CatalogOrder::Quality).unwrap();
+            // Повторная установка того же значения не пишет файл.
+            store.set_catalog_order(CatalogOrder::Quality).unwrap();
+        }
+
+        let store = SettingsStore::load(path).unwrap();
+        assert_eq!(store.settings().catalog_order, CatalogOrder::Quality);
+    }
+
+    #[test]
+    fn catalog_order_reads_from_missing_field_as_rating() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        fs::write(&path, br#"{"theme":"dark"}"#).unwrap();
+        let store = SettingsStore::load(path).unwrap();
+        assert_eq!(store.settings().catalog_order, CatalogOrder::Rating);
     }
 
     #[test]

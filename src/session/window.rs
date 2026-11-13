@@ -171,6 +171,8 @@ pub(crate) enum SettingsCategory {
     Audio,
     Motion,
     Window,
+    /// Порядок загрузки каталога (ADR-0066).
+    Catalog,
     /// Локальная статистика прослушивания (ADR-0049).
     Stats,
     /// Установка панелей, окружений и расширений браузеров (ADR-0042).
@@ -179,12 +181,13 @@ pub(crate) enum SettingsCategory {
 }
 
 impl SettingsCategory {
-    pub(crate) const ALL: [Self; 8] = [
+    pub(crate) const ALL: [Self; 9] = [
         Self::Appearance,
         Self::Language,
         Self::Audio,
         Self::Motion,
         Self::Window,
+        Self::Catalog,
         Self::Stats,
         Self::Integrations,
         Self::About,
