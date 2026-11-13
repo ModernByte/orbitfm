@@ -22,7 +22,27 @@ OrbitFM — плеер интернет-радио, где каталог пок
 ## Демо
 
 <p align="center">
-  <img src="assets/orbitfm-demo.gif" alt="OrbitFM — демо интерфейса: запуск, 3D-глобус и список станций" width="100%">
+  <img src="assets/gif-demo/orbitfm-demo-part1.gif" alt="OrbitFM — демо часть 1: запуск и главное окно (0–29 с)" width="100%">
+</p>
+
+<p align="center">
+  <img src="assets/gif-demo/orbitfm-demo-part2.gif" alt="OrbitFM — демо часть 2: поиск по странам и жанрам (29–58 с)" width="100%">
+</p>
+
+<p align="center">
+  <img src="assets/gif-demo/orbitfm-demo-part3.gif" alt="OrbitFM — демо часть 3: 3D-глобус и маркеры станций (58–87 с)" width="100%">
+</p>
+
+<p align="center">
+  <img src="assets/gif-demo/orbitfm-demo-part4.gif" alt="OrbitFM — демо часть 4: радиорулетка и избранное (87–116 с)" width="100%">
+</p>
+
+<p align="center">
+  <img src="assets/gif-demo/orbitfm-demo-part5.gif" alt="OrbitFM — демо часть 5: настройки и системный трей (116–145 с)" width="100%">
+</p>
+
+<p align="center">
+  <img src="assets/gif-demo/orbitfm-demo-part6.gif" alt="OrbitFM — демо часть 6: визуализатор и аудиореактивность (145–174 с)" width="100%">
 </p>
 
 ## Что умеет
