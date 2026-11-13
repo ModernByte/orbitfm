@@ -327,12 +327,17 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
         frame_stats::end(frame_stats::Metric::MarkersProject, started);
         screens
     };
+    // Вторая ступень: то, что слипается на экране, — один чип (ADR-0065).
+    let clusters = cluster_screens(state.markers, &marker_screens);
 
     if let Some(position) = input.primary_clicked {
-        if let Some(slot) = nearest_marker(&marker_screens, position) {
-            response.actions.push(UiAction::SelectStation(
-                state.markers[marker_screens[slot].0].station.clone(),
-            ));
+        if let Some(slot) = nearest_cluster(&clusters, position) {
+            // Пока веера нет (волна 4), клик запускает представителя кластера —
+            // первую по порядку каталога станцию.
+            let rep = &state.markers[clusters[slot].members[0]];
+            response
+                .actions
+                .push(UiAction::SelectStation(rep.station.clone()));
         } else {
             response.clicked_empty = true;
             if let Some(point) = state
@@ -357,7 +362,7 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
 
     paint_globe(ui.painter(), globe_rect, state.camera, &motion, state.heat);
 
-    let hovered = hover_pos.and_then(|position| nearest_marker(&marker_screens, position));
+    let hovered = hover_pos.and_then(|position| nearest_cluster(&clusters, position));
     let hovered_country =
         if !state.country_enabled || sense.dragged_by(egui::PointerButton::Secondary) {
             None
@@ -396,24 +401,36 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
     let current_uuid = state
         .current_station
         .map(|station| station.stationuuid.as_str());
-    if !marker_screens.is_empty() {
-        let visuals: Vec<MarkerVisual> = marker_screens
+    if !clusters.is_empty() {
+        let visuals: Vec<MarkerVisual> = clusters
             .iter()
-            .map(|(index, position)| {
-                let marker = &state.markers[*index];
+            .map(|cluster| {
+                let playing = current_uuid.is_some_and(|uuid| {
+                    cluster.members.iter().any(|index| {
+                        state.markers[*index]
+                            .members
+                            .iter()
+                            .any(|member| member == uuid)
+                    })
+                });
+                let selected = state.selected_station.is_some_and(|uuid| {
+                    cluster.members.iter().any(|index| {
+                        state.markers[*index]
+                            .members
+                            .iter()
+                            .any(|member| member == uuid)
+                    })
+                });
                 MarkerVisual {
-                    pos: *position,
-                    playing: current_uuid
-                        .is_some_and(|uuid| marker.members.iter().any(|member| member == uuid)),
-                    selected: state
-                        .selected_station
-                        .is_some_and(|uuid| marker.members.iter().any(|member| member == uuid)),
+                    pos: cluster.pos,
+                    count: cluster.stations,
+                    playing,
+                    selected,
                 }
             })
             .collect();
         any_playing = visuals.iter().any(|visual| visual.playing);
-        let hovered_label =
-            hovered.map(|slot| marker_label(&state.markers[marker_screens[slot].0]));
+        let hovered_label = hovered.map(|slot| cluster_label(state.markers, &clusters[slot]));
         let started = frame_stats::begin();
         paint_markers(
             ui.painter(),
@@ -977,19 +994,66 @@ fn marker_screens(
         .collect()
 }
 
-/// Наводимый маркер: индекс в массиве **видимых** (`slot`), а не исходный.
-///
-/// Подсветка в `paint_markers` и подпись обязаны указывать на тот же слот,
-/// что и отрисовка; исходный индекс (для клика и одиночной карточки) берётся
-/// как `screens[slot].0`. Раньше сравнивался исходный индекс со слотом, и при
-/// скрытом маркере перед наведённым кольцо попадало не на тот маркер.
-fn nearest_marker(screens: &[(usize, egui::Pos2)], position: egui::Pos2) -> Option<usize> {
+/// Радиус экранной склейки: маркеры ближе 16 px — один чип (ADR-0065 § 2).
+const CLUSTER_PIXEL_RADIUS: f32 = 16.0;
+
+/// Склеенные на экране маркеры (вторая ступень агрегации, ADR-0065 § 2).
+struct MarkerCluster {
+    /// Исходные индексы `GlobeMarker` в кластере; порядок — слой карты.
+    members: Vec<usize>,
+    /// Экранная позиция чипа; первый член — стабильный якорь.
+    pos: egui::Pos2,
+    /// Станций всего: сумма `GlobeMarker.count`.
+    stations: usize,
+}
+
+/// Склеивает видимые маркеры в кластеры по экранному расстоянию. Первая
+/// ступень (гео 0.01°) уже отработала в `build_markers`; здесь — то, что
+/// слипается на текущем зуме. Пересобирается каждый кадр, пока камера едет.
+fn cluster_screens(markers: &[GlobeMarker], screens: &[(usize, egui::Pos2)]) -> Vec<MarkerCluster> {
+    let cell = CLUSTER_PIXEL_RADIUS.max(1.0);
+    let mut clusters: Vec<MarkerCluster> = Vec::new();
+    let mut grid: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+    for &(index, pos) in screens {
+        let key = ((pos.x / cell).floor() as i32, (pos.y / cell).floor() as i32);
+        let mut hit = None;
+        'search: for dx in -1..=1 {
+            for dy in -1..=1 {
+                if let Some(ids) = grid.get(&(key.0 + dx, key.1 + dy)) {
+                    for &id in ids {
+                        if clusters[id].pos.distance(pos) <= CLUSTER_PIXEL_RADIUS {
+                            hit = Some(id);
+                            break 'search;
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(id) = hit {
+            let cluster = &mut clusters[id];
+            cluster.members.push(index);
+            cluster.stations += markers[index].count;
+        } else {
+            let id = clusters.len();
+            clusters.push(MarkerCluster {
+                members: vec![index],
+                pos,
+                stations: markers[index].count,
+            });
+            grid.entry(key).or_default().push(id);
+        }
+    }
+    clusters
+}
+
+/// Кластер под курсором: слот в массиве кластеров (порядок — слой карты).
+fn nearest_cluster(clusters: &[MarkerCluster], position: egui::Pos2) -> Option<usize> {
     let radius_sq = MARKER_CLICK_RADIUS * MARKER_CLICK_RADIUS;
-    screens
+    clusters
         .iter()
         .enumerate()
-        .filter_map(|(slot, (_, marker))| {
-            let distance_sq = (*marker - position).length_sq();
+        .filter_map(|(slot, cluster)| {
+            let distance_sq = (cluster.pos - position).length_sq();
             (distance_sq <= radius_sq).then_some((distance_sq, slot))
         })
         .min_by(|left, right| left.0.total_cmp(&right.0))
@@ -1038,30 +1102,76 @@ fn marker_label(marker: &GlobeMarker) -> MarkerLabel {
     }
 }
 
+/// Подпись кластера: имя представителя и общее число станций, склеенных на
+/// экране (ADR-0065 § 2). Когда кластер — одна гео-группа, остаётся `marker_label`.
+fn cluster_label(markers: &[GlobeMarker], cluster: &MarkerCluster) -> MarkerLabel {
+    let rep = &markers[cluster.members[0]];
+    let mut label = marker_label(rep);
+    if cluster.stations > rep.count {
+        let name = single_line(&rep.station.name);
+        let name = if name.is_empty() {
+            "Untitled".to_owned()
+        } else {
+            truncate(&name, 40)
+        };
+        label.title = format!("{name} · +{}", cluster.stations - 1);
+    }
+    label
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::session::markers::{build_markers, geo_station};
 
-    #[test]
-    fn nearest_marker_uses_click_radius() {
-        let screens = vec![(0, egui::pos2(10.0, 10.0)), (1, egui::pos2(100.0, 100.0))];
-
-        assert_eq!(nearest_marker(&screens, egui::pos2(14.0, 12.0)), Some(0));
-        assert_eq!(nearest_marker(&screens, egui::pos2(50.0, 50.0)), None);
+    /// Маркеры одной серии для тестов кластеризации.
+    fn stacked_markers(count: usize) -> Vec<GlobeMarker> {
+        build_markers(
+            (0..count)
+                .map(|index| geo_station(&format!("m{index}"), 10.0 + index as f64, 10.0))
+                .collect(),
+        )
     }
 
-    /// Регрессия индекса наведения: при скрытом маркере перед наведённым
-    /// `nearest_marker` обязан вернуть слот в массиве видимых, а не исходный
-    /// индекс, иначе кольцо подсветки уезжает на соседний маркер.
     #[test]
-    fn nearest_marker_returns_visible_slot_not_source_index() {
-        // Первый видимый слот — станция №7 (далеко), второй — станция №8 (под курсором).
-        let screens = vec![(7, egui::pos2(300.0, 300.0)), (8, egui::pos2(12.0, 10.0))];
+    fn nearest_cluster_uses_click_radius() {
+        let markers = stacked_markers(2);
+        let screens = vec![(0, egui::pos2(10.0, 10.0)), (1, egui::pos2(100.0, 100.0))];
+        let clusters = cluster_screens(&markers, &screens);
 
-        assert_eq!(nearest_marker(&screens, egui::pos2(13.0, 11.0)), Some(1));
-        // Клик и подпись достают исходный индекс через `screens[slot].0`.
-        assert_eq!(screens[1].0, 8);
+        assert_eq!(nearest_cluster(&clusters, egui::pos2(14.0, 12.0)), Some(0));
+        assert_eq!(nearest_cluster(&clusters, egui::pos2(50.0, 50.0)), None);
+    }
+
+    /// Регрессия индекса наведения: слот в массиве кластеров не должен
+    /// подменяться исходным индексом `GlobeMarker`.
+    #[test]
+    fn nearest_cluster_returns_visible_slot_not_source_index() {
+        let markers = stacked_markers(9);
+        // Первый видимый слот — станция No7 (далеко), второй — No8 (под курсором).
+        let screens = vec![(7, egui::pos2(300.0, 300.0)), (8, egui::pos2(12.0, 10.0))];
+        let clusters = cluster_screens(&markers, &screens);
+
+        let slot = nearest_cluster(&clusters, egui::pos2(13.0, 11.0)).expect("под курсором");
+        // Представитель и члены достаются через `clusters[slot].members`.
+        assert_eq!(clusters[slot].members[0], 8);
+    }
+
+    #[test]
+    fn cluster_screens_merges_neighbours_and_sums_stations() {
+        // Две станции в одной гео-точке (count = 2) и одна в стороне.
+        let markers = build_markers(vec![
+            geo_station("a", 10.0, 10.0),
+            geo_station("b", 10.0, 10.0),
+            geo_station("c", 30.0, 30.0),
+        ]);
+        assert_eq!(markers.len(), 2, "гео-склейка уже сработала");
+        let screens = vec![(0, egui::pos2(10.0, 10.0)), (1, egui::pos2(20.0, 12.0))];
+
+        let clusters = cluster_screens(&markers, &screens);
+        assert_eq!(clusters.len(), 1, "10 px — ближе радиуса склейки");
+        assert_eq!(clusters[0].stations, 3, "2 + 1 станции");
+        assert_eq!(clusters[0].members, vec![0, 1]);
     }
 
     #[test]
