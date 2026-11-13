@@ -91,6 +91,7 @@ Application Core — слой, который переживает закрыт�
 | `focus_country` | `pub(crate) fn focus_country(&mut self, country: &Country)` | Перелёт камеры к центру страны |
 | `start_search` | `pub(crate) fn start_search(&mut self)` | Поиск по имени из `search.query`; при активном контексте — локальный фильтр и вкладка `Results` |
 | `start_country_search` | `pub(crate) fn start_country_search(&mut self, country: Country)` | Список станций страны |
+| `start_map_layer` | `pub(crate) fn start_map_layer(&mut self)` | Слой карты глобуса: отдельный запрос `has_geo_info=true` по текущему контексту (страна/жанр), `limit = MAP_MARKER_LIMIT = 800`, `order` из `settings.catalog_order`; наполняет `markers` независимо от пагинации списка (ADR-0065) |
 | `clear_country_selection` | `pub(crate) fn clear_country_selection(&mut self)` | Клик мимо стран: снимает контекст страны, фильтр, список и маркеры; выделенная станция сохраняется (ADR-0036, ревизия 2026-10-31) |
 | `start_genre_search` | `pub(crate) fn start_genre_search(&mut self, tag: String)` | Глобальный поиск по тегу |
 | `switch_mode` | `pub(crate) fn switch_mode(&mut self, mode: SearchMode)` | Смена режима поиска и сброс контекста |
@@ -155,6 +156,26 @@ Application Core — слой, который переживает закрыт�
 `preview_volume`/`commit_volume`). `economy` и `world` — внутренние поля
 `src/session/`: UI не меняет их напрямую, а читает производные признаки через
 `economy_stream()` и `WorldBaseline::offline()`.
+
+### 1.1. Слой карты и порядок каталога (ADR-0065/0066, принято 2026-11-13)
+
+- `markers` — результат **слоя карты** (вся выбранная страна/жанр с координатами),
+  а не подмножество загруженных строк: `SearchState::poll_search` больше не вызывает
+  `build_markers` по страницам. Слой перестраивается при смене страны, жанра,
+  `settings.catalog_order` и профиля сети; устаревший ответ отбрасывается по
+  `generation`, офлайн-фолбэк — из `WorldBaseline` (ADR-0043).
+- Экранная кластеризация и веер станций — в presentation (`ui::globe_view`): Core
+  отдаёт только `Vec<GlobeMarker>`; кластеры собираются из проекций на кадр. Выбор
+  из веера идёт тем же путём `UiAction::SelectStation`, что строка и маркер (ADR-0036).
+- Станция слоя карты может не иметь загруженной строки: `select_station` +
+  `start_station` работают, `reveal_station` не расходуется (прокручивать нечего),
+  тоста нет.
+- Счётчики не смешиваются: подпись панели — строки списка (`results.len()`,
+  `country_total()`); «станции на карте» — `sum(marker.count)`; число кластеров
+  считает presentation. Это явно уточняет ADR-0036 § 4.
+- Смена `settings.catalog_order` применяется к запросу списка **и** к слою карты и
+  перезапускает выборку с `offset = 0`; `CatalogOrder::Random` даёт `has_more =
+  false` без догрузки (ADR-0066).
 
 ## 2. Типы-сообщения между Core и presentation
 
@@ -664,7 +685,8 @@ mode <focus|overlay|listening|panel>
 - `GlobeMarker` (`src/session/markers.rs`) — тип данных агрегации: его читает
   `ui::globe_view` и превращает в `render::MarkerVisual`; размер (3 px) и единый
   цвет задаёт `src/render/markers.rs` (ADR-0012), а качество и рейтинг UI
-  показывает в подписи `MarkerLabel`;
+  показывает в подписи `MarkerLabel`. **Кластеры и веер** (ADR-0065) — тоже
+  presentation: их состав зависит от камеры и в Core не живёт;
 - `SearchState`, `SearchResponse` (`src/session/search.rs`) —
   внутреннее состояние поиска; наружу идут только поля `Session::search`,
   читаемые UI (`query`, `country_query`, `genre_query`, `context`, `results`,

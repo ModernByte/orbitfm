@@ -308,7 +308,7 @@ Core: `src/i18n/labels.rs` и `mode_label` в `src/ui/settings_panel.rs`.
 | Метод | Поведение |
 |-------|-----------|
 | `start_search` | `search.query.trim()` пуста — no-op; контекст активен → запрос кладётся в `country_filter.text` (локальный фильтр, без сети), вкладка переключается на `Results`; `search.pending` → no-op; иначе контекст очищается и запускается `SearchParams { name, limit = 100, hide_broken = true }` |
-| `start_country_search(country)` | активирует страну, `country_filter.reset()`, запрос `country_code = <ISO alpha-2>`, `limit = 100`, `hide_broken = true`, затем `country_query.clear()`; выдача полная, без `has_geo_info` |
+| `start_country_search(country)` | активирует страну, `country_filter.reset()`, запрос `country_code = <ISO alpha-2>`, `limit = 100`, `hide_broken = true`, `order = settings.catalog_order`, затем `country_query.clear()`; выдача полная, без `has_geo_info`. Тут же запускается слой карты (ADR-0065) |
 | `start_genre_search(tag)` | `tag.trim().to_lowercase()` пуст — no-op; активирует жанр, `country_filter.reset()`, `tag`, `limit = 200`, `hide_broken = true`, затем `genre_query.clear()` |
 | `clear_country_selection()` | клик мимо маркера и стран: `SearchState::clear_country` снимает `context.country`, отбрасывает запрос и очищает результаты, затем сбрасываются `country_filter`, маркеры и `reveal_station`, вкладка — `Results`; `selected_station` сохраняется (ADR-0036, ревизия 2026-10-31) |
 | `switch_mode(mode)` | если режим не изменился — no-op; иначе `SearchState::invalidate()`, очистка результатов, маркеров и фильтров, `library_tab = Results` |
@@ -329,23 +329,27 @@ Core: `src/i18n/labels.rs` и `mode_label` в `src/ui/settings_panel.rs`.
 копию запроса для догрузки, `next_offset` стартует с `params.offset`. После
 отправки ответа задача вызывает `waker()`.
 
+`begin_search` и `poll_search` **не собирают маркеры**: `Session.markers` ведёт
+слой карты (`start_map_layer`, ADR-0065), независимый от пагинации списка.
+
 `poll_search` (`try_recv`) различает:
 - ответ чужого поколения — только `debug!` («устаревший ответ поиска отброшен»),
   состояние не меняется: быстрый `Esc`-переполск не перерисовывает панель старым
   списком и не возвращает старые маркеры;
 - `Ok(stations)` без `append` — `empty = stations.is_empty()`, `results = stations`,
-  `markers = build_markers(stations.clone())`, `next_offset += page_len`,
-  `search.offline = response.offline`; при офлайн-ответе `has_more = false`
-  (снимок уже целиком в списке), иначе `update_has_more`; `revision`
-  увеличивается, `pending = false`, `rx = None`;
+  `next_offset += page_len`, `search.offline = response.offline`; при офлайн-ответе
+  `has_more = false` (снимок уже целиком в списке), иначе `update_has_more`;
+  `revision` увеличивается, `pending = false`, `rx = None`; маркеры не трогаются —
+  их ведёт слой карты (ADR-0065);
 - `Ok(stations)` с `append` — `append_unique` дополняет список без повторных UUID,
-  маркеры пересобираются, `next_offset += page_len`, `update_has_more`,
-  `loading_more = false`, `rx = None`; пустая страница закрывает пагинацию;
+  `next_offset += page_len`, `update_has_more`, `loading_more = false`, `rx = None`;
+  маркеры не пересобираются; пустая страница закрывает пагинацию;
 - `Err(err)` с `append` — список и маркеры сохраняются, `loading_more = false`,
   тост `NoticeKey::LoadMoreFailed` с технической `detail`;
 - `Err(err)` — ошибка Radio Browser: `error = Some(err)` (техническая строка
-  `RadioError`, UI рисует её как есть — в отличие от `Notice`), маркеры очищаются,
-  `pending = false`, `rx = None` (результаты прошлого ответа остаются в списке);
+  `RadioError`, UI рисует её как есть — в отличие от `Notice`), `pending = false`,
+  `rx = None` (результаты прошлого ответа остаются в списке; слой карты живёт
+  отдельно и не гасится ошибкой списка);
 - `Disconnected` при `loading_more` — `notify_error(NoticeKey::LoadMoreFailed)`,
   флаг снимается; в остальных случаях — `notify_error(NoticeKey::SearchTaskEnded)`
   (ядро называет только причину, строку берёт каталог `i18n` — ADR-0030),
@@ -391,9 +395,11 @@ total)`: пустая страница всегда закрывает паги�
 
 ### 4.9. Маркеры (`markers::build_markers`)
 
-Вход — `Vec<Station>` текущей выдачи, то есть тот же массив, из которого
-наполняется список; маркеры — его подмножество с координатами (ADR-0036,
-ревизия 2026-10-28 (второе)). Выход — `Vec<GlobeMarker>`. Порядок:
+Вход — `Vec<Station>` **слоя карты**: вся выбранная страна/жанр с координатами,
+полученная отдельным запросом `has_geo_info=true` с `limit = MAP_MARKER_LIMIT =
+800` и `order = settings.catalog_order` (ADR-0065, ADR-0066). Это больше не
+подмножество загруженных строк: список и карта независимы, связь — «строка на
+карте имеет маркер». Выход — `Vec<GlobeMarker>`. Порядок:
 1. дедупликация по `stationuuid` (`HashSet`), повторные UUID отбрасываются;
 2. валидация координат `station_geo`: оба значения обязаны быть `Some`, конечными,
    `lat ∈ [-90, 90]`, `lon ∈ [-180, 180]`; `(0, 0)` — заглушка Radio Browser, не
@@ -409,9 +415,11 @@ total)`: пустая страница всегда закрывает паги�
 популярности группы (ADR-0012), но на геометрию маркера он больше не влияет.
 Формулы самого отображения в Core нет: `src/render/markers.rs` рисует все маркеры
 одинаковыми (радиус `3 px`, единый `palette.marker`), а битрейт и голоса уходят в
-подпись при наведении (`MarkerLabel`).
-`build_markers` вызывается только из `poll_search` (тесты `src/ui/globe_view.rs`
-используют функцию напрямую).
+подпись при наведении (`MarkerLabel`). **Экранная кластеризация и веер станций**
+(ADR-0065 § 2–3) живут в presentation (`ui::globe_view`): состав кластера зависит
+от камеры и в Core не хранится.
+`build_markers` вызывается только из поллинга слоя карты (тесты
+`src/ui/globe_view.rs` используют функцию напрямую).
 
 Выделение станции (ADR-0036 § 2–3) живёт в `Session::selected_station`:
 `start_station` ставит UUID при любом пути запуска, `select_station` — при клике

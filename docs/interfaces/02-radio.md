@@ -17,6 +17,32 @@ pub struct SearchParams {
     pub has_geo_info: bool,
     /// Потолок битрейта (`bitrateMax`); `None` — без ограничения.
     pub bitrate_max: Option<u32>,
+    /// Порядок выдачи каталога (`order`); по умолчанию — по голосам
+    /// (ADR-0066).
+    pub order: StationOrder,
+}
+
+/// Порядок выдачи каталога — подмножество официального `order`
+/// `/json/stations/search` (ADR-0066). Соответствие параметру: `Rating → votes`,
+/// `Popularity → clickcount`, `Trend → clicktrend`, `Quality → bitrate`,
+/// `Name → name`, `Random → random`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum StationOrder {
+    #[default]
+    Rating,
+    Popularity,
+    Trend,
+    Quality,
+    Name,
+    Random,
+}
+
+impl StationOrder {
+    pub const ALL: [Self; 6];
+    /// Значение параметра `order` в запросе.
+    pub fn as_str(self) -> &'static str;
+    /// Требует ли порядок стабильной пагинации; `Random` — нет.
+    pub fn paginates(self) -> bool;
 }
 
 /// Число станций страны (`/json/countrycodes`): поле `name` формата
@@ -123,8 +149,10 @@ impl RadioBrowserClient {
   `serde(default)` (0 и пустые строки), поэтому снимки, записанные до Этапа 8,
   читаются без миграции.
 - Клиент дешёво клонируется (`Arc` внутри) и используется из GUI и фоновых задач.
-- `search` всегда передаёт `hidebroken`, `order=votes`, `reverse=true`; `limit` и `offset`
-  добавляются только при значении больше нуля. Пустые строковые фильтры отбрасываются,
+- `search` всегда передаёт `hidebroken`, `reverse=true` и `order` из
+  `SearchParams` (по умолчанию `votes`); `limit` и `offset` добавляются только при
+  значении больше нуля. `Random` не передаёт `reverse` и закрывает пагинацию:
+  смена `offset` даёт другой набор (ADR-0066). Пустые строковые фильтры отбрасываются,
   значения обрезаются по краям. Станции без `url_resolved` в результат не попадают.
 - При `has_geo_info = true` добавляется фильтр `has_geo_info=true`; клиент не проверяет
   координаты — это делает вызывающая сторона (`geo_lat`/`geo_long` могут быть `null`).

@@ -64,6 +64,7 @@ pub struct SearchParams {
     pub hide_broken: bool,
     pub has_geo_info: bool,                // только станции с координатами
     pub bitrate_max: Option<u32>,          // потолок битрейта (`bitrateMax`)
+    pub order: StationOrder,               // порядок выдачи (`order`, ADR-0066)
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -118,17 +119,20 @@ pub struct Station {
 
 | Метод | Эндпоинт | Назначение |
 |-------|----------|------------|
-| GET | `/json/stations/search` | Поиск; `hidebroken`, `order=votes`, `reverse=true`, фильтры `name`, `countrycode`, `tag`, `language`, `has_geo_info`, `limit`, `offset` |
+| GET | `/json/stations/search` | Поиск; `hidebroken`, `reverse=true`, `order` из `SearchParams` (по умолчанию `votes`), фильтры `name`, `countrycode`, `tag`, `language`, `has_geo_info`, `limit`, `offset` |
 | GET | `/json/stations/search` (Roulette) | `order=random&limit=24&offset=<0..499>&has_geo_info=true&hidebroken=true`, без `reverse`; выбор станции и исключения — на клиенте, до трёх попыток |
 | GET | `/json/stations/byuuid/<uuid>` | Станция по UUID |
 | GET | `/json/url/<uuid>` | Click-tracking при старте воспроизведения |
 
 Станции без `url_resolved` отбрасываются при поиске. Воспроизведение всегда использует
 `url_resolved`. `geo_lat`/`geo_long` передаются как есть (`Option<f64>`); фильтр
-`has_geo_info=true` добавляется только при `SearchParams::has_geo_info`. Сессия
-больше не выставляет его для поиска: список страны полный и пагинируется, а
-маркеры — подмножество строк с координатами (ADR-0036, ред. 2026-10-28).
-Валидацию координат и группировку маркеров выполняет Application Core (ADR-0012).
+`has_geo_info=true` добавляется только при `SearchParams::has_geo_info`. Слой карты
+глобуса выставляет его отдельным запросом по стране/жанру (ADR-0065), а список
+страны остаётся полным и пагинируется. Валидацию координат и группировку маркеров
+выполняет Application Core (ADR-0012). `order` — подмножество официального
+параметра: `Rating → votes` (по умолчанию), `Popularity → clickcount`,
+`Trend → clicktrend`, `Quality → bitrate`, `Name → name`, `Random → random`;
+`Random` не передаёт `reverse` и закрывает пагинацию (ADR-0066).
 `bitrate_max` добавляет `bitrateMax=<n>`; `None` параметр не передаёт. Потолок
 применяется только к discovery: профиль `Metered` выставляет 128, профиль
 `offline-first` — без потолка. Станции с неизвестным битрейтом (`0`) не
