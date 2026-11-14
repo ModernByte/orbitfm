@@ -463,29 +463,30 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
         frame_stats::end(frame_stats::Metric::MarkersPaint, started);
     }
 
-    // Веер рисуется поверх маркеров, но под callout страны и станции: карточка
-    // «+N» обходит их прямоугольники (ADR-0065 § 3).
-    let chips = fan::chips(ui, state.fan, state.markers, &clusters, fan_input, palette);
-    let mut fan_clicked = chips.clicked;
-    response.actions.extend(chips.actions);
-
-    let active_country = state
-        .country_enabled
-        .then_some(match state.selected_country {
-            Some(country) => {
-                country_card(country, state.markers, state.country_counts, state.geo, 1.0)
-            }
-            None => hovered_country.and_then(|country| {
-                country_card(
-                    country,
-                    state.markers,
-                    state.country_counts,
-                    state.geo,
-                    CALLOUT_HOVER_ALPHA,
-                )
-            }),
-        })
-        .flatten();
+    // Открытый веер — активное меню: плашка страны уступает ему место, иначе
+    // выбранная страна накрывает чипы рядом с кластером (ADR-0065 § 3).
+    let fan_open = state.fan.is_open();
+    let active_country = if fan_open {
+        None
+    } else {
+        state
+            .country_enabled
+            .then_some(match state.selected_country {
+                Some(country) => {
+                    country_card(country, state.markers, state.country_counts, state.geo, 1.0)
+                }
+                None => hovered_country.and_then(|country| {
+                    country_card(
+                        country,
+                        state.markers,
+                        state.country_counts,
+                        state.geo,
+                        CALLOUT_HOVER_ALPHA,
+                    )
+                }),
+            })
+            .flatten()
+    };
     update_callout(
         state.country_callout,
         active_country,
@@ -528,6 +529,13 @@ pub(crate) fn show(ui: &mut egui::Ui, palette: &Palette, state: GlobeState<'_>) 
     if callout_fading {
         repaint::schedule(ui.ctx(), RepaintReason::Callout);
     }
+
+    // Веер рисуется поверх маркеров и callout'ов: чипы — активное меню,
+    // и плашка страны не должна их накрывать. Карточка «+N» по-прежнему
+    // обходит прямоугольники callout'ов (ADR-0065 § 3).
+    let chips = fan::chips(ui, state.fan, state.markers, &clusters, fan_input, palette);
+    let mut fan_clicked = chips.clicked;
+    response.actions.extend(chips.actions);
 
     // Карточка «+N» — последний канал: она уступает место стране и станции.
     let card = fan::card(
