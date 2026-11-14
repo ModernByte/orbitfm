@@ -8,6 +8,15 @@ use glam::Vec3;
 
 /// Радиус маркера одинаков для всех станций, px.
 const MARKER_RADIUS: f32 = 3.0;
+/// Кластер крупнее одиночной точки: две ступени по числу станций (ADR-0065).
+const CLUSTER_RADIUS_SMALL: f32 = 1.2;
+const CLUSTER_RADIUS_LARGE: f32 = 2.6;
+/// Кольцо и счётчик кластера.
+const CLUSTER_RING_GAP: f32 = 3.0;
+const CLUSTER_RING_ALPHA: u8 = 150;
+/// От вершины числа станций кластер показывает счётчик (ADR-0065 § 2).
+const CLUSTER_COUNT_FROM: usize = 5;
+const CLUSTER_COUNT_SIZE: f32 = 9.0;
 const MARKER_GLOW_RADIUS: f32 = 2.5;
 const MARKER_GLOW_ALPHA: u8 = 34;
 /// Кольцо наведения отходит от маркера на столько пикселей.
@@ -40,6 +49,8 @@ pub struct MarkerLabel {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MarkerVisual {
     pub pos: Pos2,
+    /// Сколько станций стоит за точкой: сумма гео-групп кластера (ADR-0065).
+    pub count: usize,
     /// Станция сейчас в эфире: пульсирующее кольцо того же цвета.
     pub playing: bool,
     /// Станция выбрана в списке или на глобусе: постоянное внешнее кольцо
@@ -108,6 +119,15 @@ pub fn paint_markers(
     }
 }
 
+/// Радиус точки по числу станций кластера: две ступени, без логарифмов.
+fn cluster_radius(count: usize) -> f32 {
+    match count {
+        0..=1 => MARKER_RADIUS,
+        2..=4 => MARKER_RADIUS + CLUSTER_RADIUS_SMALL,
+        _ => MARKER_RADIUS + CLUSTER_RADIUS_LARGE,
+    }
+}
+
 fn paint_marker(
     painter: &Painter,
     marker: &MarkerVisual,
@@ -115,18 +135,56 @@ fn paint_marker(
     color: Color32,
     time: f64,
 ) {
+    let radius = cluster_radius(marker.count);
     let fill = if hovered { lighten(color, 0.28) } else { color };
-    painter.circle_filled(
-        marker.pos,
-        MARKER_RADIUS + MARKER_GLOW_RADIUS,
-        Color32::from_rgba_unmultiplied(fill.r(), fill.g(), fill.b(), MARKER_GLOW_ALPHA),
-    );
-    painter.circle_filled(marker.pos, MARKER_RADIUS, fill);
+    // Гало — только у активных и выбранных: обычный маркер рисуется двумя
+    // формами вместо трёх (бюджет тесселяции, ADR-0065 § 5).
+    if marker.playing || marker.selected {
+        painter.circle_filled(
+            marker.pos,
+            radius + MARKER_GLOW_RADIUS,
+            Color32::from_rgba_unmultiplied(fill.r(), fill.g(), fill.b(), MARKER_GLOW_ALPHA),
+        );
+    }
+    painter.circle_filled(marker.pos, radius, fill);
     painter.circle_stroke(
         marker.pos,
-        MARKER_RADIUS,
+        radius,
         Stroke::new(1.0, Color32::from_white_alpha(190)),
     );
+
+    // Вес кластера: кольцо с 2 станций, счётчик — с `CLUSTER_COUNT_FROM`.
+    if marker.count >= CLUSTER_COUNT_FROM {
+        painter.circle_stroke(
+            marker.pos,
+            radius + CLUSTER_RING_GAP,
+            Stroke::new(
+                1.0,
+                Color32::from_rgba_unmultiplied(
+                    color.r(),
+                    color.g(),
+                    color.b(),
+                    CLUSTER_RING_ALPHA,
+                ),
+            ),
+        );
+        painter.text(
+            Pos2::new(
+                marker.pos.x + radius + CLUSTER_RING_GAP + 1.0,
+                marker.pos.y - radius,
+            ),
+            egui::Align2::LEFT_BOTTOM,
+            marker.count.to_string(),
+            FontId::proportional(CLUSTER_COUNT_SIZE),
+            LABEL_TITLE_COLOR,
+        );
+    } else if marker.count >= 2 {
+        painter.circle_stroke(
+            marker.pos,
+            radius + CLUSTER_RING_GAP,
+            Stroke::new(1.0, Color32::from_white_alpha(140)),
+        );
+    }
 
     if marker.playing {
         // Гало дышит в такт кольцам, а сами кольца идут в противофазе:
@@ -135,16 +193,16 @@ fn paint_marker(
         let glow = (PULSE_GLOW_ALPHA * (1.0 - 0.55 * phase)).round() as u8;
         painter.circle_filled(
             marker.pos,
-            PULSE_GLOW_RADIUS + 1.5 * phase,
+            radius + PULSE_GLOW_RADIUS + 1.5 * phase,
             Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), glow),
         );
         for offset in [0.0, 0.5] {
             let ring_phase = (phase + offset).fract();
-            let radius = MARKER_RADIUS + 1.0 + PULSE_RING_SPAN * ring_phase;
+            let ring_radius = radius + 1.0 + PULSE_RING_SPAN * ring_phase;
             let alpha = (PULSE_RING_ALPHA * (1.0 - ring_phase)).round() as u8;
             painter.circle_stroke(
                 marker.pos,
-                radius,
+                ring_radius,
                 Stroke::new(
                     PULSE_RING_WIDTH,
                     Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha),
@@ -156,7 +214,7 @@ fn paint_marker(
     if marker.selected {
         painter.circle_stroke(
             marker.pos,
-            MARKER_RADIUS + SELECTED_RING_GAP,
+            radius + SELECTED_RING_GAP,
             Stroke::new(
                 SELECTED_RING_WIDTH,
                 Color32::from_white_alpha(SELECTED_RING_ALPHA),
@@ -167,7 +225,7 @@ fn paint_marker(
     if hovered {
         painter.circle_stroke(
             marker.pos,
-            MARKER_RADIUS + HOVER_RING_GAP,
+            radius + HOVER_RING_GAP,
             Stroke::new(HOVER_RING_WIDTH, Color32::from_white_alpha(220)),
         );
     }
@@ -302,6 +360,9 @@ mod tests {
             let visuals: Vec<MarkerVisual> = (0..count)
                 .map(|index| MarkerVisual {
                     pos: Pos2::new((index * 37 % 1100) as f32, (index * 53 % 800) as f32),
+                    // Каждый десятый — кластер со счётчиком, остальные — обычные
+                    // точки: замер отражает смешанный слой карты.
+                    count: if index % 10 == 0 { 6 } else { 1 },
                     playing: index % 20 == 0,
                     selected: index % 50 == 0,
                 })

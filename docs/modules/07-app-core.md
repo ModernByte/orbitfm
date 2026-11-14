@@ -58,6 +58,10 @@ pub(crate) struct OrbitApp<'a> {
     orbit_ring: OrbitRing,
     /// Callout выбранной/наведённой страны с fade-переходами.
     callout: CalloutState,
+    /// Callout активной станции: отдельный канал, обходит страну.
+    station_callout: CalloutState,
+    /// Веер станций кластера: hover/pin, чипы и карточка «+N» (ADR-0065 § 3).
+    fan: FanState,
     visualizer: VisualizerModel,
     favicons: FaviconCache,
     artwork: ArtworkFetcher,
@@ -142,7 +146,7 @@ struct Frame {
     settings: Settings,
     playback: PlaybackState,
     volume: f64,
-    markers_total: usize,
+    map_stations: usize,
     current_favorite: bool,
     can_resume: bool,
     spectrum_target: Option<SpectrumTarget>,
@@ -166,18 +170,26 @@ struct Frame {
 `session.audio.state()`, `session.audio.volume()`, `session.audio.spectrum()` →
 `SpectrumTarget` (шесть агрегатов и `bands` через `BandTargets::from_db`),
 `session.motion_reactivity()` и `settings.motion_style` для движения, сумма
-`marker.count` в `markers_total`, `library.is_favorite` для
+`marker.count()` в `map_stations`, `library.is_favorite` для
 текущей станции, `current_url.is_some()` в `can_resume`,
 `search.context.mode == SearchMode::Country` в `country_mode`,
 `session.effective_language()` в `language` и
 `DeskLayout::compute(viewport, panel_open, show_help, session.window_mode())`
 в `layout`. Там же считается шаг
 анимации визуализатора (`advance` по `stable_dt` и `time`). `GlobeMarker` (в
-`src/session/markers.rs`) хранит представителя группы, координаты, количество станций,
-список UUID участников, максимальный по группе сигнал популярности (`votes`) и
-максимальный битрейт — оба уходят только в подпись при наведении. Маркер считается играющим, если текущий `stationuuid`
-входит в `members`: в одном городском узле станций больше одной, и пульс должен ловиться
-на любой из них.
+`src/session/markers.rs`) хранит **все** станции гео-группы (`stations:
+Vec<Station>` в порядке каталога), координаты, максимальный по группе сигнал
+популярности (`votes`) и максимальный битрейт — оба уходят только в подпись при
+наведении. Представитель и число станций читаются через `station()` и `count()`;
+полный список нужен вееру и карточке «+N» (ADR-0065 § 3). Маркер считается
+играющим, если текущий `stationuuid` входит в `stations`: в одном городском узле
+станций больше одной, и пульс должен ловиться на любой из них.
+
+`Frame` не хранит число кластеров: `draw_layers` рисует глобус раньше панели и
+передаёт `GlobeResponse.clusters` текущего кадра в `PanelState::map_points` рядом
+с `Frame::map_stations`. Поэтому подписи «A станций» и «B точек» относятся к
+одному и тому же кадру и не смешивают станции с числом нарисованных форм
+(ADR-0065 § 4).
 
 `SearchMode` определён в `src/session/search.rs` (режим выбирает ядро), `src/ui/mod.rs`
 делает только ре-экспорт; `LibraryTab` определён в `src/session/mod.rs` и импортируется
@@ -240,7 +252,8 @@ src/ui/
 ├── sleep_warning.rs  # окно предупреждения таймера сна: кольцо, рампа, «Отменить» (ADR-0058)
 ├── overlays.rs       # help-карточка управления и легенда карты стран с выбором метрики
 ├── globe_view.rs     # ввод камеры, проекция и вид маркеров, тепловая карта, гашение
-│                     # движения под курсором, каналы callout страны и станции, звёздное небо
+│                     # движения под курсором, каналы callout страны и станции, звёздное небо;
+│                     # веер станций кластера — `globe_view/fan/` (ADR-0065 § 3)
 ├── orbit_ring.rs     # орбитальное аудиокольцо Focus: корона, аврора, комета, искры (ADR-0029)
 ├── toast.rs          # стек до трёх сообщений на 3 секунды (ADR-0032)
 └── icons.rs          # векторные иконки: star, heart, dice, gear, moon, speaker, mouse, skip
@@ -428,8 +441,8 @@ IpcServer::try_bind → AudioEngine::new → GeoService::from_embedded
 ## 6. Глобус, маркеры и выбор страны
 
 Зону контента делит `center`-область: `globe_view::show` получает прямоугольник
-глобуса, камеру, маркеры, состояние спектра и `&mut CalloutState`, а возвращает
-`GlobeResponse { actions, clicked_point }`.
+глобуса, камеру, маркеры, состояние спектра, `&mut CalloutState` и `&mut FanState`,
+а возвращает `GlobeResponse { actions, clicked_point, clicked_empty, clusters }`.
 
 1. ПКМ + drag → `GlobeInput::drag_delta`; колесо при наведении → `scroll_delta`;
    ЛКМ → `primary_clicked`. Ввод под плавающими зонами отсекается
