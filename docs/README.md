@@ -25,6 +25,16 @@ counterpart and vice versa. The user guide deliberately contains no architecture
 decisions or internal design notes — if you are looking for those, use the
 developer section below.
 
+Most requested pages:
+
+| Topic | Page |
+|-------|------|
+| Install, update and remove | [Installation](user/en/install.md) |
+| Something does not work | [Troubleshooting](user/en/troubleshooting.md) |
+| Settings, theme and language | [Settings and language](user/en/settings.md) |
+| What goes online and what stays on disk | [Security and privacy](user/en/privacy.md) |
+| An unfamiliar term | [Glossary](user/en/glossary.md) |
+
 ## For developers
 
 | Document | What is inside |
@@ -37,6 +47,7 @@ developer section below.
 | [Patterns catalog](patterns/00-overview.md) | Reusable structural patterns used in the codebase |
 | [Roadmap](ROADMAP.md) · [Version map](VERSIONMAP.md) · [Changelog](CHANGELOG.md) | Plans, release contents and history |
 | [Audits and research](audit/) | Security, performance and product research |
+| [Acknowledgements](dev/acknowledgements.md) | Dependencies, licenses and asset credits |
 | [Agent rules](AGENTS.md) · [Contributing](CONTRIBUTING.md) | Workflow, code style and review rules |
 
 Architecture Decision Records are the only place where architectural decisions
@@ -53,3 +64,9 @@ guide; the user-facing pages describe behavior, not the reasoning behind it.
 - UI strings are localized separately in the application itself (seventeen
   languages, including English and Russian); see
   [Settings and language](user/en/settings.md).
+
+## Legal
+
+OrbitFM is distributed under the MIT License, “as is”, without warranties. The
+full disclaimer in English and Russian is in [LEGAL.md](../LEGAL.md); the license
+text is in [LICENSE](../LICENSE).

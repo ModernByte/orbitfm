@@ -321,6 +321,31 @@ controls and shortcuts, integrations, the browser panel, window rules, the tray
 and MPRIS, ten use cases, troubleshooting and a glossary. The same pages are in
 the [docs hub](docs/README.md).
 
+The essentials:
+
+| Topic | Page |
+|-------|------|
+| Install, update and remove | [Installation](docs/user/en/install.md) |
+| First launch and sound | [First launch](docs/user/en/first-launch.md) |
+| Settings, theme and language | [Settings and language](docs/user/en/settings.md) |
+| Something does not work | [Troubleshooting](docs/user/en/troubleshooting.md) |
+| What goes online and what stays on disk | [Security and privacy](docs/user/en/privacy.md) |
+| An unfamiliar term | [Glossary](docs/user/en/glossary.md) |
+
+## Troubleshooting
+
+A short cheat sheet; the full “symptom → why → what to do” catalog is on the
+[Troubleshooting](docs/user/en/troubleshooting.md) page, together with log
+collection and resetting settings.
+
+| Symptom | First thing to check |
+|---------|----------------------|
+| No sound | The station is playing (`orbitfm status` → `playing`), volume is not zero, the system output device is right |
+| Empty search or country list | Network access to `all.api.radio-browser.info`; the offline snapshot still shows up to 500 recent stations |
+| No tray icon | On Linux the shell needs SNI (StatusNotifierItem) support; on Windows the tray is intentionally not implemented |
+| `orbitfm` command not found | `~/.local/bin` is not in `PATH` — add the directory to your shell profile |
+| The window does not appear | `orbitfm show`; if the process does not respond — `orbitfm quit` and start again |
+
 ## Security and privacy
 
 The short version: any process running as your user can control the player over a
@@ -376,11 +401,13 @@ borders, Noto for fonts and flags, noctalia.dev, niri and Hyprland for the
 environment it was designed for. The full dependency table and asset credits are
 in [docs/dev/acknowledgements.md](docs/dev/acknowledgements.md).
 
-## Legal
+## Legal and disclaimer
 
 OrbitFM is distributed under the MIT License, “as is”, without warranties; you are
 responsible for the rights in a station's content and for the legality of
-listening to it where you live. The full disclaimer in English and Russian is in
+listening to it where you live. The authors and contributors are not liable for
+station content or for the consequences of using the application, to the extent
+permitted by applicable law. The full disclaimer in English and Russian is in
 [LEGAL.md](LEGAL.md); the license text is in [LICENSE](LICENSE).
 
 ---
