@@ -95,6 +95,18 @@ jobs:
       - name: cargo deny check
         run: bash packaging/cargo-deny-check.sh
 
+  # Пользовательская документация двуязычная, а ADR живут только в разделе для
+  # разработчиков. Job не требует системных библиотек и ловит рассинхрон деревьев.
+  docs:
+    name: docs (bilingual, no ADR)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check user documentation
+        run: bash packaging/check-docs.sh
+
   # Заявленный `rust-version = "1.95"` проверяется не словом, а компилятором:
   # без этого job MSRV дрейфует молча, стоит зависимости поднять требования.
   msrv:
@@ -566,6 +578,7 @@ jobs:
 
       - name: Check AppImage and native installer script syntax
         run: |
+          bash -n install.sh
           bash -n packaging/cargo-deny-check.sh
           bash -n packaging/linux/build-appimage.sh
           bash -n packaging/linux/install-appimage.sh

@@ -264,4 +264,4 @@ native-манифест в `<user-data-dir>/NativeMessagingHosts`; брендо�
 - ADR-0039 — поток событий состояния
 - `docs/interfaces/14-native-host.md`
 - `docs/modules/16-integrations.md`
-- `docs/wiki/Интеграции-браузер.md`
+- `docs/user/ru/browser.md`

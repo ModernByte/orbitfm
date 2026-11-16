@@ -480,7 +480,7 @@ jobs:
           sha256sum -- "${files[@]}" > SHA256SUMS
           cat SHA256SUMS
 
-      - name: Собрать текст релиза из CHANGELOG
+      - name: Собрать текст релиза из CHANGELOG и английского перевода
         env:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
@@ -489,15 +489,27 @@ jobs:
             index($0, "## [" version "]") == 1 { take = 1; next }
             take && /^## \[/ { take = 0 }
             take { print }
-          ' docs/CHANGELOG.md > release-notes.md
-          if [[ ! -s release-notes.md ]]; then
+          ' docs/CHANGELOG.md > release-notes.ru.md
+          if [[ ! -s release-notes.ru.md ]]; then
             echo "в docs/CHANGELOG.md нет секции [$VERSION] — релиз без текста не выкатываем" >&2
             exit 1
           fi
+          en_notes="docs/releases/en/$VERSION.md"
+          if [[ ! -s "$en_notes" ]]; then
+            echo "нет английского текста релиза: $en_notes (шаблон — docs/dev/release-notes.md)" >&2
+            exit 1
+          fi
           {
+            cat release-notes.ru.md
             echo ""
-            echo "Руководство пользователя — в [вики проекта](https://github.com/ModernByte/orbitfm/wiki)."
-          } >> release-notes.md
+            echo "---"
+            echo ""
+            echo "## English"
+            echo ""
+            cat "$en_notes"
+            echo ""
+            echo "**User guide:** [English](https://github.com/ModernByte/orbitfm/blob/main/docs/user/en/index.md) · [Русский](https://github.com/ModernByte/orbitfm/blob/main/docs/user/ru/index.md). **Documentation:** [hub](https://github.com/ModernByte/orbitfm/blob/main/docs/README.md)."
+          } > release-notes.md
           cat release-notes.md
 
       - name: Publish GitHub Release

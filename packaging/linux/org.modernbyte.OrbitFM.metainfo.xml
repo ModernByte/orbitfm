@@ -30,22 +30,22 @@
     <screenshot type="default">
       <caption>Focus desk with the 3D globe and the station list</caption>
       <caption xml:lang="ru">Стол Focus с 3D-глобусом и списком станций</caption>
-      <image type="source">https://raw.githubusercontent.com/ModernByte/orbitfm/main/docs/wiki/images/01-focus.png</image>
+      <image type="source">https://raw.githubusercontent.com/ModernByte/orbitfm/main/docs/user/images/01-focus.png</image>
     </screenshot>
     <screenshot>
       <caption>Settings: appearance, language and motion</caption>
       <caption xml:lang="ru">Настройки: оформление, язык и движение</caption>
-      <image type="source">https://raw.githubusercontent.com/ModernByte/orbitfm/main/docs/wiki/images/02-settings.png</image>
+      <image type="source">https://raw.githubusercontent.com/ModernByte/orbitfm/main/docs/user/images/02-settings.png</image>
     </screenshot>
     <screenshot>
       <caption>First-run wizard: language and theme</caption>
       <caption xml:lang="ru">Мастер первого запуска: язык и тема</caption>
-      <image type="source">https://raw.githubusercontent.com/ModernByte/orbitfm/main/docs/wiki/images/08-onboarding.png</image>
+      <image type="source">https://raw.githubusercontent.com/ModernByte/orbitfm/main/docs/user/images/08-onboarding.png</image>
     </screenshot>
     <screenshot>
       <caption>Integrations: panels, desktops and browsers</caption>
       <caption xml:lang="ru">Интеграции: панели, окружения и браузеры</caption>
-      <image type="source">https://raw.githubusercontent.com/ModernByte/orbitfm/main/docs/wiki/images/09-integrations.png</image>
+      <image type="source">https://raw.githubusercontent.com/ModernByte/orbitfm/main/docs/user/images/09-integrations.png</image>
     </screenshot>
   </screenshots>
   <launchable type="desktop-id">org.modernbyte.OrbitFM.desktop</launchable>

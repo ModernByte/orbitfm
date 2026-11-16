@@ -89,6 +89,14 @@ orbitfm/
 │   ├── settings/
 │   └── ipc/
 ├── docs/
+│   ├── README.md            # хаб документации (английский по умолчанию)
+│   ├── README.ru.md         # хаб документации (русский)
+│   ├── user/
+│   │   ├── en/              # руководство пользователя, английский
+│   │   ├── ru/              # руководство пользователя, русский
+│   │   └── images/          # общие скриншоты
+│   ├── dev/                 # раздел для разработчиков, индекс ADR
+│   ├── releases/en/         # английский текст описаний релизов
 │   ├── architecture/
 │   ├── adr/
 │   ├── modules/
@@ -128,6 +136,17 @@ CI исполняет `fmt`, `clippy -D warnings`, `cargo test --all-targets` и
 - Значимые решения — ADR
 - Структура кода — [docs/patterns/00-overview.md](patterns/00-overview.md)
 - Изменения поведения — запись в CHANGELOG
+- Пользовательская документация двуязычная: английский по умолчанию в
+  [docs/user/en](user/en/index.md), русский — в [docs/user/ru](user/ru/index.md).
+  Имена файлов совпадают, на каждой странице есть переключатель языка.
+- Пользовательские страницы не упоминают ADR и не ссылаются в `adr/`, `modules/`,
+  `interfaces/`. ADR — только в [разделе для разработчиков](dev/README.md).
+- Описание релиза двуязычное: русский текст — секция `## [X.Y.Z]` в
+  [CHANGELOG](CHANGELOG.md), английский — `docs/releases/en/X.Y.Z.md`. Первый
+  абзац обоих — самодостаточное превью по шаблону
+  [dev/release-notes.md](dev/release-notes.md); без английского файла release
+  workflow не публикует релиз.
+- Перед PR: `bash packaging/check-docs.sh` (то же исполняет CI-job `docs`).
 
 ## 6. AI-агенты
 

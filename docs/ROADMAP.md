@@ -115,6 +115,9 @@
   артефакт без нотаризации
 - [x] AppImage desktop integration: `packaging/linux/install-appimage.sh` —
   rootless установка в меню и `PATH`, `--uninstall`, публикация скрипта в релизе
+- [x] Установка одной командой (0.23.0-rc.2): `install.sh` — последний релиз
+  через GitHub API, `--release`/`--dry-run`/`--uninstall`, сверка
+  `SHA256SUMS`, `--extract-and-run` без `libfuse2`
 - [x] Flathub-подготовка: скриншоты в AppStream, `appstreamcli` без новых
   замечаний; путь подачи и ограничения описаны в ADR-0011
 - [ ] Публикация в Flathub — заблокировано: нужен удалённый источник вместо
@@ -234,7 +237,7 @@
 - [x] Пре-релиз 0.10.0-rc.1: CHANGELOG, VERSIONMAP, metainfo и README сведены,
       артефакты собирает release-workflow на теге `v0.10.0-rc.1`
       (AppImage / MSI / DMG + `SHA256SUMS`)
-- [x] Пользовательская документация: `docs/wiki` (Home + 10 страниц со схемами,
+- [x] Пользовательская документация: `docs/user` (Home + 10 страниц со схемами,
       скриншотами живых режимов, сценариями и глоссарием) и переписанный под
       пользователя README с атрибуциями и юридическим отказом от ответственности
 
@@ -322,7 +325,7 @@
 - [x] Документация: ADR-0021 / 0031 / 0033 (правки), `docs/interfaces/05-ipc.md`,
       `07-app.md`, `09-settings.md`, `10-session.md`, `docs/modules/05-ipc.md`,
       `07-app-core.md`, `08-noctalia-wm.md`, `11-session.md`, `14-ui-settings.md`,
-      README, CHANGELOG, `docs/wiki`, skill-ассеты `orbitfm-ipc` и `orbitfm-integration`
+      README, CHANGELOG, `docs/user`, skill-ассеты `orbitfm-ipc` и `orbitfm-integration`
 - [x] Live-приёмка геометрии на niri 26.04 (2026-10-28): Focus 1100×800, `Overlay`
       500×620, `Listening` 420×152 и `Panel` 400×640 подтверждены `niri msg windows`;
       капсулы без рамки и тени; `overlay`/`panel` переключаются, 30 циклов
@@ -540,6 +543,54 @@
       CHANGELOG/VERSIONMAP и план кадров обновлены
 - [x] Релиз `v0.23.0-rc.1`: AppImage собран и установлен локально,
       prerelease опубликован с артефактами и `SHA256SUMS`
+
+## Поставка 0.23.0-rc.2: установка одной командой (2026-11-16)
+
+- [x] `install.sh` в корне: последний релиз через GitHub API, `--release`,
+      `--dry-run`, `--uninstall` без сети сохранённым помощником, сверка
+      `SHA256SUMS` для AppImage и `install-appimage.sh`, только Linux x86_64,
+      root не нужен
+- [x] `install-appimage.sh --extract-and-run`: `env APPIMAGE_EXTRACT_AND_RUN=1`
+      в `Exec`, когда нет `libfuse2` (Ubuntu 24.04+); `desktop-file-validate`
+      проходит
+- [x] ADR-0011 — уточнение 2026-11-16; README и
+      `docs/user/{en,ru}/install.md` описывают одну команду
+- [x] Двуязычные описания релизов: русский блок в `docs/CHANGELOG.md`,
+      английский в `docs/releases/en/<версия>.md`; шаблон
+      `docs/dev/release-notes.md`; release-workflow и `check-docs.sh` требуют
+      английский файл
+- [x] `bash -n install.sh` в CI-job `packaging`
+- [x] Проверка установщика на временном XDG-корне: `--dry-run`, установка,
+      `--extract-and-run`, `--uninstall`, `desktop-file-validate`
+
+## Документация 1.0: двуязычное руководство (2026-11-15)
+
+Пользовательская документация должна быть понятна обычному человеку и доступна
+на английском (по умолчанию) и русском. ADR — только в разделе для
+разработчиков, на пользовательских страницах их нет.
+
+- [x] Дерево `docs/user/en` — английское руководство (17 страниц), `docs/user/ru`
+      — русский перевод с теми же именами файлов; изображения общие в
+      `docs/user/images`
+- [x] Переключатель языка на каждой странице; `_Sidebar` на двух языках
+- [x] Упоминания ADR убраны из пользовательских страниц (6 мест), факты
+      переписаны пользовательским языком; добавлена страница «Безопасность и
+      приватность» на двух языках
+- [x] `docs/README.md` / `docs/README.ru.md` — хаб документации; `docs/dev/` —
+      раздел для разработчиков с английским индексом ADR, правилами инженерии и
+      проверками
+- [x] `README.md` — английская посадочная страница (по умолчанию),
+      `README.ru.md` — русская; юридический текст вынесен в `LEGAL.md`, таблица
+      зависимостей — в `docs/dev/acknowledgements.md`
+- [x] CI: job `docs` + `packaging/check-docs.sh` — паритет деревьев,
+      переключатели, запрет ADR на пользовательских страницах, живые ссылки,
+      отсутствие `docs/wiki`
+- [x] Политика синхронизирована: `docs/AGENTS.md`, скиллы `orbitfm-core` и
+      `orbitfm-docs`
+- [ ] Зеркало GitHub Wiki: страницы вики публикуются вручную из `docs/user/ru`
+      (исторические URL вида `01-Установка` больше не совпадают с именами
+      файлов). Решение владельца: обновить вики из нового дерева или оставить
+      канонической документацию в репозитории
 
 ## Интеграции: macOS, оболочки и браузеры (0.13 → 0.15)
 

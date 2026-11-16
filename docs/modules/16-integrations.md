@@ -528,4 +528,4 @@ Waybar, Polybar, i3blocks, swaybar, i3status-rust, XFCE, Cinnamon, MATE и LXQt
 - `docs/modules/14-ui-settings.md` — страница «Интеграции»
 - `docs/modules/17-browser-companion.md` — браузерные цели
 - `docs/modules/08-noctalia-wm.md` — плагин Noctalia и тексты правил окон
-- `docs/wiki/06-Интеграции.md` — пользовательская инструкция
+- `docs/user/ru/integrations.md` — пользовательская инструкция

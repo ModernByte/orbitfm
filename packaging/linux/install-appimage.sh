@@ -6,6 +6,9 @@ set -euo pipefail
 # иконки и metainfo в XDG_DATA_HOME, обновляет кэши и умеет --uninstall.
 # Desktop-файл правится построчно по точному префиксу ключа, без регулярных
 # выражений; остальные строки переносятся байт в байт.
+# --extract-and-run добавляет в Exec APPIMAGE_EXTRACT_AND_RUN=1: так меню
+# работает на системах без libfuse2 (Ubuntu 24.04+), ценой распаковки при
+# каждом запуске.
 
 PROG="$(basename -- "${BASH_SOURCE[0]}")"
 SCRIPT_PATH="$(readlink -f -- "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")"
@@ -32,14 +35,16 @@ trap cleanup EXIT
 
 usage() {
     cat <<EOF
-Использование: bash $PROG [--uninstall] [--help] <OrbitFM-*.AppImage>
+Использование: bash $PROG [--uninstall | --extract-and-run] [--help] <OrbitFM-*.AppImage>
 
 Без флагов ставит AppImage в $DEST, добавляет пункт меню
 «OrbitFM», иконки и metainfo в $DATA_HOME, затем обновляет кэши.
 Права root не нужны; исходный файл AppImage не изменяется.
 
-  --uninstall  удалить только те файлы, которые установил этот скрипт
-  --help       показать эту справку
+  --uninstall        удалить только те файлы, которые установил этот скрипт
+  --extract-and-run  запускать образ через APPIMAGE_EXTRACT_AND_RUN=1, если
+                     в системе нет libfuse2 (иначе меню не запустится)
+  --help             показать эту справку
 EOF
 }
 
@@ -73,6 +78,11 @@ rewrite_desktop() {
     local target="$2"
     local line args program rest exec_path saw_exec=0
     exec_path="$(quote_exec "$DEST")"
+    if [[ "$EXTRACT_AND_RUN" -eq 1 ]]; then
+        # Desktop Entry не умеет Assignments, поэтому переменная передаётся
+        # через env: пункт меню работает без libfuse2.
+        exec_path="env APPIMAGE_EXTRACT_AND_RUN=1 $exec_path"
+    fi
     while IFS= read -r line || [[ -n "$line" ]]; do
         case "$line" in
             Exec=*)
@@ -243,10 +253,12 @@ uninstall_appimage() {
 }
 
 MODE=install
+EXTRACT_AND_RUN=0
 SOURCE=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --uninstall) MODE=uninstall ;;
+        --extract-and-run) EXTRACT_AND_RUN=1 ;;
         --help | -h)
             usage
             exit 0
@@ -266,6 +278,7 @@ done
 
 if [[ "$MODE" == uninstall ]]; then
     [[ -z "$SOURCE" ]] || fail "--uninstall не принимает путь к AppImage"
+    [[ "$EXTRACT_AND_RUN" -eq 0 ]] || fail "--extract-and-run не сочетается с --uninstall"
     uninstall_appimage
 else
     [[ -n "$SOURCE" ]] || {

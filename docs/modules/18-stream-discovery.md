@@ -211,4 +211,4 @@ TCP-сервере, а не отдельным живым прогоном.
 - ADR-0038 — браузерное расширение и native messaging host
 - `docs/interfaces/05-ipc.md` — команда `play-url` и ответы
 - `docs/modules/17-browser-companion.md` — попап и скан вкладки
-- `docs/wiki/Интеграции-браузер.md` — пользовательская инструкция
+- `docs/user/ru/browser.md` — пользовательская инструкция
