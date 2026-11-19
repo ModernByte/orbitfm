@@ -19,7 +19,7 @@ three paths — if you just want to listen to radio, take the ready-made package
 ## 1. Ready-made packages
 
 The files are on the releases page: <https://github.com/ModernByte/orbitfm/releases>. In 0.23.0-rc.2 there are six
-builds and `SHA256SUMS`:
+files and `SHA256SUMS`:
 
 | File | System |
 |---|---|

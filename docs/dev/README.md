@@ -64,6 +64,12 @@ Rules that keep the tree honest:
 4. **Developer documents are written in Russian**, the project’s working
    language. The English ADR index exists so non-Russian readers can find the
    right record; the record itself stays authoritative.
+5. **The GitHub wiki is generated, not hand-written.** `packaging/wiki-sync.sh`
+   copies `docs/user/{en,ru}` into wiki pages (`Home`, `Install`, … and the same
+   names with a `-ru` suffix), rewrites relative links, builds the bilingual
+   `_Sidebar`/`_Footer` and refuses to finish if a page loses its language
+   switch, links to a missing page or mentions an ADR. `--push` updates the wiki
+   repository; edit the guide, never the wiki.
 
 ## Engineering rules in one screen
 
@@ -90,6 +96,8 @@ cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test --locked
 packaging/cargo-deny-check.sh
+packaging/check-docs.sh
+packaging/wiki-sync.sh --check
 ```
 
 Platform packaging lives in `packaging/` (AppImage, Flatpak, MSI, DMG). CI runs

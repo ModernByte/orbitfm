@@ -33,11 +33,12 @@ Since 0.16 the menu is grouped: the station card on top, then transport, volume,
 | Window | "Hide window" / "Show window" | hides or shows the window, playback continues |
 | Playback | heading "Playback"; "Play/Pause" (check mark), "Stop", "Previous", "Next", "Radio Roulette" | the same commands as the window and MPRIS |
 | Volume | heading "Volume · 70 %"; "Volume Up", "Volume Down" | 10 % steps; the percentage updates from the state |
+| Sleep timer | submenu "Sleep timer · 45 min" (or "12:34"): "Off", 15, 30, 45, 60, 90 min | one-shot stop timer, the same values as Settings → Audio; the label shows the time left |
 | Appearance | submenu "Appearance": "System", "Dark", "Light" | theme radio group |
 | About station | submenu "About station": "Add to favorites"/"Remove from favorites", "Open homepage" | favorites of the current station and the homepage in the browser; without a station the submenu is disabled |
 | System | "Settings…", "Quit" | Settings opens even with the window hidden; "Quit" ends the process |
 
-Transport, volume, theme, favorites and quit items carry freedesktop icons (`media-playback-*`, `audio-volume-*`, `preferences-desktop-theme`, `emblem-favorite`, `application-exit`). A host without icon support shows the labels only.
+Transport, volume, sleep, theme, favorites, window and quit items carry freedesktop icons (`media-playback-*-symbolic`, `audio-volume-*-symbolic`, `preferences-system-time-symbolic`, `preferences-desktop-theme-symbolic`, `emblem-favorite-symbolic`, `view-restore-symbolic` / `view-fullscreen-symbolic`, `application-exit-symbolic`). A host without icon support shows the labels only.
 
 The menu is translated into the interface language and rebuilds immediately after a language change — no restart needed.
 
@@ -47,6 +48,7 @@ The menu is translated into the interface language and rebuilds immediately afte
 
 - the card keeps reflecting the state: playing / paused / nothing playing;
 - "Play/Pause", "Stop", "Previous", "Next", "Radio Roulette", "Volume Up"/"Volume Down" and the wheel work without the window;
+- the "Sleep timer" submenu sets or cancels the one-shot countdown without opening Settings;
 - "About station" lets you add the current station to favorites and open its homepage in the browser;
 - "Settings…" shows the window and opens the Settings window;
 - "Quit" is the only item that stops the music and ends the process;

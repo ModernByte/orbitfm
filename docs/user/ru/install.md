@@ -18,7 +18,7 @@
 
 ## 1. Готовые пакеты
 
-Файлы на странице релизов: <https://github.com/ModernByte/orbitfm/releases>. В 0.23.0-rc.2 там шесть сборок
+Файлы на странице релизов: <https://github.com/ModernByte/orbitfm/releases>. В 0.23.0-rc.2 там шесть файлов
 и `SHA256SUMS`:
 
 | Файл | Система |

@@ -1,6 +1,7 @@
 # Navigation
 
 * [Home](index.md)
+* [Quick reference](quick-reference.md)
 * [Installation](install.md)
   * [macOS: Apple Silicon](install-macos-apple-silicon.md)
   * [macOS: Intel](install-macos-intel.md)

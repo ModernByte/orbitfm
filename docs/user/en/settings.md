@@ -115,7 +115,7 @@ The profile is saved immediately and needs no restart; the current value is repo
 `orbitfm status --json` in the `network` field.
 
 **"Statistics"** is a local answer to the question "how much and what do I listen to". The category
-is sixth in the category column, between "Window" and "Integrations", under the clock icon; the page
+is seventh in the category column, between "Catalog" and "Integrations", under the clock icon; the page
 subtitle says plainly what happens to the data: "Listening minutes stay in your user data folder and are never sent anywhere."
 The section consists of three cards:
 

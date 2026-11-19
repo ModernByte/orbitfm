@@ -41,6 +41,7 @@ macOS), MPRIS и IPC продолжают работать, а `orbitfm quit` �
 
 | Страница | О чём |
 |----------|-------|
+| [Шпаргалка](quick-reference.md) | Одна страница: размеры окон, все команды, мышь и клавиатура, пути к файлам, значения по умолчанию |
 | [Установка](install.md) | AppImage / MSI / два DMG из Releases, проверка SHA256SUMS, права, desktop-файл, сборка из исходников и системные зависимости |
 | [macOS: Apple Silicon](install-macos-apple-silicon.md) | DMG `arm64` для любого Mac на Apple Silicon: установка, Gatekeeper, `PATH`, проверка архитектуры, обновление и удаление |
 | [macOS: Intel](install-macos-intel.md) | DMG `x86_64` для Intel Mac: установка, Gatekeeper, `PATH`, проверка архитектуры, обновление и удаление, лог рендера |

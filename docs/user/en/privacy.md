@@ -21,8 +21,11 @@ covers what is useful to know without opening that document.
   mirrors (search, station details), the provider's click counter when a station
   starts, the stream itself and the artwork URL. Resolving a link through an
   explicit `play-url` reads a playlist or a page, but no more than 1 MiB. There
-  is no telemetry, analytics, background polling or self-update; the User-Agent
-  is `OrbitFM/1.0 (ModernByte; Linux; Rust)`.
+  is no telemetry, analytics or self-update, and no periodic polling: the map's
+  world sample is requested once at startup (up to three attempts while the
+  catalog is unreachable), and the offline snapshot is rewritten no more than
+  once a day. The "Offline-first" network profile turns that background request
+  off entirely. The User-Agent is `OrbitFM/1.0 (ModernByte; Linux; Rust)`.
 - **Artwork is fetched by policy, not blindly.** The `favicon` link comes from a
   third-party catalog, so the address passes two tiers: a syntactic one (private
   and reserved ranges, `localhost`, `*.local`, `*.internal`, single-label hosts
@@ -44,7 +47,7 @@ covers what is useful to know without opening that document.
 
 | File | Contents | Sent anywhere |
 |------|----------|---------------|
-| `~/.config/orbitfm/settings.json` | theme, language, volume, layout, network profile, sleep settings | no |
+| `~/.config/orbitfm/settings.json` | theme, accent, language, volume, motion, network profile, sleep behavior, catalog order | no |
 | `~/.local/share/orbitfm/library.json` | favorites, history, manual station links | no |
 | `~/.local/share/orbitfm/stats.json` | listening minutes by station, country and tag | no |
 | `~/.local/share/orbitfm/cache/stations-snapshot.json` | offline catalog snapshot | no |

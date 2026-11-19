@@ -235,7 +235,7 @@ The published 0.23.0-rc.2 does not have this, and the wiki promises nothing:
 ## See also
 
 - [Window modes](window-modes.md) — sizes, minimums and window rules
-- [Settings and language](settings.md) — all seven categories of the Settings window
+- [Settings and language](settings.md) — all nine categories of the Settings window
 - [Controls and hotkeys](controls.md) — mouse, keys, CLI
 - [Tray and MPRIS](tray-and-mpris.md) — life with the window closed
 - [Troubleshooting](troubleshooting.md) — if a scenario does not work out

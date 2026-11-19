@@ -39,6 +39,7 @@ browser panel’s “Play this page” button does the same.
 
 | Page | What it covers |
 |------|----------------|
+| [Quick reference](quick-reference.md) | One page: window sizes, every command, mouse and keyboard, file paths, default numbers |
 | [Installation](install.md) | AppImage / MSI / two DMGs from Releases, checking SHA256SUMS, permissions, the desktop file, building from source and system dependencies |
 | [macOS: Apple Silicon](install-macos-apple-silicon.md) | The `arm64` DMG for any Apple Silicon Mac: install, Gatekeeper, `PATH`, architecture check, update and removal |
 | [macOS: Intel](install-macos-intel.md) | The `x86_64` DMG for Intel Macs: install, Gatekeeper, `PATH`, architecture check, update and removal, render log |
