@@ -67,7 +67,7 @@ browser panel’s “Play this page” button does the same.
 
 ## The version this guide describes
 
-This guide describes the `main` branch after **0.23.0-rc.2**. In this build:
+This guide describes the `main` branch after **0.23.0-rc.3**. In this build:
 
 - the map layer for a selected country loads up to 800 stations with
   coordinates, nearby markers merge into clusters, and hovering opens a fan of

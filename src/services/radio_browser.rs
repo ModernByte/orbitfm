@@ -597,6 +597,7 @@ enum AttemptError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     fn sample_station(uuid: &str) -> Station {
         Station {
@@ -846,7 +847,7 @@ mod tests {
             "c685c086b7164eddb313d4a7baf1084c",
             "c685c086-b716-4edd-b313-d4a7baf1084z",
         ] {
-            assert!(matches!(validate_uuid(uuid), Err(RadioError::InvalidUuid)));
+            assert_matches!(validate_uuid(uuid), Err(RadioError::InvalidUuid));
         }
     }
 

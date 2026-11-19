@@ -465,8 +465,7 @@ impl StationLibrary {
 fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs())
-        .unwrap_or_default()
+        .map_or_default(|elapsed| elapsed.as_secs())
 }
 
 fn absolute_path(path: &Path) -> Result<PathBuf, LibraryError> {
@@ -646,6 +645,7 @@ fn deduplicate(stations: &mut Vec<Station>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     fn station(uuid: &str) -> Station {
         Station {
@@ -1060,15 +1060,15 @@ mod tests {
             );
         }
         let oversized = format!("https://live.example.org/{}", "a".repeat(ALIAS_URL_LIMIT));
-        assert!(matches!(
+        assert_matches!(
             library.set_alias(uuid, &oversized),
             Err(LibraryError::Alias(_))
-        ));
+        );
         // Внешнему потоку `url:…` алиас не ставится: его адрес и есть станция.
-        assert!(matches!(
+        assert_matches!(
             library.set_alias("url:https://live.example.org/s", "https://other.example/s"),
             Err(LibraryError::Alias(_))
-        ));
+        );
         assert!(library.aliases().is_empty());
         assert!(
             !path.exists(),
@@ -1084,10 +1084,10 @@ mod tests {
                 )
                 .unwrap();
         }
-        assert!(matches!(
+        assert_matches!(
             library.set_alias("station-overflow", "https://live.example.org/stream"),
             Err(LibraryError::Alias(_))
-        ));
+        );
     }
 
     #[test]

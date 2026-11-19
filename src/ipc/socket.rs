@@ -252,6 +252,7 @@ impl Drop for SocketGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     fn dir_with_mode(mode: u32) -> tempfile::TempDir {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -273,9 +274,9 @@ mod tests {
 
     #[test]
     fn socket_dir_must_be_absolute() {
-        assert!(matches!(
+        assert_matches!(
             validate_socket_dir(Path::new("relative/dir"), "TESTDIR"),
             Err(IpcError::SocketPath(_))
-        ));
+        );
     }
 }

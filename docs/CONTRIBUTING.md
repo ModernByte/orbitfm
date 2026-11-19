@@ -38,8 +38,7 @@ cargo test --all-targets
 
 CI на Linux исполняет ровно эти четыре шага; macOS повторяет их и добавляет
 release-сборку, Windows — `fmt`/`clippy`/`check`, отдельный джоб валидирует
-desktop-метаданные, скрипты упаковки и вендинг Flatpak-крейтов
-(`python3 packaging/linux/check-flatpak-sources.py`). Сборка без фичи `tray`
+desktop-метаданные и скрипты упаковки. Сборка без фичи `tray`
 проверяется потому, что платформенные `dead_code`-сюрпризы видны только в этом
 cfg-пути. Контур поставки — отдельный job `supply-chain`
 (`bash packaging/cargo-deny-check.sh`): он проверяет лицензии, дубли, источники и

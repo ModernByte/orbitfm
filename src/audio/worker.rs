@@ -899,6 +899,7 @@ impl ReconnectTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     fn policy(max_attempts: u32) -> ReconnectPolicy {
         ReconnectPolicy {
@@ -952,15 +953,15 @@ mod tests {
             ..ReconnectTracker::default()
         };
         let now = Instant::now();
-        assert!(matches!(
+        assert_matches!(
             tracker.on_failure(now),
             RetryOutcome::Scheduled { attempt: 1, .. }
-        ));
+        );
         let _ = tracker.take_due(now + Duration::from_secs(1));
-        assert!(matches!(
+        assert_matches!(
             tracker.on_failure(now),
             RetryOutcome::Scheduled { attempt: 2, .. }
-        ));
+        );
         let _ = tracker.take_due(now + Duration::from_secs(1));
         assert_eq!(tracker.on_failure(now), RetryOutcome::Exhausted);
         assert_eq!(tracker.on_failure(now), RetryOutcome::Exhausted);

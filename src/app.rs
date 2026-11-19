@@ -1486,7 +1486,7 @@ impl<'a> OrbitApp<'a> {
             }
             UiAction::Hide => self.session.hide(),
             UiAction::Quit => self.session.quit(),
-            UiAction::TogglePanel => self.session.panel_open = !self.session.panel_open,
+            UiAction::TogglePanel => self.session.panel_open.toggle(),
             UiAction::ToggleHelp => {
                 let visible = !self.session.show_help;
                 if let Err(err) = self.session.set_help_visible(visible) {

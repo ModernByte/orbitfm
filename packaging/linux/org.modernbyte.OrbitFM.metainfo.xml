@@ -56,6 +56,21 @@
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.23.0-rc.3" date="2026-11-19">
+      <description>
+        <p>OrbitFM 0.23.0-rc.3 собирается на Rust 1.100: MSRV проекта поднят
+        с 1.95, а точечный рефакторинг применяет новые возможности языка там,
+        где они снимают ветвление или лишнюю копию (в том числе
+        `map_or_default`, `trim_suffix`, `bit_width` и диагностирующий
+        `assert_matches!` в тестах).</p>
+        <p>Flatpak удалён из проекта полностью: канал AppImage остаётся
+        единственным на Linux. В песочнице IPC-сокет живёт в приватном
+        runtime-каталоге, поэтому виджет для панели, правила окон и команды
+        `orbitfm ...` из внешней оболочки с такой сборкой не работали.</p>
+        <p>Схема `status --json` и набор событий `events` не менялись —
+        схема остаётся 1.</p>
+      </description>
+    </release>
     <release version="0.21.0-rc.1" date="2026-11-06">
       <description>
         <p>OrbitFM 0.21.0-rc.1 собирает поддержку macOS заново — как

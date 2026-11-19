@@ -126,7 +126,7 @@ icons is on `StartCause::Init`» (`tray-icon-0.26.1/src/lib.rs:21`). Это
 |---------|--------------------|
 | Оставить `Session::park` и прокачивать `NSRunLoop` вручную | Требует прямой зависимости `objc2-foundation`, ручного polling в `select!` и не решает создание `tray-icon`, которому нужен именно работающий event loop, а не отдельные прокачки; латентность команд зависит от периода опроса |
 | Вынести `park` на фоновый поток, оставив главный поток у NSRunLoop | `Session` не `Send` и связан с главным потоком (audio, UI-контекст, eframe); это перестройка Application Core ради платформенной особенности |
-| `tray-icon` и на Linux вместо `ksni` | Отклонено ещё в ADR-0020: default-фичи тянут GTK/libappindicator в AppImage/Flatpak; на macOS этого недостатка нет, поэтому выбор платформенный |
+| `tray-icon` и на Linux вместо `ksni` | Отклонено ещё в ADR-0020: default-фичи тянут GTK/libappindicator в AppImage; на macOS этого недостатка нет, поэтому выбор платформенный |
 | Нативный `NSStatusItem` на `objc2-app-kit` | Новых crate'ов почти нет, но это сотни строк unsafe-ObjC и собственный менеджер меню; `tray-icon`/`muda` уже решают эту задачу и поддерживаются Tauri |
 | Ничего не делать, только рантайм-проверка Now Playing | Не закрывает управление при скрытом окне и не даёт трея на macOS; пользователь явно запросил оба сценария |
 | XEmbed/AppIndicator | Не существует на macOS; для macOS это не альтернатива |

@@ -32,6 +32,7 @@ struct Request {
     command: String,
 }
 
+#[derive(Debug)]
 enum FrameRead {
     Eof,
     Message(Vec<u8>),
@@ -342,6 +343,7 @@ async fn write_frame(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
     use tokio::io::duplex;
 
     fn command(raw: &str) -> IpcCommand {
@@ -445,10 +447,7 @@ mod tests {
             FrameRead::Message(bytes) => assert_eq!(bytes, b"hello"),
             _ => panic!("ожидался кадр"),
         }
-        assert!(matches!(
-            read_frame(&mut host).await.expect("eof"),
-            FrameRead::Eof
-        ));
+        assert_matches!(read_frame(&mut host).await.expect("eof"), FrameRead::Eof);
     }
 
     #[tokio::test]
@@ -459,10 +458,7 @@ mod tests {
             .await
             .expect("length");
         drop(client);
-        assert!(matches!(
-            read_frame(&mut host).await.expect("eof"),
-            FrameRead::Eof
-        ));
+        assert_matches!(read_frame(&mut host).await.expect("eof"), FrameRead::Eof);
     }
 
     #[tokio::test]
@@ -474,10 +470,10 @@ mod tests {
             .await
             .expect("length");
         drop(client);
-        assert!(matches!(
+        assert_matches!(
             read_frame(&mut host).await.expect("size"),
             FrameRead::TooLarge
-        ));
+        );
     }
 
     #[tokio::test]

@@ -177,7 +177,7 @@ fn overlay_subtitle(
     station: Option<&Station>,
     playback: &PlaybackState,
 ) -> String {
-    let place = station.map(row_place).unwrap_or_default();
+    let place = station.map_or_default(row_place);
     let status = playback_label(language, playback);
     if place.is_empty() {
         status
@@ -638,7 +638,7 @@ mod tests {
 
     #[test]
     fn favorites_are_capped_for_the_capsule() {
-        let list: Vec<Station> = (0..12).map(|_| station("Radio")).collect();
+        let list: Vec<Station> = Vec::from_fn(12, |_| station("Radio"));
         assert_eq!(visible_favorites(&list).len(), FAVORITE_LIMIT);
         assert_eq!(visible_favorites(&list[..3]).len(), 3);
         assert!(visible_favorites(&[]).is_empty());

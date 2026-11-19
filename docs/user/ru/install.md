@@ -5,29 +5,28 @@
 ← [Домой](index.md)
 
 Плеер ставится одним бинарником: отдельных «движков» и сервисов доустанавливать не нужно. Выбирайте один
-из трёх путей — если хотите просто слушать радио, берите готовый пакет для своей системы.
+из двух путей — если хотите просто слушать радио, берите готовый пакет для своей системы.
 
 | Способ | Кому подходит | Сложность |
 |---|---|---|
 | Готовый пакет (AppImage / MSI / DMG) | обычный пользователь | низкая |
 | Сборка из исходников (`cargo`) | своя версия, патч, другой тулчейн | средняя |
-| Flatpak локально из репозитория | песочницы; **без** виджета Noctalia и внешнего CLI | средняя |
 
-> Готовых пакетов в AUR, Flathub и Homebrew **нет**: проект распространяется только через релизы GitHub
-> и сборку из исходников.
+> Готовых пакетов в AUR и Homebrew **нет**: проект распространяется только через релизы GitHub
+> и сборку из исходников. Flatpak не поддерживается как канал поставки.
 
 ## 1. Готовые пакеты
 
-Файлы на странице релизов: <https://github.com/ModernByte/orbitfm/releases>. В 0.23.0-rc.2 там шесть файлов
+Файлы на странице релизов: <https://github.com/ModernByte/orbitfm/releases>. В 0.23.0-rc.3 там шесть файлов
 и `SHA256SUMS`:
 
 | Файл | Система |
 |---|---|
-| `OrbitFM-0.23.0-rc.2-x86_64.AppImage` | Linux x86_64 |
-| `OrbitFM-0.23.0-rc.2-windows-x64.msi` | Windows x64 |
-| `OrbitFM-0.23.0-rc.2-macos-arm64.dmg` | macOS на Apple Silicon |
-| `OrbitFM-0.23.0-rc.2-macos-x86_64.dmg` | macOS на Intel |
-| `OrbitFM-0.23.0-rc.2-plasma.plasmoid` | виджет Plasma 6 (не приложение) |
+| `OrbitFM-0.23.0-rc.3-x86_64.AppImage` | Linux x86_64 |
+| `OrbitFM-0.23.0-rc.3-windows-x64.msi` | Windows x64 |
+| `OrbitFM-0.23.0-rc.3-macos-arm64.dmg` | macOS на Apple Silicon |
+| `OrbitFM-0.23.0-rc.3-macos-x86_64.dmg` | macOS на Intel |
+| `OrbitFM-0.23.0-rc.3-plasma.plasmoid` | виджет Plasma 6 (не приложение) |
 | `install-appimage.sh` | необязательная интеграция AppImage в меню и PATH (см. п. 1.2) |
 | `SHA256SUMS` | контрольные суммы всех шести файлов выше |
 
@@ -41,7 +40,7 @@ sha256sum -c SHA256SUMS     # ожидаемый вывод: по строке "
 ```
 
 В Windows хеш получают так и сравнивают с первой колонкой `SHA256SUMS` (регистр не важен):
-`Get-FileHash .\OrbitFM-0.23.0-rc.2-windows-x64.msi -Algorithm SHA256`
+`Get-FileHash .\OrbitFM-0.23.0-rc.3-windows-x64.msi -Algorithm SHA256`
 
 Важно понимать, что проверяет эта сумма: `SHA256SUMS` — **дайджесты, а не подписи**. Сертификатов
 Authenticode и Developer ID у проекта нет, поэтому
@@ -63,7 +62,7 @@ curl -fsSL https://raw.githubusercontent.com/ModernByte/orbitfm/main/install.sh 
 | Задача | Команда |
 |---|---|
 | Поставить или обновить до последней версии | `curl -fsSL https://raw.githubusercontent.com/ModernByte/orbitfm/main/install.sh \| sh` |
-| Поставить конкретную версию | `… \| sh -s -- --release 0.23.0-rc.2` |
+| Поставить конкретную версию | `… \| sh -s -- --release 0.23.0-rc.3` |
 | Только скачать и проверить, ничего не меняя | `… \| sh -s -- --dry-run` |
 | Удалить установленное скриптом | `… \| sh -s -- --uninstall` |
 
@@ -81,17 +80,17 @@ AppImage не устанавливается, а запускается. Вну�
 `mpv`/`libmpv` из пакетного менеджера ставить **не нужно**.
 
 ```bash
-chmod +x OrbitFM-0.23.0-rc.2-x86_64.AppImage
-./OrbitFM-0.23.0-rc.2-x86_64.AppImage
+chmod +x OrbitFM-0.23.0-rc.3-x86_64.AppImage
+./OrbitFM-0.23.0-rc.3-x86_64.AppImage
 ```
 
 Нет FUSE (контейнеры, системы с заблокированной `libfuse`) — раскройте и запустите файл так:
-`APPIMAGE_EXTRACT_AND_RUN=1 ./OrbitFM-0.23.0-rc.2-x86_64.AppImage`
+`APPIMAGE_EXTRACT_AND_RUN=1 ./OrbitFM-0.23.0-rc.3-x86_64.AppImage`
 
 **Меню и PATH без root.** Рядом с AppImage публикуется `install-appimage.sh`:
 
 ```bash
-bash install-appimage.sh OrbitFM-0.23.0-rc.2-x86_64.AppImage
+bash install-appimage.sh OrbitFM-0.23.0-rc.3-x86_64.AppImage
 ```
 
 Скрипт копирует образ в `~/.local/bin/orbitfm`, ставит desktop entry с абсолютным `Exec`, иконку и metainfo
@@ -104,7 +103,7 @@ bash install-appimage.sh OrbitFM-0.23.0-rc.2-x86_64.AppImage
 
 ```bash
 mkdir -p ~/.local/bin
-ln -sf ~/Downloads/OrbitFM-0.23.0-rc.2-x86_64.AppImage ~/.local/bin/orbitfm
+ln -sf ~/Downloads/OrbitFM-0.23.0-rc.3-x86_64.AppImage ~/.local/bin/orbitfm
 ```
 
 Проверьте `echo $PATH`: `~/.local/bin` должен там быть, иначе добавьте в свой shell-rc.
@@ -128,7 +127,7 @@ cp packaging/linux/org.modernbyte.OrbitFM.svg ~/.local/share/icons/hicolor/scala
 
 MSI ставится **для текущего пользователя** (`Scope="perUser"`), права администратора не нужны.
 
-1. Запустите `OrbitFM-0.23.0-rc.2-windows-x64.msi`, нажмите **Next → Install**.
+1. Запустите `OrbitFM-0.23.0-rc.3-windows-x64.msi`, нажмите **Next → Install**.
 2. Файлы лягут в `%LOCALAPPDATA%\Programs\OrbitFM`, ярлык — в меню «Пуск» (дальше: `Win` → `OrbitFM`).
 3. На первом запуске SmartScreen покажет «Windows protected your PC», потому что установщик **не подписан**
    Authenticode-сертификатом: нажмите **More info → Run anyway**.
@@ -140,8 +139,8 @@ MSI ставится **для текущего пользователя** (`Scop
 
 | Mac | Файл | Инструкция |
 |---|---|---|
-| Apple Silicon — любой, от M1 и новее | `OrbitFM-0.23.0-rc.2-macos-arm64.dmg` | [Установка на Apple Silicon](install-macos-apple-silicon.md) |
-| Intel | `OrbitFM-0.23.0-rc.2-macos-x86_64.dmg` | [Установка на Intel](install-macos-intel.md) |
+| Apple Silicon — любой, от M1 и новее | `OrbitFM-0.23.0-rc.3-macos-arm64.dmg` | [Установка на Apple Silicon](install-macos-apple-silicon.md) |
+| Intel | `OrbitFM-0.23.0-rc.3-macos-x86_64.dmg` | [Установка на Intel](install-macos-intel.md) |
 
 Проверить архитектуру: `uname -m` печатает `arm64` или `x86_64`. В «Об этом Mac» это строка «Чип»
 (Apple M…) либо «Процессор» (Intel). У первой команды есть ловушка: она отвечает архитектуру
@@ -156,7 +155,7 @@ MSI ставится **для текущего пользователя** (`Scop
 
 ## 2. Сборка из исходников
 
-Нужен Rust **1.95+** (Edition 2024) и системные библиотеки, которые проект линкует напрямую.
+Нужен Rust **1.100+** (Edition 2024) и системные библиотеки, которые проект линкует напрямую.
 
 Debian / Ubuntu — ровно тот набор, что ставит CI:
 
@@ -183,18 +182,7 @@ cargo build --release
 ln -sf "$(pwd)/target/release/orbitfm" ~/.local/bin/orbitfm
 ```
 
-## 3. Flatpak (локально из репозитория)
-
-Flatpak **не входит в релизы**, собирайте сами; нужны `flatpak-builder` и runtime `freedesktop` 25.08:
-
-```bash
-./packaging/linux/build-flatpak.sh
-```
-
-Ограничение: IPC-сокет Flatpak-сборки живёт в песочнице, поэтому **виджет Noctalia и команды `orbitfm …`
-из внешней оболочки с ней не работают**. Нужна интеграция с рабочим столом — берите AppImage.
-
-## 4. После установки
+## 3. После установки
 
 Запустите приложение и пройдите первые две минуты — [Первый запуск](first-launch.md). Сеть нужна только
 для каталога Radio Browser: глобус рисуется без интернета, границы стран вшиты в бинарник.
@@ -206,9 +194,9 @@ Flatpak **не входит в релизы**, собирайте сами; ну
 | `Permission denied` при запуске AppImage | файл не исполняемый | `chmod +x OrbitFM-…AppImage` |
 | AppImage падает на FUSE | нет / заблокирован `libfuse` | `APPIMAGE_EXTRACT_AND_RUN=1 ./OrbitFM-….AppImage` |
 | `orbitfm: команда не найдена` | бинарник не в PATH | симлинк в `~/.local/bin/orbitfm`, проверить `echo $PATH` |
-| Виджет Noctalia пустой | нет `orbitfm` в PATH либо сборка Flatpak | см. п. 1.1; с Flatpak не починить |
+| Виджет Noctalia пустой | нет `orbitfm` в PATH | см. п. 1.1 |
 | `cargo build`: ошибка по `libmpv` | не поставлены dev-пакеты | `libmpv-dev` (Debian) / `mpv-libs-devel` (Fedora) |
-| Сборка падает на Edition 2024 | старый Rust | `rustup update stable`, нужен 1.95+ |
+| Сборка падает на Edition 2024 | старый Rust | `rustup update stable`, нужен 1.100+ |
 | SmartScreen блокирует MSI | нет подписи Authenticode | «More info → Run anyway» |
 | macOS: «разработчик не может быть проверен» | ad-hoc подпись, нет нотаризации | правый клик → «Открыть» либо снять `com.apple.quarantine` |
 | Нет звука / станция не стартует | это не установка: сеть, кодек, битый URL | [Неполадки](troubleshooting.md) |

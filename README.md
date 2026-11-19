@@ -1,13 +1,13 @@
 # OrbitFM
 
 **Internet radio player with a 3D globe**  
-Built by [ModernByte](https://github.com/ModernByte) · version `0.23.0-rc.2`
+Built by [ModernByte](https://github.com/ModernByte) · version `0.23.0-rc.3`
 
 [**English**](README.md) · [Русский](README.ru.md)
 
 [![Release](https://img.shields.io/github/v/release/ModernByte/orbitfm?include_prereleases)](https://github.com/ModernByte/orbitfm/releases)
 [![CI status](https://img.shields.io/github/actions/workflow/status/ModernByte/orbitfm/ci.yml?branch=main)](https://github.com/ModernByte/orbitfm/actions/workflows/ci.yml)
-[![Rust](https://img.shields.io/badge/rust-1.95%2B-orange?logo=rust&logoColor=white)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/rust-1.100%2B-orange?logo=rust&logoColor=white)](https://www.rust-lang.org)
 [![Platforms](https://img.shields.io/badge/Linux%20%C2%B7%20Windows%20%C2%B7%20macOS-blueviolet)](#system-requirements)
 
 ## What it is
@@ -19,7 +19,7 @@ stop the music: the app runs as a single process, lives in the system tray and
 accepts commands from the terminal and from media keys. Three on-screen layouts
 range from a large desk with the globe to a compact capsule in the corner. Linux
 (Wayland and X11) is the primary platform; builds exist for Windows and macOS.
-Version `0.23.0-rc.2` is a pre-release, so some details can still change.
+Version `0.23.0-rc.3` is a pre-release, so some details can still change.
 
 ## Demo
 
@@ -152,7 +152,7 @@ Version `0.23.0-rc.2` is a pre-release, so some details can still change.
 
 | Platform | What you need |
 |----------|---------------|
-| Linux | Wayland or X11; a video system that works with the wgpu renderer; `libmpv` (bundled in the AppImage and Flatpak) |
+| Linux | Wayland or X11; a video system that works with the wgpu renderer; `libmpv` (bundled in the AppImage) |
 | Windows | x64; no separate `libmpv` — `libmpv-2.dll` is placed inside the MSI |
 | macOS | 13.0 Ventura or newer, either architecture: `arm64` for Apple Silicon and `x86_64` for Intel — two separate DMGs; `libmpv` is bundled in the `.app` |
 
@@ -186,19 +186,19 @@ and manual paths — [Installing OrbitFM](docs/user/en/install.md).
 ### AppImage (Linux x86_64)
 
 The file is named `OrbitFM-<version>-x86_64.AppImage`, for example
-`OrbitFM-0.23.0-rc.2-x86_64.AppImage`. No root and no installation — the app is
+`OrbitFM-0.23.0-rc.3-x86_64.AppImage`. No root and no installation — the app is
 rootless by design, and `libmpv` with FFmpeg is already inside:
 
 ```bash
-chmod +x OrbitFM-0.23.0-rc.2-x86_64.AppImage
-./OrbitFM-0.23.0-rc.2-x86_64.AppImage
+chmod +x OrbitFM-0.23.0-rc.3-x86_64.AppImage
+./OrbitFM-0.23.0-rc.3-x86_64.AppImage
 ```
 
 To add the app to your menu and `PATH` without root and without a manual
 `chmod +x`, put `install-appimage.sh` from the release next to it and run:
 
 ```bash
-bash install-appimage.sh OrbitFM-0.23.0-rc.2-x86_64.AppImage
+bash install-appimage.sh OrbitFM-0.23.0-rc.3-x86_64.AppImage
 ```
 
 The script copies the image to `~/.local/bin/orbitfm`, installs a desktop entry
@@ -209,7 +209,7 @@ are left alone. To update, run the script with the new image.
 
 If FUSE is unavailable (containers, minimal images) or you do not need
 mount-based integration, run in extract mode:
-`APPIMAGE_EXTRACT_AND_RUN=1 ./OrbitFM-0.23.0-rc.2-x86_64.AppImage`. The Noctalia
+`APPIMAGE_EXTRACT_AND_RUN=1 ./OrbitFM-0.23.0-rc.3-x86_64.AppImage`. The Noctalia
 widget and `orbitfm …` commands need an executable `orbitfm` in `PATH` — the
 script above installs it, or you can symlink the AppImage.
 
@@ -232,7 +232,7 @@ certificate.
 
 ### Building from source
 
-You need Rust 1.95 or newer (Edition 2024). System packages are the same ones CI
+You need Rust 1.100 or newer (Edition 2024). System packages are the same ones CI
 installs (`.github/workflows/ci.yml`, the “Install system dependencies” step;
 Debian/Ubuntu shown here; Arch — `mpv`, Fedora — `mpv-libs-devel`):
 
@@ -247,12 +247,9 @@ cargo build --release
 ```
 
 Packages can be built locally too: `./packaging/linux/build-appimage.sh` (result
-in `target/appimage/OrbitFM-<version>-x86_64.AppImage`) and
-`./packaging/linux/build-flatpak.sh` (needs `flatpak-builder` and runtime 25.08).
+in `target/appimage/OrbitFM-<version>-x86_64.AppImage`).
 A built AppImage can be installed into the menu and `PATH` immediately:
 `./packaging/linux/install-appimage.sh target/appimage/OrbitFM-<version>-x86_64.AppImage`.
-Flatpak is not part of the releases, and its IPC socket lives inside the sandbox,
-so the Noctalia widget and `orbitfm …` commands do not work with a Flatpak build.
 
 That is the whole player installation. The Noctalia panel widget, window rules for
 niri and Hyprland, Plasma, GNOME and Omarchy panels, bar modules and browser

@@ -223,7 +223,7 @@ pub(crate) fn show(
                             )
                             .wrap_mode(egui::TextWrapMode::Truncate),
                         );
-                        let place = current.map(row_place).unwrap_or_default();
+                        let place = current.map_or_default(row_place);
                         if !place.is_empty() {
                             ui.add(
                                 egui::Label::new(
@@ -564,7 +564,7 @@ pub(crate) fn panel_footer(
                                     palette.text
                                 }),
                         );
-                        let place = current.map(row_place).unwrap_or_default();
+                        let place = current.map_or_default(row_place);
                         let status = playback_label(language, playback);
                         let details = if place.is_empty() {
                             status

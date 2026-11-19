@@ -130,7 +130,7 @@ TUI не читает `library.json` и не обращается к Radio Brows
 | Флаги стран            | epaint `color_fonts` + системный Noto Color Emoji | Цветной флаг-эмодзи в тултипе глобуса; feature включается прямой зависимостью, деградация без шрифта (ADR-0017) |
 | Интеграция с Noctalia  | plugin.toml + Luau               | docs.noctalia.dev                                           |
 | Иконка в системном трее | ksni (SNI/StatusNotifierItem)  | Прямая работа с D-Bus без Qt; опциональная фича `tray` (ADR-0020) |
-| Терминальный клиент (план) | ratatui 0.30.2 + crossterm 0.29.0 + toml 1.1 | Отдельный crate `crates/orbitfm-tui`; MSRV 1.88/1.63 ниже проектного 1.95; не тянет desktop-зависимости (ADR-0047) |
+| Терминальный клиент (план) | ratatui 0.30.2 + crossterm 0.29.0 + toml 1.1 | Отдельный crate `crates/orbitfm-tui`; MSRV 1.88/1.63 ниже проектного 1.100; не тянет desktop-зависимости (ADR-0047) |
 
 ## 6. Именование (ModernByte)
 
@@ -148,11 +148,12 @@ TUI не читает `library.json` и не обращается к Radio Brows
 ## 7. Модель поставки
 
 - Проверенный артефакт: AppImage для Linux x86_64 с встроенными libmpv/FFmpeg,
-  desktop entry и AppStream-метаданными (ADR-0011)
-- Flatpak для Linux x86_64: runtime 25.08, libmpv/libass/libplacebo из исходников,
-  vendored cargo-исходники (ADR-0011)
+  desktop entry и AppStream-метаданными (ADR-0011 ред. 2)
 - Исходная сборка: нативный бинарник для Linux (x86_64)
-- CI: Linux (`fmt`/`clippy`/тесты), MSRV 1.95, `cargo deny` и еженедельная
+- Песочницы в канале нет: Flatpak удалён из проекта в ADR-0011 ред. 2 (IPC и CLI
+  виджета в песочнице недоступны, а второй канал не давал пользовательского
+  сценария).
+- CI: Linux (`fmt`/`clippy`/тесты), MSRV 1.100, `cargo deny` и еженедельная
   перепроверка адвизори, macOS — тесты и сборка на обеих арках (`macos-latest` под
   arm64 и `macos-15-intel` под x86_64) с `libmpv` из закреплённых бутылок Homebrew
   под macOS 13 (ADR-0052), Windows (`fmt`/`clippy`, тесты в MSI-job); отдельные джобы

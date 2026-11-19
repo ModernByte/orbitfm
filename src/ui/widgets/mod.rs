@@ -39,7 +39,7 @@ mod tests {
 
     #[test]
     fn bucket_max_collapses_source_bars_to_narrow_field() {
-        let rising: Vec<f32> = (0..24).map(|i| i as f32 / 24.0).collect();
+        let rising: Vec<f32> = Vec::from_fn(24, |i| i as f32 / 24.0);
         let out = bucket_max::<NARROW_VIZ_BARS>(&rising);
         assert_eq!(out.len(), NARROW_VIZ_BARS);
         assert!(

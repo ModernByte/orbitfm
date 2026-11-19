@@ -85,7 +85,7 @@ crates/orbitfm-tui/
 name = "orbitfm-tui"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.95"
+rust-version = "1.100"
 
 [dependencies]
 ratatui = "0.30.2"

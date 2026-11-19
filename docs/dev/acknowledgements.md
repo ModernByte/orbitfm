@@ -67,7 +67,7 @@ Names and versions come from `Cargo.toml` and `Cargo.lock`.
   — the panel the widget was made for.
 - [niri](https://niri-wm.github.io/niri/) and [Hyprland](https://hyprland.org) —
   the environments targeted by the window rules in `wm-configs/`.
-- [Rust](https://www.rust-lang.org) — Edition 2024, `rust-version = 1.95`.
+- [Rust](https://www.rust-lang.org) — Edition 2024, `rust-version = 1.100`.
 - [eframe / egui](https://github.com/emilk/egui).
 - [cava](https://github.com/karlstav/cava) — the visual reference for the
   visualizer.

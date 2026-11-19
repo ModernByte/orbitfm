@@ -1,13 +1,13 @@
 # OrbitFM
 
 **Плеер интернет-радио с 3D-глобусом**  
-Под эгидой [ModernByte](https://github.com/ModernByte) · версия `0.23.0-rc.2`
+Под эгидой [ModernByte](https://github.com/ModernByte) · версия `0.23.0-rc.3`
 
 [English](README.md) · [**Русский**](README.ru.md)
 
 [![Релиз](https://img.shields.io/github/v/release/ModernByte/orbitfm?include_prereleases)](https://github.com/ModernByte/orbitfm/releases)
 [![Статус CI](https://img.shields.io/github/actions/workflow/status/ModernByte/orbitfm/ci.yml?branch=main)](https://github.com/ModernByte/orbitfm/actions/workflows/ci.yml)
-[![Rust](https://img.shields.io/badge/rust-1.95%2B-orange?logo=rust&logoColor=white)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/rust-1.100%2B-orange?logo=rust&logoColor=white)](https://www.rust-lang.org)
 [![Платформы](https://img.shields.io/badge/Linux%20%C2%B7%20Windows%20%C2%B7%20macOS-blueviolet)](#системные-требования)
 
 ## Что это
@@ -19,7 +19,7 @@ OrbitFM — плеер интернет-радио, где каталог пок
 принимает команды из терминала и от медиа-клавиш. Для экрана есть три режима — от
 большого рабочего стола с глобусом до компактной капсулы в углу. Приоритетная
 платформа — Linux (Wayland и X11), сборки есть для Windows и macOS; версия
-`0.23.0-rc.2` — пре-релиз, отдельные детали ещё могут меняться.
+`0.23.0-rc.3` — пре-релиз, отдельные детали ещё могут меняться.
 
 ## Демо
 
@@ -145,7 +145,7 @@ OrbitFM — плеер интернет-радио, где каталог пок
 
 | Платформа | Что нужно |
 |-----------|-----------|
-| Linux | Wayland или X11; видеосистема, с которой работает wgpu-рендерер; `libmpv` (в AppImage и Flatpak уже внутри) |
+| Linux | Wayland или X11; видеосистема, с которой работает wgpu-рендерер; `libmpv` (в AppImage уже внутри) |
 | Windows | x64; отдельная `libmpv` не нужна — `libmpv-2.dll` кладётся в MSI |
 | macOS | 13.0 Ventura и новее, любая арка: `arm64` для Apple Silicon и `x86_64` для Intel — два отдельных DMG; `libmpv` бандлится в `.app` |
 
@@ -179,19 +179,19 @@ curl -fsSL https://raw.githubusercontent.com/ModernByte/orbitfm/main/install.sh 
 ### AppImage (Linux x86_64)
 
 Файл называется `OrbitFM-<версия>-x86_64.AppImage`, например
-`OrbitFM-0.23.0-rc.2-x86_64.AppImage`. Права root и установка не нужны —
+`OrbitFM-0.23.0-rc.3-x86_64.AppImage`. Права root и установка не нужны —
 приложение rootless по определению, и `libmpv` с FFmpeg уже внутри:
 
 ```bash
-chmod +x OrbitFM-0.23.0-rc.2-x86_64.AppImage
-./OrbitFM-0.23.0-rc.2-x86_64.AppImage
+chmod +x OrbitFM-0.23.0-rc.3-x86_64.AppImage
+./OrbitFM-0.23.0-rc.3-x86_64.AppImage
 ```
 
 Чтобы добавить приложение в меню и `PATH` без root и без ручного `chmod +x`,
 положите рядом `install-appimage.sh` из релиза и запустите:
 
 ```bash
-bash install-appimage.sh OrbitFM-0.23.0-rc.2-x86_64.AppImage
+bash install-appimage.sh OrbitFM-0.23.0-rc.3-x86_64.AppImage
 ```
 
 Скрипт копирует образ в `~/.local/bin/orbitfm`, ставит desktop entry с абсолютным
@@ -202,7 +202,7 @@ bash install-appimage.sh OrbitFM-0.23.0-rc.2-x86_64.AppImage
 
 Если FUSE недоступен (контейнеры, минимальные образы) или не нужна интеграция
 через монтирование, запускайте в режиме распаковки:
-`APPIMAGE_EXTRACT_AND_RUN=1 ./OrbitFM-0.23.0-rc.2-x86_64.AppImage`. Виджету
+`APPIMAGE_EXTRACT_AND_RUN=1 ./OrbitFM-0.23.0-rc.3-x86_64.AppImage`. Виджету
 Noctalia и командам `orbitfm …` нужен запускаемый `orbitfm` в `PATH` — скрипт
 выше ставит его, либо сделайте символьную ссылку на AppImage.
 
@@ -224,7 +224,7 @@ Noctalia и командам `orbitfm …` нужен запускаемый `or
 
 ### Сборка из исходников
 
-Нужен Rust 1.95 или новее (Edition 2024). Системные пакеты — те же, что ставит CI
+Нужен Rust 1.100 или новее (Edition 2024). Системные пакеты — те же, что ставит CI
 (`.github/workflows/ci.yml`, шаг Install system dependencies; Debian/Ubuntu; для
 других дистрибутивов: Arch — `mpv`, Fedora — `mpv-libs-devel`):
 
@@ -239,12 +239,9 @@ cargo build --release
 ```
 
 Пакеты собираются и локально: `./packaging/linux/build-appimage.sh` (результат —
-`target/appimage/OrbitFM-<версия>-x86_64.AppImage`) и
-`./packaging/linux/build-flatpak.sh` (нужен `flatpak-builder` и runtime 25.08).
+`target/appimage/OrbitFM-<версия>-x86_64.AppImage`).
 Собранный AppImage можно сразу поставить в меню и `PATH`:
 `./packaging/linux/install-appimage.sh target/appimage/OrbitFM-<версия>-x86_64.AppImage`.
-Flatpak в релизы не входит, а его IPC-сокет живёт в sandbox, поэтому виджет
-Noctalia и команды `orbitfm …` с Flatpak-сборкой не работают.
 
 Установка самого плеера на этом заканчивается. Виджет для панели Noctalia,
 правила окон для niri и Hyprland, панели Plasma, GNOME и Omarchy, модули баров и

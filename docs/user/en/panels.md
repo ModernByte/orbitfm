@@ -17,9 +17,6 @@ library and the queue stay in a single process.
   on it can start OrbitFM straight into the panel.
 - **`orbitfm` in `PATH`.** For the AppImage this is done by `install-appimage.sh`
   or by a symbolic link to the image.
-- **Not Flatpak.** In the Flatpak build the command socket lives inside the
-  sandbox, so external widgets and the CLI cannot see it. Use the AppImage or a
-  build from source — see [Installation](install.md).
 - Noctalia requires **Noctalia v5 with Plugin API 3** or newer.
 
 You can install the target you need with the button on the
@@ -164,7 +161,7 @@ display station metadata. The hover tooltip is extended with the state name.
 |---|---|---|
 | Click does nothing, no process | `orbitfm` is not in `PATH` for the panel's environment | `command -v orbitfm`; a symlink at `~/.local/bin/orbitfm`, check `echo $PATH` |
 | Click does nothing, process running | The window is hidden behind another window or on another workspace | `orbitfm status` will show `window visible` or `window hidden`; then `orbitfm show` |
-| Notification "Could not run the orbitfm command" | The plugin could not launch an external command declared in its dependencies | Check `PATH`; make sure the build is not Flatpak |
+| Notification "Could not run the orbitfm command" | The plugin could not launch an external command declared in its dependencies | Check `PATH` and that the binary is a native build (AppImage or sources) |
 | The player closes by itself after 5 s | An old build with a command timeout | Update OrbitFM, then `noctalia msg plugins update orbitfm` |
 | Works from a terminal, does not work from the widget | The process and the panel see different sockets: `XDG_RUNTIME_DIR` differs | The socket is `$XDG_RUNTIME_DIR/orbitfm.sock`; compare the variable where OrbitFM runs and in the session |
 | The widget is missing from "Add widget" | The plugin is not installed or not enabled | `orbitfm integration install noctalia`; manually — `source add` → `update` → `enable` |
@@ -212,7 +209,6 @@ returns the widget to its previous enabled state if it is still available.
   media keys and the CLI.
 - **The widget shows state, not the station** — the icon color and glyph reflect
   `orbitfm status`; the widget does not store or display broadcast metadata.
-- **Flatpak is not supported** either for the widget or for the external CLI.
 - **Window position is the compositor's prerogative**, not the plugin's: without
   WM rules the window will sit in the center. Ready-made rules are on the
   [Window rules](window-rules.md) page.
@@ -234,7 +230,7 @@ The widget is also published in Releases as a separate archive
 `OrbitFM-<version>-plasma.plasmoid`:
 
 ```bash
-kpackagetool6 -t Plasma/Applet -i OrbitFM-0.23.0-rc.2-plasma.plasmoid
+kpackagetool6 -t Plasma/Applet -i OrbitFM-0.23.0-rc.3-plasma.plasmoid
 ```
 
 In the graphical interface: panel edit mode → Add Widgets → Install from File →

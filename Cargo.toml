@@ -1,8 +1,8 @@
 [package]
 name = "orbitfm"
-version = "0.23.0-rc.2"
+version = "0.23.0-rc.3"
 edition = "2024"
-rust-version = "1.95"
+rust-version = "1.100"
 description = "3D Interactive Global Radio Player"
 repository = "https://github.com/ModernByte/orbitfm"
 license = "MIT"
@@ -98,6 +98,13 @@ redundant_clone = "warn"
 semicolon_if_nothing_returned = "warn"
 single_match_else = "warn"
 useless_vec = "warn"
+
+[lints.cargo]
+# Cargo 1.100 сам проверяет, что ни одна объявленная зависимость не простаивает
+# (docs/CONTRIBUTING.md: зависимость — только если реально нужна). Уровень `warn`
+# — в тон `[lints.clippy]`; на Linux-графе линт чист, платформенные ветки cfg
+# он учитывает по манифесту.
+unused_dependencies = "warn"
 
 [features]
 default = ["tray"]

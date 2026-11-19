@@ -601,13 +601,11 @@ fn has_hls_alternate(html: &str) -> bool {
         let rel = attrs
             .iter()
             .find(|(name, _)| name == "rel")
-            .map(|(_, value)| value.to_ascii_lowercase())
-            .unwrap_or_default();
+            .map_or_default(|(_, value)| value.to_ascii_lowercase());
         let mime = attrs
             .iter()
             .find(|(name, _)| name == "type")
-            .map(|(_, value)| value.to_ascii_lowercase())
-            .unwrap_or_default();
+            .map_or_default(|(_, value)| value.to_ascii_lowercase());
         rel.split_whitespace().any(|value| value == "alternate")
             && (mime.contains("mpegurl") || mime.contains("m3u8"))
     })
@@ -729,9 +727,7 @@ mod tests {
     }
 
     fn ok_reply(content_type: Option<&str>, body: &str) -> String {
-        let typed = content_type
-            .map(|value| format!("Content-Type: {value}\r\n"))
-            .unwrap_or_default();
+        let typed = content_type.map_or_default(|value| format!("Content-Type: {value}\r\n"));
         format!(
             "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n{typed}Connection: close\r\n\r\n{body}",
             body.len()

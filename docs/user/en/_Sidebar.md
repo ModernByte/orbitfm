@@ -19,6 +19,6 @@
 * [Security and privacy](privacy.md)
 * [Glossary](glossary.md)
 
-[Русское руководство](../ru/index.md) · Version: `0.23.0-rc.2` ·
+[Русское руководство](../ru/index.md) · Version: `0.23.0-rc.3` ·
 [Releases](https://github.com/ModernByte/orbitfm/releases) ·
 [README](https://github.com/ModernByte/orbitfm/blob/main/README.md)

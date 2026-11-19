@@ -506,9 +506,7 @@ mod tests {
     }
 
     fn ok_reply(content_type: Option<&str>, body: &str) -> String {
-        let typed = content_type
-            .map(|value| format!("Content-Type: {value}\r\n"))
-            .unwrap_or_default();
+        let typed = content_type.map_or_default(|value| format!("Content-Type: {value}\r\n"));
         format!(
             "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n{typed}Connection: close\r\n\r\n{body}",
             body.len()

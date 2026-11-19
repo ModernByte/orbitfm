@@ -608,8 +608,7 @@ fn clean(value: &str, max_chars: usize) -> String {
 pub(crate) fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs())
-        .unwrap_or_default()
+        .map_or_default(|elapsed| elapsed.as_secs())
 }
 
 /// Стандартный путь статистики по XDG Base Directory Specification — как у

@@ -163,7 +163,6 @@ SmartScreen: даже с валидной подписью **новый** сер
 
 | Канал | Доверие | Ссылки / заметки |
 |-------|---------|------------------|
-| **Flathub** | Пользователи доверяют репо Flathub | https://docs.flatpak.org/en/latest/publishing.html — ревью, app-id `org.modernbyte.OrbitFM` |
 | **AppImage** | Файл + `SHA256SUMS` (+ опционально GPG) | Подпись GPG — ваша идентичность, не Microsoft/Apple store trust |
 | **AUR / distro** | Мейнтейнер + репо | Отдельные процессы |
 

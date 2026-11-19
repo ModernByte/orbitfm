@@ -331,7 +331,6 @@ analysis_needed = window_visible
 | `src/ui/mod.rs` | `UiAction::SetMotion*`, `SetAllowFlips` |
 | `src/session/{mod,commands}.rs` | сеттеры настроек, `analysis_needed` с учётом видимости окна, `settle_analysis` |
 | `src/main.rs` | `settle_analysis` после `begin_window` и перед `park` |
-| `packaging/linux/flatpak-cargo-sources.json` | vendored `image-webp-0.2.4` |
 | `docs/interfaces/01-audio.md`, `docs/modules/01-audio-engine.md` | контракт полос (Phase 0) |
 | `docs/interfaces/{04-render,09-settings}.md`, `docs/modules/{04-render-globe,10-settings}.md` | контракт движения (Phase 1–4) |
 
@@ -346,8 +345,7 @@ analysis_needed = window_visible
 
 **Задачи:**
 
-1. Спайк на целевых сборках: system mpv (Linux), Flatpak runtime, Windows
-   MSYS2, macOS Homebrew. Проверить наличие `acrossover`, `amerge`, `pan`,
+1. Спайк на целевых сборках: system mpv (Linux), Windows MSYS2, macOS Homebrew. Проверить наличие `acrossover`, `amerge`, `pan`,
    `astats`, `aspectralstats`. Linux проверен; остальные платформы — в Phase 4.
 2. Проверить `audio-params/channel-count` до/после `FileLoaded`; выбрать
    stereo/mono/other graph. Свойство может быть `nil` при `FileLoaded` —
@@ -503,9 +501,7 @@ niri остаётся в Phase 4.
 - Windows/macOS: CI-задачи `Windows (check)`, `Windows (MSI)`, `macOS
   (build/test)` и `macOS (DMG)` зелёные на коммите фазы 3; локальный
   cross-check невозможен — в среде нет mingw и Apple-тулчейна. Рантайм-проверка
-  SMTC/Now Playing остаётся отдельной задачей. Flatpak: в
-  `flatpak-cargo-sources.json` не хватало `image-webp-0.2.4` — добавлен,
-  проверка manifest снова проходит.
+  SMTC/Now Playing остаётся отдельной задачей.
 - моно-поток и реконнект закрыты отдельной live-проверкой 2026-10-24:
   ignored-тест на локальном моно-mp3 подтвердил полосы (моно-граф принят mpv),
   ignored-тест с обрывом и перезапуском HTTP-потока — переход
@@ -585,10 +581,11 @@ niri остаётся в Phase 4.
 1. **Каналы до фильтра.** **Закрыт:** после `FileLoaded` воркер до 8 раз с
    интервалом 250 мс читает `audio-params/channel-count` и переустанавливает
    граф; неизвестная раскладка оставляет `@level`.
-2. **Сборки libmpv.** **Закрыт статически:** Flatpak собирает mpv 0.41 с
-   обычным FFmpeg, Windows берёт MSYS2 UCRT64, macOS — CI-раннер; CI-задачи
-   Windows/macOS (check, MSI, DMG) зелёные. Рантайм Flatpak и Windows/macOS
-   в этой среде не запускался; fallback `@level` остаётся страховкой.
+2. **Сборки libmpv.** **Закрыт статически:** Linux-артефакт (AppImage) и Windows
+   берут mpv 0.41 с обычным FFmpeg (Linux — из `libmpv.so.2` хоста, Windows — MSYS2
+   UCRT64), macOS — CI-раннер; CI-задачи Windows/macOS (check, MSI, DMG) зелёные.
+   Рантайм Windows/macOS в этой среде не запускался; fallback `@level` остаётся
+   страховкой.
 3. **Порядок `acrossover`.** **Закрыт:** оставлен 8th. Живой замер показал
    около 15 п.п. одного ядра на полный граф поверх декодирования; скрытая
    стоимость устранена снятием анализа в парке, а не снижением качества полос.

@@ -186,7 +186,8 @@ fn v4_inner(address: Ipv6Addr) -> Option<Ipv4Addr> {
 fn domain_verdict(name: &str) -> Option<PolicyReject> {
     // Корневая точка в DNS-записи легальна (`router.`, `LOCALHOST.`) и не должна
     // превращать запрет в пропуск: снимаем ровно один хвостовой разделитель.
-    let trimmed = name.strip_suffix('.').unwrap_or(name);
+    // `trim_suffix` (1.100) снимает не более одного вхождения.
+    let trimmed = name.trim_suffix('.');
     if trimmed.is_empty() {
         return Some(PolicyReject::MissingHost);
     }

@@ -682,7 +682,7 @@ fn upload_level(
 
 /// Число мипов до 1×1 включительно: 2048 → 12, 5400 → 13.
 fn mip_levels(width: u32, height: u32) -> u32 {
-    32 - width.max(height).leading_zeros()
+    width.max(height).bit_width()
 }
 
 fn earth_bind_group(

@@ -394,6 +394,7 @@ fn validate_volume(volume: f64) -> Result<(), AudioError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     #[test]
     fn accepts_http_and_https_urls() {
@@ -410,7 +411,7 @@ mod tests {
             "ftp://example.com/stream",
             "https://",
         ] {
-            assert!(matches!(validate_url(url), Err(AudioError::InvalidUrl)));
+            assert_matches!(validate_url(url), Err(AudioError::InvalidUrl));
         }
     }
 

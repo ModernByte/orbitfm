@@ -44,7 +44,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.100.0
           components: rustfmt, clippy
 
       - name: Cache cargo
@@ -87,7 +87,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.100.0
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -107,10 +107,10 @@ jobs:
       - name: Check user documentation
         run: bash packaging/check-docs.sh
 
-  # Заявленный `rust-version = "1.95"` проверяется не словом, а компилятором:
+  # Заявленный `rust-version = "1.100"` проверяется не словом, а компилятором:
   # без этого job MSRV дрейфует молча, стоит зависимости поднять требования.
   msrv:
-    name: MSRV 1.95
+    name: MSRV 1.100
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -136,7 +136,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
-          toolchain: 1.95.0
+          toolchain: 1.100.0
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -170,7 +170,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.100.0
           components: rustfmt, clippy
 
       - name: Cache cargo
@@ -213,7 +213,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.100.0
           components: rustfmt, clippy
 
       - name: Cache cargo
@@ -241,7 +241,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.100.0
           components: rustfmt, clippy
 
       - name: Cache cargo
@@ -292,7 +292,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.100.0
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -416,7 +416,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.100.0
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -619,12 +619,6 @@ jobs:
               }
             }
           '
-
-      - name: Check Flatpak manifest and vendored sources
-        run: python3 packaging/linux/check-flatpak-sources.py
-
-      - name: Check Flatpak build script syntax
-        run: bash -n packaging/linux/build-flatpak.sh
 
       - name: Check macOS packaging scripts syntax
         run: |

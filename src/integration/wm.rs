@@ -163,8 +163,7 @@ impl Desktop {
         }
         let desktop = current_desktop
             .or(session)
-            .map(|value| value.to_string_lossy().to_ascii_lowercase())
-            .unwrap_or_default();
+            .map_or_default(|value| value.to_string_lossy().to_ascii_lowercase());
         if desktop.contains("hyprland") {
             Self::Hyprland
         } else if desktop.contains("niri") {
@@ -267,6 +266,7 @@ pub(crate) fn apply_hyprland_rules() -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::integration::BACKUP_SUFFIX;
+    use std::assert_matches;
     use tempfile::TempDir;
 
     fn value(text: &str) -> Option<OsString> {
@@ -312,10 +312,10 @@ mod tests {
     #[test]
     fn runtime_rules_follow_the_environment() {
         assert_eq!(Desktop::Hyprland.runtime_rules(), RuntimeRules::Hyprland);
-        assert!(matches!(
+        assert_matches!(
             Desktop::Niri.runtime_rules(),
             RuntimeRules::Snippet(snippet) if snippet.contains("app-id=\"org.modernbyte.OrbitFM\"")
-        ));
+        );
         assert_eq!(Desktop::Kde.runtime_rules(), RuntimeRules::Unsupported);
     }
 

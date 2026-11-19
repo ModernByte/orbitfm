@@ -51,7 +51,7 @@ OrbitFM проектируется по архитектуре **«Единый 
 
 | Модуль | Технология / Crate | Назначение и обоснование |
 | :--- | :--- | :--- |
-| **Core & Async Engine** | Rust 1.95+ + `tokio` | Асинхронная обработка IPC, HTTP-запросов и событий |
+| **Core & Async Engine** | Rust 1.100+ + `tokio` | Асинхронная обработка IPC, HTTP-запросов и событий |
 | **GUI Framework** | `eframe` / `egui` | Реактивный кроссплатформенный UI с поддержкой прозрачности |
 | **3D Rendering Pass** | `egui-wgpu` (`PaintCallback`) + `wgpu` + `glam` | Нативный рендер 3D-шара в кастомный пасс `egui` (без несовместимого `three-d`); матрицы — `glam` |
 | **Texture Decoding** | `image` (feature `jpeg`) | Декодирование встроенной текстуры Земли в RGBA8 |

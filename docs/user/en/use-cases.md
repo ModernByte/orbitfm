@@ -5,7 +5,7 @@
 ← [Home](index.md)
 
 Ten complete scenarios in the "why → what to click → what you get" format. Written against the `main` branch
-after OrbitFM **0.23.0-rc.2** for Linux (Wayland/X11); Windows and macOS differences are flagged in the text.
+after OrbitFM **0.23.0-rc.3** for Linux (Wayland/X11); Windows and macOS differences are flagged in the text.
 Interface items are named as they appear in the English interface; terms are explained in the [Glossary](glossary.md).
 
 ## 1. Background radio all day long
@@ -218,7 +218,7 @@ flowchart TD
 
 ## These scenarios are not supported
 
-The published 0.23.0-rc.2 does not have this, and the wiki promises nothing:
+The published 0.23.0-rc.3 does not have this, and the wiki promises nothing:
 
 - **system-wide global hotkeys** — keys work only while the OrbitFM window has focus, while media keys arrive through MPRIS/SMTC/Now Playing;
 - **recording the broadcast** — the stream is only played;

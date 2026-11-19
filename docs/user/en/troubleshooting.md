@@ -5,7 +5,7 @@
 ← [Home](index.md)
 
 This catalog is structured as **symptom → why → what to do**. Everything below describes the `main` branch after
-OrbitFM 0.23.0-rc.2; if your build behaves differently, check the version first.
+OrbitFM 0.23.0-rc.3; if your build behaves differently, check the version first.
 
 ## Four commands that answer half the questions
 
@@ -241,7 +241,7 @@ IPC: $XDG_RUNTIME_DIR/orbitfm.sock (Linux), \\.\pipe\orbitfm-<profile hash> (Win
 
 | Symptom | Why | What to do |
 |---|---|---|
-| Clicking the widget does nothing | `orbitfm` is not in the panel environment's `PATH`, or this is a Flatpak build (its socket is inside the sandbox) | `command -v orbitfm`; the widget needs a native build — AppImage or sources |
+| Clicking the widget does nothing | `orbitfm` is not in the panel environment's `PATH` | `command -v orbitfm`; the widget needs a native build — AppImage or sources |
 | The notification "Failed to run the orbitfm command" | The plugin could not launch an external command from `dependencies` | See the row above |
 | The player closed itself 5 seconds after the click | Builds before 0.9.0-rc.3: launching with a callback was limited by the command timeout | Update OrbitFM, then `noctalia msg plugins update orbitfm` |
 | The widget is not in the "Add widget" list | The plugin is not installed or not enabled; `noctalia msg plugins` has no `install` command | `orbitfm integration install noctalia` — the target registers the git source `orbitfm` and enables the widget with shell commands; the same steps manually are `source add` → `update` → `enable` on [Panels and widgets](panels.md) |

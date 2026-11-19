@@ -5,7 +5,7 @@
 ← [Installation](install.md) · [Home](index.md)
 
 This page is for Macs with an Intel processor. You need the file
-`OrbitFM-0.23.0-rc.2-macos-x86_64.dmg`.
+`OrbitFM-0.23.0-rc.3-macos-x86_64.dmg`.
 
 Apple Silicon will also run this build through Rosetta, but the native arm64
 is faster and doesn't require Rosetta — for such Macs there is
@@ -41,7 +41,7 @@ will print `x86_64`. If the result is in doubt, check the model in
 
 From the releases page <https://github.com/ModernByte/orbitfm/releases> download:
 
-- `OrbitFM-0.23.0-rc.2-macos-x86_64.dmg`;
+- `OrbitFM-0.23.0-rc.3-macos-x86_64.dmg`;
 - `SHA256SUMS` — if you want to verify the checksum.
 
 macOS doesn't ship `sha256sum` from GNU coreutils, but it has `shasum`. This verifies only your
@@ -54,7 +54,7 @@ shasum -a 256 -c orbitfm-x86_64.sha256
 rm orbitfm-x86_64.sha256
 ```
 
-The expected output is `OrbitFM-0.23.0-rc.2-macos-x86_64.dmg: OK`. The checksum confirms
+The expected output is `OrbitFM-0.23.0-rc.3-macos-x86_64.dmg: OK`. The checksum confirms
 that the file downloaded in full and matches the published one; it is not a signature.
 
 ## 3. Install the app
@@ -123,7 +123,7 @@ orbitfm --version
 file /Applications/OrbitFM.app/Contents/MacOS/orbitfm
 ```
 
-The expected result is version `0.23.0-rc.2` and `Mach-O 64-bit executable x86_64`.
+The expected result is version `0.23.0-rc.3` and `Mach-O 64-bit executable x86_64`.
 
 ### If the picture doesn't appear — capturing the render log
 
@@ -164,7 +164,7 @@ rm -rf ~/.config/orbitfm ~/.local/share/orbitfm
 
 ## 7. Building from source
 
-You need Xcode Command Line Tools and Rust 1.95+. Homebrew and `brew install mpv`
+You need Xcode Command Line Tools and Rust 1.100+. Homebrew and `brew install mpv`
 are not needed: the script downloads pinned `libmpv`/`dylibbundler` bottles from
 ghcr.io, unpacks them into a prefix and writes `LIBRARY_PATH`.
 
@@ -193,7 +193,7 @@ Without `--arch` the script stops with a usage message (as it also does with an
 unknown value) — this replaces the previous behaviour, when the architecture was silently taken from
 `uname -m` and a build on a different architecture left a `.app` of the wrong slice.
 
-The finished file appears in `dist/OrbitFM-0.23.0-rc.2-macos-x86_64.dmg`. Inside, `libmpv`
+The finished file appears in `dist/OrbitFM-0.23.0-rc.3-macos-x86_64.dmg`. Inside, `libmpv`
 from Homebrew bottles for macOS 13 is bundled into the `.app` (the path to `dylibbundler` is set
 through `PATH`, the script creates it in the prefix). Before the file is placed in `dist/`,
 the bundle passes the gates built into the script: `check-app-arch.sh` (every Mach-O must

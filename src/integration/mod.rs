@@ -1966,6 +1966,7 @@ fn set_mode(_path: &Path, _mode: u32) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
     // Установка интеграций — только Linux: на других ОС `install_one` законно
     // отказывает, поэтому установочные тесты и их помощники не компилируются там.
     #[cfg(target_os = "linux")]
@@ -2023,13 +2024,13 @@ mod tests {
             "--force".to_owned(),
         ];
         let command = parse(&args).expect("parse install");
-        assert!(matches!(
+        assert_matches!(
             command,
             Command::Install {
                 scope: Scope::One(Target::Waybar),
                 force: true
             }
-        ));
+        );
 
         let args = ["install".to_owned(), "bogus".to_owned()];
         assert!(parse(&args).is_err());
@@ -2041,10 +2042,10 @@ mod tests {
         assert!(parse(&args).is_err());
 
         let args = ["status".to_owned()];
-        assert!(matches!(
+        assert_matches!(
             parse(&args).expect("parse status"),
             Command::Status(Scope::All)
-        ));
+        );
     }
 
     #[test]

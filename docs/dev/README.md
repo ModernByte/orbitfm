@@ -86,8 +86,7 @@ Rules that keep the tree honest:
   `unwrap`/`expect` only with a proven invariant.
 - **Measured performance.** Changes to the render or audio hot path need a
   measurement (frame stats, p50/p95), not an opinion.
-- **Supply chain.** `cargo deny`, SHA-pinned GitHub Actions, vendored Flatpak
-  crates.
+- **Supply chain.** `cargo deny`, SHA-pinned GitHub Actions.
 
 ## Checks before a pull request
 
@@ -100,6 +99,6 @@ packaging/check-docs.sh
 packaging/wiki-sync.sh --check
 ```
 
-Platform packaging lives in `packaging/` (AppImage, Flatpak, MSI, DMG). CI runs
+Platform packaging lives in `packaging/` (AppImage, MSI, DMG). CI runs
 Linux, Windows and macOS jobs, including an Intel macOS runner and a real
 launch smoke test for the DMG.

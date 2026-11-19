@@ -27,7 +27,7 @@
 | Устойчивость | offline stations snapshot, adaptive bitrate path |
 | Ритуалы | sleep timer, `queue_wrap`, экспорт/импорт библиотеки |
 | Сеть | профиль `unlimited`/`metered`/`offline-first` (ADR-0048) |
-| Packaging | AppImage, Flatpak, MSI, DMG |
+| Packaging | AppImage, MSI, DMG |
 
 **Вывод:** desktop-ядро насыщено. Рост — через **мобильный companion**, ритуалы слушания и гигиену кода; не через «ещё один DE-виджет» как главный трек.
 

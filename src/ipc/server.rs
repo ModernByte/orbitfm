@@ -202,8 +202,9 @@ async fn handle_connection(
         return Ok(());
     }
 
-    let payload = buffer.strip_suffix(b"\n").unwrap_or(&buffer);
-    let payload = payload.strip_suffix(b"\r").unwrap_or(payload);
+    // Снимаем ровно один разделитель строки: `trim_suffix` (1.100) снимает
+    // не более одного вхождения и не требует `unwrap_or`.
+    let payload = buffer.trim_suffix(b"\n").trim_suffix(b"\r");
     if payload.len() > MAX_COMMAND_BYTES {
         write_response(&mut write_half, "error превышен допустимый размер команды").await?;
         return Ok(());

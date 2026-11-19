@@ -10,7 +10,6 @@ The OrbitFM panel lives in a button on the browser toolbar and mirrors the Nocta
 
 - **OrbitFM is already running.** If the app is closed, the panel shows "OrbitFM is not running" and offers Retry; a cold start from the browser is not allowed.
 - **`orbitfm` in `PATH`** — for AppImage this is done by `install-appimage.sh` or a symlink to the image.
-- **Not Flatpak.** The installer and the command socket are designed for a regular build.
 - Chrome, Chromium, Brave, Edge or Vivaldi — or Firefox 109+.
 - The integrations installer currently works on Linux only.
 

@@ -203,7 +203,7 @@ mod tests {
     }
 
     fn targets(target: SpectrumTarget) -> Vec<f32> {
-        let phases: Vec<f32> = (0..24).map(phase_for).collect();
+        let phases: Vec<f32> = Vec::from_fn(24, phase_for);
         let mut out = vec![0.0; 24];
         band_targets(&target, 0.0, &phases, &mut out);
         out

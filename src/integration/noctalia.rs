@@ -133,7 +133,7 @@ fn run(argv: &[String]) -> Result<String, String> {
         return Err("пустой argv".to_string());
     };
     match Command::new(program).args(args).output() {
-        Ok(out) if out.status.success() => Ok(String::from_utf8_lossy(&out.stdout).into_owned()),
+        Ok(out) if out.status.success() => Ok(String::from_utf8_lossy_owned(out.stdout)),
         Ok(out) => {
             let stderr = String::from_utf8_lossy(&out.stderr);
             let stdout = String::from_utf8_lossy(&out.stdout);

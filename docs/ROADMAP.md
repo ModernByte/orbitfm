@@ -107,8 +107,9 @@
 - [x] FFT-визуализатор (экспериментальный)
 - [x] Упаковка Linux: AppImage (`packaging/linux/build-appimage.sh`), desktop entry,
   AppStream-метаданные и иконка
-- [x] Flatpak: `packaging/linux/org.modernbyte.OrbitFM.yml`, runtime 25.08,
-  libmpv/libass/libplacebo из исходников, vendored cargo (`build-flatpak.sh`)
+- [x] ~~Flatpak: `packaging/linux/org.modernbyte.OrbitFM.yml`, runtime 25.08,
+  libmpv/libass/libplacebo из исходников, vendored cargo (`build-flatpak.sh`)~~
+  — **отменено 2026-11-19** (ADR-0011 ред. 2): канал удалён из проекта
 - [x] MSI: джоба `msi` — libmpv из MSYS2 UCRT64, замыкание DLL, WiX 5,
   per-user установка и smoke-тест `msiexec`; артефакт без подписи
 - [x] DMG: джоба `dmg` — `.app` с `dylibbundler`, ad-hoc подпись и UDZO-образ;
@@ -563,6 +564,31 @@
 - [x] Проверка установщика на временном XDG-корне: `--dry-run`, установка,
       `--extract-and-run`, `--uninstall`, `desktop-file-validate`
 
+## Поставка 0.23.0-rc.3: Rust 1.100 и отказ от Flatpak (2026-11-19)
+
+- [x] Toolchain 1.100.0, MSRV проекта 1.95 → 1.100 (`Cargo.toml`, SRS, README,
+      архитектурный обзор, модуль TUI, руководство); пины в `ci.yml`,
+      `release.yml` и `advisories.yml` подняты с 1.98.1 до 1.100.0, job MSRV
+      переименован в «MSRV 1.100»
+- [x] Точечный рефакторинг под новые API: `map_or_default` (1.98, 10 мест,
+      требование линта `map_unwrap_or` при новом MSRV), `trim_suffix` (1.100,
+      IPC-кадрирование и SSRF-политика), `bit_width` (1.97), `from_utf8_lossy_owned`
+      (1.99), `Vec::from_fn` и `bool::toggle` (1.100), `assert_matches!` (1.96,
+      14 тестов)
+- [x] `[lints.cargo] unused_dependencies = "warn"` — встроенная проверка
+      простаивающих зависимостей Cargo 1.100
+- [x] Flatpak удалён полностью (ADR-0011 ред. 2): манифест, вендинг,
+      `build-flatpak.sh`, `check-flatpak-sources.py`, два шага CI, запись в
+      `.gitignore`, комментарий в `src/tray/sni.rs`; локальный кэш
+      `.flatpak-builder` (≈2 ГиБ) удалён
+- [x] ADR-0011 переписан в редакцию 2; песочница убрана из ADR-0020/0026/0027/
+      0041/0042, `architecture/00-overview.md`, `CONTRIBUTING.md`, `dev/README.md`,
+      `modules/12-tray.md`, `SECURITY.md`, `ui/audio-reactive-globe.md`,
+      `audit/OrbitFM-future-features.md`, `audit/OrbitFM-code-signing-and-notarization.md`
+- [x] Руководство пользователя и README: установка описывает два пути вместо
+      трёх, оговорки про песочницу убраны, вики перегенерирована
+      (`packaging/wiki-sync.sh --push`)
+
 ## Документация 1.0: двуязычное руководство (2026-11-15)
 
 Пользовательская документация должна быть понятна обычному человеку и доступна
@@ -646,10 +672,10 @@ ADR-0038 в 0.15. Инварианты: один GUI-процесс и один 
       сборка под `aarch64-apple-darwin` падает на C-коде `aws-lc-sys` без
       macOS SDK, поэтому вывод зафиксирован в CONTRIBUTING как правило
       матрицы, а не как локальная проверка
-- [x] Вендинг Flatpak: четыре недостающие записи дописаны, чекер вынесен в
+- [x] ~~Вендинг Flatpak: четыре недостающие записи дописаны, чекер вынесен в
       `packaging/linux/check-flatpak-sources.py` и сверяет `Cargo.lock` с
-      `flatpak-cargo-sources.json` в обе стороны по `sha256` (дайджест совпадает
-      с `checksum` лока — проверено на всех записях)
+      `flatpak-cargo-sources.json` в обе стороны по `sha256`~~ — **отменено
+      2026-11-19** (ADR-0011 ред. 2): вендинг и чекер удалены вместе с каналом
 - [x] SEC-01: потолок favicon-кэша стал инвариантом — `entries ≤ 256`,
       `in_flight ≤ 8`, результаты в bounded-канале; `pending` удалён, поколение
       записи отвергает перезасланный результат, слот освобождает RAII-страховка,
