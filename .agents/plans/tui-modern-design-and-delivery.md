@@ -97,15 +97,14 @@
       (ANSI-16, `NO_COLOR`, `TERM=dumb`, локаль, `ORBITFM_TUI_THEME`).
 - [x] **FND-4** — компонентный кит: header, panel, station row, gauge,
       status bar, footer, overlay, toast/empty/error states.
-- [ ] **FND-5** — `config.rs`: схема 1 и чтение `[ui]` (`theme`/`glyphs`) +
-      устойчивость к битому файлу — **сделано**; атомарная запись с debounce
-      500 мс — остаётся.
+- [x] **FND-5** — `config.rs`: схема 1, чтение `[ui]`/`[visualizer]`,
+      атомарная запись (`tmp`→`rename`) с debounce 500 мс.
 - [x] **VER-1** — динамическая версионность: `build.rs` (git `sha`/`dirty`,
       дата, `SOURCE_DATE_EPOCH`), `src/version.rs`, `--version`/`--help`,
       схема — `docs/tui/versioning.md`; установлен локально.
 - [x] **FND-6** — `app.rs`: состояние, `AppEvent`, цикл, `dirty`-перерисовка,
       дедлайны.
-- [ ] **FND-7** — `ui/layout.rs`: базовые `desk`/`minimal` + адаптивность.
+- [x] **FND-7** — `ui/layout.rs`: базовые `desk`/`minimal` + адаптивность.
 
 ### Волна 2 — Клиент ядра (milestone **TUI 0.1.0**)
 
@@ -136,14 +135,14 @@
 
 ### Волна 4 — Визуализаторы, компоновки, движение (milestone **TUI 0.2.0**)
 
-- [ ] **VIZ-1** — модель визуализатора: сглаживание, idle-дыхание, procedural.
-- [ ] **VIZ-2** — `bars` (default).
-- [ ] **VIZ-3** — `ring`.
-- [ ] **VIZ-4** — `scope`.
-- [ ] **VIZ-5** — `pulse` + авто-выбор для узкого/`motion=off`.
-- [ ] **LAY-1** — пресеты `desk`/`focus`/`library`/`minimal`/`dashboard`.
+- [x] **VIZ-1** — модель визуализатора: сглаживание, idle-дыхание, procedural.
+- [x] **VIZ-2** — `bars` (default).
+- [x] **VIZ-3** — `ring`.
+- [x] **VIZ-4** — `scope`.
+- [x] **VIZ-5** — `pulse` + авто-выбор для узкого/`motion=off`.
+- [x] **LAY-1** — пресеты `desk`/`focus`/`library`/`minimal`/`dashboard`.
 - [ ] **LAY-2** — менеджер модулей + сохранение в `tui.toml`.
-- [ ] **MOT-1** — `motion full|reduced|off`, лимит FPS, скрытый модуль не тикает.
+- [x] **MOT-1** — `motion full|reduced|off`, лимит FPS, скрытый модуль не тикает.
 - [ ] **CRX-1** — ядро: `events --spectrum` (interface 13/16, ADR). Если
       владелец откладывает — TUI остаётся в procedural, это законный режим.
 

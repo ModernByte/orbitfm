@@ -52,6 +52,14 @@
   Favorites/History, Help, оверлеи `QuitConfirm`/`SleepPrompt`, семантика
   `q`/`Q`; клавиши по ADR-0047. 51 unit-тест (включая fake-`orbitfm`
   shell-скрипты), fmt/clippy зелёные, live-смоук в pty проходит.
+- **TUI: визуализаторы, компоновки, motion (волна 4).** Модель уровней
+  (`[f32; 64]`, attack ≈ 28 мс, гравитация 1.8/с, peak-hold) и четыре режима:
+  `bars`, `ring`, `scope`, `pulse` (procedural; reactive — по кадрам
+  `spectrum`). Пресеты `desk`/`focus`/`minimal`, `motion` `full`/`reduced`/`off`
+  (тик 66/250/1000 мс), клавиши `v`/`V`/`l`/`M`/`Ctrl+R`. Атомарная запись
+  `tui.toml` (`tmp`→`rename`) с debounce 500 мс, поля `[ui].theme`/`glyphs`/
+  `layout`/`motion` и `[visualizer].kind`. 56 тестов; живой смоук в pty
+  отрисовал снапшот и панель Visualizer.
 - ADR-0047 ревизия 3 (язык дизайна и токены темы) + интерфейс 16 и модуль 19
   синхронизированы; `docs/ROADMAP.md` и `docs/tui/roadmap.md` обновлены.
 

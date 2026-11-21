@@ -9,10 +9,11 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::app::{App, CoreLink, Overlay, Screen, format_remaining, play_state};
-use crate::model::{PlayState, Station};
+use crate::model::{LayoutPreset, PlayState, Station};
 use crate::text;
 use crate::theme::Theme;
 use crate::version;
+use crate::visualizer;
 
 /// Минимальный поддерживаемый размер (`docs/ui/tui-design-system.md` §3).
 pub const MIN_WIDTH: u16 = 60;
@@ -94,28 +95,95 @@ fn draw_body(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         return;
     }
 
+    match app.layout {
+        LayoutPreset::Desk => draw_desk(frame, area, app, theme),
+        LayoutPreset::Focus => draw_focus(frame, area, app, theme),
+        LayoutPreset::Minimal => draw_minimal(frame, area, app, theme),
+    }
+}
+
+fn draw_desk(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+    let [now, rest] = Layout::vertical([Constraint::Length(3), Constraint::Min(1)]).areas(area);
+    let [left, right] =
+        Layout::horizontal([Constraint::Percentage(60), Constraint::Percentage(40)]).areas(rest);
+    draw_now_panel(frame, now, app, theme);
+    draw_visualizer(frame, left, app, theme);
+    draw_screen_panel(frame, right, app, theme);
+}
+
+fn draw_focus(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+    let [viz, now] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
+    draw_visualizer(frame, viz, app, theme);
+    draw_now_line(frame, now, app, theme);
+}
+
+fn draw_minimal(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+    let [now, rest] = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(area);
+    draw_now_line(frame, now, app, theme);
+    if app.screen != Screen::NowPlaying {
+        draw_screen_panel(frame, rest, app, theme);
+    }
+}
+
+fn draw_screen_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     match app.screen {
-        Screen::NowPlaying => draw_now_playing(frame, area, app, theme),
         Screen::Search => draw_list(frame, area, app, theme, " Search ", true),
         Screen::Favorites => draw_list(frame, area, app, theme, " Favorites (20 max) ", false),
         Screen::History => draw_list(frame, area, app, theme, " History (20 max) ", false),
         Screen::Help => draw_help(frame, area, app, theme),
+        Screen::NowPlaying => draw_core_panel(frame, area, app, theme),
     }
 }
 
-fn draw_now_playing(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
-    let [top, bottom] =
-        Layout::horizontal([Constraint::Percentage(64), Constraint::Percentage(36)]).areas(area);
+fn draw_visualizer(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+    if !app.visualizer_enabled {
+        return;
+    }
+    let block = panel(" Visualizer ", false, theme);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.height >= 3 && inner.width >= 8 {
+        visualizer::render(frame, inner, app.visualizer, &app.viz, theme);
+    }
+}
 
-    let station = app.status.as_ref().and_then(|s| s.current_station());
+fn draw_now_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+    frame.render_widget(
+        Paragraph::new(now_playing_lines(app, theme, area.width as usize)).block(panel(
+            " Now Playing ",
+            true,
+            theme,
+        )),
+        area,
+    );
+}
+
+fn draw_now_line(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+    let line = now_playing_lines(app, theme, area.width as usize)
+        .into_iter()
+        .next()
+        .unwrap_or_default();
+    frame.render_widget(Paragraph::new(line), area);
+}
+
+fn draw_core_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+    frame.render_widget(
+        Paragraph::new(core_lines(app, theme)).block(panel(" Core ", false, theme)),
+        area,
+    );
+}
+
+fn now_playing_lines(app: &App, theme: &Theme, width: usize) -> Vec<Line<'static>> {
+    let state = play_state(app.status.as_ref());
+    let station = app
+        .status
+        .as_ref()
+        .and_then(|snapshot| snapshot.current_station());
     let mut lines = Vec::new();
     match station {
         Some(station) => {
             lines.push(Line::from(vec![
-                Span::styled(
-                    theme.glyphs.state(play_state(app.status.as_ref())),
-                    theme.status_style(play_state(app.status.as_ref())),
-                ),
+                Span::styled(theme.glyphs.state(state), theme.status_style(state)),
                 Span::raw(" "),
                 Span::styled(text::sanitize(&station.name), theme.text),
                 Span::raw(" "),
@@ -124,7 +192,7 @@ fn draw_now_playing(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
             lines.push(Line::from(Span::styled(meta_line(station), theme.muted)));
             if !station.tags.is_empty() {
                 lines.push(Line::from(Span::styled(
-                    text::truncate(&text::sanitize(&station.tags), top.width as usize),
+                    text::truncate(&text::sanitize(&station.tags), width),
                     theme.label,
                 )));
             }
@@ -137,23 +205,22 @@ fn draw_now_playing(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
             )));
         }
     }
-    frame.render_widget(
-        Paragraph::new(lines).block(panel(" Now Playing ", true, theme)),
-        top,
-    );
+    lines
+}
 
-    let mut core_lines = vec![Line::from(vec![
+fn core_lines(app: &App, theme: &Theme) -> Vec<Line<'static>> {
+    let mut lines = vec![Line::from(vec![
         Span::styled("volume ", theme.muted),
         Span::styled(volume_bar(app, theme), theme.text),
     ])];
     if let Some(snapshot) = &app.status {
         if let Some(sleep) = &snapshot.sleep {
-            core_lines.push(Line::from(vec![
+            lines.push(Line::from(vec![
                 Span::styled("sleep ", theme.muted),
                 Span::styled(format_remaining(sleep.remaining_secs), theme.warning),
             ]));
         }
-        core_lines.push(Line::from(Span::styled(
+        lines.push(Line::from(Span::styled(
             format!(
                 "skip [ {} · ] {}",
                 if snapshot.can.previous { "on" } else { "off" },
@@ -163,15 +230,12 @@ fn draw_now_playing(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         )));
     }
     if let Some(spectrum) = &app.spectrum {
-        core_lines.push(Line::from(Span::styled(
+        lines.push(Line::from(Span::styled(
             format!("viz level {:.2}", spectrum.level),
             theme.label,
         )));
     }
-    frame.render_widget(
-        Paragraph::new(core_lines).block(panel(" Core ", false, theme)),
-        bottom,
-    );
+    lines
 }
 
 fn draw_list(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, title: &str, editing: bool) {

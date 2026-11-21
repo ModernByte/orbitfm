@@ -185,6 +185,10 @@ pub struct Theme {
     pub favorite: Style,
     pub warning: Style,
     pub danger: Style,
+    /// Тепловая рампа визуализатора (низ → середина → верх).
+    pub viz_low: Style,
+    pub viz_mid: Style,
+    pub viz_high: Style,
 }
 
 impl Theme {
@@ -225,6 +229,9 @@ impl Theme {
             favorite: plain(Color::Yellow),
             warning: plain(Color::Yellow),
             danger: plain(Color::Red),
+            viz_low: plain(Color::Green),
+            viz_mid: plain(Color::Yellow),
+            viz_high: plain(Color::Red),
         }
     }
 

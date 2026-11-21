@@ -1546,6 +1546,11 @@ Intel Core i5-8210Y, Intel UHD Graphics 617, 8 ГБ, macOS 14.8.9).
 - [x] Волны 2–3: `CoreClient` + `CliCoreClient` + worker + парсеры `ev: 1`,
       рантайм с backoff и `R`, экраны Now Playing/Search/Favorites/History/
       Help, оверлеи `QuitConfirm`/`SleepPrompt`, `q`/`Q`; 51 тест зелёный
+- [x] Волна 4: визуализаторы `bars`/`ring`/`scope`/`pulse`, пресеты `desk`/
+      `focus`/`minimal`, `motion` `full`/`reduced`/`off`, клавиши `v`/`V`/`l`/`M`/
+      `Ctrl+R`, атомарная запись `tui.toml` с debounce; 56 тестов, живой смоук
+- [ ] Волна 4 (остаток): `dashboard`, менеджер модулей (`m`),
+      `events --spectrum` в ядре (обязателен для 0.2.0), `stars`/`heat`
 - [ ] T1: Cargo workspace и `crates/orbitfm-tui`, ratatui loop, экраны на
       mock-данных, terminal guard, минимальный размер 60×18
 - [ ] T2: `CliCoreClient`, поток `orbitfm events`, worker команд, Now Playing,
