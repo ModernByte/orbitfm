@@ -133,6 +133,123 @@ impl StatusSnapshot {
     }
 }
 
+/// Визуализатор (`v` циклично).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VisualizerKind {
+    Bars,
+    Ring,
+    Scope,
+    Pulse,
+}
+
+impl VisualizerKind {
+    pub const ALL: [Self; 4] = [Self::Bars, Self::Ring, Self::Scope, Self::Pulse];
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "bars" => Some(Self::Bars),
+            "ring" => Some(Self::Ring),
+            "scope" => Some(Self::Scope),
+            "pulse" => Some(Self::Pulse),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Bars => "bars",
+            Self::Ring => "ring",
+            Self::Scope => "scope",
+            Self::Pulse => "pulse",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        let index =
+            (Self::ALL.iter().position(|kind| *kind == self).unwrap_or(0) + 1) % Self::ALL.len();
+        Self::ALL[index]
+    }
+}
+
+/// Режим движения (`M`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Motion {
+    Full,
+    Reduced,
+    Off,
+}
+
+impl Motion {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "full" => Some(Self::Full),
+            "reduced" => Some(Self::Reduced),
+            "off" => Some(Self::Off),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Reduced => "reduced",
+            Self::Off => "off",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Full => Self::Reduced,
+            Self::Reduced => Self::Off,
+            Self::Off => Self::Full,
+        }
+    }
+
+    /// Длительность тика цикла.
+    pub fn tick_ms(self) -> u64 {
+        match self {
+            Self::Full => 66,
+            Self::Reduced => 250,
+            Self::Off => 1000,
+        }
+    }
+}
+
+/// Пресет компоновки (`l`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LayoutPreset {
+    Desk,
+    Focus,
+    Minimal,
+}
+
+impl LayoutPreset {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "desk" => Some(Self::Desk),
+            "focus" => Some(Self::Focus),
+            "minimal" => Some(Self::Minimal),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Desk => "desk",
+            Self::Focus => "focus",
+            Self::Minimal => "minimal",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Desk => Self::Focus,
+            Self::Focus => Self::Minimal,
+            Self::Minimal => Self::Desk,
+        }
+    }
+}
+
 /// Избранное и история (`orbitfm library`), до 20 записей на список.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Default)]
 pub struct LibraryPayload {
@@ -207,6 +324,16 @@ mod tests {
         assert!(snapshot.current_station().is_none());
         snapshot.station = Some(Station::default());
         assert!(snapshot.current_station().is_none());
+    }
+
+    #[test]
+    fn setting_enums_roundtrip_and_cycle() {
+        assert_eq!(VisualizerKind::parse("ring"), Some(VisualizerKind::Ring));
+        assert_eq!(VisualizerKind::Bars.next(), VisualizerKind::Ring);
+        assert_eq!(VisualizerKind::Pulse.next(), VisualizerKind::Bars);
+        assert_eq!(Motion::parse("reduced"), Some(Motion::Reduced));
+        assert_eq!(Motion::Off.next(), Motion::Full);
+        assert_eq!(LayoutPreset::Minimal.next(), LayoutPreset::Desk);
     }
 
     #[test]

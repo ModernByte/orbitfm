@@ -7,17 +7,18 @@
 
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Поддерживаемая версия схемы конфига.
 pub const SCHEMA: u32 = 1;
 
 /// Полный конфиг TUI.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct TuiConfig {
     pub schema: u32,
     pub ui: UiConfig,
+    pub visualizer: VisualizerConfig,
 }
 
 impl Default for TuiConfig {
@@ -25,6 +26,24 @@ impl Default for TuiConfig {
         Self {
             schema: SCHEMA,
             ui: UiConfig::default(),
+            visualizer: VisualizerConfig::default(),
+        }
+    }
+}
+
+/// Настройки визуализатора `[visualizer]`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default)]
+pub struct VisualizerConfig {
+    pub kind: String,
+    pub bars: u8,
+}
+
+impl Default for VisualizerConfig {
+    fn default() -> Self {
+        Self {
+            kind: "bars".to_owned(),
+            bars: 32,
         }
     }
 }
@@ -34,7 +53,7 @@ impl Default for TuiConfig {
 /// `layout`/`motion`/`border`/`frame_fps` уже читаются из `tui.toml`, но
 /// применяются начиная с волн 4 (визуализаторы, компоновки).
 #[allow(dead_code)]
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct UiConfig {
     pub layout: String,
@@ -134,6 +153,27 @@ fn defaults() -> Loaded {
     }
 }
 
+/// Записать конфиг атомарно (`tmp` → `rename`). Файл создаётся при первом
+/// изменении настройки, не при запуске (`docs/modules/19-tui.md` §6.8).
+pub fn save(config: &TuiConfig) -> std::io::Result<()> {
+    let Some(path) = config_path() else {
+        return Ok(());
+    };
+    save_to(&path, config)
+}
+
+/// Атомарная запись в конкретный путь (тестируемо).
+pub fn save_to(path: &Path, config: &TuiConfig) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let text = toml::to_string_pretty(config)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    let temp = path.with_extension("tmp");
+    std::fs::write(&temp, text)?;
+    std::fs::rename(&temp, path)
+}
+
 #[cfg(test)]
 mod tests {
     use std::assert_matches;
@@ -174,6 +214,22 @@ mod tests {
         let loaded = load_from(Path::new("/nonexistent/orbitfm/tui.toml"));
         assert_matches!(loaded.source, ConfigSource::Defaults);
         assert!(loaded.note().is_none());
+    }
+
+    #[test]
+    fn save_then_load_roundtrips() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("nested/tui.toml");
+        let mut config = TuiConfig::default();
+        config.ui.theme = "amber".to_owned();
+        config.ui.motion = "reduced".to_owned();
+        save_to(&path, &config).expect("save");
+        let loaded = load_from(&path);
+        assert_matches!(loaded.source, ConfigSource::File(_));
+        assert_eq!(loaded.config.ui.theme, "amber");
+        assert_eq!(loaded.config.ui.motion, "reduced");
+        // Временный файл не остался после rename.
+        assert!(!path.with_extension("tmp").exists());
     }
 
     #[test]

@@ -8,8 +8,13 @@ use std::time::{Duration, Instant};
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use crate::config::TuiConfig;
 use crate::core_client::{CoreCommand, CoreError, CoreEvent, CoreReply};
-use crate::model::{LibraryPayload, SearchFrame, SpectrumFrame, Station, StatusSnapshot};
+use crate::model::{
+    LayoutPreset, LibraryPayload, Motion, SearchFrame, SpectrumFrame, Station, StatusSnapshot,
+    VisualizerKind,
+};
+use crate::visualizer::VisualizerModel;
 
 pub use crate::model::PlayState;
 
@@ -77,6 +82,13 @@ pub struct App {
     pub search: Option<SearchFrame>,
     pub library: LibraryPayload,
     pub spectrum: Option<SpectrumFrame>,
+    pub layout: LayoutPreset,
+    pub motion: Motion,
+    pub visualizer: VisualizerKind,
+    pub visualizer_enabled: bool,
+    pub viz: VisualizerModel,
+    pub config: TuiConfig,
+    save_at: Option<Instant>,
     pub selection: usize,
     pub sleep_input: String,
     pub should_quit: bool,
@@ -89,6 +101,15 @@ pub struct App {
 
 impl App {
     pub fn new() -> Self {
+        Self::with_config(TuiConfig::default())
+    }
+
+    /// Состояние с прочитанным `tui.toml`.
+    pub fn with_config(config: TuiConfig) -> Self {
+        let layout = LayoutPreset::parse(&config.ui.layout).unwrap_or(LayoutPreset::Desk);
+        let motion = Motion::parse(&config.ui.motion).unwrap_or(Motion::Full);
+        let visualizer =
+            VisualizerKind::parse(&config.visualizer.kind).unwrap_or(VisualizerKind::Bars);
         Self {
             core: CoreLink::Connecting,
             status: None,
@@ -103,6 +124,13 @@ impl App {
             search: None,
             library: LibraryPayload::default(),
             spectrum: None,
+            layout,
+            motion,
+            visualizer,
+            visualizer_enabled: true,
+            viz: VisualizerModel::new(),
+            config,
+            save_at: None,
             selection: 0,
             sleep_input: String::new(),
             should_quit: false,
@@ -226,8 +254,34 @@ impl App {
         self.status_note = Some(text.to_owned());
     }
 
-    pub fn on_tick(&mut self) {
+    pub fn on_tick(&mut self, dt: f32) {
         self.tick = self.tick.wrapping_add(1);
+        if self.motion == Motion::Off {
+            return;
+        }
+        let playing = play_state(self.status.as_ref()) == PlayState::Playing;
+        let frame = if self.motion == Motion::Full {
+            self.spectrum.as_ref()
+        } else {
+            None
+        };
+        self.viz.tick(dt, frame, playing);
+    }
+
+    /// Запросить отложенную запись конфига (debounce 500 мс).
+    fn request_save(&mut self) {
+        self.save_at = Some(Instant::now());
+    }
+
+    /// Пора записывать конфиг?
+    pub fn pending_save(&self, now: Instant) -> bool {
+        self.save_at
+            .is_some_and(|at| now.duration_since(at) >= Duration::from_millis(500))
+    }
+
+    /// Конфиг записан.
+    pub fn mark_saved(&mut self) {
+        self.save_at = None;
     }
 
     /// Обработать клавишу и вернуть действия для рантайма.
@@ -266,6 +320,37 @@ impl App {
                 vec![Action::Command(CoreCommand::PlayPause)]
             }
             KeyCode::Char('s') => vec![Action::Command(CoreCommand::Stop)],
+            KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.layout = LayoutPreset::Desk;
+                self.motion = Motion::Full;
+                self.visualizer_enabled = true;
+                self.config.ui.layout = "desk".to_owned();
+                self.config.ui.motion = "full".to_owned();
+                self.request_save();
+                Vec::new()
+            }
+            KeyCode::Char('v') => {
+                self.visualizer = self.visualizer.next();
+                self.config.visualizer.kind = self.visualizer.as_str().to_owned();
+                self.request_save();
+                Vec::new()
+            }
+            KeyCode::Char('V') => {
+                self.visualizer_enabled = !self.visualizer_enabled;
+                Vec::new()
+            }
+            KeyCode::Char('l') => {
+                self.layout = self.layout.next();
+                self.config.ui.layout = self.layout.as_str().to_owned();
+                self.request_save();
+                Vec::new()
+            }
+            KeyCode::Char('M') => {
+                self.motion = self.motion.next();
+                self.config.ui.motion = self.motion.as_str().to_owned();
+                self.request_save();
+                Vec::new()
+            }
             KeyCode::Char('r') => vec![Action::Command(CoreCommand::Roulette)],
             KeyCode::Char('+') | KeyCode::Char('=') => {
                 vec![Action::Command(CoreCommand::VolumeUp)]

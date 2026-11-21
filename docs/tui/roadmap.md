@@ -105,10 +105,11 @@ source-only (`cargo install`), и отдельный релизный артеф
 **Прогресс (2026-11-21):** FND-1..4, FND-6 (event loop), VER-1
 (динамическая версия), чтение `tui.toml` (часть FND-5) и волна 2
 (CLC-1..5: `CoreClient`, `events`, worker, парсеры, гейты совместимости)
-сделаны; экраны SCR-1..7 (Now Playing, Search, Favorites, History, Help,
-оверлеи, `q`/`Q`) подключены к живому IPC. 51 тест, fmt/clippy зелёные,
-бинарь установлен локально. FND-7 (пресеты компоновки), запись конфига,
-визуализаторы и `events --spectrum` — следующие.
+сделаны; экраны SCR-1..7 подключены к живому IPC. Волна 4: визуализаторы
+`bars`/`ring`/`scope`/`pulse`, пресеты `desk`/`focus`/`minimal`, `motion`
+`full`/`reduced`/`off`, запись `tui.toml` с debounce. 56 тестов, fmt/clippy
+зелёные, живой смоук в pty отрисовал снапшот. Остаются `dashboard`,
+менеджер модулей (`m`), `events --spectrum` в ядре и `stars`/`heat`.
 
 | ID | Задача | P | Сл. | Агент | Зависит |
 |----|--------|---|-----|-------|---------|

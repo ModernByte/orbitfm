@@ -172,14 +172,13 @@ impl CoreClient for CliCoreClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
     /// Фиктивный `orbitfm` без настоящего ядра: печатает то, что просят.
+    ///
+    /// `fs::write` закрывает fd до `exec`, иначе возможен ETXTBSY.
     fn fake_bin(dir: &std::path::Path, body: &str) -> PathBuf {
         let path = dir.join("orbitfm-fake");
-        let mut file = std::fs::File::create(&path).expect("create");
-        writeln!(file, "#!/bin/sh\n{body}").expect("write");
-        drop(file);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("write");
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

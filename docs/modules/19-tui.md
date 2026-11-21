@@ -563,7 +563,7 @@ Live-приёмка после T1–T5:
 | T2 | `CliCoreClient`, `events`, worker, Now Playing, play/pause/stop/volume/next/prev/roulette, `q`/`Q` | сделан |
 | T3 | `library`, избранное/история, `play-library`, `favorite`, refresh | сделан |
 | T4 | `search`, корреляция `id`, `play-result`/`play`, таймаут | сделан (буферизация кадра раньше `id` — к волне 4) |
-| T5 | `bars`/`ring`/`scope`/`pulse`, пресеты `desk`/`focus`/`library`/`minimal`, менеджер модулей, `tui.toml`, `events --spectrum` + fallback, Help, sleep prompt, README, приёмка | не начат |
+| T5 | `bars`/`ring`/`scope`/`pulse`, пресеты компоновок, менеджер модулей, `tui.toml`, `events --spectrum` + fallback, Help, sleep prompt, README, приёмка | частично: визуализаторы, пресеты `desk`/`focus`/`minimal`, `motion`, запись `tui.toml`, Help, sleep prompt сделаны; менеджер модулей, `dashboard`, `spectrum`, README — нет |
 | T6 | `stars`/`heat`, direct socket, mouse, image protocol | не начат |
 
 Headless-ядро — отдельный трек, не блокирует T1–T5, но нужен для сценария

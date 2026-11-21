@@ -13,6 +13,7 @@ mod text;
 mod theme;
 mod ui;
 mod version;
+mod visualizer;
 
 use std::io::{self, Stdout};
 use std::panic;
@@ -32,9 +33,6 @@ use crate::theme::Theme;
 
 type Backend = CrosstermBackend<Stdout>;
 
-/// Тик цикла: до визуализаторов достаточно 120 мс (≈8 FPS).
-const TICK: Duration = Duration::from_millis(120);
-
 fn main() -> io::Result<()> {
     if handle_cli() {
         return Ok(());
@@ -48,7 +46,7 @@ fn main() -> io::Result<()> {
 
     let loaded = config::load();
     let theme = Theme::from_config(&loaded.config.ui.theme, &loaded.config.ui.glyphs);
-    let mut app = App::new();
+    let mut app = App::with_config(loaded.config.clone());
     app.config_note = loaded.note();
 
     let mut runtime = Runtime::start();
@@ -56,7 +54,8 @@ fn main() -> io::Result<()> {
     while !app.should_quit {
         terminal.draw(|frame| ui::draw(frame, &app, &theme))?;
 
-        if event::poll(TICK)?
+        let tick = Duration::from_millis(app.motion.tick_ms());
+        if event::poll(tick)?
             && let Event::Key(key) = event::read()?
             && key.kind == KeyEventKind::Press
         {
@@ -75,7 +74,16 @@ fn main() -> io::Result<()> {
             app.begin_reconnect();
             runtime.connect();
         }
-        app.on_tick();
+
+        // Отложенная запись конфига (debounce 500 мс).
+        if app.pending_save(Instant::now()) {
+            if config::save(&app.config).is_err() {
+                app.status_note = Some("config: save failed".to_owned());
+            }
+            app.mark_saved();
+        }
+
+        app.on_tick(tick.as_secs_f32());
     }
 
     Ok(())
