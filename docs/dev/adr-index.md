@@ -77,3 +77,4 @@ contract. For behavior only, use the module and interface documents.
 | 0064 | Repaint policy | [0064-политика-перерисовки](../adr/0064-политика-перерисовки.md) |
 | 0065 | Country map layer and marker clusters | [0065-слой-карты-страны-и-кластеры-маркеров](../adr/0065-слой-карты-страны-и-кластеры-маркеров.md) |
 | 0066 | Catalog load order | [0066-порядок-загрузки-каталога](../adr/0066-порядок-загрузки-каталога.md) |
+| 0067 | Release channels and self-update | [0067-каналы-релизов-и-автообновление](../adr/0067-каналы-релизов-и-автообновление.md) |
