@@ -6,6 +6,7 @@
 
 pub mod cli;
 pub mod github;
+pub mod scheduler;
 
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -117,6 +118,42 @@ impl UpdateState {
     }
 }
 
+/// Компактный срез для аддитивного поля `update` в `status --json` (схема 1).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct StatusUpdate {
+    pub channel: &'static str,
+    pub current: String,
+    pub latest: Option<String>,
+    pub available: bool,
+}
+
+impl UpdateState {
+    /// Срез для `status` (`docs/interfaces/19-update.md` §3).
+    pub fn status(&self) -> StatusUpdate {
+        StatusUpdate {
+            channel: self.channel.as_str(),
+            current: self.current.to_string(),
+            latest: self
+                .latest
+                .as_ref()
+                .map(|release| release.version.to_string()),
+            available: self.available(),
+        }
+    }
+}
+
+/// Одна сетевая проверка: получить релизы канала и собрать состояние.
+pub async fn check_once(channel: Channel, current: Version) -> Result<UpdateState, UpdateError> {
+    use github::UpdateSource as _;
+
+    let source = github::GithubSource::orbitfm()?;
+    let releases = source.releases().await?;
+    let mut state = UpdateState::new(channel, current);
+    state.latest = pick_release(&releases, channel);
+    state.checked_at = Some(format_utc_now());
+    Ok(state)
+}
+
 /// Выбрать максимальный релиз канала (сравнение по semver).
 pub fn pick_release(releases: &[Release], channel: Channel) -> Option<Release> {
     releases
@@ -226,6 +263,18 @@ mod tests {
         assert_eq!(format_utc(0), "1970-01-01T00:00:00Z");
         // 2026-11-21T00:00:00Z — день из плана.
         assert_eq!(format_utc(1_795_219_200), "2026-11-21T00:00:00Z");
+    }
+
+    #[test]
+    fn status_slice_reports_channel_and_availability() {
+        let mut state = UpdateState::new(Channel::Dev, "0.23.0-rc.1".parse().unwrap());
+        assert_eq!(state.status().latest, None);
+        state.latest = Some(release("v0.23.0-rc.3", true));
+        let value = serde_json::to_value(state.status()).expect("json");
+        assert_eq!(value["channel"], "dev");
+        assert_eq!(value["available"], true);
+        assert_eq!(value["latest"], "0.23.0-rc.3");
+        assert_eq!(value["current"], "0.23.0-rc.1");
     }
 
     #[test]

@@ -26,6 +26,7 @@ pub(crate) mod world;
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use tokio::sync::{broadcast, mpsc};
 
@@ -44,6 +45,8 @@ use crate::station_filter::CountryFilterState;
 use crate::stats::StatsStore;
 use crate::text::single_line;
 use crate::tray::{TrayHandle, TraySnapshot};
+use crate::update::scheduler::UpdateScheduler;
+use crate::update::{StatusUpdate, UpdateError, UpdateState, check_once};
 
 use companion::CompanionSearchState;
 use economy::EconomyState;
@@ -221,6 +224,14 @@ pub(crate) struct Session {
     /// Вердикты яруса 2 для ссылок, уходящих в MPRIS/SMTC/Now Playing
     /// (ADR-0025, п. 12).
     pub(crate) publish_gate: PublishGate,
+    /// Планировщик фоновых проверок обновлений (ADR-0067 §5).
+    update_scheduler: UpdateScheduler,
+    /// Последний результат проверки для `status` (ADR-0067).
+    update_state: UpdateState,
+    /// Идущая проверка: канал её результата.
+    update_rx: Option<mpsc::UnboundedReceiver<Result<UpdateState, UpdateError>>>,
+    /// Проверка сейчас в полёте.
+    update_inflight: bool,
 }
 
 impl Session {
@@ -254,6 +265,13 @@ impl Session {
         let onboarding_open = !settings.existed_at_load() && !stored.onboarding_done;
         let onboarding_desktop = Desktop::detect();
         let publish_gate = PublishGate::new(runtime.clone(), wake.clone());
+        let update_state = UpdateState::new(
+            stored.update_channel,
+            env!("CARGO_PKG_VERSION")
+                .parse()
+                .expect("CARGO_PKG_VERSION — semver"),
+        );
+        let update_scheduler = UpdateScheduler::new(stored.update_check, Instant::now());
         let mut session = Self {
             audio,
             audio_events,
@@ -305,6 +323,10 @@ impl Session {
             status,
             search_feed: search,
             publish_gate,
+            update_scheduler,
+            update_state,
+            update_rx: None,
+            update_inflight: false,
         };
         // Последний снимок подставляется до первого сетевого запроса: карта
         // не остаётся пустой, пока каталог отвечает (ADR-0043).
@@ -367,7 +389,47 @@ impl Session {
         self.sync_media();
         self.sync_tray();
         self.spectrum_enabled = self.audio.spectrum_enabled();
+        self.poll_update(Instant::now(), None);
         self.publish_status();
+    }
+
+    /// Фоновая проверка обновлений: забрать результат и запустить по расписанию.
+    fn poll_update(&mut self, now: Instant, incoming: Option<Result<UpdateState, UpdateError>>) {
+        let outcome =
+            incoming.or_else(|| self.update_rx.as_mut().and_then(|rx| rx.try_recv().ok()));
+        if self.update_inflight
+            && let Some(outcome) = outcome
+        {
+            if let Ok(state) = outcome {
+                self.update_state = state;
+            }
+            self.update_inflight = false;
+            self.update_rx = None;
+            self.update_scheduler.mark_checked(now);
+        }
+        if !self.update_inflight && self.update_scheduler.due(now, self.network_profile()) {
+            self.start_update_check();
+        }
+    }
+
+    /// Запустить одиночную проверку в фоне.
+    fn start_update_check(&mut self) {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        self.update_rx = Some(receiver);
+        self.update_inflight = true;
+        let channel = self.settings.settings().update_channel;
+        let current = self.update_state.current.clone();
+        self.runtime.spawn(async move {
+            let _ = sender.send(check_once(channel, current).await);
+        });
+    }
+
+    /// Ближайший момент проверки для парковки; `None` — ждать нечего.
+    fn update_deadline(&self) -> Option<Instant> {
+        if self.update_inflight {
+            return None;
+        }
+        self.update_scheduler.next_at()
     }
 
     pub(crate) fn take_intent(&mut self) -> Option<UiIntent> {
@@ -687,7 +749,7 @@ impl Session {
                         fade_seconds: settings.sleep_fade_seconds,
                     }
                 });
-        let payload = build_status_payload(
+        let mut payload = build_status_payload(
             &self.audio.state(),
             self.audio.volume(),
             self.window.visible,
@@ -703,6 +765,7 @@ impl Session {
             sleep,
             self.settings_open,
         );
+        payload.update = Some(self.update_state.status());
         serde_json::to_string(&payload).unwrap_or_else(|err| format!("error {err}"))
     }
 
@@ -768,6 +831,9 @@ struct StatusPayload {
     sleep: Option<StatusSleep>,
     /// Окно настроек открыто (ADR-0053).
     settings_open: bool,
+    /// Проверка обновлений (ADR-0067): аддитивное поле схемы 1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    update: Option<StatusUpdate>,
     ui: StatusUi,
 }
 
@@ -973,6 +1039,7 @@ fn build_status_payload(
         },
         sleep,
         settings_open,
+        update: None,
         ui: StatusUi::new(language),
     }
 }

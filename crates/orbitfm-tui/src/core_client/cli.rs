@@ -45,13 +45,8 @@ impl CliCoreClient {
 
     /// Запуск команды с таймаутом; возвращает (код, stdout, stderr).
     fn run(&self, args: &[String]) -> Result<(Option<i32>, String, String), CoreError> {
-        let mut child = Command::new(&self.bin)
-            .args(args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|error| CoreError::Io(error.to_string()))?;
+        let mut child =
+            spawn_retrying(&self.bin, args).map_err(|error| CoreError::Io(error.to_string()))?;
 
         let mut stdout = child
             .stdout
@@ -86,6 +81,28 @@ impl CliCoreClient {
     }
 }
 
+/// `spawn` с коротким ретраем на `ETXTBSY` (26): редкая гонка, когда файл
+/// только что записан и сразу запускается (тесты, точечные сборки).
+fn spawn_retrying(bin: &std::path::Path, args: &[String]) -> std::io::Result<std::process::Child> {
+    const ETXTBSY: i32 = 26;
+    for attempt in 0..5 {
+        match Command::new(bin)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+        {
+            Ok(child) => return Ok(child),
+            Err(error) if error.raw_os_error() == Some(ETXTBSY) && attempt < 4 => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("последняя итерация всегда возвращает")
+}
+
 impl CoreClient for CliCoreClient {
     fn start_events(&mut self, spectrum: bool) -> Result<EventStream, CoreError> {
         let mut args = vec!["events".to_owned()];
@@ -93,13 +110,8 @@ impl CoreClient for CliCoreClient {
             args.push("--spectrum".to_owned());
         }
 
-        let mut child = Command::new(&self.bin)
-            .args(&args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|error| CoreError::Io(error.to_string()))?;
+        let mut child =
+            spawn_retrying(&self.bin, &args).map_err(|error| CoreError::Io(error.to_string()))?;
 
         let stdout = child
             .stdout

@@ -66,11 +66,21 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         Span::styled(glyph, style),
         Span::styled(word, style),
     ]);
-    let right = Line::from(Span::styled(
+    let mut right_spans = Vec::new();
+    if let Some(update) = app
+        .status
+        .as_ref()
+        .and_then(|snapshot| snapshot.update.as_ref())
+        && update.available
+        && let Some(latest) = &update.latest
+    {
+        right_spans.push(Span::styled(format!("↑{latest} "), theme.warning));
+    }
+    right_spans.push(Span::styled(
         format!("tui {} · core {} ", version::short(), version),
         theme.muted,
-    ))
-    .alignment(Alignment::Right);
+    ));
+    let right = Line::from(right_spans).alignment(Alignment::Right);
 
     frame.render_widget(Paragraph::new(left), left_area);
     frame.render_widget(Paragraph::new(right), right_area);

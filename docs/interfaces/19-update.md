@@ -32,11 +32,13 @@ orbitfm update install                # UPD-6
 
 `schema` не растёт: только добавление; `asset` и `sha256` могут быть `null`.
 
-## 3. `status --json` (аддитивно, UPD-4)
+## 3. `status --json` (аддитивно, сделано)
 
-Объект `update: {channel, current, latest, available}` из последнего результата
-планировщика; сетевого запроса в обработчике `status` нет. `status.schema`
-остаётся `1`.
+Объект `update: {channel, current, latest, available}` добавляется в каждый
+кадр из последнего результата планировщика; сетевого запроса в обработчике
+`status` нет. Поле появляется только когда `Session` его выставила
+(`skip_serializing_if`), поэтому старые потребители не меняются.
+`status.schema` остаётся `1`.
 
 ## 4. Ошибки
 
