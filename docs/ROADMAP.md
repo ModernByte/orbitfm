@@ -1579,6 +1579,21 @@ Intel Core i5-8210Y, Intel UHD Graphics 617, 8 ГБ, macOS 14.8.9).
 визуализаторы и пресеты компоновки переключаются и сохраняются; скрытый
 визуализатор не тикает; `motion=off`/`NO_COLOR` дают статичный читаемый экран.
 
+## Автообновление — каналы и `orbitfm update` (ADR-0067, 2026-11-21)
+
+Проверка обновлений по двум каналам (`stable`/`dev`) из GitHub Releases,
+планировщик и автоустановка AppImage.
+
+- [x] U1: модуль `src/update/` (каналы, `semver`, GitHub-источник,
+      allowlist хостов)
+- [x] U2a: `orbitfm update [--check] [--json] [--channel stable|dev]`
+- [ ] U2b: `update channel` в `settings.json`, аддитивное `update` в
+      `status --json`
+- [ ] U3: планировщик (интервал, `network_profile`, `Notice`)
+- [ ] U4: автоустановка AppImage (SHA-256 + атомарная замена); MSI/DMG —
+      уведомление (ADR-0052)
+- [ ] U5: поверхность TUI и тесты
+
 ## Без версии в этом репозитории
 
 Решения владельца от 2026-10-29, записанные, чтобы не плодить «почему этого нет»:

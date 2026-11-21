@@ -67,6 +67,17 @@
 - ADR-0047 ревизия 3 (язык дизайна и токены темы) + интерфейс 16 и модуль 19
   синхронизированы; `docs/ROADMAP.md` и `docs/tui/roadmap.md` обновлены.
 
+- **Автообновление: каналы релизов и `orbitfm update` (ADR-0067, UPD-1–UPD-2a).**
+  Модуль `src/update/` с двумя каналами (`stable` — финальные `vX.Y.Z`,
+  `dev` — предрелизы `vX.Y.Z-rc.N`), сравнением версий на `semver` 1.0 и
+  источником GitHub Releases (`UpdateSource`). Команда cold-start
+  `orbitfm update [--check] [--json] [--channel stable|dev]` печатает
+  человекочитаемый или машинный (схема 1) результат без запуска GUI.
+  Безопасность: HTTPS и allowlist хостов, обязательный `User-Agent`,
+  ассеты с чужим хостом отклоняются. Документы — `docs/modules/21-update.md`,
+  `docs/interfaces/19-update.md`, ADR-0067, `.agents/plans/auto-update.md`.
+  Дальше: сохранение канала, планировщик, установка AppImage, поле в `status`.
+
 ### Изменено
 - **Решения владельца по треку TUI (2026-11-21).** Android Companion поставлен
   на паузу — приоритет отдан TUI; `events --spectrum` обязателен для 0.2.0

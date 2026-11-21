@@ -3454,6 +3454,7 @@ dependencies = [
  "playwire",
  "reqwest",
  "rstar 0.13.1",
+ "semver",
  "serde",
  "serde_json",
  "tempfile",

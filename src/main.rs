@@ -25,6 +25,7 @@ mod storage;
 mod text;
 mod tray;
 mod ui;
+mod update;
 
 use app::OrbitApp;
 use audio::AudioEngine;
@@ -69,6 +70,10 @@ OrbitFM — 3D Interactive Global Radio Player
   integration uninstall <цель> [--force]
                        Удалить файлы интеграции по квитанции
   native-host          stdio-хост для расширений браузеров (служебная)
+  update [--check]     Проверить обновления (канал stable по умолчанию)
+  update --json        Проверка обновлений в JSON (схема 1)
+  update --channel <stable|dev>
+                       Проверить выбранный канал релизов
   mode [режим]         Текущий режим окна или focus/overlay/listening/panel
   play <uuid>          Воспроизвести станцию по UUID (Radio Browser)
   play-url <url>       Импортировать внешний поток: .m3u, .pls или страница
@@ -129,6 +134,7 @@ enum Invocation {
     Version,
     Integration(integration::Command),
     NativeHost,
+    Update(update::cli::Args),
     Command { command: IpcCommand, explicit: bool },
 }
 
@@ -139,6 +145,15 @@ fn main() -> Result<()> {
         Invocation::Help | Invocation::Version => return Ok(()),
         Invocation::Integration(command) => return integration::run(command),
         Invocation::NativeHost => return native_host::run(),
+        Invocation::Update(args) => {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .thread_name("orbitfm-update")
+                .enable_all()
+                .build()
+                .context("не удалось создать async runtime обновлений")?;
+            return update::cli::run(&runtime, &args);
+        }
         Invocation::Command { command, explicit } => (command, explicit),
     };
 
@@ -179,6 +194,7 @@ fn parse_invocation() -> Result<Invocation> {
             }
             Ok(Invocation::NativeHost)
         }
+        Some("update") => update::cli::parse(&args[1..]).map(Invocation::Update),
         _ => {
             let explicit = !args.is_empty();
             let wire = if explicit {
