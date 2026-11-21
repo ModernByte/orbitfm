@@ -91,6 +91,19 @@ pub struct SleepState {
     pub remaining_secs: u64,
 }
 
+/// Аддитивное поле `update` статуса (ADR-0067).
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Default)]
+pub struct UpdateSnapshot {
+    #[serde(default)]
+    pub channel: String,
+    #[serde(default)]
+    pub current: String,
+    #[serde(default)]
+    pub latest: Option<String>,
+    #[serde(default)]
+    pub available: bool,
+}
+
 /// Снимок `status --json` схемы 1 (только то, что нужно TUI).
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct StatusSnapshot {
@@ -110,6 +123,9 @@ pub struct StatusSnapshot {
     pub can: Can,
     #[serde(default)]
     pub sleep: Option<SleepState>,
+    /// Проверка обновлений (ADR-0067): аддитивное поле; старые ядра его не шлют.
+    #[serde(default)]
+    pub update: Option<UpdateSnapshot>,
 }
 
 impl StatusSnapshot {
@@ -366,6 +382,7 @@ mod tests {
             volume: 0.5,
             can: Can::default(),
             sleep: None,
+            update: None,
         }
     }
 }

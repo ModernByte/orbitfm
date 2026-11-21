@@ -17,6 +17,7 @@ use crate::media::{MediaCommand, MediaControls};
 use crate::services::stream::{ResolvedStream, StreamError};
 use crate::services::{RadioError, Station};
 use crate::tray::{TrayCommand, TrayHandle};
+use crate::update::{UpdateError, UpdateState};
 
 use super::UiIntent;
 use super::companion::CompanionResponse;
@@ -59,6 +60,9 @@ enum Parked {
     /// Пора сбросить статистику прослушивания: секунды считаются и в простое
     /// без окна (ADR-0049 § 4).
     Stats,
+    /// Проверка обновлений: `Some` — готовый результат, `None` — дедлайн
+    /// расписания (ADR-0067 §5).
+    Update(Option<Result<UpdateState, UpdateError>>),
 }
 
 impl super::Session {
@@ -68,6 +72,7 @@ impl super::Session {
         loop {
             let sleep_deadline = self.sleep_next_event();
             let stats_deadline = self.stats_deadline();
+            let update_deadline = self.update_deadline();
             let event = self.runtime.block_on(wait_on(
                 &mut self.commands,
                 &mut self.audio_events,
@@ -77,8 +82,10 @@ impl super::Session {
                 &mut self.pending_stream,
                 &mut self.pending_play,
                 &mut self.companion.rx,
+                &mut self.update_rx,
                 sleep_deadline,
                 stats_deadline,
+                update_deadline,
             ));
             match event {
                 Parked::Ipc(request) => {
@@ -105,6 +112,7 @@ impl super::Session {
                 Parked::QueueClosed => self.quit(),
                 Parked::Sleep => self.poll_sleep_events(),
                 Parked::Stats => {}
+                Parked::Update(outcome) => self.poll_update(Instant::now(), outcome),
             }
             // Секунды эфира считаются и без кадра окна, иначе спрятанное окно
             // обнулило бы счётчики прослушанного (ADR-0049 § 1).
@@ -137,8 +145,10 @@ async fn wait_on(
     stream: &mut Option<PendingStream>,
     play: &mut Option<PendingPlay>,
     companion: &mut Option<mpsc::UnboundedReceiver<CompanionResponse>>,
+    update: &mut Option<mpsc::UnboundedReceiver<Result<UpdateState, UpdateError>>>,
     sleep_deadline: Option<Instant>,
     stats_deadline: Option<Instant>,
+    update_deadline: Option<Instant>,
 ) -> Parked {
     loop {
         let event = tokio::select! {
@@ -162,6 +172,8 @@ async fn wait_on(
             response = companion_recv(companion) => Parked::CompanionSearch(response),
             () = sleep_until(sleep_deadline) => Parked::Sleep,
             () = sleep_until(stats_deadline) => Parked::Stats,
+            outcome = update_recv(update) => Parked::Update(outcome),
+            () = sleep_until(update_deadline) => Parked::Update(None),
         };
         return event;
     }
@@ -230,6 +242,15 @@ async fn play_recv(pending: &mut Option<PendingPlay>) -> Option<Result<Station, 
 }
 
 /// Ответ поиска попапа; без запущенного поиска ветка не готова никогда.
+async fn update_recv(
+    update: &mut Option<mpsc::UnboundedReceiver<Result<UpdateState, UpdateError>>>,
+) -> Option<Result<UpdateState, UpdateError>> {
+    match update {
+        Some(receiver) => receiver.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
 async fn companion_recv(
     companion: &mut Option<mpsc::UnboundedReceiver<CompanionResponse>>,
 ) -> Option<CompanionResponse> {

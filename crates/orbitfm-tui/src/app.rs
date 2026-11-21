@@ -563,6 +563,7 @@ mod tests {
             volume: 0.5,
             can: Can::default(),
             sleep: None,
+            update: None,
         }
     }
 

@@ -16,8 +16,8 @@ src/update/
 │                 # pick_release, format_utc_now
 ├── github.rs     # UpdateSource (трейт), GithubSource, parse_releases, allowlist хостов
 ├── cli.rs        # `orbitfm update [--check] [--json] [--channel <stable|dev>]`
-├── install.rs    # (UPD-6) скачивание, SHA-256, атомарная замена AppImage
-└── scheduler.rs  # (UPD-5) tokio-задача периодической проверки
+├── scheduler.rs  # UpdateScheduler: «когда проверять» (частота, профиль сети)
+└── install.rs    # (UPD-6) скачивание, SHA-256, атомарная замена AppImage
 ```
 
 Канал `stable` — релизы без флага `prerelease` (`vX.Y.Z`); `dev` —
@@ -55,13 +55,15 @@ Cold-start: сеть проверяется в процессе CLI, GUI и IPC 
 `--json` содержит `schema, channel, current, latest, available, checked_at,
 release_url, published_at, notes, checksums, asset{name,size,url,sha256}`.
 
-## 5. Планировщик (UPD-5)
+## 5. Планировщик (сделано)
 
-tokio-задача в `Session`: задержка на старте, далее интервал по
+`UpdateScheduler` (чистое решение, время инъектируется): первая проверка через
+60 с, далее интервал по
 `settings.update_check` (`off|daily|weekly`); уважает `network_profile`
 (`offline-first` — не проверять, `metered` — только проверка без загрузки);
-уведомление `Notice` при смене `latest`; результат кэшируется и попадает в
-аддитивное поле `update` `status --json`.
+проверка запускается в `Session::tick` (окно) и `Session::park` (простой,
+источник в `wait_on`); результат кэшируется и попадает в аддитивное поле
+`update` `status --json`. Отдельного `Notice` нет — поверхность статус/TUI.
 
 ## 6. Установка (UPD-6)
 

@@ -28,12 +28,13 @@ orbitfm-docs; orbitfm-integration (уведомления/трей); orbitfm-tui
 - [ ] **UPD-2c** `update install` — честная ошибка «не реализовано» (UPD-6).
 - [x] **UPD-3** настройки `update_channel`, `update_check` (`off|daily|weekly`),
       `update_auto_install` + сеттеры. **Сделано.**
-- [ ] **UPD-4** аддитивное поле `update` в `status --json` (без сети).
+- [x] **UPD-4** аддитивное поле `update` в `status --json` (без сети).
 
 ### U3 — планировщик
-- [ ] **UPD-5** tokio-задача в `Session`: задержка на старте, интервал по
-      `update_check`, уважение `network_profile` (offline-first — не проверять,
-      metered — без загрузки), `Notice` при смене `latest`, кэш результата.
+- [x] **UPD-5** планировщик: `UpdateScheduler` (задержка 60 с, интервал
+      `off|daily|weekly`, `offline-first` отключает), проверка в `Session::tick`
+      и `park` (источник в `wait_on`), результат в `status.update` без сети.
+      **Сделано** (без отдельного `Notice` — поверхность TUI/статус).
 
 ### U4 — установка
 - [ ] **UPD-6** AppImage: скачать ассет и `SHA256SUMS`, сверить SHA-256,
@@ -41,7 +42,8 @@ orbitfm-docs; orbitfm-integration (уведомления/трей); orbitfm-tui
 - [ ] **UPD-7** MSI/DMG: только уведомление + URL (ADR-0052).
 
 ### U5 — поверхность и тесты
-- [ ] **UPD-8** TUI: строка «update available» в статусе, клавиша `U` — проверка.
+- [x] **UPD-8** TUI: индикатор `↑<версия>` в шапке из `status.update`.
+      Клавиша `U` не добавлена: проверку запускает ядро по расписанию.
 - [ ] **UPD-9** тесты: фикстуры Releases, сравнение версий, фильтр канала,
       выбор ассета, allowlist, сверка SHA-256; fake `UpdateSource`.
 - [ ] **UPD-10** docs: interface 05, module (новый `docs/modules/21-update.md`),
