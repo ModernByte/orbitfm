@@ -108,7 +108,7 @@ source-only (`cargo install`), и отдельный релизный артеф
 сделаны; экраны SCR-1..7 подключены к живому IPC. Волна 4: визуализаторы
 `bars`/`ring`/`scope`/`pulse`, пресеты `desk`/`focus`/`minimal`, `motion`
 `full`/`reduced`/`off`, запись `tui.toml` с debounce. 56 тестов, fmt/clippy
-зелёные, живой смоук в pty отрисовал снапшот. Остаются `dashboard`,
+зелёные, живой смоук в pty отрисовал снапшот. Пресеты `library`/`dashboard` и README крейта добавлены. Остаются
 менеджер модулей (`m`), `events --spectrum` в ядре и `stars`/`heat`.
 
 | ID | Задача | P | Сл. | Агент | Зависит |

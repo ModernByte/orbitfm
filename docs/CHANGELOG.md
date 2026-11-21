@@ -60,6 +60,10 @@
   `tui.toml` (`tmp`→`rename`) с debounce 500 мс, поля `[ui].theme`/`glyphs`/
   `layout`/`motion` и `[visualizer].kind`. 56 тестов; живой смоук в pty
   отрисовал снапшот и панель Visualizer.
+- **TUI: пресеты `library`/`dashboard` и README крейта.** Полный цикл
+  компоновок по ADR-0047 (пять пресетов); `dashboard` на узком экране
+  откатывается к `desk`. Добавлен `crates/orbitfm-tui/README.md`
+  (установка, клавиши, конфиг, совместимость, версия).
 - ADR-0047 ревизия 3 (язык дизайна и токены темы) + интерфейс 16 и модуль 19
   синхронизированы; `docs/ROADMAP.md` и `docs/tui/roadmap.md` обновлены.
 

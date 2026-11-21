@@ -220,7 +220,9 @@ impl Motion {
 pub enum LayoutPreset {
     Desk,
     Focus,
+    Library,
     Minimal,
+    Dashboard,
 }
 
 impl LayoutPreset {
@@ -228,7 +230,9 @@ impl LayoutPreset {
         match value {
             "desk" => Some(Self::Desk),
             "focus" => Some(Self::Focus),
+            "library" => Some(Self::Library),
             "minimal" => Some(Self::Minimal),
+            "dashboard" => Some(Self::Dashboard),
             _ => None,
         }
     }
@@ -237,15 +241,19 @@ impl LayoutPreset {
         match self {
             Self::Desk => "desk",
             Self::Focus => "focus",
+            Self::Library => "library",
             Self::Minimal => "minimal",
+            Self::Dashboard => "dashboard",
         }
     }
 
     pub fn next(self) -> Self {
         match self {
             Self::Desk => Self::Focus,
-            Self::Focus => Self::Minimal,
-            Self::Minimal => Self::Desk,
+            Self::Focus => Self::Library,
+            Self::Library => Self::Minimal,
+            Self::Minimal => Self::Dashboard,
+            Self::Dashboard => Self::Desk,
         }
     }
 }
@@ -333,7 +341,8 @@ mod tests {
         assert_eq!(VisualizerKind::Pulse.next(), VisualizerKind::Bars);
         assert_eq!(Motion::parse("reduced"), Some(Motion::Reduced));
         assert_eq!(Motion::Off.next(), Motion::Full);
-        assert_eq!(LayoutPreset::Minimal.next(), LayoutPreset::Desk);
+        assert_eq!(LayoutPreset::Minimal.next(), LayoutPreset::Dashboard);
+        assert_eq!(LayoutPreset::Dashboard.next(), LayoutPreset::Desk);
     }
 
     #[test]

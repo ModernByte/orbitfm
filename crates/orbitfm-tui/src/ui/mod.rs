@@ -98,7 +98,9 @@ fn draw_body(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     match app.layout {
         LayoutPreset::Desk => draw_desk(frame, area, app, theme),
         LayoutPreset::Focus => draw_focus(frame, area, app, theme),
+        LayoutPreset::Library => draw_library(frame, area, app, theme),
         LayoutPreset::Minimal => draw_minimal(frame, area, app, theme),
+        LayoutPreset::Dashboard => draw_dashboard(frame, area, app, theme),
     }
 }
 
@@ -123,6 +125,101 @@ fn draw_minimal(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     if app.screen != Screen::NowPlaying {
         draw_screen_panel(frame, rest, app, theme);
     }
+}
+
+fn draw_library(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+    let [now, rest] = Layout::vertical([Constraint::Length(3), Constraint::Min(1)]).areas(area);
+    let [left, right] =
+        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(rest);
+    draw_now_panel(frame, now, app, theme);
+    draw_named_list(
+        frame,
+        left,
+        app,
+        theme,
+        " Favorites (20 max) ",
+        &app.library.favorites,
+        Screen::Favorites,
+    );
+    draw_named_list(
+        frame,
+        right,
+        app,
+        theme,
+        " History (20 max) ",
+        &app.library.history,
+        Screen::History,
+    );
+}
+
+fn draw_dashboard(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+    // `dashboard` требует широкого экрана, иначе — обычный стол.
+    if area.width < 120 {
+        draw_desk(frame, area, app, theme);
+        return;
+    }
+    let [top, bottom] =
+        Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(area);
+    let [top_left, top_right] =
+        Layout::horizontal([Constraint::Percentage(60), Constraint::Percentage(40)]).areas(top);
+    let [bottom_left, bottom_right] =
+        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(bottom);
+    draw_now_panel(frame, top_left, app, theme);
+    draw_visualizer(frame, top_right, app, theme);
+    draw_named_list(
+        frame,
+        bottom_left,
+        app,
+        theme,
+        " Favorites (20 max) ",
+        &app.library.favorites,
+        Screen::Favorites,
+    );
+    draw_named_list(
+        frame,
+        bottom_right,
+        app,
+        theme,
+        " History (20 max) ",
+        &app.library.history,
+        Screen::History,
+    );
+}
+
+fn draw_named_list(
+    frame: &mut Frame,
+    area: Rect,
+    app: &App,
+    theme: &Theme,
+    title: &str,
+    stations: &[Station],
+    screen: Screen,
+) {
+    let focused = app.screen == screen;
+    let playing_uuid = app
+        .status
+        .as_ref()
+        .and_then(|snapshot| snapshot.current_station())
+        .map(|station| station.uuid.as_str());
+    let mut lines: Vec<Line> = stations
+        .iter()
+        .enumerate()
+        .map(|(index, station)| {
+            station_row(
+                station,
+                focused && index == app.selection,
+                playing_uuid,
+                theme,
+            )
+        })
+        .collect();
+    if lines.is_empty() {
+        lines.push(Line::from(Span::styled("Nothing here yet", theme.muted)));
+    }
+    frame.render_widget(
+        Paragraph::new(lines).block(panel(title, focused, theme)),
+        area,
+    );
 }
 
 fn draw_screen_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
