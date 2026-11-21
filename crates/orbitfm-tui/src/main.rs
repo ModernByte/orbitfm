@@ -1,19 +1,22 @@
 //! `orbitfm-tui` — лёгкий терминальный клиент к ядру OrbitFM (ADR-0047).
 //!
-//! Волна 1: CLI (`--version`/`--help`), чтение `tui.toml`, терминальный
-//! жизненный цикл (raw mode, alternate screen, guard, panic hook), тема и
-//! каркас кадра. Аудио, MPRIS и библиотека остаются за ядром `orbitfm`; TUI
-//! не содержит второго плеера.
+//! Аудио, MPRIS и библиотека остаются за ядром `orbitfm`; TUI не содержит
+//! второго плеера. Здесь — терминальный жизненный цикл, CLI и event loop;
+//! состояние в `App`, эффекты в `Runtime`.
 
 mod app;
 mod config;
+mod core_client;
+mod model;
+mod runtime;
+mod text;
 mod theme;
 mod ui;
 mod version;
 
 use std::io::{self, Stdout};
 use std::panic;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -23,13 +26,14 @@ use ratatui::crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 
-use crate::app::App;
+use crate::app::{App, AppEvent};
+use crate::runtime::Runtime;
 use crate::theme::Theme;
 
 type Backend = CrosstermBackend<Stdout>;
 
-/// Частота тика волны 1: до визуализаторов — 4 FPS-подобная, без перегрева.
-const TICK: Duration = Duration::from_millis(250);
+/// Тик цикла: до визуализаторов достаточно 120 мс (≈8 FPS).
+const TICK: Duration = Duration::from_millis(120);
 
 fn main() -> io::Result<()> {
     if handle_cli() {
@@ -47,6 +51,8 @@ fn main() -> io::Result<()> {
     let mut app = App::new();
     app.config_note = loaded.note();
 
+    let mut runtime = Runtime::start();
+
     while !app.should_quit {
         terminal.draw(|frame| ui::draw(frame, &app, &theme))?;
 
@@ -54,7 +60,20 @@ fn main() -> io::Result<()> {
             && let Event::Key(key) = event::read()?
             && key.kind == KeyEventKind::Press
         {
-            app.on_key(key);
+            let actions = app.on_key(key);
+            runtime.dispatch(actions, &mut app);
+        }
+
+        while let Some(event) = runtime.try_core() {
+            app.apply_event(AppEvent::Core(event));
+        }
+        while let Some(event) = runtime.try_event() {
+            app.apply_event(event);
+        }
+
+        if app.should_reconnect(Instant::now()) {
+            app.begin_reconnect();
+            runtime.connect();
         }
         app.on_tick();
     }
@@ -93,10 +112,12 @@ fn help_text() -> String {
          \x20   -h, --help       Print help\n\
          \x20   -V, --version    Print version and compatibility\n\
          \n\
-         KEYS (wave 1):\n\
-         \x20   q / Ctrl-C  quit TUI (radio keeps playing)\n\
-         \x20   space       play/pause\n\
-         \x20   a           toggle favorite\n\
+         KEYS:\n\
+         \x20   j/k move · enter play · p/space pause · s stop\n\
+         \x20   [/] prev/next · r roulette · +/- volume\n\
+         \x20   / search · f favorites · h history · a favorite\n\
+         \x20   t/T sleep timer · R reconnect · ? help\n\
+         \x20   q quit TUI (radio keeps playing) · Q quit the core\n\
          \n\
          The core `orbitfm` must already be running; this client does not start it.\n",
         version::semver()

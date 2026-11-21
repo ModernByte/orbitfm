@@ -12,7 +12,10 @@ license = "MIT"
 # не разъезжались (docs/modules/19-tui.md §2.1).
 ratatui = "0.30.2"
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
 toml = "1.1"
+unicode-width = "0.2.3"
 
 [dev-dependencies]
 tempfile = "3"

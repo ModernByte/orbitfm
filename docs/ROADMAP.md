@@ -1543,6 +1543,9 @@ Intel Core i5-8210Y, Intel UHD Graphics 617, 8 ГБ, macOS 14.8.9).
       `--help`, git `sha`/`dirty`, `SOURCE_DATE_EPOCH`; `docs/tui/versioning.md`)
       и чтение `tui.toml` (`[ui].theme`/`[ui].glyphs`); бинарь установлен
       локально, конфиг — `~/.config/orbitfm/tui.toml`
+- [x] Волны 2–3: `CoreClient` + `CliCoreClient` + worker + парсеры `ev: 1`,
+      рантайм с backoff и `R`, экраны Now Playing/Search/Favorites/History/
+      Help, оверлеи `QuitConfirm`/`SleepPrompt`, `q`/`Q`; 51 тест зелёный
 - [ ] T1: Cargo workspace и `crates/orbitfm-tui`, ratatui loop, экраны на
       mock-данных, terminal guard, минимальный размер 60×18
 - [ ] T2: `CliCoreClient`, поток `orbitfm events`, worker команд, Now Playing,

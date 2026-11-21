@@ -44,6 +44,14 @@
   Бинарь собран как release и установлен локально; `orbitfm-tui --version`
   правдиво печатает `0.1.0+<sha>-dirty` и совместимость с ядром. Проверки:
   fmt/clippy чисты, 18 тестов зелёные.
+- **TUI: клиент ядра и экраны (волны 2–3).** `core_client` (`CoreClient`,
+  `CliCoreClient`, `parse`, worker с таймаутом 15 с и fallback
+  `play-result`→`play`), модели `status`/`library`/`search`/`spectrum`,
+  санитизация и обрезка строк, `Runtime` (поток `orbitfm events`, backoff
+  1→30 с, `R`, `stale`). Экраны Now Playing, Search (корреляция по `id`),
+  Favorites/History, Help, оверлеи `QuitConfirm`/`SleepPrompt`, семантика
+  `q`/`Q`; клавиши по ADR-0047. 51 unit-тест (включая fake-`orbitfm`
+  shell-скрипты), fmt/clippy зелёные, live-смоук в pty проходит.
 - ADR-0047 ревизия 3 (язык дизайна и токены темы) + интерфейс 16 и модуль 19
   синхронизированы; `docs/ROADMAP.md` и `docs/tui/roadmap.md` обновлены.
 
