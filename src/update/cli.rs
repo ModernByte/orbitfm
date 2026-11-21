@@ -20,6 +20,8 @@ pub enum Action {
     Check,
     /// Сохранить канал в `settings.json`.
     SetChannel(Channel),
+    /// Скачать и установить обновление (только AppImage).
+    Install,
 }
 
 /// Аргументы `orbitfm update ...`.
@@ -59,7 +61,7 @@ pub fn parse(args: &[String]) -> Result<Args> {
                 parsed.channel = channel;
                 parsed.action = Action::SetChannel(channel);
             }
-            "install" => bail!("update install ещё не реализован (ADR-0067 UPD-6)"),
+            "install" => parsed.action = Action::Install,
             other => bail!("update: неизвестный аргумент `{other}`"),
         }
         index += 1;
@@ -76,7 +78,40 @@ pub fn run(runtime: &tokio::runtime::Runtime, args: &Args) -> Result<()> {
     match args.action {
         Action::SetChannel(channel) => set_channel(runtime, channel),
         Action::Check => check(runtime, args),
+        Action::Install => install(runtime, args),
     }
+}
+
+/// Скачать и установить AppImage (ADR-0067 §6).
+fn install(runtime: &tokio::runtime::Runtime, args: &Args) -> Result<()> {
+    if !crate::update::install::is_appimage() {
+        bail!("установка доступна только для AppImage (ADR-0067 §6)");
+    }
+    let target = crate::update::install::installed_path()
+        .context("не удалось определить путь установки AppImage")?;
+    let current: Version = env!("CARGO_PKG_VERSION")
+        .parse()
+        .context("CARGO_PKG_VERSION не является semver")?;
+    let source = GithubSource::orbitfm().context("не удалось создать клиент обновлений")?;
+    let releases = runtime
+        .block_on(source.releases())
+        .map_err(|error| anyhow!(error.to_string()))?;
+    let latest = pick_release(&releases, args.channel).context("в канале нет релизов")?;
+    if latest.version <= current {
+        println!("уже последняя версия: {current}");
+        return Ok(());
+    }
+    let client =
+        crate::update::install::download_client().map_err(|error| anyhow!(error.to_string()))?;
+    runtime
+        .block_on(crate::update::install::install(&latest, &target, &client))
+        .map_err(|error| anyhow!(error.to_string()))?;
+    println!(
+        "установлено {} → {} (применится при следующем запуске)",
+        latest.version,
+        target.display()
+    );
+    Ok(())
 }
 
 fn check(runtime: &tokio::runtime::Runtime, args: &Args) -> Result<()> {
@@ -220,7 +255,10 @@ mod tests {
     }
 
     #[test]
-    fn install_is_honest_about_not_being_ready() {
-        assert!(parse(&args(&["install"])).is_err());
+    fn install_is_a_known_action() {
+        assert_eq!(
+            parse(&args(&["install"])).expect("parse").action,
+            Action::Install
+        );
     }
 }

@@ -17,7 +17,7 @@ src/update/
 ├── github.rs     # UpdateSource (трейт), GithubSource, parse_releases, allowlist хостов
 ├── cli.rs        # `orbitfm update [--check] [--json] [--channel <stable|dev>]`
 ├── scheduler.rs  # UpdateScheduler: «когда проверять» (частота, профиль сети)
-└── install.rs    # (UPD-6) скачивание, SHA-256, атомарная замена AppImage
+└── install.rs    # скачивание, SHA-256, атомарная замена AppImage (готово)
 ```
 
 Канал `stable` — релизы без флага `prerelease` (`vX.Y.Z`); `dev` —
@@ -65,7 +65,7 @@ release_url, published_at, notes, checksums, asset{name,size,url,sha256}`.
 источник в `wait_on`); результат кэшируется и попадает в аддитивное поле
 `update` `status --json`. Отдельного `Notice` нет — поверхность статус/TUI.
 
-## 6. Установка (UPD-6)
+## 6. Установка (готово)
 
 Только Linux AppImage и только после сверки SHA-256 из `SHA256SUMS`:
 скачать во временный файл рядом, `chmod 0755`, атомарный `rename` поверх
