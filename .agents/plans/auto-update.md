@@ -23,9 +23,11 @@ orbitfm-docs; orbitfm-integration (уведомления/трей); orbitfm-tui
 ### U2 — команда и состояние
 - [x] **UPD-2a** CLI `update` / `update --check` / `update --check --json` /
       `update --channel <stable|dev>`; cold-start без GUI. **Сделано.**
-- [ ] **UPD-2b** `update channel <…>` (сохранение) и `update install`;
-      сейчас возвращают честную ошибку «ещё не реализовано».
-- [ ] **UPD-3** настройки `update_channel`, `update_check`, `update_auto_install`.
+- [x] **UPD-2b** `update channel <stable|dev>` сохраняет канал через
+      `SettingsStore` (только когда ядро не запущено). **Сделано.**
+- [ ] **UPD-2c** `update install` — честная ошибка «не реализовано» (UPD-6).
+- [x] **UPD-3** настройки `update_channel`, `update_check` (`off|daily|weekly`),
+      `update_auto_install` + сеттеры. **Сделано.**
 - [ ] **UPD-4** аддитивное поле `update` в `status --json` (без сети).
 
 ### U3 — планировщик

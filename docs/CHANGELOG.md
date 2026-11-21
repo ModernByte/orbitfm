@@ -78,6 +78,14 @@
   `docs/interfaces/19-update.md`, ADR-0067, `.agents/plans/auto-update.md`.
   Дальше: сохранение канала, планировщик, установка AppImage, поле в `status`.
 
+- **Автообновление: настройки и сохранение канала (ADR-0067, UPD-3/UPD-2b).**
+  `settings.json` получил аддитивные поля `update_channel`
+  (`stable`/`dev`), `update_check` (`off`/`daily`/`weekly`, по умолчанию
+  `daily`) и `update_auto_install` (по умолчанию `false`) с сеттерами.
+  `orbitfm update channel <stable|dev>` сохраняет канал, если ядро не
+  запущено; при работающем экземпляре честно просит сменить канал в
+  настройках, чтобы не перезаписать принадлежащий ядру файл.
+
 ### Изменено
 - **Решения владельца по треку TUI (2026-11-21).** Android Companion поставлен
   на паузу — приоритет отдан TUI; `events --spectrum` обязателен для 0.2.0

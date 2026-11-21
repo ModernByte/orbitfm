@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::update::Channel;
+
 pub mod language;
 
 pub use language::Language;
@@ -317,6 +319,52 @@ impl SleepAction {
     }
 }
 
+/// Частота фоновой проверки обновлений (ADR-0067).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UpdateCheck {
+    /// Проверка выключена.
+    Off,
+    /// Раз в сутки.
+    #[default]
+    Daily,
+    /// Раз в неделю.
+    Weekly,
+}
+
+// `ALL`/`as_str`/`parse`/`interval_hours` читает планировщик обновлений
+// (ADR-0067 §5, UPD-5) и будущий выбор в настройках.
+#[allow(dead_code)]
+impl UpdateCheck {
+    pub const ALL: [Self; 3] = [Self::Off, Self::Daily, Self::Weekly];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Daily => "daily",
+            Self::Weekly => "weekly",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "off" => Some(Self::Off),
+            "daily" => Some(Self::Daily),
+            "weekly" => Some(Self::Weekly),
+            _ => None,
+        }
+    }
+
+    /// Интервал в часах; `None` — проверка выключена (ADR-0067 §5).
+    pub fn interval_hours(self) -> Option<u64> {
+        match self {
+            Self::Off => None,
+            Self::Daily => Some(24),
+            Self::Weekly => Some(168),
+        }
+    }
+}
+
 /// Настройки оформления и поведения.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -371,6 +419,13 @@ pub struct Settings {
     /// Порядок загрузки каталога: список и слой карты, по умолчанию
     /// «по рейтингу» (ADR-0066).
     pub catalog_order: CatalogOrder,
+    /// Канал обновлений: `stable` (публичный) или `dev` (предрелизы), ADR-0067.
+    pub update_channel: Channel,
+    /// Частота фоновой проверки обновлений (ADR-0067).
+    pub update_check: UpdateCheck,
+    /// Автоматически устанавливать обновление там, где это поддерживается
+    /// (AppImage); по умолчанию выключено.
+    pub update_auto_install: bool,
 }
 
 fn default_stats_enabled() -> bool {
@@ -415,6 +470,9 @@ impl Default for Settings {
             sleep_prevent_sleep: true,
             sleep_warning: true,
             catalog_order: CatalogOrder::Rating,
+            update_channel: Channel::Stable,
+            update_check: UpdateCheck::Daily,
+            update_auto_install: false,
         }
     }
 }
@@ -722,6 +780,37 @@ impl SettingsStore {
         self.save()
     }
 
+    /// Канал обновлений (ADR-0067).
+    pub fn set_update_channel(&mut self, channel: Channel) -> Result<(), SettingsError> {
+        if self.settings.update_channel == channel {
+            return Ok(());
+        }
+        self.settings.update_channel = channel;
+        self.save()
+    }
+
+    /// Частота фоновой проверки обновлений (ADR-0067). Потребитель —
+    /// планировщик и будущий выбор в настройках (UPD-5).
+    #[allow(dead_code)]
+    pub fn set_update_check(&mut self, check: UpdateCheck) -> Result<(), SettingsError> {
+        if self.settings.update_check == check {
+            return Ok(());
+        }
+        self.settings.update_check = check;
+        self.save()
+    }
+
+    /// Автоустановка обновлений (ADR-0067 §6). Потребитель — планировщик
+    /// и установка (UPD-5/UPD-6).
+    #[allow(dead_code)]
+    pub fn set_update_auto_install(&mut self, enabled: bool) -> Result<(), SettingsError> {
+        if self.settings.update_auto_install == enabled {
+            return Ok(());
+        }
+        self.settings.update_auto_install = enabled;
+        self.save()
+    }
+
     fn save(&self) -> Result<(), SettingsError> {
         let Some(path) = &self.path else {
             return Ok(());
@@ -1013,6 +1102,32 @@ mod tests {
         fs::write(&path, br#"{"theme":"dark"}"#).unwrap();
         let store = SettingsStore::load(path).unwrap();
         assert_eq!(store.settings().catalog_order, CatalogOrder::Rating);
+    }
+
+    #[test]
+    fn roundtrip_persists_update_preferences() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        {
+            let mut store = SettingsStore::load(path.clone()).unwrap();
+            store.set_update_channel(Channel::Dev).unwrap();
+            store.set_update_check(UpdateCheck::Weekly).unwrap();
+            store.set_update_auto_install(true).unwrap();
+        }
+        let store = SettingsStore::load(path).unwrap();
+        assert_eq!(store.settings().update_channel, Channel::Dev);
+        assert_eq!(store.settings().update_check, UpdateCheck::Weekly);
+        assert!(store.settings().update_auto_install);
+    }
+
+    #[test]
+    fn update_check_tokens_and_intervals() {
+        assert_eq!(UpdateCheck::default(), UpdateCheck::Daily);
+        assert_eq!(UpdateCheck::parse("weekly"), Some(UpdateCheck::Weekly));
+        assert_eq!(UpdateCheck::parse("nope"), None);
+        assert_eq!(UpdateCheck::Off.interval_hours(), None);
+        assert_eq!(UpdateCheck::Daily.interval_hours(), Some(24));
+        assert_eq!(UpdateCheck::Weekly.interval_hours(), Some(168));
     }
 
     #[test]
