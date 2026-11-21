@@ -74,6 +74,9 @@ OrbitFM — 3D Interactive Global Radio Player
   update --json        Проверка обновлений в JSON (схема 1)
   update --channel <stable|dev>
                        Проверить выбранный канал релизов
+  update channel <stable|dev>
+                       Сохранить канал обновлений (ядро должно быть остановлено)
+  update install       Скачать и установить AppImage (только Linux AppImage)
   mode [режим]         Текущий режим окна или focus/overlay/listening/panel
   play <uuid>          Воспроизвести станцию по UUID (Radio Browser)
   play-url <url>       Импортировать внешний поток: .m3u, .pls или страница

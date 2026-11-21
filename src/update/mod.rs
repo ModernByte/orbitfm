@@ -6,6 +6,7 @@
 
 pub mod cli;
 pub mod github;
+pub mod install;
 pub mod scheduler;
 
 use semver::Version;
@@ -174,6 +175,14 @@ pub enum UpdateError {
     Parse(String),
     #[error("недопустимый хост: {0}")]
     Host(String),
+    #[error("в релизе нет SHA256SUMS — установка отменена")]
+    NoChecksum,
+    #[error("несовпадение SHA-256 загруженного файла")]
+    ChecksumMismatch,
+    #[error("ввод-вывод: {0}")]
+    Io(String),
+    #[error("установка доступна только для AppImage")]
+    Unsupported,
 }
 
 /// Текущее время UTC в формате RFC 3339 (`ГГГГ-ММ-ДДTЧЧ:ММ:ССZ`).

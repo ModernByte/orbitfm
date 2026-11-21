@@ -1593,8 +1593,8 @@ Intel Core i5-8210Y, Intel UHD Graphics 617, 8 ГБ, macOS 14.8.9).
 - [x] U2c: аддитивное поле `update` в `status --json` (без сети)
 - [x] U3: планировщик (`UpdateScheduler`): задержка 60 с, интервал
       `off|daily|weekly`, `offline-first` отключает; проверка в `tick` и `park`
-- [ ] U4: автоустановка AppImage (SHA-256 + атомарная замена); MSI/DMG —
-      уведомление (ADR-0052)
+- [x] U4: автоустановка AppImage (`install.rs`: SHA-256 + атомарная замена),
+      `orbitfm update install` и автоустановка в `Session`; MSI/DMG — отказ
 - [x] U5: индикатор `↑<версия>` в шапке TUI из `status.update`; тесты
       планировщика и среза статуса
 

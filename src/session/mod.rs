@@ -232,6 +232,8 @@ pub(crate) struct Session {
     update_rx: Option<mpsc::UnboundedReceiver<Result<UpdateState, UpdateError>>>,
     /// Проверка сейчас в полёте.
     update_inflight: bool,
+    /// Версия, для которой автоустановка уже запускалась (без повторов).
+    update_installed_for: Option<String>,
 }
 
 impl Session {
@@ -327,6 +329,7 @@ impl Session {
             update_state,
             update_rx: None,
             update_inflight: false,
+            update_installed_for: None,
         };
         // Последний снимок подставляется до первого сетевого запроса: карта
         // не остаётся пустой, пока каталог отвечает (ADR-0043).
@@ -406,10 +409,47 @@ impl Session {
             self.update_inflight = false;
             self.update_rx = None;
             self.update_scheduler.mark_checked(now);
+            self.maybe_auto_install();
         }
         if !self.update_inflight && self.update_scheduler.due(now, self.network_profile()) {
             self.start_update_check();
         }
+    }
+
+    /// Автоустановка при разрешении: только AppImage и не в экономии трафика.
+    /// Замена применится при следующем запуске; ошибки — только в лог.
+    fn maybe_auto_install(&mut self) {
+        if !self.settings.settings().update_auto_install {
+            return;
+        }
+        if self.network_profile() != NetworkProfile::Unlimited {
+            return;
+        }
+        if !self.update_state.available() || !crate::update::install::is_appimage() {
+            return;
+        }
+        let Some(release) = self.update_state.latest.clone() else {
+            return;
+        };
+        let version = release.version.to_string();
+        if self.update_installed_for.as_deref() == Some(version.as_str()) {
+            return;
+        }
+        let Some(target) = crate::update::install::installed_path() else {
+            return;
+        };
+        self.update_installed_for = Some(version);
+        self.runtime.spawn(async move {
+            let Ok(client) = crate::update::install::download_client() else {
+                return;
+            };
+            match crate::update::install::install(&release, &target, &client).await {
+                Ok(()) => {
+                    tracing::info!("обновление установлено; применится при следующем запуске");
+                }
+                Err(error) => tracing::warn!(%error, "не удалось установить обновление"),
+            }
+        });
     }
 
     /// Запустить одиночную проверку в фоне.

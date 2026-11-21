@@ -37,9 +37,12 @@ orbitfm-docs; orbitfm-integration (уведомления/трей); orbitfm-tui
       **Сделано** (без отдельного `Notice` — поверхность TUI/статус).
 
 ### U4 — установка
-- [ ] **UPD-6** AppImage: скачать ассет и `SHA256SUMS`, сверить SHA-256,
-      временный файл + `chmod 0755` + атомарный `rename`; отказ без суммы.
-- [ ] **UPD-7** MSI/DMG: только уведомление + URL (ADR-0052).
+- [x] **UPD-6** AppImage: `install.rs` — скачать ассет и `SHA256SUMS`,
+      сверить SHA-256, временный файл + `chmod 0755` + атомарный `rename`;
+      отказ без суммы; `orbitfm update install` и автоустановка в `Session`
+      (при `update_auto_install` и `unlimited`).
+- [x] **UPD-7** MSI/DMG: `is_appimage()` ложь → установка отклоняется;
+      остаётся уведомление/URL (ADR-0052).
 
 ### U5 — поверхность и тесты
 - [x] **UPD-8** TUI: индикатор `↑<версия>` в шапке из `status.update`.
