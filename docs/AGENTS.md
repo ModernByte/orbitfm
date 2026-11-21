@@ -71,6 +71,16 @@
 | **orbitfm-docs**          | Синхронизация SRS, ADR, modules, interfaces, patterns, CHANGELOG | Любое изменение контрактов или документации |
 | **orbitfm-patterns**      | Каталог паттернов, выбор структуры кода                   | Проектирование модулей, рефакторинг структуры |
 
+Встроенные тимейты трека TUI (запускаемые, а не только скиллы) лежат в
+`.pi/agents/tui-*.md`: `tui-lead`, `tui-design`, `tui-architect`,
+`tui-foundation`, `tui-coreclient`, `tui-screens`, `tui-visualizer`,
+`tui-layout`, `tui-spectrum`, `tui-qa`, `tui-docs`. Каждый тимейт явно
+перечисляет свои скиллы, обязательные документы, границы и Definition of Done.
+Ростер и соответствие задачам — в
+`.agents/plans/tui-modern-design-and-delivery.md` §6. Проектные агенты
+включаются в расширении `subagent` только для доверенного репозитория
+(`agentScope: "project"|"both"`).
+
 ### Правила делегирования
 
 1. `orbitfm-core` подгружается **первым** при любой задаче.
@@ -441,6 +451,7 @@ bitflags::bitflags! {
 - `docs/plan-settings-window-sleep-ritual.md` — план фичи «Настройки как отдельное окно + ритуал сна» (волны 1–7, проверочный чек-лист, критические файлы).
 - `docs/plans/render-frame-budget.md` — дисциплина кадров и оптимизация проекции маркеров: волны 0–2 сделаны, волны 3–6 — по замеру (журнал § 11). Бюджет и режимы перерисовки закреплены в `docs/modules/04-render-globe.md` § 3.1 и `docs/interfaces/04-render.md`.
 - `docs/plans/globe-country-markers-and-clusters.md` — слой карты выбранной страны, экранные кластеры и веер станций, порядок загрузки каталога (ADR-0065/0066 приняты 2026-11-13; волны 1–5 сделаны, приёмка `0.23.0-rc.1`).
+- `.agents/plans/tui-modern-design-and-delivery.md` — план трека TUI: волны 0–6, реестр задач с приоритетами и сложностью, команда тимейтов, открытые решения владельцу. Дорожная карта — `docs/tui/roadmap.md`, язык дизайна — `docs/ui/tui-design-system.md`.
 - `.agents/plans/azure-mist-cod.md` — дубликат того же плана для контекста сессии (копируется из `~/.qoder/plans/` при старте).
 
 Планы не являются кодом и не коммитируются в `main` без явного решения владельца; при работе над волной актуальную версию сверять с `docs/plan-settings-window-sleep-ritual.md`.

@@ -1516,15 +1516,33 @@ Intel Core i5-8210Y, Intel UHD Graphics 617, 8 ГБ, macOS 14.8.9).
       «Рендер глобуса на Intel UHD 617» из «не проверено» в «подтверждено». Пока блока
       нет, ни один текст не должен утверждать работоспособность рендера на этой GPU
 
-## Трек TUI на ratatui — спроектирован, код не начат (2026-11-03)
+## Трек TUI на ratatui — волна 1 запущена (2026-11-21)
 
 Терминальный клиент к работающему ядру: ADR-0047, интерфейс 16, модуль 19.
-Не второй плеер и не второй libmpv; не отменяет Android-приоритет.
-Документы готовы, реализация начинается с T1.
+Не второй плеер и не второй libmpv. **Решения владельца 2026-11-21:** Android
+на паузе — приоритет у TUI; `events --spectrum` обязателен для 0.2.0;
+поставка — и source-only, и отдельный релизный артефакт. Документы и язык
+дизайна готовы, реализация волны 1 начата.
 
 - [x] T0: ADR-0047, `docs/interfaces/16-tui.md`, `docs/modules/19-tui.md`,
       актуализация `docs/audit/OrbitFM-tui-ratatui.md`, обзорные документы,
       ROADMAP, CHANGELOG и VERSIONMAP
+- [x] D0: современный язык дизайна `docs/ui/tui-design-system.md`, хаб
+      приложения `docs/tui/README.md`, карта версий и приоритетов
+      `docs/tui/roadmap.md`, мастер-план
+      `.agents/plans/tui-modern-design-and-delivery.md` и команда тимейтов
+      `.pi/agents/tui-*.md`
+- [x] ADR-R3: ревизия 3 ADR-0047 и интерфейс 16 — поля `ui.theme`/`ui.border`/
+      `ui.glyphs`, порядок темы/акцента/глифов, статус кадра `spectrum`
+- [x] Волна 1 (начало): Cargo workspace и `crates/orbitfm-tui`, терминальный
+      жизненный цикл (raw mode, alternate screen, guard, panic hook, минимум
+      60×18), токены темы ANSI-16 (`theme.rs`, `NO_COLOR`/`TERM=dumb`/локаль),
+      каркас кадра; `cargo fmt`/`clippy`/18 тестов зелёные, desktop-пакет не
+      затронут
+- [x] Динамическая версионность (`build.rs` + `version.rs`, `--version`/
+      `--help`, git `sha`/`dirty`, `SOURCE_DATE_EPOCH`; `docs/tui/versioning.md`)
+      и чтение `tui.toml` (`[ui].theme`/`[ui].glyphs`); бинарь установлен
+      локально, конфиг — `~/.config/orbitfm/tui.toml`
 - [ ] T1: Cargo workspace и `crates/orbitfm-tui`, ratatui loop, экраны на
       mock-данных, terminal guard, минимальный размер 60×18
 - [ ] T2: `CliCoreClient`, поток `orbitfm events`, worker команд, Now Playing,
@@ -1539,9 +1557,11 @@ Intel Core i5-8210Y, Intel UHD Graphics 617, 8 ГБ, macOS 14.8.9).
 - [ ] T6: визуализаторы `stars`/`heat`, прямой сокет, мышь, image protocol
 - [ ] Headless-ядро (`--headless` или `ORBITFM_HEADLESS=1`) — отдельный трек
       для чистого SSH; TUI v1 требует уже запущенного ядра
-- [ ] Решение владельца: остаётся ли TUI source-only (`cargo install`) или
-      получает отдельный артефакт; пятый релизный артефакт без решения не
-      добавляется
+- [x] Решение владельца (2026-11-21): TUI распространяется и как source-only
+      (`cargo install`), и как отдельный релизный артефакт; формат артефакта
+      уточняет `tui-lead`
+- [ ] `events --spectrum` в ядре (P0 для 0.2.0): аддитивные кадры, ≤ 30 Hz,
+      только подписчику с флагом
 
 Критерии готовности TUI v1: живое ядро видно в Now Playing; играют избранное,
 история и поиск; `q` не останавливает эфир, `Q` + подтверждение останавливает;

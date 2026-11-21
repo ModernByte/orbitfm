@@ -7,6 +7,12 @@ description = "3D Interactive Global Radio Player"
 repository = "https://github.com/ModernByte/orbitfm"
 license = "MIT"
 
+# Workspace: desktop `orbitfm` (корень) + лёгкий терминальный клиент.
+# Корневой пакет не получает ratatui; TUI — отдельный crate (ADR-0047).
+[workspace]
+members = [".", "crates/orbitfm-tui"]
+resolver = "3"
+
 [dependencies]
 anyhow = "1.0"
 bytemuck = { version = "1.25", features = ["derive"] }

@@ -1,0 +1,18 @@
+[package]
+name = "orbitfm-tui"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.100"
+description = "Lightweight terminal client for the OrbitFM radio player"
+repository = "https://github.com/ModernByte/orbitfm"
+license = "MIT"
+
+[dependencies]
+# crossterm берётся из ре-экспорта ratatui, чтобы версии backend и event API
+# не разъезжались (docs/modules/19-tui.md §2.1).
+ratatui = "0.30.2"
+serde = { version = "1.0", features = ["derive"] }
+toml = "1.1"
+
+[dev-dependencies]
+tempfile = "3"

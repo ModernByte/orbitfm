@@ -6,7 +6,8 @@ description: Terminal UI OrbitFM на ratatui — IPC-клиент к single-ins
 # OrbitFM TUI (ratatui)
 
 Ты проектируешь или пишешь **терминальный клиент** OrbitFM. T0 (ADR-0047,
-interface 16, module 19) выполнен; код T1 ещё не начат.
+interface 16, module 19) и D0 (язык дизайна, хаб, карта версий, план, команда)
+выполнены; код T1 ещё не начат.
 
 ## Источники
 
@@ -16,7 +17,13 @@ interface 16, module 19) выполнен; код T1 ещё не начат.
 4. `docs/modules/19-tui.md` — crate, event loop, визуализаторы, `tui.toml`
 5. ADR-0005 (single-instance + IPC), ADR-0039 (поток событий), ADR-0046
    (sleep, очередь, library)
-6. `orbitfm-core`, `orbitfm-ipc`
+6. `docs/ui/tui-design-system.md` — язык дизайна: токены, компоненты,
+   композиции, доступность (обязателен при любой визуальной правке)
+7. `docs/tui/README.md` — хаб приложения; `docs/tui/roadmap.md` — версии,
+   приоритеты и сложность задач
+8. `.agents/plans/tui-modern-design-and-delivery.md` — мастер-план и реестр
+   задач; `.pi/agents/tui-*.md` — команда тимейтов трека
+9. `orbitfm-core`, `orbitfm-ipc`
 
 ## Маршрутизация
 

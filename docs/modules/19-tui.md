@@ -384,8 +384,10 @@ schema = 1
 [ui]
 layout = "desk"        # desk|focus|library|minimal|dashboard
 motion = "full"        # full|reduced|off
-glyphs = "unicode"     # unicode|ascii
-accent = "cyan"        # имя 16-цветной палитры
+glyphs = "auto"        # auto|unicode|ascii
+border = "rounded"     # rounded|square|none
+theme = "orbit-dark"   # orbit-dark|ice|amber|green|magenta|mono
+accent = "cyan"        # совместимость; theme главнее
 frame_fps = 15         # 1..=30
 
 [modules]
@@ -410,7 +412,10 @@ bars = 32              # 8..=64, только для bars
 - при ошибке чтения/разбора файл не перезаписывается без действия
   пользователя; в статусе — `config: defaults`;
 - `frame_fps` ограничен сверху 30, чтобы терминал не захлёбывался;
-- конфиг не содержит URL, UUID и станций — только параметры отображения.
+- конфиг не содержит URL, UUID и станций — только параметры отображения;
+- поля `theme`/`border`/`glyphs` аддитивны к схеме `1` (ADR-0047 рев. 3);
+  порядок разрешения — `tui.toml` → `NO_COLOR`/`TERM=dumb` → локаль →
+  дефолты; визуальный язык — `docs/ui/tui-design-system.md`.
 
 ## 7. Клавиши
 
