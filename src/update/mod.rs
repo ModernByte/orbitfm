@@ -8,10 +8,10 @@ pub mod cli;
 pub mod github;
 
 use semver::Version;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Канал релизов.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Channel {
     /// Публичный канал: финальные `vX.Y.Z`.

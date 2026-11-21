@@ -1587,8 +1587,10 @@ Intel Core i5-8210Y, Intel UHD Graphics 617, 8 ГБ, macOS 14.8.9).
 - [x] U1: модуль `src/update/` (каналы, `semver`, GitHub-источник,
       allowlist хостов)
 - [x] U2a: `orbitfm update [--check] [--json] [--channel stable|dev]`
-- [ ] U2b: `update channel` в `settings.json`, аддитивное `update` в
-      `status --json`
+- [x] U2b: `update channel` пишет канал в `settings.json` через `SettingsStore`
+      (когда ядро не запущено); настройки `update_channel`/`update_check`/
+      `update_auto_install`
+- [ ] U2c: аддитивное поле `update` в `status --json`
 - [ ] U3: планировщик (интервал, `network_profile`, `Notice`)
 - [ ] U4: автоустановка AppImage (SHA-256 + атомарная замена); MSI/DMG —
       уведомление (ADR-0052)
