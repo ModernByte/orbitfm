@@ -559,10 +559,10 @@ Live-приёмка после T1–T5:
 | Этап | Содержание | Статус |
 |------|------------|--------|
 | T0 | ADR-0047, интерфейс 16, модуль 19, аудит, ROADMAP | сделан документами |
-| T1 | workspace, crate, ratatui loop, экраны на mock-данных, terminal guard, min size | не начат |
-| T2 | `CliCoreClient`, `events`, worker, Now Playing, play/pause/stop/volume/next/prev/roulette, `q`/`Q` | не начат |
-| T3 | `library`, избранное/история, `play-library`, `favorite`, refresh | не начат |
-| T4 | `search`, корреляция `id`, `play-result`/`play`, таймаут | не начат |
+| T1 | workspace, crate, ratatui loop, экраны на mock-данных, terminal guard, min size | сделан |
+| T2 | `CliCoreClient`, `events`, worker, Now Playing, play/pause/stop/volume/next/prev/roulette, `q`/`Q` | сделан |
+| T3 | `library`, избранное/история, `play-library`, `favorite`, refresh | сделан |
+| T4 | `search`, корреляция `id`, `play-result`/`play`, таймаут | сделан (буферизация кадра раньше `id` — к волне 4) |
 | T5 | `bars`/`ring`/`scope`/`pulse`, пресеты `desk`/`focus`/`library`/`minimal`, менеджер модулей, `tui.toml`, `events --spectrum` + fallback, Help, sleep prompt, README, приёмка | не начат |
 | T6 | `stars`/`heat`, direct socket, mouse, image protocol | не начат |
 

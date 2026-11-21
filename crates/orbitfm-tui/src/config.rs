@@ -30,6 +30,10 @@ impl Default for TuiConfig {
 }
 
 /// Настройки отображения `[ui]`.
+///
+/// `layout`/`motion`/`border`/`frame_fps` уже читаются из `tui.toml`, но
+/// применяются начиная с волн 4 (визуализаторы, компоновки).
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {

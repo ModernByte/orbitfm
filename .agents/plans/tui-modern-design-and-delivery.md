@@ -95,7 +95,7 @@
       panic hook, min size 60×18.
 - [x] **FND-3** — `src/ui/theme.rs` по `docs/ui/tui-design-system.md` §9.2
       (ANSI-16, `NO_COLOR`, `TERM=dumb`, локаль, `ORBITFM_TUI_THEME`).
-- [ ] **FND-4** — компонентный кит: header, panel, station row, gauge,
+- [x] **FND-4** — компонентный кит: header, panel, station row, gauge,
       status bar, footer, overlay, toast/empty/error states.
 - [ ] **FND-5** — `config.rs`: схема 1 и чтение `[ui]` (`theme`/`glyphs`) +
       устойчивость к битому файлу — **сделано**; атомарная запись с debounce
@@ -103,33 +103,33 @@
 - [x] **VER-1** — динамическая версионность: `build.rs` (git `sha`/`dirty`,
       дата, `SOURCE_DATE_EPOCH`), `src/version.rs`, `--version`/`--help`,
       схема — `docs/tui/versioning.md`; установлен локально.
-- [ ] **FND-6** — `app.rs`: состояние, `AppEvent`, цикл, `dirty`-перерисовка,
+- [x] **FND-6** — `app.rs`: состояние, `AppEvent`, цикл, `dirty`-перерисовка,
       дедлайны.
 - [ ] **FND-7** — `ui/layout.rs`: базовые `desk`/`minimal` + адаптивность.
 
 ### Волна 2 — Клиент ядра (milestone **TUI 0.1.0**)
 
-- [ ] **CLC-1** — трейт `CoreClient`, модели, `CoreCommand/Reply/Event`.
-- [ ] **CLC-2** — поток `orbitfm events`: NDJSON, первый `snapshot`, stale 45 с,
+- [x] **CLC-1** — трейт `CoreClient`, модели, `CoreCommand/Reply/Event`.
+- [x] **CLC-2** — поток `orbitfm events`: NDJSON, первый `snapshot`, stale 45 с,
       backoff 1→30 с, `R`.
-- [ ] **CLC-3** — worker one-shot команд: сериализация, таймаут 15 с, `kill`,
+- [x] **CLC-3** — worker one-shot команд: сериализация, таймаут 15 с, `kill`,
       классификация `NotRunning`/`Command`/`Protocol`/`Timeout`/`Io`.
-- [ ] **CLC-4** — гейты совместимости `schema: 1`, `app: orbitfm`, `ev: 1`;
+- [x] **CLC-4** — гейты совместимости `schema: 1`, `app: orbitfm`, `ev: 1`;
       блокировка управления при несовпадении.
-- [ ] **CLC-5** — парсеры `snapshot`/`state`/`keepalive`/`search`/`library`/
+- [x] **CLC-5** — парсеры `snapshot`/`state`/`keepalive`/`search`/`library`/
       `favorite`/`ok sleep`; лимит 64 КиБ; NaN/out-of-range отбрасываются.
 
 ### Волна 3 — Экраны (milestone **TUI 0.1.0**)
 
-- [ ] **SCR-1** — Now Playing + строка статуса; пустое состояние.
-- [ ] **SCR-2** — транспорт: `p`/`Space`, `s`, `[`/`]`, `r`, `+`/`-`.
-- [ ] **SCR-3** — Favorites/History: `library`, `play-library`, `favorite`,
+- [x] **SCR-1** — Now Playing + строка статуса; пустое состояние.
+- [x] **SCR-2** — транспорт: `p`/`Space`, `s`, `[`/`]`, `r`, `+`/`-`.
+- [x] **SCR-3** — Favorites/History: `library`, `play-library`, `favorite`,
       refresh, потолок 20.
-- [ ] **SCR-4** — Search: ввод, `search <id>`, корреляция по `id`, буферизация
+- [x] **SCR-4** — Search: ввод, `search <id>`, корреляция по `id`, буферизация
       обратного порядка, таймаут 15 с, `play-result` → `play` fallback.
-- [ ] **SCR-5** — Help: клавиши, версии TUI/ядра, ограничения v1.
-- [ ] **SCR-6** — оверлеи: `QuitConfirm`, `SleepPrompt`, `Modules`.
-- [ ] **SCR-7** — `q`/`Q`-семантика и честный отказ без ядра.
+- [x] **SCR-5** — Help: клавиши, версии TUI/ядра, ограничения v1.
+- [x] **SCR-6** — оверлеи: `QuitConfirm`, `SleepPrompt`, `Modules`.
+- [x] **SCR-7** — `q`/`Q`-семантика и честный отказ без ядра.
 
 **Критерий TUI 0.1.0** — критерии готовности из `docs/ROADMAP.md` (живое ядро
 видно, играют избранное/история/поиск, `q`/`Q`, нет паники при resize).

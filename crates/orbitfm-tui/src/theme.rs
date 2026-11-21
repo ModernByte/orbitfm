@@ -81,6 +81,30 @@ impl GlyphSet {
         }
     }
 
+    /// Маркер выбранной строки списка.
+    pub fn selection(self) -> &'static str {
+        match self {
+            Self::Unicode => "▌",
+            Self::Ascii => ">",
+        }
+    }
+
+    /// Заполненная ячейка шкалы.
+    pub fn gauge_filled(self) -> &'static str {
+        match self {
+            Self::Unicode => "█",
+            Self::Ascii => "#",
+        }
+    }
+
+    /// Пустая ячейка шкалы.
+    pub fn gauge_empty(self) -> &'static str {
+        match self {
+            Self::Unicode => "░",
+            Self::Ascii => "-",
+        }
+    }
+
     /// Кадр спиннера (10 кадров).
     pub fn spinner(self, tick: u64) -> &'static str {
         const UNICODE: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -159,6 +183,8 @@ pub struct Theme {
     pub reconnect: Style,
     pub error: Style,
     pub favorite: Style,
+    pub warning: Style,
+    pub danger: Style,
 }
 
 impl Theme {
@@ -197,6 +223,8 @@ impl Theme {
             reconnect: plain(Color::Yellow),
             error: plain(Color::Red),
             favorite: plain(Color::Yellow),
+            warning: plain(Color::Yellow),
+            danger: plain(Color::Red),
         }
     }
 
