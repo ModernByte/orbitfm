@@ -7,6 +7,55 @@
 
 ## [Unreleased]
 
+### Добавлено
+- **Трек TUI: язык дизайна, хаб приложения, карта версий, план и команда
+  тимейтов.** Код `orbitfm-tui` не начат (правило скилла `orbitfm-tui`:
+  старт только по решению владельца). Добавлены:
+  - `docs/ui/tui-design-system.md` — современный язык дизайна: ANSI-16 токены,
+    темы, глифы unicode/ascii, сетка, компоненты, визуализаторы, движение,
+    доступность и эталонные композиции;
+  - `docs/tui/README.md` — главный документ отдельного лёгкого приложения
+    (роль, установка, клавиши, конфиг, совместимость, ограничения);
+  - `docs/tui/roadmap.md` — версионная карта TUI 0.1.0 → 1.0.0 с задачами,
+    приоритетами и оценками сложности;
+  - `.agents/plans/tui-modern-design-and-delivery.md` — мастер-план волн 0–6,
+    реестр задач, критические файлы, открытые решения;
+  - `.pi/agents/tui-*.md` — 11 запускаемых тимейтов трека (lead, design,
+    architect, foundation, coreclient, screens, visualizer, layout, spectrum,
+    qa, docs) с скиллами, контекстом, границами и Definition of Done.
+  Синхронизированы `docs/ROADMAP.md`, `docs/README.md`, `docs/dev/README.md`,
+  `docs/AGENTS.md` и скилл `.agents/skills/orbitfm-tui/SKILL.md`.
+- **TUI: фундамент волны 1 (`crates/orbitfm-tui`).** Cargo workspace с корнем
+  и `crates/orbitfm-tui`; терминальный жизненный цикл (raw mode, alternate
+  screen, guard, panic hook, минимум 60×18); токены дизайна ANSI-16
+  (`theme.rs`: 6 тем, `NO_COLOR`, `TERM=dumb`, автоопределение глифов
+  unicode/ascii, неизменная семантика статусов); каркас кадра (header, две
+  панели, строка статуса). CI линтует и тестирует TUI отдельным шагом. Кода
+  аудио/IPC в TUI нет — это каркас, desktop-пакет не тронут. 8 unit-тестов
+  зелёные, `cargo clippy -p orbitfm-tui -- -D warnings` чистый.
+- **TUI: динамическая версионность и чтение конфига.** `build.rs` вшивает
+  git-состояние (`sha`/`sha-dirty`), дату сборки (учитывает
+  `SOURCE_DATE_EPOCH`) и `ORBITFM_TUI_VERSION`; `src/version.rs` собирает
+  короткую и полную формы; добавлены CLI `--version`/`-V` и `--help`/`-h`.
+  `config.rs` читает `$XDG_CONFIG_HOME/orbitfm/tui.toml` (fallback
+  `~/.config`), применяет `[ui].theme`/`[ui].glyphs`, а битый файл заменяет
+  defaults с предупреждением в статусе. Схема версионирования зафиксирована
+  в `docs/tui/versioning.md` (тег `tui-vX.Y.Z`, независимость от ядра).
+  Бинарь собран как release и установлен локально; `orbitfm-tui --version`
+  правдиво печатает `0.1.0+<sha>-dirty` и совместимость с ядром. Проверки:
+  fmt/clippy чисты, 18 тестов зелёные.
+- ADR-0047 ревизия 3 (язык дизайна и токены темы) + интерфейс 16 и модуль 19
+  синхронизированы; `docs/ROADMAP.md` и `docs/tui/roadmap.md` обновлены.
+
+### Изменено
+- **Решения владельца по треку TUI (2026-11-21).** Android Companion поставлен
+  на паузу — приоритет отдан TUI; `events --spectrum` обязателен для 0.2.0
+  (`CRX-1` = P0); поставка — и source-only (`cargo install`), и отдельный
+  релизный артефакт (`PKG-1` закрыт). Волна 1 реализации запущена; обновлены
+  `.agents/plans/tui-modern-design-and-delivery.md` §9, `docs/tui/roadmap.md`,
+  `docs/tui/README.md` и `docs/ROADMAP.md`. Поставка TUI — два канала
+  (source-only + артефакт), см. `docs/tui/versioning.md` §5.
+
 ## [0.23.0-rc.3] - 2026-11-19
 
 PATCH: сборка перешла на Rust 1.100, Flatpak удалён из проекта — на Linux остаётся один канал поставки, AppImage, с тем же CLI и виджетом.

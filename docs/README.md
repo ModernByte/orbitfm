@@ -46,6 +46,7 @@ Most requested pages:
 | [Interface contracts](interfaces/) | Public contracts between modules, IPC, file schemas |
 | [Patterns catalog](patterns/00-overview.md) | Reusable structural patterns used in the codebase |
 | [Roadmap](ROADMAP.md) · [Version map](VERSIONMAP.md) · [Changelog](CHANGELOG.md) | Plans, release contents and history |
+| [TUI application](tui/README.md) | Lightweight terminal client `orbitfm-tui`: hub, [design language](ui/tui-design-system.md), [version map](tui/roadmap.md) |
 | [Audits and research](audit/) | Security, performance and product research |
 | [Acknowledgements](dev/acknowledgements.md) | Dependencies, licenses and asset credits |
 | [Agent rules](AGENTS.md) · [Contributing](CONTRIBUTING.md) | Workflow, code style and review rules |

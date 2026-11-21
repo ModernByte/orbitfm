@@ -75,6 +75,15 @@ jobs:
       - name: Test
         run: cargo test --all-targets
 
+      # TUI — отдельный crate и бинарь, поэтому не попадает в `--all-targets`
+      # корневого пакета; линтуется и тестируется отдельно. Системных
+      # библиотек не требует (`cargo fmt --all --check` выше уже покрывает его).
+      - name: TUI clippy
+        run: cargo clippy -p orbitfm-tui --all-targets -- -D warnings
+
+      - name: TUI test
+        run: cargo test -p orbitfm-tui
+
   # Контур поставки (QA-01). Отдельный job, а не шаг в `checks`: он не требует
   # системных библиотек и не должен зависеть от того, собрался ли проект.
   supply-chain:

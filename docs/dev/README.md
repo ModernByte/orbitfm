@@ -24,6 +24,7 @@ update an ADR before the code.
 | [Version map](../VERSIONMAP.md) | Which feature landed in which release |
 | [Changelog](../CHANGELOG.md) | Release-by-release history |
 | [Release notes template](release-notes.md) | How a GitHub Release body is written: Russian + English, preview paragraph, checklist |
+| [TUI application](../tui/README.md) | Lightweight terminal client `orbitfm-tui`: hub, [design language](../ui/tui-design-system.md), [version map](../tui/roadmap.md) |
 | [Audits and research](../audit/) | Independent audits, security and performance research |
 | [Plans](../plans/) | Active feature plans and measurement journals |
 | [Agent rules](../AGENTS.md) | Mandatory workflow for AI agents and reviewers |
@@ -47,6 +48,7 @@ docs/
 ├── modules/               # module specifications (Russian)
 ├── interfaces/            # interface contracts (Russian)
 ├── patterns/              # pattern catalog (Russian)
+├── tui/                   # TUI client hub, design language, version map (Russian)
 ├── audit/                 # audits and research (Russian)
 └── plans/                 # feature plans (Russian)
 ```
